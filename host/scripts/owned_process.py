@@ -18,7 +18,7 @@ import unicodedata
 import argparse
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import Any, BinaryIO, Protocol, TypeVar, cast
 from types import TracebackType
 
 Result = TypeVar("Result")
@@ -144,14 +144,18 @@ if sys.platform == "win32":
         return result
 
 
+class FileDescriptor(Protocol):
+    def fileno(self) -> int: ...
+
+
 class OwnedProcess:
     def __init__(
         self,
         command: Sequence[str],
         *,
-        stdout: BinaryIO,
-        stderr: BinaryIO,
-        stdin: BinaryIO | None = None,
+        stdout: FileDescriptor,
+        stderr: FileDescriptor,
+        stdin: FileDescriptor | None = None,
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
     ):
@@ -161,9 +165,9 @@ class OwnedProcess:
         if sys.platform != "win32":
             self._process = subprocess.Popen(
                 command,
-                stdin=subprocess.DEVNULL if stdin is None else stdin,
-                stdout=stdout,
-                stderr=stderr,
+                stdin=subprocess.DEVNULL if stdin is None else stdin.fileno(),
+                stdout=stdout.fileno(),
+                stderr=stderr.fileno(),
                 start_new_session=True,
                 cwd=cwd,
                 env=env,

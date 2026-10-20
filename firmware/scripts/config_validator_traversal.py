@@ -6,6 +6,20 @@ normal-return proof. Complete child effects and contextual coverage remain
 the responsibility of the enclosing validator-return consumer.
 """
 
+from collections.abc import Mapping, Sequence
+from typing import Never, NotRequired, TypeGuard, TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap, OutlineConsumer
+from config_stack import DiagnosticObjects
+from config_regions import Storage, Region, View
+from config_default_sources import SourceTerminal
+from config_validator_access import ValidatorContext
+from config_validator_controls import ValidatorControls
+from config_validator_children import NormalBody
+from config_default import Writes
+from config_logger import LoggerRecord
+from config_refill_children import DefinitionResult, PeriodResult
+from config_abstract_compare import InitializedPrefix
+from config_validator_traversal_contracts import TraversalObject
 import re
 from dataclasses import replace
 from config_entry import CONFIG, entry_object
@@ -13,8 +27,6 @@ from config_finite import _literal_body
 from config_helpers import _helper_function
 from config_refill_children import _readonly, child_coverage, definition_interface, period_interface
 from config_regions import (
-    Storage,
-    Region,
     Transfer,
     Argument,
     borrow,
@@ -25,9 +37,281 @@ from config_regions import (
 from config_logger import logger_body
 from config_roots import root_location
 from config_stack import canonical_symbol, _typed_function_extent, transfer_family
-from config_validator_traversal_contracts import TRAVERSAL, MATH, COLOR_CAPTURE, COLOR_CAPTURE_ROLE
+from config_validator_traversal_contracts import (
+    TRAVERSAL,
+    MATH as MATH,
+    COLOR_CAPTURE,
+    COLOR_CAPTURE_ROLE,
+)
 import struct
 from validation import require
+
+
+Point = tuple[int, str, str]
+
+
+class SourceInputs(TypedDict):
+    views: tuple[View, ...]
+    widgets: tuple[View, ...]
+    sources: tuple[View, ...]
+    history: View
+    led: View
+    controls: View
+    warnings: View
+    warning_colors: View
+    fuel: View
+    fuel_variant: str
+    fuel_physical_tag: int
+    initialized_counts: dict[str, int]
+    opaque: tuple[str, ...]
+    source_semantically_valid_assumed: bool
+
+
+class MathBody(BodyRecord):
+    normal_preserves: tuple[str, ...]
+    reads: tuple[()]
+    writes: tuple[()]
+    clobbers: tuple[str, ...]
+    condition_result: str
+
+
+class SourceArguments(TypedDict):
+    kind: str
+    readonly: tuple[View, ...]
+    receiver: NotRequired[View]
+    source_values: NotRequired[tuple[View, ...]]
+    dynamic_range: NotRequired[str | None]
+    unused_padding_excluded: NotRequired[tuple[tuple[int, int], ...]]
+    exhausted_initialized_false: NotRequired[bool]
+    source_strings: NotRequired[tuple[InitializedPrefix, ...]]
+    maxima: NotRequired[tuple[int, ...]]
+    placement_and_current_Widget_paired: NotRequired[bool]
+    color_role_subset: NotRequired[tuple[int, ...] | None]
+    same_current_Widget: NotRequired[bool]
+    domain: NotRequired[tuple[int, ...]]
+    returns: NotRequired[tuple[str, ...]]
+    count_domain: NotRequired[tuple[int, ...]]
+    stride: NotRequired[int]
+    same_receiver_across_previous_index_calls: NotRequired[bool]
+    original_count4_diagnostic_pending: NotRequired[bool]
+
+
+class NormalCall(TypedDict):
+    site: int
+    family: str
+    proof: NormalBody
+    arguments: SourceArguments
+    save_intervals: tuple[tuple[int, int], ...]
+
+
+class ReceiverArguments(TypedDict):
+    source: str
+    site: NotRequired[int]
+    kind: NotRequired[str]
+    readonly_ranges: NotRequired[tuple[tuple[int, int], ...]]
+    Q: NotRequired[int]
+    R: NotRequired[int]
+    B: NotRequired[int]
+    phase: NotRequired[str]
+    read: NotRequired[int]
+    write: NotRequired[int]
+    count: NotRequired[int]
+    source_count: NotRequired[int]
+
+
+class ChildBinding(TypedDict):
+    target: int
+    role: str
+    extent: int
+    frame: int
+    name: str
+    cut: bool
+    stops_at_cut: bool
+    interface: str
+    proof: BodyRecord
+    family: str | None
+    arguments: ReceiverArguments
+    effects: tuple[()]
+    copy_bodies: tuple[LoggerRecord, ...] | None
+
+
+class ColorCapture(TypedDict):
+    proof: BodyRecord
+    possible_writes: Writes
+    source_fields: tuple[tuple[View, View], ...]
+    owned_frame: Storage
+    reference_cells: tuple[tuple[int, int], ...]
+    current_Widget_cell: int
+    first_cell: int
+    source_ColorRole_domain: tuple[int, ...]
+    first_Some_tag: int
+    code: int
+    Field_base: int
+    inactive_or_padding: tuple[tuple[int, int], ...]
+    normal_preserves: tuple[str, ...]
+
+
+class LedCopy(TypedDict):
+    source: View
+    destination: View
+    count: int
+    bodies: tuple[LoggerRecord, ...]
+    physical_activation_paths: tuple[tuple[int, ...], ...]
+    normal_preserves: tuple[str, ...]
+    possible_writes: Writes
+    copied_padding_stays_opaque: bool
+    source_epoch: str
+
+
+class Epoch(TypedDict):
+    interval: tuple[int, int]
+    owner: str
+    entry: int
+    exit: int
+    domain: NotRequired[tuple[int, ...]]
+    invariant: str
+
+
+class ViewsTraversal(TypedDict):
+    base: int
+    stride: int
+    count: int
+    prior_prefix_indices: tuple[int, ...]
+
+
+class WidgetsTraversal(TypedDict):
+    base: int
+    stride: int
+    count: int
+    prior_prefix_bounds: tuple[tuple[int, int], ...]
+    view_indices: tuple[int, ...]
+    placement_rows: tuple[int, ...]
+    placement_columns: tuple[int, ...]
+    rect_payload_requires_Some1: bool
+    missing_or_duplicate_view_stays_error: bool
+
+
+class BandsTraversal(TypedDict):
+    receiver_offsets: tuple[int, ...]
+    stride: int
+    count_domain: tuple[int, ...]
+    previous_indices: tuple[tuple[int, int], ...]
+    bound_sites: tuple[int, ...]
+    distinct_Locations: tuple[str, ...]
+
+
+class ColorsTraversal(TypedDict):
+    constructed_subset: tuple[int, ...]
+    count: int
+    scratch: tuple[int, int]
+    all_same_Widget_scalar_pairs: bool
+
+
+class SourcesTraversal(TypedDict):
+    base: int
+    stride: int
+    channels: tuple[int, ...]
+    DefinitionId_pairs: tuple[tuple[int, int], ...]
+    poll_payload_read_only_for_EveryMs: bool
+    source_Off_payload_opaque: bool
+    Access_table_domain: tuple[int, ...]
+    route_payload_read_only_for_Physical: bool
+
+
+class FuelTraversal(TypedDict):
+    active_constructor: str
+    representation_tag: int
+    active_bytes: tuple[int, int]
+    inactive_payload: tuple[int, int]
+    normal_s0_bits: int
+    scalar_only_other_typed_variants_kept_in_body: bool
+    Ok_requires_actual_valid_flag_and_finite_stoichiometric_guards: bool
+
+
+class Traversal(TypedDict):
+    views: ViewsTraversal
+    widgets: WidgetsTraversal
+    bands: BandsTraversal
+    colors: ColorsTraversal
+    sources: SourcesTraversal
+    fuel: FuelTraversal
+
+
+class FirstError(TypedDict):
+    initial_None: int
+    Some_tags: tuple[int, ...]
+    error_field_bytes: tuple[int, int]
+    valid: int
+    capture: tuple[int, int]
+    spill: tuple[int, int]
+    early_R: str
+    late_R: str
+    shared_widget_Some1_and_root_None0_pairs_preserved: bool
+    None2_is_diagnostic_not_Err: bool
+    Err_payload_before_tag: bool
+    Ok_s0_before_tag2: bool
+
+
+class EdgesRetirement(TypedDict):
+    zero: Point
+    pointer_writers: tuple[tuple[int, str, int, int, int], ...]
+    old_domain: tuple[int, ...]
+    new_domain: tuple[int, ...]
+
+
+class WidgetRetirement(TypedDict):
+    pointer_store: Point
+    Widget_epoch_writers: tuple[tuple[int, int, int], ...]
+    Source_epoch_writers: tuple[tuple[int, int, int], ...]
+
+
+class Retirements(TypedDict):
+    edges_to_occupied: EdgesRetirement
+    Widget_to_dynamic_ranges: WidgetRetirement
+    Color_reference_cells: tuple[Point, ...]
+
+
+class FuelOutput(TypedDict):
+    constructor: tuple[Point, ...]
+    same_B: int
+    constructor_word: int
+    source_dispatch_guard: tuple[Point, ...]
+    subtracted_tag: int
+    selected_f32: tuple[Point, int, int]
+    output_pair: tuple[Point, ...]
+
+
+class PhaseRelations(TypedDict):
+    epochs: tuple[Epoch, ...]
+    traversal: Traversal
+    first: FirstError
+    checked_table_transports: dict[str, tuple[Point, ...]]
+    checked_owned_write_intervals: tuple[tuple[int, int], ...]
+    checked_retirements: Retirements
+    checked_Fuel_to_Ok: FuelOutput
+    initialized_prefix_counts: dict[str, int]
+    semantic_validation_success_assumed: bool
+
+
+class AuditedRegions(TypedDict):
+    function: int
+    frame: int
+    instructions: int
+    code_bytes: int
+    data_bytes: int
+    regions: int
+    machine_transfers: int
+    phase_fallthroughs: int
+    terminal_padding: tuple[int, ...]
+    all_current_bytes_owned_once: bool
+
+
+class TraversalCoverage(TypedDict):
+    coverage: AuditedRegions
+    regions: tuple[Region, ...]
+    tables: tuple[tuple[int, str, tuple[int, ...], tuple[int, ...]], ...]
+    iterations: tuple[tuple[int, int, str], ...]
+    typed_shared_suffixes: tuple[tuple[int, int], ...]
 
 
 # Semantic grouping follows visit_validation source order, not target struct
@@ -137,7 +421,7 @@ TERMINAL_PADDING = {
 }
 
 
-def _source_inputs(source, context):
+def _source_inputs(source: SourceTerminal, context: ValidatorContext) -> SourceInputs:
     """Consume actual returned source views; no capacity-as-initialization."""
     prepared = source["widget"]["prepared"]
     widgets = source["widget"]["iterations"]
@@ -192,11 +476,10 @@ def _source_inputs(source, context):
             W.storage == prepared["config"].storage and S.storage == prepared["config"].storage,
             "validator traversal substitutes another source allocation",
         )
-        for key, offset, capacity in (
-            ("initialized_label", 156, 24),
-            ("initialized_warning", 36, 20),
+        for text, offset, capacity in (
+            (widget["initialized_label"], 156, 24),
+            (widget["initialized_warning"], 36, 20),
         ):
-            text = widget[key]
             require(
                 text.view.start == W.start + offset
                 and text.view.extent == capacity
@@ -232,12 +515,14 @@ def _source_inputs(source, context):
     )
 
 
-def _object_consumer(objects, address, descriptor, B):
+def _object_consumer(
+    objects: DiagnosticObjects, address: int, descriptor: TraversalObject, B: int
+) -> tuple[Callback, ...]:
     kind = descriptor["kind"]
-    if kind == "config":
+    if descriptor["kind"] == "config":
         require(address == B, "validator source phase loads another Config")
         return entry_object(objects, address, dict(kind="entry_static", role=CONFIG))
-    if kind == "source_location":
+    if descriptor["kind"] == "source_location":
         root_location(objects, address, descriptor["role"])
         return ()
     require(kind in ("range", "first_message"), "unreviewed validator typed readonly role")
@@ -250,7 +535,7 @@ def _object_consumer(objects, address, descriptor, B):
     return ()
 
 
-def _math_body(objects, name, rows, label):
+def _math_body(objects: DiagnosticObjects, name: str, rows: InstructionMap, label: str) -> MathBody:
     require(
         label in MATH and re.fullmatch(r"OUTLINED_FUNCTION_[0-9]+", name),
         "validator math outline borrows an ordinary identity",
@@ -258,7 +543,7 @@ def _math_body(objects, name, rows, label):
     start = objects.elf.functions[name][0] & ~1
     contract = MATH[label]
 
-    def function(objects, target, role):
+    def function(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, int, str]:
         if target == start:
             extent, raw = _typed_function_extent(objects, target, role)
             require(
@@ -268,7 +553,7 @@ def _math_body(objects, name, rows, label):
             return extent, 0, raw
         return _helper_function(objects, target, role)
 
-    def unexpected(*args):
+    def unexpected(*args: object) -> Never:
         raise AssertionError("scalar validator outline gains memory/callee effect")
 
     proof = _literal_body(
@@ -289,7 +574,8 @@ def _math_body(objects, name, rows, label):
     # The closed sequences above contain only register/FP comparisons, shifts,
     # condition transfer and BX LR. They neither read nor write memory, change
     # SP, nor change r4-r11/d8-d15. Flags are consumed at the exact parent site.
-    proof.update(
+    return dict(
+        **proof,
         normal_preserves=tuple("r" + str(i) for i in range(4, 12)) + ("sp", "d8-d15"),
         reads=(),
         writes=(),
@@ -303,10 +589,15 @@ def _math_body(objects, name, rows, label):
         + ("flags",),
         condition_result="exact APSR/fpscr relation in the matched parent source phase",
     )
-    return proof
 
 
-def _complete_sequence(objects, name, instructions, B, outline_consumer):
+def _complete_sequence(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    B: int,
+    outline_consumer: OutlineConsumer,
+) -> BodyRecord:
     """Exact current sequence; semantic/child/coverage composition is separate."""
     rows = {
         a: replace(r, operands=r.operands.split("@", 1)[0].split("<", 1)[0].strip())
@@ -325,7 +616,7 @@ def _complete_sequence(objects, name, instructions, B, outline_consumer):
     )
 
 
-def _child_allocation(context, extent, label):
+def _child_allocation(context: ValidatorContext, extent: int, label: str) -> Storage:
     require(
         type(extent) is int and extent > 0 and extent % 4 == 0,
         "invalid complete validator child frame",
@@ -347,7 +638,7 @@ def _child_allocation(context, extent, label):
     return child
 
 
-def _visitor_guards(context):
+def _visitor_guards(context: ValidatorContext) -> tuple[Storage, ...]:
     q = context.frame
     return context.protected + tuple(
         Storage(q.space, q.identity + ":" + label, q.start + lo, n, 1, q.phase, False)
@@ -360,13 +651,20 @@ def _visitor_guards(context):
     )
 
 
-def _color_capture(objects, name, instructions, parent, context, inputs):
+def _color_capture(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    parent: BodyRecord,
+    context: ValidatorContext,
+    inputs: SourceInputs,
+) -> ColorCapture:
     require(
         canonical_symbol(name) == COLOR_CAPTURE_ROLE,
         "ColorRole first-error closure changes raw context",
     )
 
-    def none(*args):
+    def none(*args: object) -> Never:
         raise AssertionError("ColorRole capture gains a child/object/indirect effect")
 
     proof = _literal_body(
@@ -436,11 +734,16 @@ def _color_capture(objects, name, instructions, parent, context, inputs):
     )
 
 
-def _led_copies(objects, instructions, parent, context):
+def _led_copies(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    parent: BodyRecord,
+    context: ValidatorContext,
+) -> dict[int, LedCopy]:
     """Only the four reviewed LED staging copies, not a generic copy API."""
     q = context.frame
     guards = _visitor_guards(context)
-    results = {}
+    results: dict[int, LedCopy] = {}
     children = []
     edges = {
         offset: (target, role)
@@ -533,7 +836,13 @@ def _led_copies(objects, instructions, parent, context):
     return results
 
 
-def _source_catalogue(objects, instructions, parent, context, source):
+def _source_catalogue(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    parent: BodyRecord,
+    context: ValidatorContext,
+    source: SourceTerminal,
+) -> dict[int, DefinitionResult | PeriodResult]:
     """Close actual Definition/period calls with paired initialized Sources."""
     edges = {
         offset: (target, role)
@@ -541,7 +850,7 @@ def _source_catalogue(objects, instructions, parent, context, source):
     }
     q = context.frame
     guards = _visitor_guards(context)
-    results = {}
+    results: dict[int, DefinitionResult | PeriodResult] = {}
     for offset, label in ((0xE44, "definition"), (0xF3E, "period")):
         target, role = edges[offset]
         extent, frame, name = _helper_function(objects, target, role)
@@ -577,7 +886,7 @@ def _source_catalogue(objects, instructions, parent, context, source):
                     "validator catalogue loses the same-Source Definition/Channel/Access pairing",
                 )
         else:
-            result = period_interface(
+            period_result = period_interface(
                 objects,
                 instructions,
                 proof,
@@ -586,7 +895,7 @@ def _source_catalogue(objects, instructions, parent, context, source):
                 guards,
             )
             require(
-                tuple(item["channel"] for item in result["outcomes"]) == tuple(range(8)),
+                tuple(item["channel"] for item in period_result["outcomes"]) == tuple(range(8)),
                 "validator period uses another Channel iteration domain",
             )
         require(
@@ -597,24 +906,28 @@ def _source_catalogue(objects, instructions, parent, context, source):
             ),
             "validator Source child changes live floating carriers",
         )
-        results[parent["function"] + offset] = result
+        results[parent["function"] + offset] = result if label == "definition" else period_result
     return results
 
 
+def _has_definition_writes(result: DefinitionResult | PeriodResult) -> TypeGuard[DefinitionResult]:
+    return "local_writes" in result
+
+
 def _phase_relations(
-    objects,
-    parent,
-    context,
-    source,
-    inputs,
-    controls,
-    normal,
-    children,
-    instructions,
-    copies,
-    catalogue,
-    color_capture,
-):
+    objects: DiagnosticObjects,
+    parent: BodyRecord,
+    context: ValidatorContext,
+    source: SourceTerminal,
+    inputs: SourceInputs,
+    controls: ValidatorControls,
+    normal: Sequence[NormalCall],
+    children: Mapping[int, ChildBinding],
+    instructions: InstructionMap,
+    copies: Mapping[int, LedCopy],
+    catalogue: Mapping[int, DefinitionResult | PeriodResult],
+    color_capture: ColorCapture,
+) -> PhaseRelations:
     """Closed induction for these fixed typed source/transport phases.
 
     The complete sequence fixes updates, comparisons, source stores and all
@@ -695,7 +1008,7 @@ def _phase_relations(
     local = controls["pointer"]["local"]
     pointer = controls["pointer"]
 
-    def point(offset, operation, operand):
+    def point(offset: int, operation: str, operand: str) -> Point:
         row = instructions.get(start + offset)
         require(
             row is not None and (row.mnemonic, row.operands) == (operation, operand),
@@ -703,7 +1016,7 @@ def _phase_relations(
         )
         return (start + offset, operation, operand)
 
-    def writers(lo, hi, begin, end):
+    def writers(lo: int, hi: int, begin: int, end: int) -> tuple[tuple[int, int, int], ...]:
         return tuple(
             (at - start, a, b)
             for at, a, b in local["local_ranges"]
@@ -797,9 +1110,10 @@ def _phase_relations(
     writes.extend(controls["pointer"]["local"]["boundary"]["error_copy"]["possible_writes"])
     for value in copies.values():
         writes.extend(value["possible_writes"])
-    for value in catalogue.values():
-        writes.extend(value["possible_writes"])
-        writes.extend(value.get("local_writes", ()))
+    for catalogue_result in catalogue.values():
+        writes.extend(catalogue_result["possible_writes"])
+        if _has_definition_writes(catalogue_result):
+            writes.extend(catalogue_result["local_writes"])
     for label in ("first_capture", "band_capture", "placement_rect"):
         writes.extend(pointer["children"][label]["writes"])
     # The sole direct VSTR is the checked successful R+4 output.
@@ -834,6 +1148,8 @@ def _phase_relations(
                 row is not None and (row.mnemonic, row.operands) == (operation, operand),
                 "actual source Fuel constructor loses r1=2 or the same-B store",
             )
+        if row is None:
+            raise AssertionError("actual source Fuel constructor loses its instruction")
         fuel_constructor.append((row.address, row.mnemonic, row.operands))
     require(source["outgoing"]["r10"] == B, "Fuel constructor has another source owner")
     fuel_guard = (
@@ -859,7 +1175,7 @@ def _phase_relations(
     # Object epochs are physical subintervals of the SAME Q allocation. Never
     # retag a live buffer to make another owner appear disjoint. Each new epoch
     # below begins after the old phase's last matched read or exact zeroing.
-    epochs = (
+    epochs: tuple[Epoch, ...] = (
         dict(
             interval=(104, 107),
             owner="edges[ControlPage]",
@@ -938,7 +1254,7 @@ def _phase_relations(
         and sources == tuple((B + 32 + 22 * i, 22) for i in range(8)),
         "validator source loop end/cursor is not the same initialized vector prefix",
     )
-    traversal = dict(
+    traversal: Traversal = dict(
         views=dict(base=B + 248, stride=24, count=1, prior_prefix_indices=tuple(range(1))),
         widgets=dict(
             base=B + 444,
@@ -991,7 +1307,7 @@ def _phase_relations(
     # pointer families, or the checked capture children. None2 reaches its
     # pending expect diagnostic. Valid=false retains the completed Some error
     # and reloads the original R from Q60; early errors keep original r5.
-    first = dict(
+    first: FirstError = dict(
         initial_None=2,
         Some_tags=(0, 1),
         error_field_bytes=(76, 88),
@@ -1039,7 +1355,14 @@ def _phase_relations(
     )
 
 
-def _coverage(objects, name, instructions, proof, context, children):
+def _coverage(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    context: ValidatorContext,
+    children: Mapping[int, ChildBinding],
+) -> TraversalCoverage:
     """Reconcile authored phases after their child/source effects are joined.
 
     `children` is internal output of complete child recognizers, keyed by the
@@ -1058,9 +1381,9 @@ def _coverage(objects, name, instructions, proof, context, children):
     backwards = {a: (b, label) for a, b, label in ITERATIONS}
     backwards.update({a: (b, "typed first/Result or scalar-only finite join") for a, b in SUFFIXES})
     regions = []
-    all_backwards = set()
+    all_backwards: set[int] = set()
     tables = []
-    phase_at = {}
+    phase_at: dict[int, int] = {}
     for ordinal, (label, lo, hi) in enumerate(SOURCE_PHASES):
         require(
             lo == (0 if ordinal == 0 else SOURCE_PHASES[ordinal - 1][2]) and lo < hi,
@@ -1136,12 +1459,20 @@ def _coverage(objects, name, instructions, proof, context, children):
                     require(
                         target in rows, "validator source continuation leaves current normal code"
                     )
+                    if target is None:
+                        raise AssertionError(
+                            "validator source continuation leaves current normal code"
+                        )
                     if target <= at:
                         expected = backwards.get(at - start)
                         require(
                             expected is not None and target == start + expected[0],
                             "validator backward edge loses its source invariant/typed suffix",
                         )
+                        if expected is None:
+                            raise AssertionError(
+                                "validator backward edge loses its source invariant/typed suffix"
+                            )
                         interface = expected[1]
                         kind = "loop"
                         all_backwards.add(at - start)
@@ -1193,7 +1524,14 @@ def _coverage(objects, name, instructions, proof, context, children):
     )
 
 
-def _audit_regions(objects, name, instructions, proof, regions, children):
+def _audit_regions(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    regions: tuple[Region, ...],
+    children: Mapping[int, ChildBinding],
+) -> AuditedRegions:
     """Closed validator-only coverage including its four terminal pads.
 
     Full _literal_body has already checked every instruction, mapped byte and
@@ -1206,16 +1544,16 @@ def _audit_regions(objects, name, instructions, proof, regions, children):
     end = start + 5048
     rows = {a: r for a, r in instructions.items() if start <= a < end}
     pads = {start + a for a in TERMINAL_PADDING}
-    machine = {}
-    falls = {}
-    owners = {}
-    data = set()
+    machine: dict[int, Transfer] = {}
+    falls: dict[int, Transfer] = {}
+    owners: dict[int, int] = {}
+    data: set[int] = set()
     for ordinal, region in enumerate(regions):
         require(
             region.context == regions[0].context and start <= region.start < region.end <= end,
             "validator region loses its actual invocation",
         )
-        points = set()
+        points: set[int] = set()
         for at in region.instructions:
             require(
                 at in rows and region.start <= at < at + len(rows[at].raw) <= region.end,
@@ -1241,21 +1579,21 @@ def _audit_regions(objects, name, instructions, proof, regions, children):
             points == set(range(region.start, region.end)), "validator phase leaves an unowned byte"
         )
         for edge in region.transfers:
-            target = falls if edge.kind == "fallthrough" else machine
+            destination_map = falls if edge.kind == "fallthrough" else machine
             require(
                 edge.site in region.instructions
                 and edge.operation == rows[edge.site].mnemonic
-                and edge.site not in target,
+                and edge.site not in destination_map,
                 "validator phase gains duplicate/unbound control",
             )
-            target[edge.site] = edge
+            destination_map[edge.site] = edge
     require(
         set(owners).isdisjoint(data) and set(owners) | data == set(range(start, end)),
         "validator current mapping has an uncovered/overlapping byte",
     )
     direct_edges = []
-    consumed = set()
-    crossings = set()
+    consumed: set[int] = set()
+    crossings: set[int] = set()
     for at, row in sorted(rows.items()):
         if at in pads:
             before, kind = TERMINAL_PADDING[at - start]
@@ -1272,27 +1610,28 @@ def _audit_regions(objects, name, instructions, proof, regions, children):
             )
             continue
         family, conditional = _control(row)
-        edge = machine.get(at)
+        current_edge = machine.get(at)
         stops = False
         if family is None:
-            require(edge is None, "validator has a spurious machine control")
+            require(current_edge is None, "validator has a spurious machine control")
         else:
-            require(edge is not None, "validator leaves an actual transfer unconsumed")
+            if current_edge is None:
+                raise AssertionError("validator leaves an actual transfer unconsumed")
             consumed.add(at)
             operand = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
             target = re.search(r"(?<![#\w])0x([0-9a-f]+)(?:\s|$)", operand)
             if family in ("b", "bl", "cbz", "cbnz"):
                 require(
-                    target is not None and edge.target == int(target[1], 16),
+                    target is not None and current_edge.target == int(target[1], 16),
                     "validator direct edge changes target",
                 )
-                direct_edges.append(edge.target)
+                direct_edges.append(current_edge.target)
                 if at in children:
                     child = children[at]
                     require(
-                        child["target"] == edge.target
-                        and child["role"] == edge.role
-                        and edge.kind
+                        child["target"] == current_edge.target
+                        and child["role"] == current_edge.role
+                        and current_edge.kind
                         == (
                             "pending_diagnostic_cut"
                             if child["stops_at_cut"]
@@ -1302,25 +1641,29 @@ def _audit_regions(objects, name, instructions, proof, regions, children):
                         ),
                         "validator child effects do not match its live transfer",
                     )
-                    stops = edge.kind in ("pending_diagnostic_cut", "tail") and not conditional
+                    stops = (
+                        current_edge.kind in ("pending_diagnostic_cut", "tail") and not conditional
+                    )
                 else:
                     require(
-                        edge.target in rows
-                        and edge.target not in pads
-                        and edge.role is None
-                        and edge.kind in ("branch", "loop"),
+                        current_edge.target in rows
+                        and current_edge.target not in pads
+                        and current_edge.role is None
+                        and current_edge.kind in ("branch", "loop"),
                         "validator source branch enters data/padding/unbound code",
                     )
                     stops = family == "b" and not conditional
             elif family == "tbb":
                 require(
-                    edge.kind == "table"
-                    and isinstance(edge.target, tuple)
-                    and bool(edge.target)
-                    and all(t in rows and t not in pads for t in edge.target),
+                    current_edge.kind == "table"
+                    and isinstance(current_edge.target, tuple)
+                    and bool(current_edge.target)
+                    and all(t in rows and t not in pads for t in current_edge.target),
                     "validator typed table enters data/padding",
                 )
-                direct_edges.extend(edge.target)
+                if not isinstance(current_edge.target, tuple):
+                    raise AssertionError("validator typed table enters data/padding")
+                direct_edges.extend(current_edge.target)
                 stops = True
             else:
                 raise AssertionError("validator gains an implicit-PC/unknown normal transfer")

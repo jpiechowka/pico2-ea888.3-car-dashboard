@@ -38,8 +38,9 @@ not authenticated MITM protection; physical peer behavior remains unverified.
 
 ## Reproducible host tests
 
-Run library tests only. Upstream integration tests access physical controllers.
-The tests share a global bounded packet pool, so serialize the test runner.
+Physical serial integration tests are explicitly ignored unless selected with
+`--ignored` on suitable hardware. Native library and harness tests share a global
+bounded packet pool, so serialize the test runner.
 
 ```powershell
 cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-pc-windows-msvc --lib --no-default-features --features central,gatt,security,default-packet-pool -- --test-threads=1
@@ -232,3 +233,38 @@ still lacks its rejected tuple and is not attributed to these defects.
 
 References: Bluetooth Core 6.1 [GATT 3.1, 3.3, 4.4, 4.6 and 4.7](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html),
 [ATT 3.2.2, 3.4.3.4 and 3.4.4.10](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/attribute-protocol--att-.html).
+
+## Full-code audit (2026-10-20)
+
+- GATT client transactions hold an exclusive lease through response handling.
+  Cancellation retains quarantine until terminal disconnect; malformed responses
+  cannot release ownership to a new transaction.
+- Server custom reads return their actual data, check blob offsets and bound
+  response lengths. Write Commands never receive ATT error responses. Typed
+  strings, Read Multiple, prepared writes, subscription bits and indication
+  authorization/serialization have packet-level regressions.
+- Dynamic L2CAP channels validate result encodings, peer CID/MTU/MPS and complete
+  payloads before admission. Pending creates reserve their slot until completion
+  or cancellation, including rejected responses and disconnect. Cleanup releases
+  the attempt's own reference without admitting stale ownership.
+- LE connection-parameter replies echo the request identifier, reject zero,
+  preserve queue/error handling and use the appropriate LL/HCI response path.
+  Encryption Change V2 follows the V1 security revocation path. Resolvable
+  private address generation uses the specification's byte order and bounded
+  random retries; generation failure propagates.
+- Advertising validates entire batches and HCI lengths before writes. Supported
+  empty data explicitly clears old bytes; unsupported directed/scannable data
+  commands are skipped. The high-level API owns all advertising sets: it waits
+  for prior disable cleanup, clears retained sets, then configures/enables them.
+  Accepting one extended connection still disables remaining sets before reuse,
+  while preserving that connection. Unmanaged raw advertising commands must not
+  be mixed with this global owner.
+- Cursor splitting respects the remaining span. Physical harnesses check both
+  task join and operation errors and bound input draining; a GATT fixture now
+  explicitly accepts its second write before expecting a changed value.
+
+The current probe/dashboard use the shared client/central paths; server,
+advertising and dynamic-channel corrections also protect optional upstream APIs
+but do not establish that those paths caused a physical failure. See the
+[full-code audit](../../../docs/validation/full-code-audit-2026-10-20.md) for
+finite test coverage and remaining hardware limits.

@@ -13,15 +13,50 @@ nor proves architectural register equality or exceptional return behavior.
 """
 
 import re
+from collections.abc import Callable, Mapping, Sequence, Set
+from typing import TypeAlias, TypedDict
+from config_body_types import BodyRecord, InstructionMap, OrdinaryEdge
+from config_stack import DiagnosticObjects
+from config_structural import InstructionItems
+from llvm_stack import Instruction
 from config_regions import _control
 from config_owner_entry import _direct_target
 from validation import require
 
 
+# Equality-only register/save tokens, never evaluated as machine scalar values.
+Carrier: TypeAlias = int | str | None | tuple["Carrier", ...]
+Cells: TypeAlias = tuple[tuple[int, Carrier], ...]
+Registers: TypeAlias = tuple[Carrier, ...]
+WalkState: TypeAlias = tuple[int, int, Carrier, Cells, Carrier, Registers]
+
+
+class ReturnParent(TypedDict):
+    function: int
+    ordinary_edges: tuple[OrdinaryEdge, ...]
+
+
+class ReturnNode(TypedDict):
+    function: int
+    role: str
+    entry_SP: int
+    return_PC: int
+    return_SP: int
+    lowest_SP: int
+    returns: tuple[tuple[int, Carrier, int], ...]
+    restored_cells: Cells
+    architectural_LR_preserved: bool
+    architectural_LR_after: Carrier
+    architectural_LR_return_values: tuple[Carrier, ...]
+    preserved_high_gprs: tuple[str, ...]
+    returned_high_gprs: Registers
+    high_gpr_return_values: tuple[Registers, ...]
+
+
 _HIGH = tuple("r" + str(i) for i in range(4, 12))
 
 
-def _high_definitions(row, control):
+def _high_definitions(row: Instruction, control: str | None) -> tuple[str, ...]:
     """Finite integer destination footprints, without evaluating scalar bits."""
     if control is not None:
         return ()
@@ -60,7 +95,9 @@ def _high_definitions(row, control):
     return tuple(reg for reg in _HIGH if reg in writes)
 
 
-def _body_selector(rows, objects=None):
+def _body_selector(
+    rows: InstructionItems, objects: DiagnosticObjects | None = None
+) -> Callable[[float, float], dict[int, Instruction]]:
     """Fresh body dictionaries; only detached input permits address lookup.
 
     The invocation-local immutable address index validates actual keys once;
@@ -74,7 +111,7 @@ def _body_selector(rows, objects=None):
         require(rows is objects._rows, "finite child return input package differs")
     indexed = _instruction_addresses(objects, rows) is not None
 
-    def select(start, extent):
+    def select(start: float, extent: float) -> dict[int, Instruction]:
         if indexed:
             return dict(_instruction_items(objects, rows, start, extent))
         return {at: row for at, row in rows.items() if start <= at < start + extent}
@@ -82,16 +119,37 @@ def _body_selector(rows, objects=None):
     return select
 
 
-def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores, *, objects=None):
+def _closed_child_returns(
+    rows: InstructionMap,
+    parents: Sequence[ReturnParent],
+    children: Mapping[tuple[int, str], BodyRecord],
+    sp: int,
+    stacks: Mapping[str, Set[int]],
+    scratch_restores: Sequence[str],
+    *,
+    objects: DiagnosticObjects | None = None,
+) -> tuple[ReturnNode, ...]:
     select_body = _body_selector(rows, objects)
-    completed = {}
-    nodes = []
-    active = []
+    completed: dict[tuple[object, ...], ReturnNode] = {}
+    nodes: list[ReturnNode] = []
+    active: list[int] = []
     activation = [0]
 
-    def walk(proof, entry, token, expected_sp, cells=(), lr=None, shuttle=None, high=_HIGH):
+    def walk(
+        proof: BodyRecord,
+        entry: int,
+        token: int,
+        expected_sp: int,
+        cells: Cells = (),
+        lr: Carrier = None,
+        shuttle: Carrier = None,
+        high: Registers = _HIGH,
+    ) -> ReturnNode:
         start = proof["function"]
-        family = proof.get("semantic_role", proof["role"])
+        family_value = proof.get("semantic_role", proof["role"])
+        if not isinstance(family_value, str):
+            raise AssertionError("finite child has no authored child return family")
+        family = family_value
         require(family in stacks, "finite child has no authored child return family")
         key = (start, proof["role"], family, entry, token, expected_sp, cells, lr, shuttle, high)
         if key in completed:
@@ -101,16 +159,18 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
         activation[0] += 1
         # A local incoming token is fresh even when its caller value is unknown.
         # Repeated definitions of an unknown value cannot prove preservation.
-        incoming = tuple(("incoming", activation[0], reg) for reg in _HIGH)
+        incoming: Registers = tuple(("incoming", activation[0], reg) for reg in _HIGH)
         resolve = dict(zip(incoming, high))
         body = select_body(start, proof["extent"])
         edges = {start + e[0]: e for e in proof["ordinary_edges"]}
         require(not proof["indirect_sites"], "finite child child adds an executable callback")
-        pending = [(start, entry, token if lr is None else lr, cells, shuttle, incoming)]
-        seen = set()
-        returns = []
-        carrier_returns = []
-        link_returns = []
+        pending: list[WalkState] = [
+            (start, entry, token if lr is None else lr, cells, shuttle, incoming)
+        ]
+        seen: set[WalkState] = set()
+        returns: list[tuple[int, Carrier, int]] = []
+        carrier_returns: list[Registers] = []
+        link_returns: list[Carrier] = []
         minimum = entry
         while pending:
             at, sp, link, saved, reg2, registers = pending.pop()
@@ -126,7 +186,7 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
             memory = dict(saved)
             new_sp = sp
             new_link = link
-            return_pc = None
+            return_pc: Carrier = None
             new_high = list(registers)
             stack_step = (
                 op.startswith(("push", "pop"))
@@ -188,10 +248,12 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
                                     "finite child restores scratch into another low-register family",
                                 )
                             elif reg in _HIGH:
-                                require(
-                                    type(value) is tuple and len(value) == 2 and value[0] == reg,
-                                    "finite child restore consumes another caller register",
-                                )
+                                if not (
+                                    type(value) is tuple and len(value) == 2 and value[0] == reg
+                                ):
+                                    raise AssertionError(
+                                        "finite child restore consumes another caller register"
+                                    )
                                 new_high[_HIGH.index(reg)] = value[1]
                             else:
                                 require(
@@ -210,13 +272,12 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
                 else:
                     reg = row.operands.split(",")[0]
                     value = memory.get(sp)
-                    require(
-                        op == "ldr"
-                        and type(value) is tuple
-                        and len(value) == 2
-                        and value[0] == reg,
-                        "finite child postindexed restore loses its high register",
-                    )
+                    if not (
+                        op == "ldr" and type(value) is tuple and len(value) == 2 and value[0] == reg
+                    ):
+                        raise AssertionError(
+                            "finite child postindexed restore loses its high register"
+                        )
                     new_high[_HIGH.index(reg)] = value[1]
                     del memory[sp]
                     new_sp = sp + 4
@@ -224,7 +285,9 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
                 for reg in _high_definitions(row, control):
                     source = row.operands.split(", ")[1] if op == "mov" else None
                     new_high[_HIGH.index(reg)] = (
-                        registers[_HIGH.index(source)] if source in _HIGH else None
+                        registers[_HIGH.index(source)]
+                        if source is not None and source in _HIGH
+                        else None
                     )
             if family == "slice_pop" and at - start == 30:
                 reg2 = link
@@ -256,8 +319,8 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
                 minimum = min(minimum, result["lowest_SP"])
                 if control == "b":
                     returns.extend(result["returns"])
-                    for values in result["high_gpr_return_values"]:
-                        carrier_returns.append(values)
+                    for child_values in result["high_gpr_return_values"]:
+                        carrier_returns.append(child_values)
                     link_returns.extend(result["architectural_LR_return_values"])
                     continue
                 require(
@@ -352,7 +415,7 @@ def _closed_child_returns(rows, parents, children, sp, stacks, scratch_restores,
             if all(v == link_returns[0] for v in link_returns)
             else ("unknown_LR", start, token)
         )
-        result = dict(
+        result = ReturnNode(
             function=start,
             role=proof["role"],
             entry_SP=entry,

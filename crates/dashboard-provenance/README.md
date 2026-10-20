@@ -25,8 +25,10 @@ release identities, firmware revision and binary/license inventory are pinned.
 Manifest paths/hashes are validated before overlays are combined; duplicate keys,
 unknown schema fields, absolute/noncanonical paths and non-lowercase SHA256 reject.
 Every regular file is hashed, with missing/extra/changed bytes rejected. Only a
-real top-level `target` directory in radio trees is excluded; nested `target` is
-source. HAL has no output-directory exemption.
+real top-level `target` directory in HAL and radio trees is excluded, permitting
+their native regression builds; nested `target` directories remain source.
+The Bluetooth overlay additionally binds the exact upstream header, extraction
+array, commit, byte count and resulting binary hash.
 
 Root and lexical ancestors, source entries and ignored top-level target entries
 reject symlinks and Windows reparse points/junctions. Files reject multiple hard

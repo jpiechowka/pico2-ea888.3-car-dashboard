@@ -1160,6 +1160,9 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
         || m.reports == 0
         || m.first_seen_ms > m.last_seen_ms
         || m.last_seen_ms > m.captured_at_ms
+        || m.scan_diagnostics
+            .last
+            .is_some_and(|last| last.at_ms > m.captured_at_ms)
         || m.advertisement.observation.is_none()
         || !packet_time_valid(&m.advertisement)
         || !packet_time_valid(&m.response)

@@ -6,7 +6,9 @@ source/byte review and mutations/varied links; never learn a runtime grammar.
 Body matching alone does not establish input domains, cursor/count evolution,
 protected writes, child effects, entry policy or ordinary graph admission."""
 
-HELPER_ROLES = {
+from config_body_types import BodyContract, SourceLocationObject
+
+HELPER_ROLES: dict[str, str] = {
     "@outline:ordinary_is_zero_r0": "is_zero_r0",
     "_RNvXs_NtNtCs_8postcard3ser10serializerQINtB4_10SerializerNtNtCs_16dashboard_config5codec7CompareENtNtCs_10serde_core3ser10Serializer13serialize_u16B18_": "serialize_u16",
     "_RNvXs_NtNtCs_8postcard3ser10serializerQINtB4_10SerializerNtNtCs_16dashboard_config5codec7CompareENtNtCs_10serde_core3ser10Serializer12serialize_u8B18_": "serialize_u8",
@@ -64,7 +66,7 @@ HELPER_SEMANTIC_ROLES = {
     "deserialize_u16": "_RINvXsN_NtNtCs_10serde_core2de5implstNtB8_11Deserialize11deserializeQINtNtNtCs_8postcard2de12deserializer12DeserializerNtNtB1l_7flavors5SliceEECs_16dashboard_config",
 }
 
-HELPER_GRAMMARS = {
+HELPER_GRAMMARS: dict[str, BodyContract[SourceLocationObject]] = {
     "is_zero_r0": {
         "extent": 8,
         "frame": 0,

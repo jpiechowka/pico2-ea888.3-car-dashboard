@@ -3,6 +3,8 @@ This script never flashes hardware or claims a device timing measurement.
 """
 
 import argparse
+from collections.abc import Mapping, Sequence
+from typing import NotRequired, TypedDict
 import hashlib
 import json
 import os
@@ -15,7 +17,7 @@ import unicodedata
 import zipfile
 
 
-def external_tool_path(path):
+def external_tool_path(path: str | Path) -> Path:
     """Keep filesystem identity but avoid MSVC's long verbatim-path argument failure."""
     resolved = Path(path).resolve(strict=True)
     value = str(resolved)
@@ -44,33 +46,114 @@ from source_inventory import shared_inputs  # noqa: E402
 from owned_process import run_bounded, run_checked  # noqa: E402
 from elf_image import ElfImage  # noqa: E402
 from check_program_image import inspect_program, linked_configuration, linked_startup  # noqa: E402
-from check_memory_layout import read_selected_image_result  # noqa: E402
+from check_memory_layout import FullImageRecord, read_selected_image_result  # noqa: E402
+from practical_image import PracticalRecord  # noqa: E402
 from config_build_source import (  # noqa: E402
+    SourceContext,
     make_source_context,
     write_source_context,
     load_source_context,
     inspect_source_context,
 )
 
+from script_values import object_fields, array_items, string_value  # noqa: E402
+
+
+class MemoryEvidence(TypedDict):
+    record: PracticalRecord | FullImageRecord
+    sha256: str
+
+
+class ClockEvidence(TypedDict):
+    out_dir: str
+    source: bytes
+    metadata: bytes
+    source_sha256: str
+    metadata_sha256: str
+
+
+class ConfigRecord(TypedDict):
+    selection: str
+    source: NotRequired[str]
+    sha256: NotRequired[str]
+    normalization_command: NotRequired[list[str]]
+    normalized_sha256: NotRequired[str]
+    embedded_sha256: NotRequired[str]
+
+
+class StartupMember(TypedDict):
+    sha256: str
+    bytes: int
+
+
+def fields(value: object) -> dict[str, object]:
+    try:
+        return object_fields(value, "capture value must be an object")
+    except AssertionError as error:
+        raise ValueError(str(error)) from error
+
+
+def text_value(value: object) -> str:
+    try:
+        return string_value(value, "capture value must be a string")
+    except AssertionError as error:
+        raise ValueError(str(error)) from error
+
+
+def items(value: object) -> list[object]:
+    try:
+        return array_items(value, "capture value must be an array")
+    except AssertionError as error:
+        raise ValueError(str(error)) from error
+
+
+def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate capture JSON key")
+        result[key] = value
+    return result
+
+
+def json_object(raw: str | bytes | bytearray) -> dict[str, object]:
+    return fields(json.loads(raw, object_pairs_hook=unique))
+
+
+def cargo_records(output: str) -> list[dict[str, object]]:
+    return [json_object(line) for line in output.splitlines()]
+
+
+def cargo_environment(record: Mapping[str, object]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for raw in items(record.get("env", [])):
+        pair = items(raw)
+        if len(pair) != 2:
+            raise ValueError("invalid Cargo environment pair")
+        key, value = map(text_value, pair)
+        if key in result:
+            raise ValueError("duplicate Cargo environment key")
+        result[key] = value
+    return result
+
+
 CUSTOM_KEYS = ("DASHBOARD_CPU_HZ", "DASHBOARD_SPI_HZ", "DASHBOARD_VSEL_MV")
 
 
-def read_memory_gate(path, frozen, config_bytes, source_context=None, gate="practical"):
+def read_memory_gate(
+    path: Path,
+    frozen: Path,
+    config_bytes: bytes,
+    source_context: SourceContext | None = None,
+    gate: str = "practical",
+) -> MemoryEvidence:
     """Retain the explicitly selected successful image result, bound to this immutable input."""
     with path.open("rb") as stream:
         raw = stream.read(65537)
     if len(raw) > 65536:
         raise ValueError("oversized image gate result")
 
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate image result key")
-            result[key] = value
-        return result
-
-    record = json.loads(raw, object_pairs_hook=unique)
+    record = json_object(raw)
     checked = read_selected_image_result(
         record, ElfImage(frozen), config_bytes, source_context=source_context, gate=gate
     )
@@ -78,13 +161,13 @@ def read_memory_gate(path, frozen, config_bytes, source_context=None, gate="prac
 
 
 def run_memory_gate(
-    frozen,
-    destination,
-    config_bytes,
-    source_context=None,
-    source_context_path=None,
-    gate="practical",
-):
+    frozen: Path,
+    destination: Path,
+    config_bytes: bytes,
+    source_context: SourceContext | None = None,
+    source_context_path: Path | None = None,
+    gate: str = "practical",
+) -> MemoryEvidence:
     if source_context is None or source_context_path is None:
         raise ValueError(
             "image gate requires an explicit source context and owned sidecar before launching child"
@@ -105,7 +188,7 @@ def run_memory_gate(
     return read_memory_gate(path, frozen, config_bytes, source_context, gate)
 
 
-def check_clock_environment(environment):
+def check_clock_environment(environment: Mapping[str, str]) -> None:
     if any(key in CUSTOM_KEYS or key.startswith(ENV_PREFIXES) for key in environment):
         raise ValueError(
             "unset ambient compiler/config/custom-clock overrides; select typed inputs explicitly"
@@ -118,12 +201,12 @@ MAX_CARGO_DIAGNOSTICS = 256 * 1024
 class CargoDiagnostics:
     """Bound rendered messages independently of the raw Cargo identity stream."""
 
-    def __init__(self, destination):
+    def __init__(self, destination: Path) -> None:
         self.file = (destination / "cargo-diagnostics.log").open("xb")
         self.remaining = MAX_CARGO_DIAGNOSTICS
         self.truncated = False
 
-    def record(self, raw):
+    def record(self, raw: str | bytes | bytearray) -> None:
         if self.truncated:
             return
         try:
@@ -150,7 +233,7 @@ class CargoDiagnostics:
                     return
                 self.emit(data)
 
-    def emit(self, data):
+    def emit(self, data: bytes) -> None:
         self.file.write(data)
         self.file.flush()
         self.remaining -= len(data)
@@ -160,13 +243,19 @@ class CargoDiagnostics:
         sys.stderr.flush()
 
 
-def run_build(command, environment, destination, *, timeout=1800):
+def run_build(
+    command: Sequence[str],
+    environment: Mapping[str, str],
+    destination: Path,
+    *,
+    timeout: float = 1800,
+) -> subprocess.CompletedProcess[str]:
     # stderr (including rendered JSON diagnostics below) uses the native redactor.
     diagnostics = CargoDiagnostics(destination)
     output = bytearray()
     pending = bytearray()
 
-    def record(chunk):
+    def record(chunk: bytes) -> None:
         output.extend(chunk)
         pending.extend(chunk)
         while (end := pending.find(b"\n")) >= 0:
@@ -188,7 +277,9 @@ def run_build(command, environment, destination, *, timeout=1800):
     return build
 
 
-def fixed_json_tool(arguments, environment, target_dir=None):
+def fixed_json_tool(
+    arguments: Sequence[str], environment: Mapping[str, str], target_dir: Path | None = None
+) -> tuple[list[str], dict[str, object]]:
     """Bound both streams and time; stop the owned tree immediately on overflow."""
     command = [
         "cargo",
@@ -207,7 +298,7 @@ def fixed_json_tool(arguments, environment, target_dir=None):
     result = run_bounded(command, cwd=REPO, env=environment, timeout=120, stdout_limit=8193)
     if result.returncode:
         raise ValueError("capture options producer failed or exceeded output bound")
-    value = json.loads(result.stdout.decode("utf-8"))
+    value = json_object(result.stdout)
     expected = {
         "schema_version",
         "normalized",
@@ -221,39 +312,51 @@ def fixed_json_tool(arguments, environment, target_dir=None):
         "legacy_longan_backend",
         "voltage_mv",
     }
+    if set(value) != expected:
+        raise ValueError("invalid fixed capture options envelope")
+    features = items(value["features"])
     if (
-        not isinstance(value, dict)
-        or set(value) != expected
+        type(value["schema_version"]) is not int
         or value["schema_version"] != 2
         or value["no_default_features"] is not True
-        or not isinstance(value["features"], list)
-        or len(value["features"]) > 16
-        or any(
-            not isinstance(f, str) or not re.fullmatch("[a-z0-9-]+", f) for f in value["features"]
-        )
-        or value["features"] != sorted(set(value["features"]))
+        or len(features) > 16
+        or any(not isinstance(f, str) or not re.fullmatch("[a-z0-9-]+", f) for f in features)
+        or features != sorted({text_value(feature) for feature in features})
         or value["optimization"] not in ("3", "2", "s", "z")
     ):
         raise ValueError("invalid fixed capture options envelope")
+    fields(value["normalized"])
+    for key in ("benchmark", "legacy_stock", "legacy_unavailable_backend", "legacy_longan_backend"):
+        if type(value[key]) is not bool:
+            raise ValueError("invalid fixed capture boolean")
+    if type(value["voltage_mv"]) is not int:
+        raise ValueError("invalid fixed capture voltage")
+    if value["custom_clock"] is not None:
+        custom = fields(value["custom_clock"])
+        if set(custom) != {"cpu_hz", "spi_hz", "vsel_mv"} or any(
+            not isinstance(v, str) or re.fullmatch("[0-9]+", v) is None for v in custom.values()
+        ):
+            raise ValueError("invalid fixed custom environment framing")
     return command, value
 
 
-def firmware_package(output):
-    records = [json.loads(line) for line in output.splitlines()]
+def firmware_package(output: str) -> str:
+    records = cargo_records(output)
     matches = [
-        r["package_id"]
+        r.get("package_id")
         for r in records
         if r.get("reason") == "compiler-artifact"
-        and Path(r.get("manifest_path", "")).resolve() == (FIRMWARE / "pico2/Cargo.toml").resolve()
-        and r.get("target", {}).get("kind") == ["bin"]
-        and r.get("profile", {}).get("test") is False
+        and Path(text_value(r.get("manifest_path", ""))).resolve()
+        == (FIRMWARE / "pico2/Cargo.toml").resolve()
+        and fields(r.get("target", {})).get("kind") == ["bin"]
+        and fields(r.get("profile", {})).get("test") is False
     ]
     if len(matches) != 1:
         raise ValueError("expected exactly one firmware package identity")
-    return matches[0]
+    return text_value(matches[0])
 
 
-def verify_clock_literals(source, options):
+def verify_clock_literals(source: bytes, options: Mapping[str, object]) -> None:
     """Check fixed generated syntax/values, without resolving any clock policy."""
     text = source.decode("utf-8")
     expected_header = "// Generated from dashboard-build-profiles; do not edit.\n"
@@ -265,7 +368,7 @@ def verify_clock_literals(source, options):
     scalars = {name: (kind, value) for name, kind, value in matches}
     if len(scalars) != len(matches):
         raise ValueError("duplicate generated clock literal")
-    clock = options["normalized"]["clock"]
+    clock = fields(fields(options["normalized"])["clock"])
     expected = {
         key: ("u32", str(clock[field]))
         for key, field in [
@@ -284,9 +387,9 @@ def verify_clock_literals(source, options):
     if scalars != expected:
         raise ValueError("generated scalar constants differ from normalized clock")
     remaining = re.sub(scalar_pattern, "", text)
-    pll = clock["pll"]
+    pll = fields(clock["pll"])
     expected_remaining = (
-        f"pub const CORE_VOLTAGE: CoreVoltage = CoreVoltage::{clock['voltage'].upper()};\n"
+        f"pub const CORE_VOLTAGE: CoreVoltage = CoreVoltage::{text_value(clock['voltage']).upper()};\n"
         f"pub const PLL: PllConfig = PllConfig {{ refdiv: {pll['refdiv']}, fbdiv: {pll['fbdiv']}, "
         f"post_div1: {pll['postdiv1']}, post_div2: {pll['postdiv2']} }};\n"
     )
@@ -294,8 +397,10 @@ def verify_clock_literals(source, options):
         raise ValueError("generated PLL/voltage constants differ from normalized clock")
 
 
-def generated_clock(output, build_dir, package_id, options):
-    records = [json.loads(line) for line in output.splitlines()]
+def generated_clock(
+    output: str, build_dir: Path, package_id: str, options: Mapping[str, object]
+) -> ClockEvidence:
+    records = cargo_records(output)
     matches = [
         r
         for r in records
@@ -304,11 +409,12 @@ def generated_clock(output, build_dir, package_id, options):
     if len(matches) != 1:
         raise ValueError("expected one firmware clock generation record")
     record = matches[0]
-    out = Path(record["out_dir"]).resolve()
+    out = Path(text_value(record.get("out_dir"))).resolve()
     if not out.is_relative_to(build_dir.resolve()):
         raise ValueError("clock generation is outside this capture build")
-    environment = dict(record.get("env", []))
-    evidence = {"out_dir": str(out)}
+    environment = cargo_environment(record)
+    evidence: dict[str, bytes] = {}
+    hashes: dict[str, str] = {}
     for label, filename, key in [
         ("source", "clock_profile.rs", "DASHBOARD_CLOCK_SOURCE_SHA256"),
         ("metadata", "clock_profile.json", "DASHBOARD_CLOCK_METADATA_SHA256"),
@@ -322,22 +428,30 @@ def generated_clock(output, build_dir, package_id, options):
         if len(data) > 4096 or digest != environment.get(key):
             raise ValueError("generated clock evidence hash/bound mismatch")
         evidence[label] = data
-        evidence[label + "_sha256"] = digest
-    metadata = json.loads(evidence["metadata"].decode("utf-8"))
+        hashes[label] = digest
+    metadata = json_object(evidence["metadata"])
     expected = dict(
         schema_version=1,
-        selection=options["normalized"]["requested"]["clock"],
-        clock=options["normalized"]["clock"],
+        selection=fields(fields(options["normalized"])["requested"])["clock"],
+        clock=fields(options["normalized"])["clock"],
         optimization=options["optimization"],
         features=options["features"],
     )
-    if metadata != expected:
+    if json.dumps(metadata, sort_keys=True, allow_nan=False) != json.dumps(
+        expected, sort_keys=True, allow_nan=False
+    ):
         raise ValueError("actual generated clock/options differ from immutable attempt")
     verify_clock_literals(evidence["source"], options)
-    return evidence
+    return ClockEvidence(
+        out_dir=str(out),
+        source=evidence["source"],
+        metadata=evidence["metadata"],
+        source_sha256=hashes["source"],
+        metadata_sha256=hashes["metadata"],
+    )
 
 
-def configuration():
+def configuration() -> dict[str, object]:
     expected = tomllib.loads((FIRMWARE / ".cargo/config.toml").read_text(encoding="utf-8"))
     result = {}
     for key in CONFIG_KEYS:
@@ -357,13 +471,19 @@ def configuration():
     return result
 
 
-def inputs():
+def inputs() -> dict[str, bytes]:
     paths = shared_inputs(REPO)
-    for crate in [FIRMWARE / "pico2"]:
-        paths.update(p for p in (crate / "src").rglob("*") if p.is_file())
-        # Root files are also compile inputs (include_str!, linker templates,
-        # manifests and build scripts). Keep the complete crate root.
-        paths.update(p for p in crate.iterdir() if p.is_file())
+    # Cargo resolves every workspace member even when only dashboard-pico2 is built.
+    # Bind the sibling manifest, build script and complete source/include tree too.
+    for crate in (FIRMWARE / "pico2", FIRMWARE / "ble-probe"):
+        paths.update(
+            path
+            for path in crate.rglob("*")
+            if path.is_file()
+            and not any(
+                part in ("target", ".git", "__pycache__") for part in path.relative_to(crate).parts
+            )
+        )
     # Radio firmware blobs and include_bytes! inputs may live outside src/.
     # Hash the complete reviewed vendor trees and their provenance manifests.
     vendor = FIRMWARE / "vendor"
@@ -375,7 +495,7 @@ def inputs():
             part in ("target", ".git", "__pycache__") for part in p.relative_to(vendor).parts
         )
     )
-    for directory in [FIRMWARE, FIRMWARE / "pico2"]:
+    for directory in (FIRMWARE, FIRMWARE / "pico2", FIRMWARE / "ble-probe"):
         for name in [
             "Cargo.toml",
             "Cargo.lock",
@@ -401,21 +521,22 @@ def inputs():
     return {p.relative_to(REPO).as_posix(): p.read_bytes() for p in sorted(paths)}
 
 
-def emitted_elf(output):
-    candidates, finished = [], []
+def emitted_elf(output: str) -> Path:
+    candidates: list[Path] = []
+    finished: list[bool] = []
     manifest = (FIRMWARE / "pico2/Cargo.toml").resolve()
-    for line in output.splitlines():
-        record = json.loads(line)
-        if not isinstance(record, dict):
-            raise ValueError("invalid Cargo message")
+    for record in cargo_records(output):
         if record.get("reason") == "build-finished":
-            finished.append(record.get("success"))
+            success = record.get("success")
+            if type(success) is not bool:
+                raise ValueError("Cargo success must be boolean")
+            finished.append(success)
         if (
             record.get("reason") == "compiler-artifact"
-            and Path(record.get("manifest_path", "")).resolve() == manifest
-            and record.get("target", {}).get("name") == "pico2"
-            and record.get("target", {}).get("kind") == ["bin"]
-            and record.get("profile", {}).get("test") is False
+            and Path(text_value(record.get("manifest_path", ""))).resolve() == manifest
+            and fields(record.get("target", {})).get("name") == "pico2"
+            and fields(record.get("target", {})).get("kind") == ["bin"]
+            and fields(record.get("profile", {})).get("test") is False
         ):
             executable = record.get("executable")
             if not isinstance(executable, str) or not Path(executable).is_absolute():
@@ -426,7 +547,7 @@ def emitted_elf(output):
     return candidates[0]
 
 
-def bounded_bytes(path):
+def bounded_bytes(path: Path) -> bytes:
     if not path.is_file():
         raise ValueError("configuration must be a regular binary .eav file")
     with path.open("rb") as stream:
@@ -436,7 +557,7 @@ def bounded_bytes(path):
     return data
 
 
-def selected_config(environment):
+def selected_config(environment: Mapping[str, str]) -> tuple[str, bytes] | tuple[None, None]:
     selected = environment.get("DASHBOARD_CONFIG")
     if selected is None:
         return None, None
@@ -447,12 +568,18 @@ def selected_config(environment):
     return str(path), bounded_bytes(path)
 
 
-def freeze_config(selection, destination, environment):
+def freeze_config(
+    selection: tuple[str, bytes] | tuple[None, None],
+    destination: Path,
+    environment: Mapping[str, str],
+) -> tuple[dict[str, str], ConfigRecord]:
     selected, data = selection
-    frozen = environment.copy()
+    frozen = dict(environment)
     if selected is None:
         frozen.pop("DASHBOARD_CONFIG", None)
         return frozen, dict(selection="default")
+    if data is None:
+        raise ValueError("explicit configuration requires bytes")
     path = destination / "selected.eav"
     path.write_bytes(data)
     frozen["DASHBOARD_CONFIG"] = str(path.resolve())
@@ -461,14 +588,13 @@ def freeze_config(selection, destination, environment):
     )
 
 
-def embedded_config(output, build_dir):
+def embedded_config(output: str, build_dir: Path) -> bytes:
     matches = []
-    for line in output.splitlines():
-        record = json.loads(line)
+    for record in cargo_records(output):
         if record.get("reason") == "build-script-executed":
-            environment = dict(record.get("env", []))
+            environment = cargo_environment(record)
             if "DASHBOARD_CONFIG_SHA256" in environment:
-                path = (Path(record["out_dir"]) / "dashboard.eav").resolve()
+                path = (Path(text_value(record.get("out_dir"))) / "dashboard.eav").resolve()
                 if not path.is_relative_to(build_dir.resolve()):
                     raise ValueError("embedded config is outside this build")
                 data = bounded_bytes(path)
@@ -481,8 +607,14 @@ def embedded_config(output, build_dir):
 
 
 def verify_selected_config(
-    destination, environment, embedded, record, target_dir=None, *, reuse_host=False
-):
+    destination: Path,
+    environment: Mapping[str, str],
+    embedded: bytes,
+    record: ConfigRecord,
+    target_dir: Path | None = None,
+    *,
+    reuse_host: bool = False,
+) -> None:
     """Compare to the canonical upgrade, retaining the original input identity."""
     if record["selection"] != "explicit":
         return
@@ -516,14 +648,19 @@ def verify_selected_config(
     record["normalized_sha256"] = hashlib.sha256(expected).hexdigest()
 
 
-def freeze_startup(profile_path, asset_path, destination, environment):
+def freeze_startup(
+    profile_path: str | Path | None,
+    asset_path: str | Path | None,
+    destination: Path,
+    environment: dict[str, str],
+) -> dict[str, StartupMember] | None:
     if profile_path is None:
         if asset_path is not None:
             raise ValueError("startup asset requires explicit profile")
         if any(k in environment for k in ("DASHBOARD_STARTUP_PROFILE", "DASHBOARD_STARTUP_ASSET")):
             raise ValueError("use explicit startup arguments instead of ambient inputs")
         return None
-    result = {}
+    result: dict[str, StartupMember] = {}
     for key, path, name, maximum in [
         ("DASHBOARD_STARTUP_PROFILE", profile_path, "startup_profile.bin", 16),
         ("DASHBOARD_STARTUP_ASSET", asset_path, "startup_asset.bin", 524288),
@@ -545,22 +682,23 @@ def freeze_startup(profile_path, asset_path, destination, environment):
     return result
 
 
-def verify_startup(output, build_dir, destination, record):
+def verify_startup(
+    output: str, build_dir: Path, destination: Path, record: Mapping[str, StartupMember] | None
+) -> None:
     if record is None:
         return
     matches = []
-    for line in output.splitlines():
-        row = json.loads(line)
+    for row in cargo_records(output):
         if row.get("reason") != "build-script-executed":
             continue
-        env = dict(row.get("env", []))
+        env = cargo_environment(row)
         if "DASHBOARD_STARTUP_SHA256" not in env:
             continue
         for name, key in [
             ("startup_profile.bin", "DASHBOARD_STARTUP_SHA256"),
             ("startup_asset.bin", "DASHBOARD_STARTUP_ASSET_SHA256"),
         ]:
-            path = (Path(row["out_dir"]) / name).resolve()
+            path = (Path(text_value(row.get("out_dir"))) / name).resolve()
             if not path.is_relative_to(build_dir.resolve()):
                 raise ValueError("startup output outside build")
             with path.open("rb") as stream:
@@ -578,7 +716,7 @@ def verify_startup(output, build_dir, destination, record):
         raise ValueError("expected one startup snapshot producer")
 
 
-def build_directories(destination, native):
+def build_directories(destination: Path, native: bool) -> tuple[Path, Path | None, Path | None]:
     """Native scratch is fixed inside the locked attempt, never a user path/cache."""
     if not native:
         return destination / "build", None, None
@@ -587,7 +725,7 @@ def build_directories(destination, native):
     root = external_tool_path(REPO.parent / "b")
     if root != REPO.parent / "b" or not root.is_dir() or any(root.iterdir()):
         raise ValueError("native scratch must be an empty owned attempt directory")
-    paths = tuple(root / name for name in ("f", "h", "n"))
+    paths = (root / "f", root / "h", root / "n")
     # Allow 145 UTF-16 units for this locked graph's Cargo/MSVC output suffixes.
     # This is a host path limit, not a flash/RAM budget or arbitrary-package guarantee.
     if os.name == "nt" and any(len(str(p).encode("utf-16-le")) // 2 + 145 >= 260 for p in paths):
@@ -595,7 +733,7 @@ def build_directories(destination, native):
     return paths
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name")
     parser.add_argument("--features")
@@ -693,16 +831,16 @@ def main():
     environment.update(
         RUSTC=rustc,
         CARGO_PROFILE_RELEASE_STRIP="none",
-        CARGO_PROFILE_RELEASE_OPT_LEVEL=options["optimization"],
+        CARGO_PROFILE_RELEASE_OPT_LEVEL=text_value(options["optimization"]),
     )
     if options["custom_clock"] is not None:
-        custom = options["custom_clock"]
+        custom = fields(options["custom_clock"])
         if set(custom) != {"cpu_hz", "spi_hz", "vsel_mv"} or any(
             not isinstance(v, str) or not re.fullmatch("[0-9]+", v) for v in custom.values()
         ):
             raise ValueError("invalid fixed custom environment framing")
         environment.update(
-            zip(CUSTOM_KEYS, [custom["cpu_hz"], custom["spi_hz"], custom["vsel_mv"]])
+            zip(CUSTOM_KEYS, [text_value(custom[key]) for key in ("cpu_hz", "spi_hz", "vsel_mv")])
         )
     command = [
         "cargo",
@@ -717,7 +855,7 @@ def main():
         str(build_dir),
         "--message-format=json",
         "--features",
-        ",".join(options["features"]),
+        ",".join(text_value(feature) for feature in items(options["features"])),
         "--no-default-features",
     ]
     print("Capture: compiling accepted frozen project", flush=True)
@@ -743,7 +881,8 @@ def main():
     frozen = destination / "pico2.elf"
     elf_bytes = elf.read_bytes()
     frozen.write_bytes(elf_bytes)
-    _, program_image = inspect_program(ElfImage(elf_bytes))
+    _, base_program = inspect_program(ElfImage(elf_bytes))
+    program_image: dict[str, object] = dict(base_program)
     program_image["linked_configuration"] = linked_configuration(ElfImage(elf_bytes), config_bytes)
     if startup_record is not None:
         program_image["linked_startup"] = linked_startup(
@@ -858,7 +997,7 @@ def main():
     )
     print("Capture: frozen software evidence complete", flush=True)
     print(destination)
-    print("ELF SHA256 " + record["elf_sha256"])
+    print("ELF SHA256 " + hashlib.sha256(elf_bytes).hexdigest())
 
 
 if __name__ == "__main__":

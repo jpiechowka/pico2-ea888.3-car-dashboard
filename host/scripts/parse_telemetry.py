@@ -6,6 +6,86 @@ import argparse
 import json
 from pathlib import Path
 import re
+from collections.abc import Iterable
+from typing import Literal, TypedDict, overload
+
+
+class Quantile(TypedDict):
+    lower: int
+    upper: int
+
+
+class Histogram(TypedDict):
+    samples: int
+    overflow: int
+    rejected: int
+    min: int | None
+    max: int | None
+    p50: Quantile | None
+    p95: Quantile | None
+    p99: Quantile | None
+    unit: str
+
+
+class GroupRows(TypedDict):
+    inputs: list[int] | None
+    metrics: dict[int, Histogram]
+    pids: dict[int, list[int]]
+    bad: bool
+    record_version: int
+
+
+class FrameGroup(GroupRows):
+    kind: Literal[0]
+    header: tuple[int, int, int, int, int, int | None, int]
+
+
+class DiagnosticGroup(GroupRows):
+    kind: Literal[1]
+    header: tuple[int, int, int, int, int]
+
+
+class FrameResult(TypedDict):
+    record_version: int
+    sequence: int
+    start_us: int
+    end_us: int
+    frames: int
+    payload_bytes: int
+    active_cycles: int | None
+    rejected: int
+    inputs: list[int]
+    metrics: list[Histogram]
+    accepted_completion_rate_hz: float
+
+
+class DiagnosticResult(TypedDict):
+    sequence: int
+    ecu: int
+    epoch: int
+    session_ms: int
+    published_ms: int
+    pids: dict[int, list[int]]
+    metrics: dict[int, Histogram]
+
+
+class ParseError(TypedDict):
+    line: int | None
+    reason: str
+
+
+class MissingGroups(TypedDict):
+    frames: int
+    diagnostics: int
+
+
+class TelemetryResult(TypedDict):
+    frames: list[FrameResult]
+    diagnostics: list[DiagnosticResult]
+    errors: list[ParseError]
+    missing_or_incomplete: MissingGroups
+    scope: str
+
 
 U32 = (1 << 32) - 1
 U64 = (1 << 64) - 1
@@ -15,24 +95,27 @@ RECORD = re.compile(r"\b(FRAME1|FRAME2|DIAG1|INPUT1|PID1|METRIC1|END1),(.*)$")
 LENGTHS = {"FRAME1": 7, "FRAME2": 7, "DIAG1": 5, "INPUT1": 8, "PID1": 10, "METRIC1": 14, "END1": 2}
 
 
-def require(condition, reason):
+def require(condition: object, reason: str) -> None:
     if not condition:
         raise ValueError(reason)
 
 
-def distribution(fields, kind):
+def distribution(fields: list[int], kind: int) -> Histogram:
     n, overflow, rejected, low, high, *quantiles = fields
+    bounds: list[Quantile | None]
+    minimum: int | None = low
+    maximum: int | None = high
     require(n <= U32 and overflow <= n and rejected <= U32, "invalid histogram counts")
     require(rejected == 0 or n == U32, "rejection before histogram exhaustion")
     if n == 0:
         require(all(x == 0 for x in fields), "nonempty statistics with zero samples")
         bounds = [None] * 3
-        low = high = None
+        minimum = maximum = None
     else:
         require(low <= high, "minimum exceeds maximum")
         require(n != 1 or low == high, "one sample has different extrema")
         bounds = []
-        by_rank = {}
+        by_rank: dict[int, tuple[int, int]] = {}
         for p, (a, b) in zip((50, 95, 99), zip(quantiles[::2], quantiles[1::2])):
             require(a <= b and max(a, low) <= min(b, high), "quantile outside observed range")
             rank = (n * p + 99) // 100
@@ -66,8 +149,8 @@ def distribution(fields, kind):
         samples=n,
         overflow=overflow,
         rejected=rejected,
-        min=low,
-        max=high,
+        min=minimum,
+        max=maximum,
         p50=bounds[0],
         p95=bounds[1],
         p99=bounds[2],
@@ -75,57 +158,98 @@ def distribution(fields, kind):
     )
 
 
-def validate(group, previous, prior_frame=False, continuous_from_boot=False):
+@overload
+def validate(
+    group: FrameGroup,
+    previous: FrameResult | None,
+    prior_frame: bool = False,
+    continuous_from_boot: bool = False,
+) -> FrameResult: ...
+
+
+@overload
+def validate(
+    group: DiagnosticGroup,
+    previous: DiagnosticResult | None,
+    prior_frame: bool = False,
+    continuous_from_boot: bool = False,
+) -> DiagnosticResult: ...
+
+
+def validate(
+    group: FrameGroup | DiagnosticGroup,
+    previous: FrameResult | DiagnosticResult | None,
+    prior_frame: bool = False,
+    continuous_from_boot: bool = False,
+) -> FrameResult | DiagnosticResult:
     kind = group["kind"]
-    h = group["header"]
     rows = group["metrics"]
     require(not group["bad"], "group contains corrupt or duplicate rows")
     require(set(rows) == (set(range(9)) if kind == 0 else PIDS), "missing or unknown metrics")
-    if kind == 0:
-        seq, start, end, frames, payload, cycles, rejected = h
-        require(end >= start and end - start >= 30_000_000, "invalid frame window duration")
+    if group["kind"] == 0:
+        # A preceding result belongs to this same stream; reject mismatched API callers.
+        if previous is not None and "ecu" in previous:
+            raise ValueError("previous group kind mismatch")
+        return validate_frame(group, previous, prior_frame, continuous_from_boot)
+    if previous is not None and "record_version" in previous:
+        raise ValueError("previous group kind mismatch")
+    return validate_diagnostic(group, previous)
+
+
+def validate_frame(
+    group: FrameGroup, previous: FrameResult | None, prior_frame: bool, continuous_from_boot: bool
+) -> FrameResult:
+    rows = group["metrics"]
+    seq, start, end, frames, payload, cycles, rejected = group["header"]
+    require(end >= start and end - start >= 30_000_000, "invalid frame window duration")
+    require(
+        frames <= U32 and payload % 2 == 0 and 2 * frames <= payload <= 153600 * frames,
+        "invalid completed frame count or payload",
+    )
+    require(frames != 0 or cycles == 0, "cycles without a completed frame")
+    inputs = group["inputs"]
+    if inputs is None:
+        raise ValueError("missing input counters")
+    require(all(m["samples"] <= frames for m in rows.values()), "too many metric samples")
+    require(all(rows[i]["samples"] == frames for i in (1, 2, 3, 4)), "missing per-frame samples")
+    require(
+        rows[0]["samples"] == rows[8]["samples"] and rows[6]["samples"] == rows[7]["samples"],
+        "mismatched interval/overlap or input batch counts",
+    )
+    intervals = rows[0]["samples"]
+    expected = frames if prior_frame else max(0, frames - 1)
+    if prior_frame or continuous_from_boot:
+        require(intervals == expected, "missing or fabricated preceding frame interval")
+    else:
+        require(intervals in (frames, max(0, frames - 1)), "too many missing frame intervals")
+    if previous:
+        require(start >= previous["end_us"], "overlapping or regressed frame windows")
+        if seq == previous["sequence"] + 1:
+            require(start == previous["end_us"], "contiguous sequence has a time gap")
         require(
-            frames <= U32 and payload % 2 == 0 and 2 * frames <= payload <= 153600 * frames,
-            "invalid completed frame count or payload",
+            all(a >= b for a, b in zip(inputs, previous["inputs"])),
+            "input counters regressed",
         )
-        require(frames != 0 or cycles == 0, "cycles without a completed frame")
-        require(group["inputs"] is not None, "missing input counters")
-        require(all(m["samples"] <= frames for m in rows.values()), "too many metric samples")
-        require(
-            all(rows[i]["samples"] == frames for i in (1, 2, 3, 4)), "missing per-frame samples"
-        )
-        require(
-            rows[0]["samples"] == rows[8]["samples"] and rows[6]["samples"] == rows[7]["samples"],
-            "mismatched interval/overlap or input batch counts",
-        )
-        intervals = rows[0]["samples"]
-        expected = frames if prior_frame else max(0, frames - 1)
-        if prior_frame or continuous_from_boot:
-            require(intervals == expected, "missing or fabricated preceding frame interval")
-        else:
-            require(intervals in (frames, max(0, frames - 1)), "too many missing frame intervals")
-        if previous:
-            require(start >= previous["end_us"], "overlapping or regressed frame windows")
-            if seq == previous["sequence"] + 1:
-                require(start == previous["end_us"], "contiguous sequence has a time gap")
-            require(
-                all(a >= b for a, b in zip(group["inputs"], previous["inputs"])),
-                "input counters regressed",
-            )
-        return dict(
-            record_version=group["record_version"],
-            sequence=seq,
-            start_us=start,
-            end_us=end,
-            frames=frames,
-            payload_bytes=payload,
-            active_cycles=cycles,
-            rejected=rejected,
-            inputs=group["inputs"],
-            metrics=[rows[i] for i in range(9)],
-            accepted_completion_rate_hz=frames * 1_000_000 / (end - start),
-        )
-    seq, ecu, epoch, at, published = h
+    return dict(
+        record_version=group["record_version"],
+        sequence=seq,
+        start_us=start,
+        end_us=end,
+        frames=frames,
+        payload_bytes=payload,
+        active_cycles=cycles,
+        rejected=rejected,
+        inputs=inputs,
+        metrics=[rows[i] for i in range(9)],
+        accepted_completion_rate_hz=frames * 1_000_000 / (end - start),
+    )
+
+
+def validate_diagnostic(
+    group: DiagnosticGroup, previous: DiagnosticResult | None
+) -> DiagnosticResult:
+    rows = group["metrics"]
+    seq, ecu, epoch, at, published = group["header"]
     require(
         0x7E8 <= ecu <= 0x7EF and epoch != 0 and at <= published,
         "invalid ECU, epoch or diagnostic clock",
@@ -154,7 +278,9 @@ def validate(group, previous, prior_frame=False, continuous_from_boot=False):
             old_d = previous["metrics"][pid]
             new_d = rows[pid]
             require(
-                all(new_d[k] >= old_d[k] for k in ("samples", "overflow", "rejected")),
+                new_d["samples"] >= old_d["samples"]
+                and new_d["overflow"] >= old_d["overflow"]
+                and new_d["rejected"] >= old_d["rejected"],
                 "RTT counts regressed",
             )
             require(
@@ -163,15 +289,22 @@ def validate(group, previous, prior_frame=False, continuous_from_boot=False):
             )
             if old_d["samples"]:
                 require(
-                    new_d["min"] <= old_d["min"] and new_d["max"] >= old_d["max"],
+                    new_d["min"] is not None
+                    and old_d["min"] is not None
+                    and new_d["max"] is not None
+                    and old_d["max"] is not None
+                    and new_d["min"] <= old_d["min"]
+                    and new_d["max"] >= old_d["max"],
                     "retained extrema contracted",
                 )
             if new_d["samples"] == old_d["samples"]:
                 require(
-                    all(
-                        new_d[k] == old_d[k]
-                        for k in ("min", "max", "overflow", "p50", "p95", "p99")
-                    ),
+                    new_d["min"] == old_d["min"]
+                    and new_d["max"] == old_d["max"]
+                    and new_d["overflow"] == old_d["overflow"]
+                    and new_d["p50"] == old_d["p50"]
+                    and new_d["p95"] == old_d["p95"]
+                    and new_d["p99"] == old_d["p99"],
                     "histogram changed without samples",
                 )
     if previous:
@@ -193,17 +326,18 @@ def validate(group, previous, prior_frame=False, continuous_from_boot=False):
     )
 
 
-def parse(lines):
-    result = dict(
+def parse(lines: Iterable[str]) -> TelemetryResult:
+    result: TelemetryResult = dict(
         frames=[],
         diagnostics=[],
         errors=[],
         missing_or_incomplete=dict(frames=0, diagnostics=0),
         scope="Software observations only. Split captures at reboot; no physical FPS or ECU qualification.",
     )
-    active = {}
+    active: dict[int, FrameGroup | DiagnosticGroup] = {}
     seen = {0: 0, 1: 0}
-    last = {0: None, 1: None}
+    last_frame: FrameResult | None = None
+    last_diagnostic: DiagnosticResult | None = None
     prior_frame = False
     for number, line in enumerate(lines, 1):
         match = RECORD.search(line.rstrip("\r\n"))
@@ -221,8 +355,9 @@ def parse(lines):
                 ),
                 "invalid integer record",
             )
-            values = [None if x == "na" else int(x) for x in tokens]
-            require(all(x is None or x <= U64 for x in values), "integer exceeds u64")
+            # Only FRAME2 cycle counts may be unavailable. All other positions are integers.
+            values = [0 if x == "na" else int(x) for x in tokens]
+            require(all(x <= U64 for x in values), "integer exceeds u64")
             if name in ("FRAME1", "FRAME2", "DIAG1"):
                 kind = int(name == "DIAG1")
                 seq = values[0]
@@ -236,15 +371,34 @@ def parse(lines):
                     del active[kind]
                 require(seq > seen[kind], "replayed/reset header; split capture after reboot")
                 seen[kind] = seq
-                active[kind] = dict(
-                    kind=kind,
-                    header=values,
-                    inputs=None,
-                    metrics={},
-                    pids={},
-                    bad=False,
-                    record_version=2 if name == "FRAME2" else 1,
-                )
+                if name == "DIAG1":
+                    active[kind] = DiagnosticGroup(
+                        kind=1,
+                        header=(values[0], values[1], values[2], values[3], values[4]),
+                        inputs=None,
+                        metrics={},
+                        pids={},
+                        bad=False,
+                        record_version=1,
+                    )
+                else:
+                    active[kind] = FrameGroup(
+                        kind=0,
+                        header=(
+                            values[0],
+                            values[1],
+                            values[2],
+                            values[3],
+                            values[4],
+                            None if tokens[5] == "na" else values[5],
+                            values[6],
+                        ),
+                        inputs=None,
+                        metrics={},
+                        pids={},
+                        bad=False,
+                        record_version=2 if name == "FRAME2" else 1,
+                    )
                 continue
             if name in ("METRIC1", "END1"):
                 kind, seq, *rest = values
@@ -258,19 +412,28 @@ def parse(lines):
             group = active[kind]
             if name == "END1":
                 del active[kind]
-                value = validate(group, last[kind], prior_frame, seq == len(result["frames"]) + 1)
-                result[KINDS[kind]].append(value)
-                last[kind] = value
-                if kind == 0:
-                    prior_frame = prior_frame or value["frames"] != 0
+                if group["kind"] == 0:
+                    frame = validate(
+                        group, last_frame, prior_frame, seq == len(result["frames"]) + 1
+                    )
+                    result["frames"].append(frame)
+                    last_frame = frame
+                    prior_frame = prior_frame or frame["frames"] != 0
+                else:
+                    diagnostic = validate(group, last_diagnostic)
+                    result["diagnostics"].append(diagnostic)
+                    last_diagnostic = diagnostic
             elif name == "INPUT1":
                 require(group["inputs"] is None, "duplicate input counters")
                 group["inputs"] = rest
             else:
                 key, *fields = rest
-                destination = group["metrics"] if name == "METRIC1" else group["pids"]
-                require(key not in destination, "duplicate metric or PID")
-                destination[key] = distribution(fields, kind) if name == "METRIC1" else fields
+                if name == "METRIC1":
+                    require(key not in group["metrics"], "duplicate metric or PID")
+                    group["metrics"][key] = distribution(fields, kind)
+                else:
+                    require(key not in group["pids"], "duplicate metric or PID")
+                    group["pids"][key] = fields
         except ValueError as error:
             # A corrupted identity cannot reliably identify its owning group.
             # Conservatively invalidate all currently open groups.
@@ -281,14 +444,14 @@ def parse(lines):
         result["errors"].append(
             dict(line=None, reason=f"incomplete {KINDS[kind]} group {group['header'][0]} at EOF")
         )
-    for kind, name in KINDS.items():
-        result["missing_or_incomplete"][name] = seen[kind] - len(result[name])
+    result["missing_or_incomplete"]["frames"] = seen[0] - len(result["frames"])
+    result["missing_or_incomplete"]["diagnostics"] = seen[1] - len(result["diagnostics"])
     if not result["frames"] and not result["diagnostics"]:
         result["errors"].append(dict(line=None, reason="no complete recognized telemetry groups"))
     return result
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)
     parser.add_argument("--output", type=Path, required=True)

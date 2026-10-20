@@ -6,10 +6,15 @@ Caller initialization, frame/source history and whole graph remain required.
 """
 
 from dataclasses import dataclass
+from collections.abc import Iterable
+from typing import Never, TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap
+from config_stack import DiagnosticObjects
 from config_abstract import Span
 from config_decode_effects import _object
 from config_finite import _complete_body
 from config_regions import (
+    CoverageRecord,
     Storage,
     View,
     require_disjoint,
@@ -23,7 +28,7 @@ from config_stack import canonical_symbol
 from config_owner_entry import _direct_target
 from validation import require
 from config_structural import _structural
-from config_views_contracts import GRAMMARS
+from config_views_contracts import GRAMMARS, ViewsObject
 
 UTF8 = "_RNvNtNtCs_4core3str8converts9from_utf8"
 _WIDTHS = bytes([1] * 128 + [0] * 66 + [2] * 30 + [3] * 16 + [4] * 5 + [0] * 11)
@@ -42,7 +47,7 @@ class UTF8Slice:
     offset: Span
     length: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.payload, View)
             and self.payload.storage.space == "address"
@@ -70,7 +75,9 @@ class UTF8Slice:
         )
 
 
-def _widths(objects, address, descriptor):
+def _widths(
+    objects: DiagnosticObjects, address: int, descriptor: ViewsObject
+) -> tuple[Callback, ...]:
     require(
         descriptor == dict(kind="utf8_widths", extent=256)
         and objects.read_only(address, 256) == _WIDTHS,
@@ -79,12 +86,72 @@ def _widths(objects, address, descriptor):
     return ()
 
 
-def _no_child(*args):
-    require(False, "unexpected UTF8 child/outline")
+def _no_child(*args: object) -> Never:
+    raise AssertionError("unexpected UTF8 child/outline")
+
+
+class UTF8Proof(BodyRecord):
+    coverage: CoverageRecord
+
+
+class UTF8Success(TypedDict):
+    tag: int
+    source: UTF8Slice
+    encoding: tuple[str, ...]
+    valid_UTF8_for_same_pair: bool
+
+
+class UTF8ErrorBase(TypedDict):
+    option_tag: int
+    error_length: int | None
+    valid_up_to: Span
+    length_guard: str
+    active_output_offsets: tuple[int, ...]
+
+
+class UTF8Error(UTF8ErrorBase):
+    tag: int
+    encoding: str
+    guard: str
+
+
+class UTF8Reads(TypedDict):
+    byte_offsets: tuple[int, ...]
+    guard: str
+    aligned_word_offsets: tuple[int, ...]
+    word_guard: str
+    word_stride: int
+    nonascii_mask: int
+    width_index: tuple[int, int]
+    input_envelope: View
+
+
+class UTF8Return(TypedDict):
+    SP: int
+    saved_PC: tuple[int, int]
+    site: int
+    original_r8: tuple[int, int]
+    original_r4_to_r7: tuple[int, int]
+    architectural_LR_not_preserved: bool
+
+
+UTF8ReturnField = TypedDict("UTF8ReturnField", {"return": UTF8Return})
+
+
+class UTF8Result(UTF8ReturnField):
+    proof: UTF8Proof
+    success: UTF8Success
+    errors: tuple[UTF8Error, ...]
+    write_footprint: tuple[tuple[int, int], ...]
+    possible_writes: tuple[tuple[View, int, int], ...]
+    input_reads: UTF8Reads
+    normal_preserves: tuple[str, ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_actual_caller_slice_transport_return_token_and_source_ownership: bool
 
 
 @_structural(1)
-def utf8_body(objects, instructions):
+def utf8_body(objects: DiagnosticObjects, instructions: InstructionMap) -> UTF8Proof:
     names = [n for n in objects.elf.functions if canonical_symbol(n) == UTF8]
     require(len(names) == 1, "UTF8 has no unique current typed body")
     name = names[0]
@@ -136,10 +203,17 @@ def utf8_body(objects, instructions):
         tuple(transfers),
     )
     coverage = audit_coverage(objects, name, instructions, context, (region,))
-    return dict(proof, coverage=coverage)
+    return {**proof, "coverage": coverage}
 
 
-def from_utf8_interface(objects, instructions, source, output, frame, ancestor_protected):
+def from_utf8_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    source: UTF8Slice,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> UTF8Result:
     proof = utf8_body(objects, instructions)
     require(
         isinstance(source, UTF8Slice)
@@ -184,7 +258,7 @@ def from_utf8_interface(objects, instructions, source, output, frame, ancestor_p
         (output,), ((output, 4, 8), (output, 0, 4)), guards + (frame, source_owner, table)
     )
     objects.read_only(source.payload.start, source.payload.extent)
-    errors = []
+    errors: list[UTF8ErrorBase] = []
     maximum = source.length.upper
     if maximum:
         # Some1 includes an invalid lead byte; Some2/3 require the actual
@@ -210,18 +284,20 @@ def from_utf8_interface(objects, instructions, source, output, frame, ancestor_p
                 active_output_offsets=(0, 1, 2, 3, 4, 5, 6, 7, 8),
             )
         )
-    return dict(
-        proof=proof,
-        success=dict(
+    return {
+        "proof": proof,
+        "success": dict(
             tag=0, source=source, encoding=("O0=0", "O4=p", "O8=n"), valid_UTF8_for_same_pair=True
         ),
-        errors=tuple(
-            dict(v, tag=1, encoding="O0=1,O4=k,O8=option_tag|(active length<<8)", guard="0<=k<n")
+        "errors": tuple(
+            UTF8Error(
+                **v, tag=1, encoding="O0=1,O4=k,O8=option_tag|(active length<<8)", guard="0<=k<n"
+            )
             for v in errors
         ),
-        write_footprint=((output.start + 4, 8), (output.start, 4)),
-        possible_writes=((output, 4, 8), (output, 0, 4)),
-        input_reads=dict(
+        "write_footprint": ((output.start + 4, 8), (output.start, 4)),
+        "possible_writes": ((output, 4, 8), (output, 0, 4)),
+        "input_reads": dict(
             byte_offsets=(54, 96, 134, 150, 176, 258, 272, 310),
             guard="i<n at each actual byte read",
             aligned_word_offsets=(80, 82),
@@ -231,17 +307,15 @@ def from_utf8_interface(objects, instructions, source, output, frame, ancestor_p
             width_index=(128, 255),
             input_envelope=source.payload,
         ),
-        normal_preserves=tuple("r" + str(i) for i in range(4, 12)) + ("sp",),
-        conservative_activation_frames=(24,),
-        **{
-            "return": dict(
-                SP=frame.start + 24,
-                saved_PC=(frame.start + 20, frame.start + 24),
-                site=proof["function"] + 360,
-                original_r8=(frame.start, 4),
-                original_r4_to_r7=(frame.start + 4, 16),
-                architectural_LR_not_preserved=True,
-            )
-        },
-        requires_actual_caller_slice_transport_return_token_and_source_ownership=True,
-    )
+        "normal_preserves": tuple("r" + str(i) for i in range(4, 12)) + ("sp",),
+        "conservative_activation_frames": (24,),
+        "return": dict(
+            SP=frame.start + 24,
+            saved_PC=(frame.start + 20, frame.start + 24),
+            site=proof["function"] + 360,
+            original_r8=(frame.start, 4),
+            original_r4_to_r7=(frame.start + 4, 16),
+            architectural_LR_not_preserved=True,
+        ),
+        "requires_actual_caller_slice_transport_return_token_and_source_ownership": True,
+    }

@@ -641,6 +641,51 @@ fn transport_failure_records_failed_read_and_stops_before_next_request() {
 }
 
 #[test]
+fn read_timing_is_frozen_before_event_publication_waits() {
+    for outcome in [
+        Ok(vec![b'x']),
+        Err(FailureReason::Att(0x05)),
+        Err(FailureReason::Hardware(0xF1)),
+        Err(FailureReason::Timeout),
+    ] {
+        let mut fixture = Fixture::default();
+        fixture.service(1, 5, 0x180A);
+        fixture.characteristic(2, 0x2A29, true);
+        fixture.values = vec![(3, outcome)];
+        let released = Cell::new(false);
+        let observed = Cell::new(None);
+        let emit = async |event| {
+            if let Event::Item {
+                item: InspectionItem::Value(value),
+                ..
+            } = event
+            {
+                observed.set(Some(value));
+                core::future::poll_fn(|_| if released.get() { Poll::Ready(()) } else { Poll::Pending }).await;
+            }
+        };
+        let mut future = pin!(inventory::inventory(&fixture, 7, &emit));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        let value = observed.get().expect("read finished before publication suspended");
+        // Exercise a real awaited publication delay with the host's real time driver.
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        released.set(true);
+        let Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+            panic!("publication did not resume");
+        };
+        if value.result == dashboard_core::discovery::ReadResult::Error {
+            let failure = result.unwrap_err();
+            assert_eq!(failure.reason, value.failure.unwrap());
+            assert_eq!(failure.elapsed_ms, Some(value.elapsed_ms));
+        } else {
+            assert_eq!(result, Ok(false));
+        }
+        assert_eq!(observed.get().unwrap().elapsed_ms, value.elapsed_ms);
+    }
+}
+
+#[test]
 fn slot1_service_endpoint_is_not_silently_extended_to_accept_rejected_value() {
     for end in [4, 5] {
         let mut fixture = Fixture::default();

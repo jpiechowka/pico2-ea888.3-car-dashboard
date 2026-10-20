@@ -1,22 +1,31 @@
 """Focused artifact consumer failures; no compiler/converter/hardware calls."""
 
-import importlib.util
+import sys
 import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location(
-    "artifact", ROOT / "firmware/scripts/validate_capture_artifact.py"
-)
-artifact = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(artifact)
+sys.path.insert(0, str(ROOT / "firmware/scripts"))
+import validate_capture_artifact as artifact  # noqa: E402
+import check_memory_layout  # noqa: E402
 
 
 class Consumer(unittest.TestCase):
-    def test_duplicate_identity_and_bounded_read(self):
+    def test_schema_requires_integer_and_manifest_requires_object(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            malformed: list[object] = [[], None, True, {"schema": 2.0, "image_gate": "practical"}]
+            for value in malformed:
+                (root / "manifest.json").write_text(json.dumps(value))
+                with self.subTest(value=value), patch.object(artifact, "ElfImage") as elf:
+                    with self.assertRaises(AssertionError):
+                        artifact.validate(root, root, root / "missing.uf2")
+                    elf.assert_not_called()
+
+    def test_duplicate_identity_and_bounded_read(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manifest"
             path.write_text('{"schema":2,"schema":1}')
@@ -26,7 +35,7 @@ class Consumer(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 artifact.bounded(path, 32)
 
-    def test_incomplete_capture_never_reaches_elf(self):
+    def test_incomplete_capture_never_reaches_elf(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "manifest.json").write_text('{"schema":1}')
@@ -35,11 +44,11 @@ class Consumer(unittest.TestCase):
                     artifact.validate(root, root, root / "missing.uf2")
                 elf.assert_not_called()
 
-    def test_native_gate_is_explicit_and_never_experimental(self):
+    def test_native_gate_is_explicit_and_never_experimental(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for gate in (None, "experimental-full", "practical_image", True):
-                manifest = {"schema": 2}
+                manifest: dict[str, object] = {"schema": 2}
                 if gate is not None:
                     manifest["image_gate"] = gate
                 (root / "manifest.json").write_text(json.dumps(manifest))
@@ -48,9 +57,10 @@ class Consumer(unittest.TestCase):
                         artifact.validate(root, root, root / "missing.uf2")
                     elf.assert_not_called()
 
-    def test_practical_result_is_revalidated_and_bound_to_capture(self):
+    def test_practical_result_is_revalidated_and_bound_to_capture(self) -> None:
         from contextlib import ExitStack
         from types import SimpleNamespace
+        from image_test_support import ImageFixture
 
         eav = b"eav"
         profile = b"profile"
@@ -66,7 +76,7 @@ class Consumer(unittest.TestCase):
         from check_program_image import inspect_program, FLASH_START
 
         boot = struct.pack("<5I", 0xFFFFDED3, 0x10210142, 0x000001FF, 0, 0xAB123579)
-        fixture = SimpleNamespace(
+        fixture = ImageFixture(
             data=boot,
             segments=[(1, 0, FLASH_START, FLASH_START, 20, 20, 5, 1)],
             section_entries=[(1, ".start_block", (0, 1, 2, FLASH_START, 0, 20, 0, 0, 4, 0))],
@@ -75,7 +85,8 @@ class Consumer(unittest.TestCase):
         program = dict(
             base_program, linked_configuration={"sha": "config"}, linked_startup={"sha": "startup"}
         )
-        manifest = {
+        manifest_program: dict[str, object] = dict(program)
+        manifest: dict[str, object] = {
             "schema": 2,
             "image_gate": "practical",
             "elf_sha256": artifact.sha(elf_data),
@@ -85,7 +96,7 @@ class Consumer(unittest.TestCase):
             "source_context": {"sha256": artifact.sha(b"context")},
             "memory_layout": memory,
             "memory_layout_json_sha256": artifact.sha(memory_raw),
-            "program_image": json.loads(json.dumps(program)),
+            "program_image": manifest_program,
         }
         blobs = {
             "dashboard.eav": eav,
@@ -97,8 +108,10 @@ class Consumer(unittest.TestCase):
         }
         with ExitStack() as stack:
 
-            def mock(name, **kwargs):
-                return stack.enter_context(patch.object(artifact, name, **kwargs))
+            def mock(name: str, **kwargs: object) -> MagicMock:
+                mocked = MagicMock(**kwargs)
+                stack.enter_context(patch.object(artifact, name, mocked))
+                return mocked
 
             mock(
                 "record",
@@ -113,7 +126,7 @@ class Consumer(unittest.TestCase):
             mock("load_source_context", return_value=context)
             reader = stack.enter_context(
                 patch.object(
-                    artifact.check_memory_layout,
+                    check_memory_layout,
                     "read_selected_image_result",
                     create=True,
                     return_value=memory,
@@ -130,10 +143,10 @@ class Consumer(unittest.TestCase):
             self.assertEqual(report["image_gate"], "practical")
             self.assertFalse(report["complete_instruction_proof"])
             self.assertFalse(report["hardware_qualified"])
-            manifest["program_image"]["schema_version"] = True
+            manifest_program["schema_version"] = True
             with self.assertRaisesRegex(AssertionError, "program image identity mismatch"):
                 artifact.validate(Path("capture"), Path("input"), Path("program.uf2"))
-            manifest["program_image"]["schema_version"] = 1
+            manifest_program["schema_version"] = 1
             reader.return_value = {"schema": 3, "tampered": True}
             with self.assertRaisesRegex(AssertionError, "practical image evidence mismatch"):
                 artifact.validate(Path("capture"), Path("input"), Path("program.uf2"))

@@ -478,8 +478,30 @@ impl BufferedUartTx {
         })
     }
 
-    fn flush(info: &'static Info, state: &'static State) -> impl Future<Output = Result<(), Error>> {
-        poll_fn(move |cx| buffered_io::poll_flush(&state.tx_buf, &state.tx_waker, cx, || info.interrupt.pend()).map(Ok))
+    async fn flush(info: &'static Info, state: &'static State) -> Result<(), Error> {
+        poll_fn(move |cx| buffered_io::poll_flush(&state.tx_buf, &state.tx_waker, cx, || info.interrupt.pend())).await;
+        // The last ring drain wake can precede FIFO/shift-register completion.
+        // There is no UART interrupt for the final stop bit.
+        while !tx_drained(info.regs) {
+            Timer::after_micros(10).await;
+        }
+        Ok(())
+    }
+
+    fn try_write(&mut self, byte: u8) -> nb::Result<(), Error> {
+        let mut writer = unsafe { self.state.tx_buf.writer() };
+        match buffered_io::try_write(&mut writer, &[byte], || self.info.interrupt.pend()) {
+            Poll::Ready(1) => Ok(()),
+            _ => Err(nb::Error::WouldBlock),
+        }
+    }
+
+    fn try_flush(&mut self) -> nb::Result<(), Error> {
+        if self.state.tx_buf.is_empty() && tx_drained(self.info.regs) {
+            Ok(())
+        } else {
+            Err(nb::Error::WouldBlock)
+        }
     }
 
     /// Write to UART TX buffer blocking execution until done.
@@ -510,7 +532,7 @@ impl BufferedUartTx {
     /// Flush UART TX blocking execution until done.
     pub fn blocking_flush(&mut self) -> Result<(), Error> {
         loop {
-            if self.state.tx_buf.is_empty() {
+            if self.state.tx_buf.is_empty() && tx_drained(self.info.regs) {
                 return Ok(());
             }
         }
@@ -530,23 +552,11 @@ impl BufferedUartTx {
     /// for the transmit fifo to empty, which may take a while on slow links.
     pub async fn send_break(&mut self, bits: u32) {
         let regs = self.info.regs;
-        let bits = bits.max({
-            let lcr = regs.uartlcr_h().read();
-            let width = lcr.wlen() as u32 + 5;
-            let parity = lcr.pen() as u32;
-            let stops = 1 + lcr.stp2() as u32;
-            2 * (1 + width + parity + stops)
-        });
-        let divx64 = (((regs.uartibrd().read().baud_divint() as u32) << 6)
-            + regs.uartfbrd().read().baud_divfrac() as u32) as u64;
-        let div_clk = clk_peri_freq() as u64 * 64;
-        let wait_usecs = (1_000_000 * bits as u64 * divx64 * 16 + div_clk - 1) / div_clk;
+        let wait_usecs = break_duration_us(regs, bits);
 
         Self::flush(self.info, self.state).await.unwrap();
-        while self.busy() {}
-        regs.uartlcr_h().write_set(|w| w.set_brk(true));
+        let _guard = BreakGuard::new(regs);
         Timer::after_micros(wait_usecs).await;
-        regs.uartlcr_h().write_clear(|w| w.set_brk(true));
     }
 }
 
@@ -857,11 +867,11 @@ impl embedded_hal_nb::serial::Read for BufferedUartRx {
 
 impl embedded_hal_nb::serial::Write for BufferedUartTx {
     fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
-        self.blocking_write(&[char]).map(drop).map_err(nb::Error::Other)
+        self.try_write(char)
     }
 
     fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        self.blocking_flush().map_err(nb::Error::Other)
+        self.try_flush()
     }
 }
 
@@ -873,10 +883,10 @@ impl embedded_hal_nb::serial::Read for BufferedUart {
 
 impl embedded_hal_nb::serial::Write for BufferedUart {
     fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
-        self.blocking_write(&[char]).map(drop).map_err(nb::Error::Other)
+        self.tx.try_write(char)
     }
 
     fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        self.blocking_flush().map_err(nb::Error::Other)
+        self.tx.try_flush()
     }
 }

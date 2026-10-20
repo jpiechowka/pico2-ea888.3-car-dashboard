@@ -2,10 +2,33 @@
 
 import re
 import struct
-from config_control_contracts import CONTROL_GRAMMARS
-from config_stack import canonical_symbol, typed_function, enum_dispatch
-from llvm_stack import mapping_ranges
+from collections.abc import Mapping
+from typing import TypedDict
+from config_control_contracts import CONTROL_GRAMMARS, ControlObject
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function, enum_dispatch
+from llvm_stack import Instruction, mapping_ranges
 from validation import require
+
+Callback = tuple[int, str, int, int]
+OrdinaryEdge = tuple[int, str, int, str, int]
+
+
+class ControlRecord(TypedDict):
+    role: str
+    function: int
+    extent: int
+    frame: int
+    objects: tuple[int, ...]
+    callbacks: tuple[Callback, ...]
+    ordinary_edges: tuple[OrdinaryEdge, ...]
+    indirect_sites: tuple[tuple[int, str, str], ...]
+    cases: tuple[tuple[str, tuple[int, ...], int], ...]
+    source_tags: tuple[int, ...]
+    requires_value_source_and_live_sink: bool
+    requires_options: tuple[int, int, int]
+    requires_pretty_inventory_exclusion: bool
+    requires_parent_outline_abi: str | None
+
 
 CONTROL_CASES = (
     "HoldDuration",
@@ -19,16 +42,17 @@ CONTROL_CASES = (
 CONTROL_TAGS = ((2,), (3,), (0, 1), (5,), (6,), (7,), (8,))
 
 
-def control_object(objects, address, descriptor):
-    kind = descriptor["kind"]
-    if kind == "bytes":
+def control_object(
+    objects: DiagnosticObjects, address: int, descriptor: ControlObject
+) -> tuple[Callback, ...]:
+    if descriptor["kind"] == "bytes":
         expected = bytes.fromhex(descriptor["hex"])
         require(
             objects.read_only(address, len(expected)) == expected,
             "ControlError label/length/delimiter differs",
         )
         return ()
-    if kind == "pointer_table":
+    if descriptor["kind"] == "pointer_table":
         labels = [v.encode() for v in descriptor["labels"]]
         require(address % 4 == 0, "unaligned control label pointer table")
         pointers = struct.unpack(
@@ -39,12 +63,15 @@ def control_object(objects, address, descriptor):
                 objects.read_only(pointer, len(label)) == label, "control indexed label differs"
             )
         return ()
-    if kind == "callback":
+    if descriptor["kind"] == "callback":
         require(address & 1, "control raw callback is not Thumb")
         extent, frame, _ = typed_function(objects, address & ~1, descriptor["role"])
         require(frame == descriptor["frame"], "control raw callback frame differs")
         return ((address & ~1, descriptor["role"], extent, frame),)
-    require(kind == "vtable" and address % 4 == 0, "unreviewed control object interface")
+    require(
+        descriptor["kind"] == "vtable" and address % 4 == 0,
+        "unreviewed control object interface",
+    )
     roles = descriptor["roles"]
     words = struct.unpack(
         "<" + "I" * (3 + len(roles)), objects.read_only(address, 4 * (3 + len(roles)))
@@ -58,7 +85,12 @@ def control_object(objects, address, descriptor):
     return tuple(result)
 
 
-def control_body(objects, name, instructions, outline_role=None):
+def control_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: Mapping[int, Instruction],
+    outline_role: str | None = None,
+) -> ControlRecord:
     """Match every current byte/operand and typed object, including pretty paths.
 
     Complete local predecessor and return-cell shapes are fixed by the finite
@@ -91,8 +123,8 @@ def control_body(objects, name, instructions, outline_role=None):
         len(rows) == len(contract["grammar"]) == len(contract["widths"]),
         "control instruction inventory differs",
     )
-    covered = set()
-    producers = {}
+    covered: set[int] = set()
+    producers: dict[int, dict[str, int]] = {}
     edges = []
     indirect = []
     for row, line, width in zip(rows, contract["grammar"], contract["widths"]):
@@ -116,10 +148,8 @@ def control_body(objects, name, instructions, outline_role=None):
         target_role = expected.removeprefix("@role:") if expected.startswith("@role:") else None
         if producer:
             match = re.fullmatch(r"(r[0-9]+|lr), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                match is not None and int(match[2], 0) <= 65535,
-                "invalid control typed object producer",
-            )
+            if match is None or int(match[2], 0) > 65535:
+                raise AssertionError("invalid control typed object producer")
             ordinal, part = int(producer[1]), producer[2]
             require(
                 part not in producers.setdefault(ordinal, {}), "ambiguous control object producer"
@@ -128,14 +158,13 @@ def control_body(objects, name, instructions, outline_role=None):
             actual = match[1] + ", " + producer[0]
         elif local:
             match = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                match is not None and int(match[1], 16) == start + int(local[1], 16),
-                "control local predecessor differs",
-            )
+            if match is None or int(match[1], 16) != start + int(local[1], 16):
+                raise AssertionError("control local predecessor differs")
             actual = actual[: match.start()] + local[0]
         elif target_role:
             match = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(match is not None, "missing control ordinary target")
+            if match is None:
+                raise AssertionError("missing control ordinary target")
             target = int(match[1], 16)
             if target_role.startswith("@"):
                 names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
@@ -153,7 +182,7 @@ def control_body(objects, name, instructions, outline_role=None):
     data = {a for lo, hi, k in mapping if k == "d" for a in range(lo, hi)}
     pool_bytes = set()
     values = []
-    callbacks = []
+    callbacks: list[Callback] = []
     current = bytearray(raw)
     by_offset = {r.address - start: r for r in rows}
     for ordinal, descriptor in enumerate(contract["objects"]):
@@ -187,19 +216,19 @@ def control_body(objects, name, instructions, outline_role=None):
         set(producers) == {i for i, v in enumerate(contract["objects"]) if "pool" not in v},
         "unbound control object pair",
     )
-    fixed = set()
-    for offset, value in contract["data"]:
-        value = bytes.fromhex(value)
-        points = set(range(start + offset, start + offset + len(value)))
+    fixed: set[int] = set()
+    for offset, encoded in contract["data"]:
+        fixed_bytes = bytes.fromhex(encoded)
+        points = set(range(start + offset, start + offset + len(fixed_bytes)))
         require(
             points <= data
             and not points & fixed
-            and current[offset : offset + len(value)] == value,
+            and current[offset : offset + len(fixed_bytes)] == fixed_bytes,
             "control TBB/pool data differs",
         )
         fixed |= points
     require(fixed == data, "unbound control mapped data")
-    cases = ()
+    cases: tuple[tuple[str, tuple[int, ...], int], ...] = ()
     if "12ControlError" in role:
         dispatch = enum_dispatch(objects, name, rows)
         cases = tuple(zip(CONTROL_CASES, CONTROL_TAGS, dispatch["entries"]))

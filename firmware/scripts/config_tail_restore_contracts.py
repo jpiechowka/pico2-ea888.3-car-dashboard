@@ -4,7 +4,17 @@ These current anchors retain separate caller obligations. They grant neither
 execution in the selected Visitor nor an inherited save/return permission.
 """
 
-RESTORE_CONTEXTS = {
+from typing import TypedDict
+
+
+class RestoreContract(TypedDict):
+    extent: int
+    frame: int
+    site: int
+    anchors: tuple[tuple[int, int, str, str], ...]
+
+
+RESTORE_CONTEXTS: dict[str, RestoreContract] = {
     "_RINvMNtCs_14dashboard_core15control_sessionNtB3_14ControlSession6actionNtNtNtCs_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexECs_5pico2": {
         "extent": 424,
         "frame": 80,

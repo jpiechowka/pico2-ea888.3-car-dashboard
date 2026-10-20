@@ -2,24 +2,34 @@
 
 import re
 import struct
-from config_stack import canonical_symbol, typed_function
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
+from config_body_types import (
+    BodyContract,
+    BodyRecord,
+    Callback,
+    Descriptor,
+    FunctionConsumer,
+    InstructionMap,
+    ObjectConsumer,
+    OutlineConsumer,
+)
 from llvm_stack import mapping_ranges
 from validation import require
 from config_structural import _instruction_items
 
 
 def _complete_body(
-    objects,
-    name,
-    instructions,
-    role,
-    shape,
-    contract,
-    object_consumer,
-    outline_consumer,
-    ancestry=(),
-    function_consumer=typed_function,
-):
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    role: str,
+    shape: str,
+    contract: BodyContract[Descriptor],
+    object_consumer: ObjectConsumer[Descriptor] | None,
+    outline_consumer: OutlineConsumer | None,
+    ancestry: tuple[int, ...] = (),
+    function_consumer: FunctionConsumer = typed_function,
+) -> BodyRecord:
     return _literal_body(
         objects,
         name,
@@ -35,8 +45,16 @@ def _complete_body(
 
 
 def _bounded_body(
-    objects, name, instructions, role, shape, contract, object_consumer, outline_consumer, start
-):
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    role: str,
+    shape: str,
+    contract: BodyContract[Descriptor],
+    object_consumer: ObjectConsumer[Descriptor] | None,
+    outline_consumer: OutlineConsumer | None,
+    start: int,
+) -> BodyRecord:
     """A reviewed terminal window; upstream/whole-caller proof stays required."""
     proof = _literal_body(
         objects,
@@ -50,25 +68,24 @@ def _bounded_body(
         (),
         start,
     )
-    proof.update(
-        function=objects.elf.functions[name][0] & ~1, caller_extent=objects.elf.functions[name][1]
-    )
+    proof["function"] = objects.elf.functions[name][0] & ~1
+    proof["caller_extent"] = objects.elf.functions[name][1]
     return proof
 
 
 def _literal_body(
-    objects,
-    name,
-    instructions,
-    role,
-    shape,
-    contract,
-    object_consumer,
-    outline_consumer,
-    ancestry=(),
-    window=None,
-    function_consumer=typed_function,
-):
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    role: str,
+    shape: str,
+    contract: BodyContract[Descriptor],
+    object_consumer: ObjectConsumer[Descriptor] | None,
+    outline_consumer: OutlineConsumer | None,
+    ancestry: tuple[int, ...] = (),
+    window: int | None = None,
+    function_consumer: FunctionConsumer = typed_function,
+) -> BodyRecord:
     """Literal byte/operand matcher for closed, reviewed internal grammars.
 
     No instruction execution, inferred CFG, runtime learning or public plugin
@@ -113,11 +130,11 @@ def _literal_body(
     )
     require(len(rows) == len(contract["instructions"]), "payload instruction inventory differs")
     code = {a for lo, hi, k in mapping if k == "t" for a in range(lo, hi)}
-    covered = set()
-    producers = {}
+    covered: set[int] = set()
+    producers: dict[int, dict[str, int]] = {}
     edges = []
     indirect = []
-    external_values = {}
+    external_values: dict[int, int] = {}
     for row, (offset, width, operation) in zip(rows, contract["instructions"]):
         mnemonic, _, expected = operation.partition(" ")
         points = set(range(row.address, row.address + len(row.raw)))
@@ -139,10 +156,8 @@ def _literal_body(
         target_role = expected if expected.startswith(("@role:", "@outline:")) else None
         if producer:
             match = re.fullmatch(r"(r[0-9]+|lr), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                match is not None and int(match[2], 0) <= 65535,
-                "invalid payload typed object producer",
-            )
+            if match is None or int(match[2], 0) > 65535:
+                raise AssertionError("invalid payload typed object producer")
             ordinal, part = int(producer[1]), producer[2]
             require(
                 part not in producers.setdefault(ordinal, {}), "ambiguous payload object producer"
@@ -152,9 +167,8 @@ def _literal_body(
         elif pool_producer:
             require(window is not None, "external PC pool only belongs to bounded root contract")
             match = re.fullmatch(r"(r[0-9]+), \[pc, #(0x[0-9a-f]+|[0-9]+)\]", actual)
-            require(
-                match is not None and mnemonic in ("ldr", "ldr.w"), "invalid root PC pool producer"
-            )
+            if match is None or mnemonic not in ("ldr", "ldr.w"):
+                raise AssertionError("invalid root PC pool producer")
             pool = ((row.address + 4) & ~3) + int(match[2], 0)
             ordinal = int(pool_producer[1])
             require(
@@ -162,9 +176,9 @@ def _literal_body(
                 and pool % 4 == 0,
                 "root PC pool is not owned mapped caller data",
             )
-            value = struct.unpack("<I", objects.read_only(pool, 4))[0]
+            pool_value = struct.unpack("<I", objects.read_only(pool, 4))[0]
             require(ordinal not in external_values, "duplicate root PC object producer")
-            external_values[ordinal] = value
+            external_values[ordinal] = pool_value
             actual = match[1] + ", [pc, " + pool_producer[0] + "]"
         elif parent_local:
             target = parent + int(parent_local[1], 16)
@@ -183,25 +197,24 @@ def _literal_body(
                 "payload parent-relative target is not a current mapped instruction in its typed parent",
             )
             match = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                match is not None and int(match[1], 16) == target,
-                "payload parent-relative destination differs",
-            )
+            if match is None or int(match[1], 16) != target:
+                raise AssertionError("payload parent-relative destination differs")
             actual = actual[: match.start()] + parent_local[0]
         elif local:
             match = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                match is not None and int(match[1], 16) == start + int(local[1], 16),
-                "payload case/predecessor destination differs",
-            )
+            if match is None or int(match[1], 16) != start + int(local[1], 16):
+                raise AssertionError("payload case/predecessor destination differs")
             actual = actual[: match.start()] + local[0]
         elif target_role:
             match = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(match is not None, "unresolved payload ordinary target")
+            if match is None:
+                raise AssertionError("unresolved payload ordinary target")
             target = int(match[1], 16)
             if target_role.startswith("@outline:"):
                 names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
                 require(names, "missing payload outline")
+                if outline_consumer is None:
+                    raise TypeError("outline consumer is required for an outline edge")
                 child = outline_consumer(
                     objects, names[0], instructions, target_role, ancestry + (start,)
                 )
@@ -261,8 +274,10 @@ def _literal_body(
         set(values) == set(range(len(contract["objects"]))),
         "missing/unreviewed payload typed object",
     )
-    callbacks = []
+    callbacks: list[Callback] = []
     for ordinal, descriptor in enumerate(contract["objects"]):
+        if object_consumer is None:
+            raise TypeError("object consumer is required for a declared object")
         callbacks.extend(object_consumer(objects, values[ordinal], descriptor))
     return dict(
         shape=shape,

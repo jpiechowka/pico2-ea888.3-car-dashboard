@@ -12,7 +12,7 @@ later Dashboard invocations receive no boot identity. Post-initialize rows
 partition the complete bodies but are not predecessors of the once claim.
 """
 
-WRITES = {
+WRITES: dict[str, tuple[tuple[int, str, int, int, str], ...]] = {
     "speed2_0": (
         (0, "stack", -8, 8, "before"),
         (12, "boot", 40, 4, "before"),

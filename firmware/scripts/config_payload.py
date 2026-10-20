@@ -2,22 +2,26 @@
 
 import re
 import struct
-from config_payload_contracts import PAYLOAD_GRAMMARS, PAYLOAD_ROLES
-from config_stack import canonical_symbol, typed_function
+from config_payload_contracts import PAYLOAD_GRAMMARS, PAYLOAD_ROLES, PayloadObject
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
+from config_body_types import BodyRecord, Callback, InstructionMap
 from config_finite import _complete_body
 from validation import require
 
 
-def payload_object(objects, address, descriptor):
-    kind = descriptor["kind"]
-    if kind in ("literal", "enum_lengths"):
-        value = (
-            bytes.fromhex(descriptor["bytes"])
-            if kind == "literal"
-            else bytes(descriptor["lengths"])
-        )
+class PayloadRecord(BodyRecord):
+    requires_value_source_and_live_sink: bool
+    requires_options: tuple[int, int, int]
+    requires_pretty_inventory_exclusion: bool
+
+
+def payload_object(
+    objects: DiagnosticObjects, address: int, descriptor: PayloadObject
+) -> tuple[Callback, ...]:
+    if descriptor["kind"] == "literal":
+        value = bytes.fromhex(descriptor["bytes"])
         require(
-            kind != "literal" or len(value) == descriptor["length"],
+            len(value) == descriptor["length"],
             "inconsistent payload literal contract",
         )
         require(
@@ -25,7 +29,14 @@ def payload_object(objects, address, descriptor):
             "payload label/ordered enum lengths differ",
         )
         return ()
-    if kind == "enum_pointers":
+    if descriptor["kind"] == "enum_lengths":
+        value = bytes(descriptor["lengths"])
+        require(
+            objects.read_only(address, len(value)) == value,
+            "payload label/ordered enum lengths differ",
+        )
+        return ()
+    if descriptor["kind"] == "enum_pointers":
         require(address % 4 == 0, "unaligned payload enum pointer table")
         labels = [v.encode() for v in descriptor["labels"]]
         words = struct.unpack("<" + "I" * len(labels), objects.read_only(address, 4 * len(labels)))
@@ -36,10 +47,11 @@ def payload_object(objects, address, descriptor):
             )
         return ()
     require(
-        kind in ("debug_vtable", "raw_debug_callback") and len(descriptor["roles"]) == 1,
+        descriptor["kind"] in ("debug_vtable", "raw_debug_callback")
+        and len(descriptor["roles"]) == 1,
         "unreviewed payload object",
     )
-    if kind == "debug_vtable":
+    if descriptor["kind"] == "debug_vtable":
         require(address % 4 == 0, "unaligned payload Debug table")
         words = struct.unpack("<4I", objects.read_only(address, 16))
         require(words[:3] == tuple(descriptor["layout"]), "payload Debug table layout differs")
@@ -52,7 +64,14 @@ def payload_object(objects, address, descriptor):
     return ((pointer & ~1, role, extent, frame),)
 
 
-def _payload_shape(objects, name, instructions, role, shape, ancestry):
+def _payload_shape(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    role: str,
+    shape: str,
+    ancestry: tuple[int, ...],
+) -> PayloadRecord:
     proof = _complete_body(
         objects,
         name,
@@ -64,15 +83,21 @@ def _payload_shape(objects, name, instructions, role, shape, ancestry):
         payload_body,
         ancestry,
     )
-    proof.update(
-        requires_value_source_and_live_sink=True,
-        requires_options=(0x60000020, 0, 0),
-        requires_pretty_inventory_exclusion=True,
-    )
-    return proof
+    return {
+        **proof,
+        "requires_value_source_and_live_sink": True,
+        "requires_options": (0x60000020, 0, 0),
+        "requires_pretty_inventory_exclusion": True,
+    }
 
 
-def payload_body(objects, name, instructions, outline_role=None, _ancestry=()):
+def payload_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: str | None = None,
+    _ancestry: tuple[int, ...] = (),
+) -> PayloadRecord:
     """Select exactly one full typed body; never widen clones by demangled name."""
     require(name in objects.elf.functions, "missing payload body")
     start = objects.elf.functions[name][0] & ~1

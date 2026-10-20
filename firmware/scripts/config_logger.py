@@ -9,17 +9,20 @@ full emitted stores, source ownership, entry and panic guard proof are required.
 import json
 import re
 import struct
+from config_body_types import BodyRecord, Callback, InstructionMap
 from config_panic import panic_object, PANIC_CALLBACKS
 from config_roots import root_location
 from config_stack import (
+    DiagnosticObjects,
     DEFMT_IDENTITIES,
     canonical_symbol,
     typed_function,
     _typed_function_extent,
     transfer_family,
 )
+from elf_image import Section
 from config_finite import _complete_body
-from config_logger_contracts import LOGGER_GRAMMARS, LOGGER_ROLES, MANUAL_BUILTINS
+from config_logger_contracts import LOGGER_GRAMMARS, LOGGER_ROLES, MANUAL_BUILTINS, LoggerObject
 from validation import require
 from config_structural import _structural
 
@@ -33,7 +36,15 @@ TIMESTAMP_ALIASES = {"_defmt_timestamp": 0, "__defmt_default_timestamp": 6, "Def
 PANIC_ALIASES = ("_defmt_panic", "__defmt_default_panic")
 
 
-def _logger_function(objects, target, role):
+class LoggerRecord(BodyRecord):
+    transfers: tuple[tuple[int, str, str], ...]
+    requires_runtime_ownership_entry_and_guard_closure: bool
+    requires_typed_inputs_live_sink_and_default_options: bool
+    manual_frame_requires_complete_builtin: str | None
+    reference_only: bool
+
+
+def _logger_function(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, int, str]:
     """Only reviewed zero-size aliases and complete assembly have exceptions."""
     if role in TIMESTAMP_ALIASES or role == "@logger_timestamp":
         expected = TIMESTAMP_ALIASES
@@ -100,7 +111,13 @@ def _logger_function(objects, target, role):
 
 
 @_structural(2)
-def logger_body(objects, name, instructions, outline_role=None, _ancestry=()):
+def logger_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: str | None = None,
+    _ancestry: tuple[int, ...] = (),
+) -> LoggerRecord:
     """Complete finite bodies; every caller/state/default/guard edge stays open."""
     require(name in objects.elf.functions, "missing logger body")
     start = objects.elf.functions[name][0] & ~1
@@ -118,7 +135,7 @@ def logger_body(objects, name, instructions, outline_role=None, _ancestry=()):
         "logger outline origin differs",
     )
     require(role in LOGGER_ROLES, "unreviewed exact logger/builtin role")
-    results = []
+    results: list[LoggerRecord] = []
     for shape in LOGGER_ROLES[role]:
         try:
             proof = _complete_body(
@@ -136,24 +153,28 @@ def logger_body(objects, name, instructions, outline_role=None, _ancestry=()):
         except AssertionError:
             continue
         rows = [r for a, r in sorted(instructions.items()) if start <= a < start + proof["extent"]]
-        proof.update(
-            transfers=tuple(
-                (r.address - start, r.mnemonic, r.operands.split("@", 1)[0].strip())
-                for r in rows
-                if transfer_family(r.mnemonic.removesuffix(".w"))
-                or re.search(r"\bpc\b", r.operands)
-            ),
-            requires_runtime_ownership_entry_and_guard_closure=True,
-            requires_typed_inputs_live_sink_and_default_options=True,
-            manual_frame_requires_complete_builtin=role if role in MANUAL_BUILTINS else None,
-            reference_only=role == "@logger_default_panic",
+        results.append(
+            {
+                **proof,
+                "transfers": tuple(
+                    (r.address - start, r.mnemonic, r.operands.split("@", 1)[0].strip())
+                    for r in rows
+                    if transfer_family(r.mnemonic.removesuffix(".w"))
+                    or re.search(r"\bpc\b", r.operands)
+                ),
+                "requires_runtime_ownership_entry_and_guard_closure": True,
+                "requires_typed_inputs_live_sink_and_default_options": True,
+                "manual_frame_requires_complete_builtin": role if role in MANUAL_BUILTINS else None,
+                "reference_only": role == "@logger_default_panic",
+            }
         )
-        results.append(proof)
     require(len(results) == 1, "missing, changed or ambiguous complete logger/builtin shape")
     return results[0]
 
 
-def _object_symbol(objects, address, role, size, section_name):
+def _object_symbol(
+    objects: DiagnosticObjects, address: int, role: str, size: int, section_name: str
+) -> Section:
     # Preserve the numeric object ordinal. canonical_symbol strips function
     # clone suffixes and is deliberately not used for these object identities.
     require(
@@ -196,23 +217,23 @@ def _object_symbol(objects, address, role, size, section_name):
         )
         backing.append(i)
     require(backing == [index], "logger object allocation is not uniquely owned")
-    for other in objects.elf.symbol_entries:
+    for symbol in objects.elf.symbol_entries:
         if (
-            other == entries[0]
-            or other[3] & 15 != 1
-            or not other[2]
-            or not 0 <= other[4] < len(objects.elf.sections)
+            symbol == entries[0]
+            or symbol[3] & 15 != 1
+            or not symbol[2]
+            or not 0 <= symbol[4] < len(objects.elf.sections)
         ):
             continue
-        if objects.elf.sections[other[4]][2] & 2:
+        if objects.elf.sections[symbol[4]][2] & 2:
             require(
-                not (other[1] < address + size and address < other[1] + other[2]),
+                not (symbol[1] < address + size and address < symbol[1] + symbol[2]),
                 "distinct allocated OBJECT intersects logger storage",
             )
     return section
 
 
-def _initialized(objects, address, size, role):
+def _initialized(objects: DiagnosticObjects, address: int, size: int, role: str) -> bytes:
     section = _object_symbol(objects, address, role, size, ".data")
     offset = section[4] + address - section[3]
     raw = objects.elf.data[offset : offset + size]
@@ -223,10 +244,11 @@ def _initialized(objects, address, size, role):
     return raw
 
 
-def logger_object(objects, address, descriptor):
+def logger_object(
+    objects: DiagnosticObjects, address: int, descriptor: LoggerObject
+) -> tuple[Callback, ...]:
     """Bind one producer-selected object. No nearby-object or role union."""
-    kind = descriptor["kind"]
-    if kind == "defmt_metadata_id":
+    if descriptor["kind"] == "defmt_metadata_id":
         require(
             descriptor["raw_names"]
             and all(
@@ -237,7 +259,7 @@ def logger_object(objects, address, descriptor):
         )
         objects.defmt_id(address, "usize_encoding_id")
         return ()
-    if kind == "fmt_write_vtable":
+    if descriptor["kind"] == "fmt_write_vtable":
         require(
             descriptor["layout"] == [0, 0, 1]
             and descriptor["slots"]
@@ -245,24 +267,25 @@ def logger_object(objects, address, descriptor):
             "unreviewed logger Write table interface",
         )
         return panic_object(objects, address, "sink_vtable")
-    if kind == "literal":
+    if descriptor["kind"] == "literal":
         raw = bytes.fromhex(descriptor["hex"])
         require(
             len(raw) == descriptor["length"] and objects.read_only(address, len(raw)) == raw,
             "logger literal bytes/length differ",
         )
         return ()
-    if kind == "location":
+    if descriptor["kind"] == "location":
         roles = {
             (173, 13): "logger_acquire",
             (226, 13): "logger_release",
             (385, 5): "defmt_default_panic",
         }
         role = roles.get((descriptor["line"], descriptor["column"]))
-        require(role is not None, "unreviewed logger source Location")
+        if role is None:
+            raise AssertionError("unreviewed logger source Location")
         root_location(objects, address, role)
         return ()
-    if kind == "writable_symbol":
+    if descriptor["kind"] == "writable_symbol":
         require(len(descriptor["roles"]) == 1, "ambiguous logger state role")
         role = descriptor["roles"][0]
         require(
@@ -271,7 +294,7 @@ def logger_object(objects, address, descriptor):
         )
         _object_symbol(objects, address, role, 1, ".bss")
         return ()
-    if kind == "split_state_anchor":
+    if descriptor["kind"] == "split_state_anchor":
         require(
             descriptor["anchor_is_encoder"] is False
             and descriptor["offsets"] == dict(taken=1, cs_restore=2, started=3, run=4, zeros=5)
@@ -283,7 +306,7 @@ def logger_object(objects, address, descriptor):
             _object_symbol(objects, address + i + 1, ENCODER + str(i), 1, ".bss")
         return ()
     require(
-        kind == "rtt_header"
+        descriptor["kind"] == "rtt_header"
         and descriptor["roles"] == ["_SEGGER_RTT"]
         and descriptor["extent"] == 48
         and address % 4 == 0

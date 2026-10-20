@@ -7,9 +7,14 @@ Those remain mandatory in the separate actual finite graph producer.
 """
 
 from dataclasses import dataclass, asdict
+from typing import TYPE_CHECKING
+from script_values import object_fields, array_items, string_value, integer_value
+
+if TYPE_CHECKING:
+    from config_stack import DiagnosticObjects
 import re
 from config_regions import Storage, View, borrow, require_writes
-from config_owned_access import _storage, _view
+from config_owned_access import _storage, _view, _boolean
 from validation import require
 
 # Reviewed mode-specific physical layouts, not universal Rust enum/return ABI.
@@ -40,9 +45,9 @@ class ValidatorContext:
     frame: Storage
     config: View
     result: View
-    protected: tuple
+    protected: tuple[Storage, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.mode, str) and self.mode in LAYOUTS and self.phase in PHASES,
             "unreviewed validator context",
@@ -113,10 +118,10 @@ class ValidatorFamily:
     role: str
     mode: str
     parent: int
-    sites: tuple
-    contexts: tuple
+    sites: tuple[tuple[int, str, int, bool], ...]
+    contexts: tuple[ValidatorContext, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.role, str)
             and self.role in OPERATIONS
@@ -173,7 +178,7 @@ class ValidatorFamily:
             "validator loses distinct default/decoded contexts",
         )
 
-        def physical(c):
+        def physical(c: ValidatorContext) -> tuple[str, str, int, int, str, int, int, int]:
             return (
                 c.caller.space,
                 c.caller.identity,
@@ -212,7 +217,7 @@ class ValidatorFamily:
                         (owner,), ((owner, lo - owner.start, hi - lo),), context.protected
                     )
 
-    def footprints(self, phase, index=0, count=1):
+    def footprints(self, phase: str, index: int = 0, count: int = 1) -> tuple[tuple[int, int], ...]:
         require(
             phase in PHASES and type(index) is int and type(count) is int,
             "untyped validator loop/epoch",
@@ -238,8 +243,8 @@ class ValidatorFamily:
             (base + offset, base + offset + width) for at, raw, offset, outlined in self.sites
         )
 
-    def to_record(self):
-        record = asdict(self)
+    def to_record(self) -> dict[str, object]:
+        record: dict[str, object] = asdict(self)
         record["sites"] = [
             dict(site=at, encoding=raw, offset=o, outlined=x) for at, raw, o, x in self.sites
         ]
@@ -280,7 +285,8 @@ class ValidatorFamily:
         return record
 
 
-def read_validator_family(record):
+def read_validator_family(value: object) -> ValidatorFamily:
+    record = object_fields(value, "malformed ValidatorFamily record")
     keys = set(ValidatorFamily.__dataclass_fields__) | {
         "kind",
         "operation",
@@ -294,45 +300,61 @@ def read_validator_family(record):
         isinstance(record, dict)
         and set(record) == keys
         and isinstance(record["sites"], list)
-        and 1 <= len(record["sites"]) <= 6
+        and 1 <= len(array_items(record["sites"], "malformed sites")) <= 6
         and isinstance(record["contexts"], list)
-        and len(record["contexts"]) == 2,
+        and len(array_items(record["contexts"], "malformed contexts")) == 2,
         "malformed validator dependency family",
     )
     contexts = []
-    for c in record["contexts"]:
+    for raw_context in array_items(record["contexts"], "malformed contexts"):
+        c = object_fields(raw_context, "malformed context")
         require(
             isinstance(c, dict)
             and set(c) == set(ValidatorContext.__dataclass_fields__)
             and isinstance(c["protected"], list)
-            and 1 <= len(c["protected"]) <= 16,
+            and 1 <= len(array_items(c["protected"], "malformed protected")) <= 16,
             "malformed validator context fields",
         )
         contexts.append(
             ValidatorContext(
-                c["mode"],
-                c["phase"],
+                string_value(c["mode"], "malformed mode"),
+                string_value(c["phase"], "malformed phase"),
                 _storage(c["caller"]),
                 _storage(c["frame"]),
                 _view(c["config"]),
                 _view(c["result"]),
-                tuple(_storage(v) for v in c["protected"]),
+                tuple(_storage(v) for v in array_items(c["protected"], "malformed protected")),
             )
         )
     sites = []
-    for v in record["sites"]:
+    for raw_site in array_items(record["sites"], "malformed sites"):
+        v = object_fields(raw_site, "malformed site")
         require(
             isinstance(v, dict) and set(v) == {"site", "encoding", "offset", "outlined"},
             "malformed validator site fields",
         )
-        sites.append((v["site"], v["encoding"], v["offset"], v["outlined"]))
+        sites.append(
+            (
+                integer_value(v["site"], "malformed site"),
+                string_value(v["encoding"], "malformed encoding"),
+                integer_value(v["offset"], "malformed offset"),
+                _boolean(v["outlined"], "malformed outlined"),
+            )
+        )
     value = ValidatorFamily(
-        record["role"], record["mode"], record["parent"], tuple(sites), tuple(contexts)
+        string_value(record["role"], "malformed role"),
+        string_value(record["mode"], "malformed mode"),
+        integer_value(record["parent"], "malformed parent"),
+        tuple(sites),
+        tuple(contexts),
     )
     require(
         type(record["width"]) is int
         and isinstance(record["transport"], dict)
-        and all(type(record["transport"].get(k)) is int for k in ("first_offset", "capture_offset"))
+        and all(
+            type(object_fields(record["transport"], "malformed transport").get(k)) is int
+            for k in ("first_offset", "capture_offset")
+        )
         and record == value.to_record(),
         "validator dependency operation/context qualifier differs",
     )
@@ -382,7 +404,9 @@ EXPECTED_ROLES = {
 }
 
 
-def current_validator_family(objects, value):
+def current_validator_family(
+    objects: "DiagnosticObjects", value: ValidatorFamily
+) -> ValidatorFamily:
     """Bind a producer's family to bytes/metadata, never infer its ownership."""
     from config_entry import CONFIG, entry_object
     from config_stack import typed_function, canonical_symbol

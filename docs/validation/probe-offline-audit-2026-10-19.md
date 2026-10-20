@@ -1,5 +1,9 @@
 # Probe captures and dashboard diagnostics audit
 
+Historical delivery. The [20 October whole-code audit](full-code-audit-2026-10-20.md)
+and [detailed diagnostics re-audit](diagnostics-reaudit-2026-10-20.md)
+record subsequent fixes and current software/image verification.
+
 Review date: 2026-10-19. This delivery adds bounded offline evidence, corrects
 shared BLE failure handling and audits diagnostics on both firmware routes.
 Software checks and linked-image admission are separate from device validation.

@@ -6,7 +6,10 @@ Only typed data and direct targets relocate; defaults require separately bound
 flags 0x60000020, width 0 and precision 0 at each entry. No custom/hex admission.
 """
 
-NUMERIC_VARIANTS = {
+# Role, byte extent, stack frame, code/data spans, complete literal grammar.
+NumericVariant = tuple[str, int, int, tuple[tuple[int, int, str], ...], list[str]]
+
+NUMERIC_VARIANTS: dict[str, tuple[NumericVariant, ...]] = {
     "_RNvXsZ_NtNtCs_4core3fmt3numjNtB7_5Debug3fmt": (
         (
             "<usize as core::fmt::Debug>::fmt",

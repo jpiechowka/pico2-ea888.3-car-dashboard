@@ -5,6 +5,11 @@ families. They bind individual typed static producers, not their surrounding
 dataflow, paths or complete consuming effects. No mutable owner is emitted.
 """
 
+from typing import Never, NotRequired, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_boot_history import HistoryRecord
+from config_stack import DiagnosticObjects
+from llvm_stack import Instruction
 import re
 import struct
 from config_boot_history import first_boot_history
@@ -171,7 +176,74 @@ _PC = {
 }
 
 
-def _parent(objects, role, frame):
+class StaticPoint(TypedDict):
+    parent: int
+    role: str
+    sites: tuple[int, ...]
+    register: str
+    value: int
+    kind: str
+    pool: NotRequired[int]
+    requires_intervening_and_consuming_transport: NotRequired[bool]
+    requires_consuming_transport: NotRequired[bool]
+
+
+class LoaderGeometry(TypedDict):
+    function: int
+    extent: int
+    entry_SP: int
+    frame: tuple[int, int]
+    root_frame_bytes: int
+    saves: tuple[int, int]
+    locals: tuple[int, int]
+    LR_value: int
+    once_frame_retained_bytes: int
+
+
+class ProtectedInterval(TypedDict):
+    kind: str
+    interval: tuple[int, int]
+
+
+class TakenState(TypedDict):
+    address: int
+    width: int
+    value: int
+    source: str
+
+
+class LoaderBoundary(TypedDict):
+    phase: str
+    mode: str
+    history: HistoryRecord
+    loader_geometry: LoaderGeometry
+    prologue: BodyRecord
+    static_producers: tuple[StaticPoint, ...]
+    static_point_scope: str
+    physical_protected: tuple[ProtectedInterval, ...]
+    retained_save_constituents: tuple[tuple[str, tuple[int, int]], ...]
+    protection_requires_complete_consuming_write_and_child_checks: bool
+    enclosing_allocation: tuple[int, int]
+    confined_slot_extent: int
+    config_extent: int
+    taken_state: TakenState
+    initial_file_facts_not_live_reinitialization: bool
+    initial_fact_expiry: str
+    consuming_phase_closure: bool
+    unclosed_phases: tuple[str, ...]
+    mode_specific_consuming_variants_not_borrowed: bool
+    requires_complete_same_B_loader_before_owner: bool
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    hardware_qualified: bool
+    existing_conservative_frame_arithmetic_unchanged: bool
+
+
+def _parent(objects: DiagnosticObjects, role: str, frame: int) -> tuple[str, int, int]:
     candidates = {
         e[0] & ~1 for n, e in objects.elf.functions.items() if canonical_symbol(n) == role
     }
@@ -182,22 +254,26 @@ def _parent(objects, role, frame):
     return name, start, extent
 
 
-def _point(objects, name, rows, at, width):
+def _point(
+    objects: DiagnosticObjects, name: str, rows: InstructionMap, at: int, width: int
+) -> Instruction:
     row = rows.get(at)
     mapping = mapping_ranges(objects.elf, name)
-    require(
+    if not (
         row is not None
         and row.address == at
         and len(row.raw) == width
         and any(k == "t" and a <= at < at + width <= b for a, b, k in mapping)
-        and objects.read_only(at, width) == row.raw,
-        "loader producer current bytes/mapping differ",
-    )
+        and objects.read_only(at, width) == row.raw
+    ):
+        raise AssertionError("loader producer current bytes/mapping differ")
     return row
 
 
-def _static_points(objects, rows, mode, B):
-    result = []
+def _static_points(
+    objects: DiagnosticObjects, rows: InstructionMap, mode: str, B: int
+) -> tuple[StaticPoint, ...]:
+    result: list[StaticPoint] = []
     parents = {ROOT: _FRAMES[mode][0], VALIDATOR: _FRAMES[mode][1]}
     if mode == "sizez":
         parents[VISITOR] = 1608
@@ -243,10 +319,8 @@ def _static_points(objects, rows, mode, B):
                 row = _point(objects, name, rows, start + offset, width)
                 actual = row.operands.split("@", 1)[0].strip()
                 m = re.fullmatch(re.escape(register) + r", \[pc, #(0x[0-9a-f]+|[0-9]+)\]", actual)
-                require(
-                    m is not None and row.mnemonic == ("ldr" if width == 2 else "ldr.w"),
-                    "loader static PC producer differs",
-                )
+                if not (m is not None and row.mnemonic == ("ldr" if width == 2 else "ldr.w")):
+                    raise AssertionError("loader static PC producer differs")
                 immediate = int(m[1], 0)
                 rd = int(register[1:])
                 pool = ((row.address + 4) & ~3) + immediate
@@ -292,7 +366,7 @@ def _static_points(objects, rows, mode, B):
     return tuple(result)
 
 
-def _physical(objects, low, high, bottom):
+def _physical(objects: DiagnosticObjects, low: int, high: int, bottom: int) -> None:
     """Compare actual addresses BEFORE any separate Storage space is used."""
     require(
         all(type(v) is int for v in (low, high, bottom))
@@ -301,7 +375,7 @@ def _physical(objects, low, high, bottom):
         "loader frame leaves its actual Reset-derived stack allocation",
     )
 
-    def interval(a, n, label):
+    def interval(a: int, n: int, label: str) -> None:
         require(
             type(a) is int and type(n) is int and n > 0 and 0 <= a < a + n <= 0x100000000,
             "loader physical " + label + " extent is invalid",
@@ -341,7 +415,9 @@ def _physical(objects, low, high, bottom):
             interval(a, n, "allocated OBJECT")
 
 
-def first_boot_loader_boundary(objects, instructions, source_context):
+def first_boot_loader_boundary(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> LoaderBoundary:
     """Derive geometry and same-B static points; never return a mutable View."""
     history = first_boot_history(objects, instructions, source_context)
     p = history["preclaim"]
@@ -364,7 +440,7 @@ def first_boot_loader_boundary(objects, instructions, source_context):
     )
     _physical(objects, incoming - frame, sp, startup["copy"]["stack_bottom"])
 
-    def unexpected(*args):
+    def unexpected(*args: object) -> Never:
         raise AssertionError("unexpected loader prologue dependency")
 
     prologue = _PROLOGUES[mode]
@@ -398,7 +474,7 @@ def first_boot_loader_boundary(objects, instructions, source_context):
         all(incoming <= a < b <= sp for k, (a, b) in constituent),
         "loader caller envelope loses an actual saved carrier",
     )
-    protected = (
+    protected: tuple[ProtectedInterval, ...] = (
         dict(kind="Boot_task", interval=(task[0], task[0] + 48)),
         dict(kind="executor_P", interval=(P[0], P[0] + 8)),
         dict(kind="retained_callers", interval=(incoming, sp)),

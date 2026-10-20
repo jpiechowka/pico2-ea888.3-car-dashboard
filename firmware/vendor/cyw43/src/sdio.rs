@@ -488,15 +488,15 @@ where
     }
 
     async fn read16(&mut self, func: u32, addr: u32) -> u16 {
-        let mut val = [0u32];
-        self.cmd53_read(func, addr, &mut aligned_mut(&mut val)[..2]).await;
+        let mut bytes = Aligned::<A4, _>([0u8; 2]);
+        self.cmd53_read(func, addr, &mut bytes).await;
 
-        u16::from_be_bytes(val[0].to_be_bytes()[..2].try_into().unwrap())
+        u16::from_le_bytes(*bytes)
     }
 
     #[allow(unused)]
     async fn write16(&mut self, func: u32, addr: u32, val: u16) {
-        self.cmd53_write(func, addr, &aligned_ref(&[val as u32])[..2]).await;
+        self.cmd53_write(func, addr, &Aligned::<A4, _>(val.to_le_bytes())).await;
     }
 
     async fn read32(&mut self, func: u32, addr: u32) -> u32 {

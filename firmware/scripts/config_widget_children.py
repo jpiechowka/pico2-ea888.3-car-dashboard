@@ -6,12 +6,25 @@ grants Widget/source/exclusive-owner or whole-graph permission.
 """
 
 from dataclasses import replace
+from collections.abc import Mapping, Sequence
+from typing import NoReturn, NotRequired, TypeAlias, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_widget_contracts import WidgetObject
 import re
-from config_abstract import Span, SequenceInterface, decoder_interface
+from config_abstract import (
+    Span,
+    DecoderInterface,
+    SequenceInterface,
+    DecoderOutcome,
+    PrimitiveResult,
+    decoder_interface,
+)
 from config_decode_effects import _object
 from config_abstract_compare import InitializedPrefix
 from config_finite import _complete_body
-from config_helpers import HELPER_SEMANTIC_ROLES, helper_coverage, _helper_function
+from config_helpers import helper_coverage, _helper_function
+from config_helper_contracts import HELPER_SEMANTIC_ROLES
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_stack import canonical_symbol
 from config_widget_contracts import GRAMMARS, ROLES
@@ -19,12 +32,12 @@ from config_decoded_views import _outline as _views_outline
 from config_refill_children import child_body as _refill_body
 from validation import require
 from config_structural import _structural
-from config_logger import logger_body
+from config_logger import logger_body, LoggerRecord
 
 _CUSTOM = {v: k for k, v in ROLES.items() if v.startswith("@outline:")}
 
 
-def _typed_names(objects):
+def _typed_names(objects: DiagnosticObjects) -> Mapping[str, tuple[tuple[str, int], ...]] | None:
     """Index immutable names only; unsupported metadata keeps the old scan.
 
     Every original name and its order remain present, including ambiguous
@@ -46,7 +59,7 @@ def _typed_names(objects):
         for n, e in functions.items()
     ):
         return None
-    names = {}
+    names: dict[str, list[tuple[str, int]]] = {}
     for n, e in functions.items():
         names.setdefault(canonical_symbol(n), []).append((n, e[0] & ~1))
     index = MappingProxyType({role: tuple(values) for role, values in names.items()})
@@ -54,7 +67,7 @@ def _typed_names(objects):
     return index
 
 
-def _name(objects, role, address=None):
+def _name(objects: DiagnosticObjects, role: str, address: int | None = None) -> str:
     index = (
         _typed_names(objects)
         if type(role) is str and (address is None or type(address) is int)
@@ -73,7 +86,7 @@ def _name(objects, role, address=None):
     return names[0]
 
 
-def _function(objects, address, role):
+def _function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     extent, frame, name = _helper_function(objects, address, role)
     if role in (ROLES["color"], ROLES["warning_colors"]):
         shape = "color" if role == ROLES["color"] else "warning_colors"
@@ -84,7 +97,13 @@ def _function(objects, address, role):
     return extent, frame, name
 
 
-def _outline(objects, name, rows, role, ancestry=()):
+def _outline(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    role: str,
+    ancestry: tuple[int, ...] = (),
+) -> BodyRecord:
     if role.startswith("@outline:decoded_"):
         return _views_outline(objects, name, rows, role, ancestry)
     if role == "@outline:advanced_copy_bands48":
@@ -98,7 +117,13 @@ def _outline(objects, name, rows, role, ancestry=()):
 
 
 @_structural(2)
-def widget_body(objects, name, rows, outline_role=None, ancestry=()):
+def widget_body(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    outline_role: str | None = None,
+    ancestry: tuple[int, ...] = (),
+) -> BodyRecord:
     role = outline_role or canonical_symbol(name)
     if outline_role is not None:
         require(
@@ -112,8 +137,8 @@ def widget_body(objects, name, rows, outline_role=None, ancestry=()):
         )
         shape = "color" if role == ROLES["color"] else "warning_colors"
 
-    def no_object(*args):
-        require(False, "unexpected Widget child readonly object")
+    def no_object(objects: DiagnosticObjects, address: int, descriptor: WidgetObject) -> NoReturn:
+        raise AssertionError("unexpected Widget child readonly object")
 
     proof = _complete_body(
         objects,
@@ -131,7 +156,9 @@ def widget_body(objects, name, rows, outline_role=None, ancestry=()):
     return proof
 
 
-def _current(objects, rows, proof, shape):
+def _current(
+    objects: DiagnosticObjects, rows: InstructionMap, proof: BodyRecord, shape: str
+) -> BodyRecord:
     require(
         isinstance(proof, dict) and proof.get("shape") == shape,
         "Widget effect uses another complete adapter",
@@ -143,8 +170,8 @@ def _current(objects, rows, proof, shape):
     return current
 
 
-def _layout(frame, size, protected):
-    protected = tuple(protected)
+def _layout(frame: Storage, size: int, protected: Sequence[Storage]) -> tuple[Storage, ...]:
+    guards = tuple(protected)
     require(
         isinstance(frame, Storage)
         and frame.space.startswith("stack:")
@@ -153,17 +180,78 @@ def _layout(frame, size, protected):
         and frame.extent == size,
         "Widget adapter activation has another SP/frame",
     )
-    require_disjoint((frame,) + protected)
-    return protected
+    require_disjoint((frame,) + guards)
+    return guards
 
 
-def _child_frame(frame, size, label):
+def _child_frame(frame: Storage, size: int, label: str) -> Storage:
     return Storage(
         frame.space, frame.identity + ":" + label, frame.start - size, size, 8, frame.phase, True
     )
 
 
-def color_interface(objects, rows, proof, state, frame, ancestor_protected):
+ColorIdentity: TypeAlias = tuple[int, str, int, int]
+DecoderIdentity: TypeAlias = tuple[int, str, str, int, int]
+
+
+class ColorOutcome(TypedDict):
+    kind: str
+    tag: int
+    count: Span
+    cursor: Span
+    state: SequenceInterface
+    possible_writes: tuple[tuple[View, int, int], ...]
+    error: NotRequired[int | None]
+    value_domain: NotRequired[tuple[int, int] | None]
+    child_origin: NotRequired[tuple[DecoderInterface, DecoderIdentity, DecoderOutcome]]
+
+
+ColorPredecessor: TypeAlias = tuple[SequenceInterface, ColorIdentity, ColorOutcome]
+
+
+class ColorResult(TypedDict):
+    proof: BodyRecord
+    outcomes: tuple[ColorOutcome, ...]
+    children: tuple[PrimitiveResult[DecoderOutcome], ...]
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    normal_preserves: tuple[str, ...]
+    requires_actual_Color_source_Q_D_and_original_return: bool
+
+
+class WarningColorsOutcome(TypedDict):
+    kind: str
+    tag: int
+    state: SequenceInterface
+    cursor: Span
+    count: Span
+    possible_writes: tuple[tuple[View, int, int], ...]
+    error: NotRequired[int | None]
+    nested_origin: NotRequired[
+        tuple[int, SequenceInterface, ColorIdentity, ColorOutcome, tuple[ColorPredecessor, ...]]
+    ]
+    value_domains: NotRequired[tuple[tuple[int, int], tuple[int, int]]]
+
+
+class WarningColorsResult(TypedDict):
+    proof: BodyRecord
+    outcomes: tuple[WarningColorsOutcome, ...]
+    children: tuple[ColorResult, ...]
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    scratch_pop_registers: tuple[str, ...]
+    local_writes: tuple[tuple[View, int, int], ...]
+    caller_count_writes: tuple[tuple[View, int, int], ...]
+    normal_preserves: tuple[str, ...]
+    requires_actual_WarningColors_source_Q_D_and_original_return: bool
+
+
+def color_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord,
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> ColorResult:
     proof = _current(objects, rows, proof, "color")
     guards = _layout(frame, 8, ancestor_protected)
     require(
@@ -177,8 +265,8 @@ def color_interface(objects, rows, proof, state, frame, ancestor_protected):
     require_disjoint((frame, q, d))
     require_writes((state.header,), ((state.header, 4, 4),), guards + (d,))
     saved = Storage(frame.space, frame.identity + ":saved", frame.start, 8, 4, frame.phase, False)
-    outcomes = []
-    children = []
+    outcomes: list[ColorOutcome] = []
+    children: list[PrimitiveResult[DecoderOutcome]] = []
     if state.count.lower == 0:
         outcomes.append(
             dict(
@@ -197,6 +285,8 @@ def color_interface(objects, rows, proof, state, frame, ancestor_protected):
             "Color loses its positive decrement/decoder transport",
         )
         name = next((n for n, e in objects.elf.functions.items() if e[0] & ~1 == edge[0][2]), None)
+        if name is None:
+            raise AssertionError("Color transport has no current typed target")
         transport = _outline(objects, name, rows, ROLES["OUTLINED_FUNCTION_259"])
         target = transport["ordinary_edges"]
         role = HELPER_SEMANTIC_ROLES["deserialize_u16"]
@@ -230,9 +320,12 @@ def color_interface(objects, rows, proof, state, frame, ancestor_protected):
                     value_domain=(0, 65535) if success else None,
                     child_origin=(
                         state.decoder,
-                        tuple(
-                            scalar.get(k)
-                            for k in ("function", "role", "semantic_role", "extent", "frame")
+                        (
+                            scalar["function"],
+                            scalar["role"],
+                            scalar["semantic_role"],
+                            scalar["extent"],
+                            scalar["frame"],
                         ),
                         option,
                     ),
@@ -249,7 +342,15 @@ def color_interface(objects, rows, proof, state, frame, ancestor_protected):
     )
 
 
-def warning_colors_interface(objects, rows, proof, state, output, frame, ancestor_protected):
+def warning_colors_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> WarningColorsResult:
     proof = _current(objects, rows, proof, "warning_colors")
     guards = _layout(frame, 24, ancestor_protected)
     require(
@@ -279,8 +380,8 @@ def warning_colors_interface(objects, rows, proof, state, output, frame, ancesto
     color_targets = {e[2] for e in proof["ordinary_edges"] if e[3] == ROLES["color"]}
     require(len(color_targets) == 1, "WarningColors does not use the same Color decoder twice")
     color = widget_body(objects, _name(objects, ROLES["color"], next(iter(color_targets))), rows)
-    outcomes = []
-    children = []
+    outcomes: list[WarningColorsOutcome] = []
+    children: list[ColorResult] = []
     if state.count.lower == 0:
         outcomes.append(
             dict(
@@ -294,9 +395,11 @@ def warning_colors_interface(objects, rows, proof, state, output, frame, ancesto
         )
     if state.count.upper:
         count = Span(max(1, state.count.lower) - 1, state.count.upper - 1)
-        pending = [(SequenceInterface(local, state.decoder, Span(2, 2)), ())]
+        pending: list[tuple[SequenceInterface, tuple[ColorPredecessor, ...]]] = [
+            (SequenceInterface(local, state.decoder, Span(2, 2)), ())
+        ]
         for ordinal in range(2):
-            following = []
+            following: list[tuple[SequenceInterface, tuple[ColorPredecessor, ...]]] = []
             for current, previous in pending:
                 child = color_interface(
                     objects,
@@ -317,9 +420,11 @@ def warning_colors_interface(objects, rows, proof, state, output, frame, ancesto
                                 + (
                                     (
                                         current,
-                                        tuple(
-                                            color.get(k)
-                                            for k in ("function", "role", "extent", "frame")
+                                        (
+                                            color["function"],
+                                            color["role"],
+                                            color["extent"],
+                                            color["frame"],
                                         ),
                                         option,
                                     ),
@@ -340,9 +445,11 @@ def warning_colors_interface(objects, rows, proof, state, output, frame, ancesto
                                 nested_origin=(
                                     ordinal,
                                     current,
-                                    tuple(
-                                        color.get(k)
-                                        for k in ("function", "role", "extent", "frame")
+                                    (
+                                        color["function"],
+                                        color["role"],
+                                        color["extent"],
+                                        color["frame"],
                                     ),
                                     option,
                                     previous,
@@ -377,7 +484,7 @@ def warning_colors_interface(objects, rows, proof, state, output, frame, ancesto
     )
 
 
-def _visitor(frame):
+def _visitor(frame: Storage) -> None:
     require(
         isinstance(frame, Storage)
         and frame.space.startswith("stack:")
@@ -388,7 +495,25 @@ def _visitor(frame):
     )
 
 
-def band_tail_clear_interface(objects, rows, target, output, length, frame, ancestor_protected):
+class BandClearResult(TypedDict):
+    proof: LoggerRecord
+    count_domain: Span
+    possible_writes: tuple[tuple[View, int, int], ...]
+    zero_tail_relative: tuple[int, int] | None
+    dependent_zero_tail: str
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    requires_actual_ASCII_nonempty_spaces_and_label_source: bool
+
+
+def band_tail_clear_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    target: int,
+    output: View,
+    length: Span,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> BandClearResult:
     """Only normalized Band label[0,5), clearing exactly[length,5)."""
     _visitor(frame)
     require(
@@ -430,7 +555,34 @@ def band_tail_clear_interface(objects, rows, target, output, length, frame, ance
     )
 
 
-def _bounded_copy(objects, rows, target, source, output, count, frame, ancestor_protected, aligned):
+class CopyResult(TypedDict):
+    proof: LoggerRecord
+    builtin: LoggerRecord
+    byte_count_domain: Span
+    possible_writes: tuple[tuple[View, int, int], ...]
+    source: InitializedPrefix
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    restored_tail_storage: bool
+    architectural_LR_preserved: bool
+    requires_actual_source_count_transport_and_original_return: bool
+    band_count: NotRequired[Span]
+    byte_count_relation: NotRequired[str]
+    requires_complete_Band_source_and_retired_initializer_epoch: NotRequired[bool]
+    preserves_existing_tail: NotRequired[bool]
+    requires_preceding_actual_tail_clear_and_validated_same_label: NotRequired[bool]
+
+
+def _bounded_copy(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    target: int,
+    source: InitializedPrefix,
+    output: View,
+    count: Span,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+    aligned: bool,
+) -> CopyResult:
     role = "__aeabi_memcpy4" if aligned else "__aeabi_memcpy"
     proof = logger_body(objects, _name(objects, role, target), rows)
     expected = ((62, "b.w"), (160, "b.w")) if aligned else ((8, "b.w"),)
@@ -473,7 +625,16 @@ def _bounded_copy(objects, rows, target, source, output, count, frame, ancestor_
     )
 
 
-def band_copy_interface(objects, rows, target, source, output, count, frame, ancestor_protected):
+def band_copy_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    target: int,
+    source: InitializedPrefix,
+    output: View,
+    count: Span,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> CopyResult:
     """The post-initializer set_bands copy, with0/16/32/48 actual bytes."""
     _visitor(frame)
     require(
@@ -495,14 +656,24 @@ def band_copy_interface(objects, rows, target, source, output, count, frame, anc
         objects, rows, target, source, output, bytes_, frame, ancestor_protected, True
     )
     result.update(
-        band_count=count,
-        byte_count_relation="16*the same completed Band count, not arbitrary bytes",
-        requires_complete_Band_source_and_retired_initializer_epoch=True,
+        {
+            "band_count": count,
+            "byte_count_relation": "16*the same completed Band count, not arbitrary bytes",
+            "requires_complete_Band_source_and_retired_initializer_epoch": True,
+        }
     )
     return result
 
 
-def label_copy_interface(objects, rows, target, source, output, frame, ancestor_protected):
+def label_copy_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    target: int,
+    source: InitializedPrefix,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> CopyResult:
     """Copy1..5 validated source bytes into the separate zero-tailed label."""
     _visitor(frame)
     require(
@@ -522,7 +693,9 @@ def label_copy_interface(objects, rows, target, source, output, frame, ancestor_
         objects, rows, target, source, output, source.length, frame, ancestor_protected, False
     )
     result.update(
-        preserves_existing_tail=True,
-        requires_preceding_actual_tail_clear_and_validated_same_label=True,
+        {
+            "preserves_existing_tail": True,
+            "requires_preceding_actual_tail_clear_and_validated_same_label": True,
+        }
     )
     return result

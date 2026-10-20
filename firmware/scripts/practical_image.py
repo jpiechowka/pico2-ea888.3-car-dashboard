@@ -10,9 +10,12 @@ import io
 import json
 import struct
 import zlib
-from check_stack_budget import check as stack_check, FrameAdmission
+from typing import TypedDict
+from check_stack_budget import check as stack_check, FrameAdmission, FrameRecord
 from check_program_image import inspect_program, linked_configuration
 from config_build_source import validate_source_context
+from elf_image import InspectableImage
+from script_values import object_fields
 from validation import require
 
 # Current-only device envelope; historical files migrate through host tooling.
@@ -31,7 +34,23 @@ LIMITATIONS = (
 )
 
 
-def _configuration(elf, expected):
+class PracticalRecord(TypedDict):
+    schema: int
+    gate: str
+    status: str
+    hardware_qualified: bool
+    complete_instruction_proof: bool
+    elf_sha256: str
+    config_sha256: str
+    source_context_sha256: str
+    static_ram_bytes: int
+    headroom: int
+    stack: FrameRecord
+    assumptions: list[str]
+    limitations: list[str]
+
+
+def _configuration(elf: InspectableImage, expected: bytes | None) -> bytes:
     sections = [section for _, name, section in elf.section_entries if name == ".dashboard_config"]
     require(len(sections) == 1, "unique linked EAV section required")
     section = sections[0]
@@ -50,7 +69,9 @@ def _configuration(elf, expected):
     return raw
 
 
-def check(elf, expected_eav=None, source_context=None):
+def check(
+    elf: InspectableImage, expected_eav: bytes | None = None, source_context: object = None
+) -> PracticalRecord:
     from check_memory_layout import geometry, check_boundaries
 
     context = validate_source_context(source_context, elf)
@@ -61,10 +82,10 @@ def check(elf, expected_eav=None, source_context=None):
     require(type(stack) is FrameAdmission, "missing conservative frame admission")
     check_boundaries(elf)
 
-    def sha(raw):
+    def sha(raw: bytes) -> str:
         return hashlib.sha256(raw).hexdigest()
 
-    result = dict(
+    result: PracticalRecord = dict(
         schema=3,
         gate="practical_image",
         status="STATIC_IMAGE_CHECKS_PASS",
@@ -88,7 +109,13 @@ def check(elf, expected_eav=None, source_context=None):
     return result
 
 
-def read_result(record, elf, expected_eav=None, source_context=None):
+def read_result(
+    record: object,
+    elf: InspectableImage,
+    expected_eav: bytes | None = None,
+    source_context: object = None,
+) -> PracticalRecord:
+    record = object_fields(record, "practical image requires its distinct schema3 receipt")
     require(
         type(record) is dict
         and record.get("gate") == "practical_image"

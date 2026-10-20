@@ -6,11 +6,14 @@ acquired/validated/published Config capability is emitted by this boundary.
 """
 
 import re
-from config_entry import boot_entry, CONFIG, INITIALIZE
+from typing import TypedDict
+from config_body_types import InstructionMap
+from llvm_stack import Instruction
+from config_entry import BootEntryRecord, boot_entry, CONFIG, INITIALIZE
 from config_entry_contracts import ENTRY_GRAMMARS
 from config_headers import ROOT
-from config_initial import initial_configuration
-from config_stack import typed_function, transfer_family
+from config_initial import InitialConfiguration, initial_configuration
+from config_stack import DiagnosticObjects, typed_function, transfer_family
 from validation import require
 
 
@@ -20,7 +23,79 @@ _ONCE = {"speed2_6": (20, 24, 26, 30, 32, 34, 38, 42), "sizez_10": (14, 18, 20, 
 _MODES = {"speed2_2": ("speed2", 1288), "sizes_2": ("sizes", 696), "sizez_2": ("sizez", 456)}
 
 
-def _direct_target(row, family):
+class OnceSuccess(TypedDict):
+    predicate: tuple[str, str]
+    load: int
+    store: int
+    new_taken: int
+    width: int
+    restore: int
+    tail: int
+
+
+class OnceRetry(TypedDict):
+    predicate: str
+    compare: int
+    branch: int
+    target: int
+
+
+class OnceTaken(TypedDict):
+    predicate: str
+    branch: int
+    target: int
+    requires_nonreturn_diagnostic_closure: bool
+
+
+class OnceRecord(TypedDict):
+    function: int
+    extent: int
+    frame: int
+    taken_address: int
+    success: OnceSuccess
+    retry: OnceRetry
+    already_taken: OnceTaken
+    requires_actual_live_initial_state_and_exclusive_source_claim: bool
+
+
+class LoaderRecord(TypedDict):
+    function: int
+    name: str
+    extent: int
+    frame: int
+    incoming_r0: int
+    initialize_frame_live_on_tail: int
+    requires_same_B_reconstructed_inside_specialized_body: bool
+
+
+class PhysicalPrefix(TypedDict):
+    entry_chain: tuple[tuple[int, int], ...]
+    boot_poll: tuple[int, int]
+    once_frame: int
+    loader_frame: int
+    once_restores_before_loader: bool
+    existing_conservative_boot_formula_unchanged: bool
+
+
+class ConfigurationEntryRecord(TypedDict):
+    mode: str
+    phase: str
+    initial: InitialConfiguration
+    entry: BootEntryRecord
+    actual_Config_references: tuple[tuple[str, int, int, int], ...]
+    boot_call: int
+    once: OnceRecord
+    loader: LoaderRecord
+    physical_prefix: PhysicalPrefix
+    requires_actual_startup_preservation_and_no_prior_Config_alias: bool
+    requires_specialized_loader_reconstruction_and_all_internal_effects: bool
+    requires_frozen_executor_first_batch_source_ownership_and_all_indirect_ingress: bool
+    requires_once_retry_and_nonreturn_diagnostic_default_sink_closure: bool
+    must_not_reuse_initial_prewrite_epoch_after_acquisition_or_mutation: bool
+    requires_completed_decode_or_default_validation_before_publication: bool
+
+
+def _direct_target(row: Instruction, family: str) -> int:
     """One complete selected-LLVM operand, never a later hexadecimal token.
 
     B/BL start with their target; CBZ/CBNZ first name a low register. The only
@@ -35,7 +110,8 @@ def _direct_target(row, family):
     match = re.fullmatch(
         prefix + r"(0x[0-9a-f]{1,8})(?:[ \t]+(<.+>))?", operand.split("@", 1)[0].strip()
     )
-    require(match is not None, error)
+    if match is None:
+        raise AssertionError(error)
     annotation = match[2]
     if annotation is not None:
         depth = 0
@@ -49,7 +125,9 @@ def _direct_target(row, family):
     return int(match[1], 16)
 
 
-def configuration_entry_boundary(objects, instructions):
+def configuration_entry_boundary(
+    objects: DiagnosticObjects, instructions: InstructionMap
+) -> ConfigurationEntryRecord:
     """Bind actual objects/calls and closed retry/success/failure alternatives.
 
     This function accepts no source-owner flag or caller-selected phase. The

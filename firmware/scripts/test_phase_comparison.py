@@ -6,16 +6,34 @@ import tracemalloc
 import unittest
 import weakref
 from dataclasses import dataclass, make_dataclass
-from types import MappingProxyType
+from types import MappingProxyType, FrameType
+from collections.abc import Callable, Iterator, Sized
+from typing import Protocol, TypeAlias
+
+from image_test_support import fixture_fields
 
 import config_decoded_sources as subject
 
 
-def matches(value, baseline):
+Outcome: TypeAlias = tuple[str, object] | tuple[str, type[Exception], str]
+TraceFixture: TypeAlias = tuple[object, object, list[str]]
+
+
+class IndexedRecord(Protocol):
+    index: int
+
+
+def tuple_items(value: object) -> tuple[object, ...]:
+    if type(value) is not tuple:
+        raise AssertionError("expected phase tuple")
+    return tuple(value)
+
+
+def matches(value: object, baseline: object) -> bool:
     return subject._phase_matches(value, baseline)
 
 
-def outcome(call):
+def outcome(call: Callable[[], object]) -> Outcome:
     try:
         return ("return", call())
     except Exception as error:
@@ -23,9 +41,9 @@ def outcome(call):
 
 
 class PhaseComparison(unittest.TestCase):
-    def test_literals_aliases_order_types_and_node_counts(self):
+    def test_literals_aliases_order_types_and_node_counts(self) -> None:
         shared = [1]
-        baseline = (
+        baseline: subject.PhaseGraph = (
             ("reference", 0),
             (
                 ("list", (("reference", 1), ("reference", 2), ("reference", 1))),
@@ -56,7 +74,7 @@ class PhaseComparison(unittest.TestCase):
             baseline = subject._phase_graph(saved)
             self.assertIs(matches(live, baseline), wanted)
 
-    def test_plain_dataclasses_preserve_fields_metadata_and_aliases(self):
+    def test_plain_dataclasses_preserve_fields_metadata_and_aliases(self) -> None:
         @dataclass
         class Record:
             value: object
@@ -69,8 +87,8 @@ class PhaseComparison(unittest.TestCase):
         value.flag = True
         self.assertFalse(matches([value, value], baseline))
 
-    def test_malformed_baselines_preserve_equality_and_late_traversal_errors(self):
-        for baseline in (
+    def test_malformed_baselines_preserve_equality_and_late_traversal_errors(self) -> None:
+        malformed: tuple[object, ...] = (
             None,
             (),
             ((),),
@@ -80,7 +98,8 @@ class PhaseComparison(unittest.TestCase):
             (("reference", 0), (7,)),
             (("reference", 0), (("list", ()), "extra")),
             (None, (("list", ()),)),
-        ):
+        )
+        for baseline in malformed:
             with self.subTest(baseline=baseline):
                 self.assertFalse(matches([], baseline))
                 self.assertFalse(subject._phase_graph([]) == baseline)
@@ -89,8 +108,8 @@ class PhaseComparison(unittest.TestCase):
                     ("raise", AssertionError, "unsupported Sources phase snapshot value"),
                 )
 
-    def test_earlier_difference_does_not_hide_late_invalid_values(self):
-        cycle = []
+    def test_earlier_difference_does_not_hide_late_invalid_values(self) -> None:
+        cycle: list[object] = []
         cycle.append(cycle)
         baseline = subject._phase_graph([0, []])
         for invalid, message in (
@@ -103,24 +122,28 @@ class PhaseComparison(unittest.TestCase):
                 outcome(lambda: subject._phase_graph([1, invalid]) == baseline), wanted
             )
 
-    def check_trace(self, factory, wanted, trace):
+    def check_trace(
+        self, factory: Callable[[], TraceFixture], wanted: Outcome, trace: list[str]
+    ) -> None:
         for compare in (lambda v, b: subject._phase_graph(v) == b, matches):
             live, baseline, events = factory()
             self.assertEqual(outcome(lambda: compare(live, baseline)), wanted)
             self.assertEqual(events, trace)
 
-    def test_getters_finish_before_metadata_equality_and_hash_is_never_called(self):
-        def fixture():
-            events = []
+    def test_getters_finish_before_metadata_equality_and_hash_is_never_called(self) -> None:
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
             class Metadata:
-                def __init__(self, label):
+                def __init__(self, label: str) -> None:
                     self.label = label
 
-                def __hash__(self):
+                def __hash__(self) -> int:
                     raise RuntimeError("metadata must not be hashed")
 
-                def __eq__(self, other):
+                def __eq__(self, other: object) -> bool:
+                    if not isinstance(other, Metadata):
+                        return NotImplemented
                     events.append("EQ:" + self.label + ":" + other.label)
                     return True
 
@@ -128,14 +151,14 @@ class PhaseComparison(unittest.TestCase):
             class Record:
                 value: int
 
-                def __getattribute__(self, name):
+                def __getattribute__(self, name: str) -> object:
                     if name == "value":
                         events.append("GET:" + str(object.__getattribute__(self, name)))
                     return object.__getattribute__(self, name)
 
-            Record.__module__ = Metadata("base")
+            setattr(Record, "__module__", Metadata("base"))
             baseline = subject._phase_graph([Record(1), Record(2)])
-            Record.__module__ = Metadata("live")
+            setattr(Record, "__module__", Metadata("live"))
             events.clear()
             return [Record(1), Record(2)], baseline, events
 
@@ -143,15 +166,15 @@ class PhaseComparison(unittest.TestCase):
             fixture, ("return", True), ["GET:1", "GET:2", "EQ:live:base", "EQ:live:base"]
         )
 
-    def test_late_getter_exception_precedes_an_earlier_mismatch(self):
-        def fixture():
-            events = []
+    def test_late_getter_exception_precedes_an_earlier_mismatch(self) -> None:
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
             @dataclass
             class Record:
                 value: int
 
-                def __getattribute__(self, name):
+                def __getattribute__(self, name: str) -> object:
                     if name == "value":
                         events.append("GET")
                         raise RuntimeError("late getter")
@@ -161,66 +184,62 @@ class PhaseComparison(unittest.TestCase):
 
         self.check_trace(fixture, ("raise", RuntimeError, "late getter"), ["GET"])
 
-    def test_earlier_canonical_mismatch_skips_metadata_equality_after_full_traversal(self):
-        def fixture():
-            events = []
+    def test_earlier_canonical_mismatch_skips_metadata_equality_after_full_traversal(self) -> None:
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
             class Metadata:
-                __hash__ = None
-
-                def __eq__(self, other):
+                def __eq__(self, other: object) -> bool:
                     raise RuntimeError("unreached equality")
 
             @dataclass
             class Record:
                 value: int
 
-                def __getattribute__(self, name):
+                def __getattribute__(self, name: str) -> object:
                     if name == "value":
                         events.append("GET")
                     return object.__getattribute__(self, name)
 
-            Record.__module__ = Metadata()
+            setattr(Record, "__module__", Metadata())
             baseline = subject._phase_graph([0, Record(1)])
-            Record.__module__ = Metadata()
+            setattr(Record, "__module__", Metadata())
             events.clear()
             return [1, Record(1)], baseline, events
 
         self.check_trace(fixture, ("return", False), ["GET"])
 
-    def test_captured_unhashable_metadata_survives_getter_class_mutation(self):
-        def fixture():
-            events = []
+    def test_captured_unhashable_metadata_survives_getter_class_mutation(self) -> None:
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
             @dataclass
             class Record:
                 value: int
 
-                def __getattribute__(self, name):
+                def __getattribute__(self, name: str) -> object:
                     if name == "value":
                         events.append("GET")
                         type(self).__module__ = "changed"
                     return object.__getattribute__(self, name)
 
-            Record.__module__ = ["captured"]
+            setattr(Record, "__module__", ["captured"])
             baseline = subject._phase_graph(Record(1))
-            Record.__module__ = ["captured"]
+            setattr(Record, "__module__", ["captured"])
             events.clear()
             return Record(1), baseline, events
 
         self.check_trace(fixture, ("return", True), ["GET"])
 
-    def test_callback_equality_order_is_preorder_with_short_circuit_and_mutation(self):
-        def fixture(stop):
-            events = []
+    def test_callback_equality_order_is_preorder_with_short_circuit_and_mutation(self) -> None:
+        def fixture(stop: str) -> TraceFixture:
+            events: list[str] = []
 
             class Metadata:
-                __hash__ = None
-
-                def __init__(self, name):
+                def __init__(self, name: str) -> None:
                     self.name, self.changed = name, False
 
-                def __eq__(self, other):
+                def __eq__(self, other: object) -> bool:
                     events.append(self.name)
                     if self.name == "outer":
                         later.changed = True
@@ -232,9 +251,11 @@ class PhaseComparison(unittest.TestCase):
             outer, later = Metadata("outer"), Metadata("inner")
             A = make_dataclass("Outer", [("value", object)])
             B = make_dataclass("Inner", [("value", object)])
-            A.__module__, B.__module__ = Metadata("base outer"), Metadata("base inner")
+            setattr(A, "__module__", Metadata("base outer"))
+            setattr(B, "__module__", Metadata("base inner"))
             baseline = subject._phase_graph(A(B(1)))
-            A.__module__, B.__module__ = outer, later
+            setattr(A, "__module__", outer)
+            setattr(B, "__module__", later)
             return A(B(1)), baseline, events
 
         self.check_trace(lambda: fixture("true"), ("return", True), ["outer", "inner"])
@@ -243,19 +264,21 @@ class PhaseComparison(unittest.TestCase):
             lambda: fixture("raise"), ("raise", ValueError, "outer equality"), ["outer"]
         )
 
-    def test_custom_metaclass_dispatch_and_scalar_hash_callbacks_use_writer_once(self):
-        def fixture():
-            events = []
+    def test_custom_metaclass_dispatch_and_scalar_hash_callbacks_use_writer_once(self) -> None:
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
             class Meta(type):
-                def __eq__(cls, other):
+                def __eq__(cls, other: object) -> bool:
+                    if not isinstance(other, type):
+                        return NotImplemented
                     events.append("TYPE:" + other.__name__)
                     return other is int
 
                 __hash__ = type.__hash__
 
             class Scalar(int, metaclass=Meta):
-                def __hash__(self):
+                def __hash__(self) -> int:
                     events.append("HASH")
                     return int.__hash__(self)
 
@@ -263,7 +286,7 @@ class PhaseComparison(unittest.TestCase):
             class Record:
                 value: object
 
-                def __getattribute__(self, name):
+                def __getattribute__(self, name: str) -> object:
                     if name == "value":
                         events.append("GET")
                     return object.__getattribute__(self, name)
@@ -281,22 +304,22 @@ class PhaseComparison(unittest.TestCase):
         self.assertGreater(expected.count("HASH"), 0)
         self.check_trace(fixture, ("return", True), expected)
 
-    def test_proxy_custom_mapping_is_not_a_preflight_callback(self):
+    def test_proxy_custom_mapping_is_not_a_preflight_callback(self) -> None:
         from collections.abc import Mapping
 
-        def fixture():
-            events = []
+        def fixture() -> TraceFixture:
+            events: list[str] = []
 
-            class Custom(Mapping):
-                def __getitem__(self, key):
+            class Custom(Mapping[str, int]):
+                def __getitem__(self, key: str) -> int:
                     events.append("GETITEM")
                     return 1
 
-                def __iter__(self):
+                def __iter__(self) -> Iterator[str]:
                     events.append("ITER")
                     return iter(("x",))
 
-                def __len__(self):
+                def __len__(self) -> int:
                     events.append("LEN")
                     return 1
 
@@ -305,9 +328,9 @@ class PhaseComparison(unittest.TestCase):
 
         self.check_trace(fixture, ("return", True), ["ITER", "GETITEM"])
 
-    def test_property_default_custom_metaclass_and_instance_field_override_fall_back(self):
-        def fixture(mode):
-            events = []
+    def test_property_default_custom_metaclass_and_instance_field_override_fall_back(self) -> None:
+        def fixture(mode: str) -> TraceFixture:
+            events: list[str] = []
 
             @dataclass
             class Record:
@@ -316,24 +339,24 @@ class PhaseComparison(unittest.TestCase):
             live = Record(1)
             if mode == "property":
 
-                def getter(self):
+                def getter(self: object) -> int:
                     events.append("PROPERTY")
                     return 1
 
-                Record.value = property(getter)
+                setattr(Record, "value", property(getter))
             elif mode == "default":
 
                 class Meta(type):
-                    def __eq__(cls, other):
+                    def __eq__(cls, other: object) -> bool:
                         events.append("DEFAULT TYPE")
                         return False
 
                 class Default(metaclass=Meta):
                     pass
 
-                Record.value = Default()
+                setattr(Record, "value", Default())
             else:
-                live.__dataclass_fields__ = {}
+                setattr(live, "__dataclass_fields__", {})
             baseline = subject._phase_graph(live)
             events.clear()
             return live, baseline, events
@@ -342,10 +365,10 @@ class PhaseComparison(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.check_trace(lambda: fixture(mode), ("return", True), trace)
 
-    def test_inherited_class_descriptor_does_not_read_a_shadow_dictionary_value(self):
+    def test_inherited_class_descriptor_does_not_read_a_shadow_dictionary_value(self) -> None:
         @dataclass(init=False)
         class Record:
-            __class__: object
+            __annotations__ = {"__class__": object}
 
         value = Record()
         value.__dict__["__class__"] = 1
@@ -354,12 +377,12 @@ class PhaseComparison(unittest.TestCase):
         self.assertEqual(outcome(lambda: subject._phase_graph([1, value]) == baseline), wanted)
         self.assertEqual(outcome(lambda: matches([1, value], baseline)), wanted)
 
-    def test_cleanup_releases_preflight_and_comparison_tables_without_cyclic_gc(self):
-        visitors = []
-        tables = []
-        counts = []
+    def test_cleanup_releases_preflight_and_comparison_tables_without_cyclic_gc(self) -> None:
+        visitors: list[weakref.ReferenceType[Callable[..., object]]] = []
+        tables: list[tuple[object, ...]] = []
+        counts: list[int] = []
 
-        def observe(frame, event, arg):
+        def observe(frame: FrameType, event: str, arg: object) -> None:
             if frame.f_code.co_filename != subject.__file__:
                 return
             if frame.f_code.co_name not in ("plain", "plain_encoded", "visit"):
@@ -370,7 +393,9 @@ class PhaseComparison(unittest.TestCase):
             if owner is None:
                 return
             if event == "call":
-                visitor = owner.f_locals["visit"]
+                visitor: object = owner.f_locals["visit"]
+                if not callable(visitor):
+                    self.fail("profiled visitor must be callable")
                 if not any(ref() is visitor for ref in visitors):
                     visitors.append(weakref.ref(visitor))
                     tables.append(
@@ -379,7 +404,10 @@ class PhaseComparison(unittest.TestCase):
                         )
                     )
             if event == "return" and frame.f_code.co_name == "visit":
-                counts.append(len(owner.f_locals["memo"]))
+                memo: object = owner.f_locals["memo"]
+                if not isinstance(memo, Sized):
+                    self.fail("profiled memo must be sized")
+                counts.append(len(memo))
 
         enabled, previous = gc.isenabled(), sys.getprofile()
         gc.disable()
@@ -390,7 +418,7 @@ class PhaseComparison(unittest.TestCase):
             self.assertTrue(matches(value, baseline))
             value[-1].index = -1
             self.assertFalse(matches(value, baseline))
-            cycle = []
+            cycle: list[object] = []
             cycle.append(cycle)
             with self.assertRaisesRegex(AssertionError, "cyclic"):
                 matches(cycle, baseline)
@@ -402,27 +430,31 @@ class PhaseComparison(unittest.TestCase):
             self.assertTrue(all(not table for group in tables for table in group))
             self.assertTrue(all(ref() is None for ref in visitors))
             self.assertEqual(value[-1].index, -1)
-            self.assertEqual(baseline[1][-3][3][0], ("index", ("value", "int", 3999)))
+            self.assertEqual(
+                tuple_items(tuple_items(tuple_items(tuple_items(baseline)[1])[-3])[3])[0],
+                ("index", ("value", "int", 3999)),
+            )
         finally:
             sys.setprofile(previous)
             if enabled:
                 gc.enable()
 
-    def test_unchanged_writer_handles_unusual_metadata_numeric_equality(self):
+    def test_unchanged_writer_handles_unusual_metadata_numeric_equality(self) -> None:
         A = make_dataclass("Same", [("value", int)])
         B = make_dataclass("Same", [("value", int)])
-        A.__module__, B.__module__ = True, 1
+        setattr(A, "__module__", True)
+        setattr(B, "__module__", 1)
         self.assertTrue(matches(A(7), subject._phase_graph(B(7))))
 
-    def test_actual_tail_controls_records_compare_without_a_second_snapshot(self):
+    def test_actual_tail_controls_records_compare_without_a_second_snapshot(self) -> None:
         from config_tail_source import _controls_source
         from test_config_tail import TailControlsSource
 
         value = _controls_source(*TailControlsSource.fixture())
         baseline = subject._phase_graph(value)
-        calls = []
+        calls: list[bool] = []
 
-        def observe(frame, event, arg):
+        def observe(frame: FrameType, event: str, arg: object) -> None:
             if event == "call" and frame.f_code is subject._phase_graph.__code__:
                 calls.append(True)
 
@@ -430,15 +462,15 @@ class PhaseComparison(unittest.TestCase):
         try:
             sys.setprofile(observe)
             self.assertTrue(matches(value, baseline))
-            value["Config_writes"] = (1,)
+            fixture_fields(value)["Config_writes"] = (1,)
             self.assertFalse(matches(value, baseline))
         finally:
             sys.setprofile(previous)
         self.assertEqual(calls, [], "ordinary Tail model records should not rebuild a snapshot")
-        self.assertEqual(len(baseline[1]), 23508)
+        self.assertEqual(len(tuple_items(tuple_items(baseline)[1])), 23508)
 
     @staticmethod
-    def substantial_graph():
+    def substantial_graph() -> list[IndexedRecord]:
         @dataclass
         class Record:
             index: int
@@ -447,12 +479,12 @@ class PhaseComparison(unittest.TestCase):
         shared = [None, True, b"data"]
         return [Record(i, {"tag": i, "shared": shared, "values": [i, -i]}) for i in range(4000)]
 
-    def test_canonical_comparison_peak_allocation_is_under_half_the_writer(self):
+    def test_canonical_comparison_peak_allocation_is_under_half_the_writer(self) -> None:
         value = self.substantial_graph()
         baseline = subject._phase_graph(value)
-        self.assertEqual(len(baseline[1]), 12002)
+        self.assertEqual(len(tuple_items(tuple_items(baseline)[1])), 12002)
 
-        def peak(compare):
+        def peak(compare: Callable[[object, object], bool]) -> int:
             gc.collect()
             tracemalloc.start()
             try:

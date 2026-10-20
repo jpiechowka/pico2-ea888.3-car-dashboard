@@ -4,8 +4,19 @@ use crate::Peri;
 use crate::clocks::clk_sys_freq;
 use crate::gpio::Level;
 use crate::pio::{
-    Common, Config, Direction, Instance, LoadedProgram, PioPin, ShiftConfig, ShiftDirection, StateMachine,
+    Common, Config, Direction, Instance, LoadedProgram, Pin, PioPin, ShiftConfig, ShiftDirection, StateMachine,
 };
+
+fn presence_sample(word: u32) -> bool {
+    (word >> 24) != 0xff
+}
+
+fn pullup_counter(data: &[u8]) -> u32 {
+    assert!(data.last().is_some_and(|byte| byte & 0x80 == 0),
+        "strong pullup requires a nonempty command ending in a zero bit");
+    u32::try_from(data.len()).ok().and_then(|n| n.checked_mul(8))
+        .and_then(|n| n.checked_sub(1)).expect("OneWire command exceeds the bit counter")
+}
 
 /// This struct represents a onewire driver program
 pub struct PioOneWireProgram<'a, PIO: Instance> {
@@ -96,6 +107,7 @@ pub struct PioOneWire<'d, PIO: Instance, const SM: usize> {
     cfg: Config<'d, PIO>,
     reset_addr: u8,
     next_bit_addr: u8,
+    pin: Pin<'d, PIO>,
 }
 
 impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
@@ -124,8 +136,9 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         cfg.shift_in = shift_cfg;
         cfg.shift_out = shift_cfg;
 
-        let divider = (clk_sys_freq() / 1000000) as u16 * 6;
-        cfg.clock_divider = divider.into();
+        let divider = u64::from(clk_sys_freq()) * 6 * 256 / 1_000_000;
+        assert!((256..=0x100_0000).contains(&divider));
+        cfg.clock_divider = fixed::types::U24F8::from_bits(divider as u32);
 
         sm.set_config(&cfg);
         sm.clear_fifos();
@@ -140,51 +153,59 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
             cfg,
             reset_addr: program.reset_addr,
             next_bit_addr: program.next_bit_addr,
+            pin,
         }
     }
 
     /// Perform an initialization sequence, will return true if a presence pulse was detected from a device
     pub async fn reset(&mut self) -> bool {
+        self.restore_after_search();
+        let mut guard = BusGuard { bus: self, active: true };
         // The state machine immediately starts running when jumping to this address
         unsafe {
-            self.sm.exec_jmp(self.reset_addr);
+            guard.bus.sm.exec_jmp(guard.bus.reset_addr);
         }
 
-        let rx = self.sm.rx();
+        let rx = guard.bus.sm.rx();
         let mut found = false;
         for _ in 0..4 {
-            if rx.wait_pull().await != 0 {
+            if presence_sample(rx.wait_pull().await) {
                 found = true;
             }
         }
 
+        guard.active = false;
         found
     }
 
     /// Write bytes to the onewire bus
     pub async fn write_bytes(&mut self, data: &[u8]) {
+        let mut guard = BusGuard { bus: self, active: true };
         unsafe {
-            self.sm.set_enable(false);
-            self.sm.set_y(u32::MAX as u32);
-            self.sm.set_enable(true);
+            guard.bus.sm.set_enable(false);
+            guard.bus.sm.set_y(u32::MAX);
+            guard.bus.sm.set_enable(true);
         }
-        let (rx, tx) = self.sm.rx_tx();
+        let (rx, tx) = guard.bus.sm.rx_tx();
         for b in data {
             tx.wait_push(*b as u32).await;
 
             // Empty the buffer that is being filled with every write
             let _ = rx.wait_pull().await;
         }
+        guard.active = false;
     }
 
     /// Write bytes to the onewire bus, then apply a strong pullup
     pub async fn write_bytes_pullup(&mut self, data: &[u8], pullup_time: embassy_time::Duration) {
+        let counter = pullup_counter(data);
+        let mut guard = BusGuard { bus: self, active: true };
         unsafe {
-            self.sm.set_enable(false);
-            self.sm.set_y(data.len() as u32 * 8 - 1);
-            self.sm.set_enable(true);
+            guard.bus.sm.set_enable(false);
+            guard.bus.sm.set_y(counter);
+            guard.bus.sm.set_enable(true);
         };
-        let (rx, tx) = self.sm.rx_tx();
+        let (rx, tx) = guard.bus.sm.rx_tx();
         for b in data {
             tx.wait_push(*b as u32).await;
 
@@ -199,22 +220,25 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         tx.wait_push(0 as u32).await;
         // Wait until it's back at 0 low, open drain
         let _ = rx.wait_pull().await;
+        guard.active = false;
     }
 
     /// Read bytes from the onewire bus
     pub async fn read_bytes(&mut self, data: &mut [u8]) {
+        let mut guard = BusGuard { bus: self, active: true };
         unsafe {
-            self.sm.set_enable(false);
-            self.sm.set_y(u32::MAX as u32);
-            self.sm.set_enable(true);
+            guard.bus.sm.set_enable(false);
+            guard.bus.sm.set_y(u32::MAX);
+            guard.bus.sm.set_enable(true);
         };
-        let (rx, tx) = self.sm.rx_tx();
+        let (rx, tx) = guard.bus.sm.rx_tx();
         for b in data {
             // Write all 1's so that we can read what the device responds
             tx.wait_push(0xff).await;
 
             *b = (rx.wait_pull().await >> 24) as u8;
         }
+        guard.active = false;
     }
 
     async fn search(&mut self, state: &mut PioOneWireSearch) -> Option<u64> {
@@ -226,8 +250,8 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         self.write_bytes(&[0xF0]).await; // 0xF0 is the search rom command
 
         self.prepare_search();
-
-        let (rx, tx) = self.sm.rx_tx();
+        let guard = BusGuard { bus: self, active: true };
+        let (rx, tx) = guard.bus.sm.rx_tx();
 
         let mut value = 0;
         let mut last_zero = 0;
@@ -261,7 +285,6 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
                 (1, 0) => 1, // Only devices with a 1 bit in this position
                 _ => {
                     // If both are 1, it means there is no device active and there is no point in continuing
-                    self.restore_after_search();
                     state.finished = true;
                     return None;
                 }
@@ -273,8 +296,6 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
             tx.wait_push(push).await;
             let _ = rx.wait_pull().await; // Discard the result of the write action
         }
-
-        self.restore_after_search();
 
         state.last_discrepancy = last_zero;
         state.finished = last_zero == 0;
@@ -308,12 +329,51 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         // Clear the state in case we aborted prematurely with some bits still in the shift registers
         self.sm.clear_fifos();
         self.sm.restart();
+        self.sm.set_pin_dirs(Direction::In, &[&self.pin]);
+        self.sm.set_pins(Level::Low, &[&self.pin]);
 
         // set_config jumps to the wrong address so jump to the right one here
         unsafe {
+            self.sm.set_y(u32::MAX);
             self.sm.exec_jmp(self.next_bit_addr);
         }
         self.sm.set_enable(true);
+    }
+}
+
+// Cancellation discards any partial command/search and releases strong pullup.
+// A caller must start a new bus transaction with reset after cancellation.
+struct BusGuard<'a, 'd, PIO: Instance, const SM: usize> {
+    bus: &'a mut PioOneWire<'d, PIO, SM>,
+    active: bool,
+}
+
+impl<PIO: Instance, const SM: usize> Drop for BusGuard<'_, '_, PIO, SM> {
+    fn drop(&mut self) {
+        if self.active {
+            self.bus.restore_after_search();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn idle_high_is_not_presence_and_a_sampled_low_is_presence() {
+        assert!(!presence_sample(0xff00_0000));
+        assert!(presence_sample(0xfe00_0000));
+        assert!(presence_sample(0));
+    }
+
+    #[test]
+    fn pullup_requires_a_nonempty_command_ending_in_a_zero_bit() {
+        assert_eq!(pullup_counter(&[0x44]), 7);
+        assert_eq!(pullup_counter(&[0xcc, 0x48]), 15);
+        assert!(std::panic::catch_unwind(|| pullup_counter(&[])).is_err());
+        assert!(std::panic::catch_unwind(|| pullup_counter(&[0x80])).is_err());
     }
 }
 

@@ -6,6 +6,16 @@ enclosing producer must discharge every returned prerequisite before it can
 produce a qualified stack result. No policy is minted by this component.
 """
 
+from collections.abc import Mapping
+from typing import Literal, TypedDict
+from config_body_types import BodyRecord, InstructionMap, Callback
+from config_stack import DiagnosticObjects
+from config_regions import View
+from config_default import Writes
+from config_refill_children import OpaqueCopyResult
+from config_roots import WindowRecord
+from config_validator_contract import ValidatorObject
+from llvm_stack import Instruction
 from dataclasses import replace
 import re
 from config_default import _ingress
@@ -22,7 +32,78 @@ from config_validator_contract import CONTRACTS
 from validation import require
 
 
-def _object(objects, address, descriptor):
+class EarlyCarrier(TypedDict):
+    result: str
+    first: str
+    spill_initialized: bool
+
+
+class LateCarrier(TypedDict):
+    result: str
+    first: str
+    resets: tuple[int, int]
+
+
+class ErrorAlternative(TypedDict):
+    kind: Literal["Err"]
+    requires_completed_first_Some_tags: tuple[int, int]
+    opaque_payload: tuple[int, int]
+    writes: Writes
+    tag_after_payload: bool
+
+
+class SuccessAlternative(TypedDict):
+    kind: Literal["Ok"]
+    tag: int
+    requires_valid_visitor_stoichiometric_s0: bool
+    writes: Writes
+    inactive_or_padding: tuple[tuple[int, int], ...]
+    tag_after_payload: bool
+
+
+class NormalReturn(TypedDict):
+    restored_bytes: int
+    saved_return: int
+    return_to: int
+    final_sp: int
+    preserved: tuple[str, ...]
+    r0: str
+
+
+class SaveLayout(TypedDict):
+    vfp: tuple[int, int]
+    discarded_duplicate_r7: tuple[int, int]
+    registers: dict[str, int]
+
+
+class ValidatorResult(TypedDict):
+    proofs: dict[str, BodyRecord]
+    caller: BodyRecord
+    context: ValidatorContext
+    first: View
+    capture: View
+    spill: View
+    local_writes: Writes
+    error_copy: OpaqueCopyResult
+    none_failure: WindowRecord
+    early_carrier: EarlyCarrier
+    late_carrier: LateCarrier
+    alternatives: tuple[ErrorAlternative, SuccessAlternative]
+    normal_return: NormalReturn
+    save_layout: SaveLayout
+    requires_intact_complete_save_area_before_normal_restore: bool
+    requires_complete_typed_Config_and_exclusive_Result_owner: bool
+    requires_all_visitor_first_capture_spill_valid_save_and_ancestor_preservation: bool
+    requires_source_valid_errors_and_fuel_success_not_arbitrary_non2: bool
+    requires_early_child_and_all_late_predecessor_effects: bool
+    requires_whole_parent_computed_ingress_and_coverage: bool
+    requires_diagnostic_default_Formatter_sink_PANICKED_nonreturn_closure: bool
+    platform_requirements_unresolved: bool
+
+
+def _object(
+    objects: DiagnosticObjects, address: int, descriptor: ValidatorObject
+) -> tuple[Callback, ...]:
     kind = descriptor["kind"]
     if kind == "config":
         return entry_object(objects, address, dict(kind="entry_static", role=CONFIG))
@@ -33,14 +114,21 @@ def _object(objects, address, descriptor):
         )
     else:
         require(
-            kind == "first_literal" and address == descriptor["value"],
+            descriptor["kind"] == "first_literal" and address == descriptor["value"],
             "validator first-error constructor literal differs",
         )
     return ()
 
 
-def _match(objects, name, rows, label, start, bindings):
-    contract = dict(CONTRACTS[label])
+def _match(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    label: str,
+    start: int,
+    bindings: Mapping[str, int],
+) -> BodyRecord:
+    contract = CONTRACTS[label].copy()
     operations = []
     for offset, width, text in contract["instructions"]:
         for key, value in bindings.items():
@@ -52,7 +140,13 @@ def _match(objects, name, rows, label, start, bindings):
         for a, r in rows.items()
     }
 
-    def outline(objects, child, rows, role, ancestry):
+    def outline(
+        objects: DiagnosticObjects,
+        child: str,
+        rows: InstructionMap,
+        role: str,
+        ancestry: tuple[int, ...],
+    ) -> BodyRecord:
         require(
             role in ("@outline:first_tail", "@outline:validator_restore")
             and re.fullmatch(r"OUTLINED_FUNCTION_[0-9]+", child),
@@ -77,13 +171,20 @@ def _match(objects, name, rows, label, start, bindings):
     )
 
 
-def _target(row):
+def _target(row: Instruction) -> int:
     match = re.search(r"(?<![#\w])0x([0-9a-f]+)(?:\s|$)", row.operands.split("@", 1)[0])
-    require(match is not None, "unresolved validator direct transfer")
+    if match is None:
+        raise AssertionError("unresolved validator direct transfer")
     return int(match[1], 16)
 
 
-def validator_result_boundary(objects, name, rows, context, call):
+def validator_result_boundary(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    context: ValidatorContext,
+    call: int,
+) -> ValidatorResult:
     """Preserve supplied source context through actual before/after-call ABI.
 
     The first Some and success s0 are typed incoming visitor alternatives,

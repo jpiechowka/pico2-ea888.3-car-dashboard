@@ -5,13 +5,13 @@ use core::marker::PhantomData;
 use embassy_futures::join::join;
 use embassy_hal_internal::Peri;
 use embedded_hal_02::spi::{Phase, Polarity};
-use fixed::traits::ToFixed;
 use fixed::types::extra::U8;
 
-use crate::clocks::clk_sys_freq;
 use crate::gpio::Level;
 use crate::pio::{Common, Direction, Instance, LoadedProgram, Pin, PioPin, ShiftDirection, StateMachine};
 use crate::spi::{Async, Blocking, Config, Mode};
+use crate::pio_programs::clock_divider::calculate_pio_clock_divider;
+use crate::pio_programs::wait_tx_idle;
 use crate::{dma, interrupt};
 
 /// This struct represents an SPI program loaded into pio instruction memory.
@@ -222,6 +222,8 @@ impl<'d, PIO: Instance, const SM: usize, M: Mode> Spi<'d, PIO, SM, M> {
 
     /// Block execution until SPI is done.
     pub fn flush(&mut self) -> Result<(), Error> {
+        // Discard a sticky stall from before the current transfer.
+        self.sm.tx().stalled();
         // Wait for all words in the FIFO to have been pulled by the SM
         while !self.sm.tx().empty() {}
 
@@ -284,9 +286,7 @@ impl<'d, PIO: Instance, const SM: usize, M: Mode> Spi<'d, PIO, SM, M> {
 fn calculate_clock_divider(frequency_hz: u32) -> fixed::FixedU32<U8> {
     // we multiply by 4 since each clock period is equal to 4 instructions
 
-    let sys_freq = clk_sys_freq().to_fixed::<fixed::FixedU64<U8>>();
-    let target_freq = (frequency_hz * 4).to_fixed::<fixed::FixedU64<U8>>();
-    (sys_freq / target_freq).to_fixed()
+    calculate_pio_clock_divider(frequency_hz.checked_mul(4).expect("SPI clock overflow"))
 }
 
 impl<'d, PIO: Instance, const SM: usize> Spi<'d, PIO, SM, Blocking> {
@@ -326,34 +326,12 @@ impl<'d, PIO: Instance, const SM: usize> Spi<'d, PIO, SM, Async> {
 
     /// Read data from SPI using DMA.
     pub async fn read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
-        let (rx, tx) = self.sm.rx_tx();
-
-        let len = buffer.len();
-
-        let mut rx_ch = self.rx_dma.as_mut().unwrap().reborrow();
-        let rx_transfer = rx.dma_pull(&mut rx_ch, buffer, false);
-
-        let mut tx_ch = self.tx_dma.as_mut().unwrap().reborrow();
-        let tx_transfer = tx.dma_push_zeros::<u8>(&mut tx_ch, len);
-
-        join(tx_transfer, rx_transfer).await;
-
-        Ok(())
+        self.transfer_inner(buffer, &[]).await
     }
 
     /// Write data to SPI using DMA.
     pub async fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
-        let (rx, tx) = self.sm.rx_tx();
-
-        let mut rx_ch = self.rx_dma.as_mut().unwrap().reborrow();
-        let rx_transfer = rx.dma_pull_discard::<u8>(&mut rx_ch, buffer.len());
-
-        let mut tx_ch = self.tx_dma.as_mut().unwrap().reborrow();
-        let tx_transfer = tx.dma_push(&mut tx_ch, buffer, false);
-
-        join(tx_transfer, rx_transfer).await;
-
-        Ok(())
+        self.transfer_inner(&mut [], buffer).await
     }
 
     /// Transfer data to SPI using DMA.
@@ -363,37 +341,75 @@ impl<'d, PIO: Instance, const SM: usize> Spi<'d, PIO, SM, Async> {
 
     /// Transfer data in place to SPI using DMA.
     pub async fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Error> {
-        self.transfer_inner(words, words).await
+        let buffer: *mut [u8] = words;
+        self.transfer_inner(buffer, buffer.cast_const()).await
     }
 
     async fn transfer_inner(&mut self, rx_buffer: *mut [u8], tx_buffer: *const [u8]) -> Result<(), Error> {
-        let (rx, tx) = self.sm.rx_tx();
+        let rx_ptr = self.sm.rx_fifo_ptr().cast::<u8>();
+        let tx_ptr = self.sm.tx_fifo_ptr().cast::<u8>();
+        let rx_treq = self.sm.rx_treq();
+        let tx_treq = self.sm.tx_treq();
+        let mut guard = TransferGuard {
+            sm: &mut self.sm,
+            clk_pin: &self.clk_pin,
+            origin: self.program.as_ref().unwrap().prg.origin,
+            active: true,
+        };
 
         let mut rx_ch = self.rx_dma.as_mut().unwrap().reborrow();
         let rx_transfer = async {
-            rx.dma_pull(&mut rx_ch, unsafe { &mut *rx_buffer }, false).await;
+            // Raw DMA pointers preserve in-place aliasing: no overlapping Rust
+            // references exist. RX cannot overwrite byte N before TX clocked it.
+            if !rx_buffer.is_empty() {
+                unsafe { rx_ch.read(rx_ptr, rx_buffer, rx_treq, false) }.await;
+            }
 
             if tx_buffer.len() > rx_buffer.len() {
                 let read_bytes_len = tx_buffer.len() - rx_buffer.len();
 
-                rx.dma_pull_discard::<u8>(&mut rx_ch, read_bytes_len).await;
+                unsafe { rx_ch.read_discard(rx_ptr, read_bytes_len, rx_treq) }.await;
             }
         };
 
         let mut tx_ch = self.tx_dma.as_mut().unwrap().reborrow();
         let tx_transfer = async {
-            tx.dma_push(&mut tx_ch, unsafe { &*tx_buffer }, false).await;
+            if !tx_buffer.is_empty() {
+                unsafe { tx_ch.write(tx_buffer, tx_ptr, tx_treq, false) }.await;
+            }
 
             if rx_buffer.len() > tx_buffer.len() {
                 let write_bytes_len = rx_buffer.len() - tx_buffer.len();
 
-                tx.dma_push_zeros::<u8>(&mut tx_ch, write_bytes_len).await;
+                unsafe { tx_ch.write_zeros(write_bytes_len, tx_ptr, tx_treq) }.await;
             }
         };
 
         join(tx_transfer, rx_transfer).await;
-
+        wait_tx_idle(guard.sm).await;
+        guard.active = false;
         Ok(())
+    }
+}
+
+// Declared before both DMA futures so their Drop stops DMA before FIFO recovery.
+struct TransferGuard<'a, 'd, PIO: Instance, const SM: usize> {
+    sm: &'a mut StateMachine<'d, PIO, SM>,
+    clk_pin: &'a Pin<'d, PIO>,
+    origin: u8,
+    active: bool,
+}
+
+impl<PIO: Instance, const SM: usize> Drop for TransferGuard<'_, '_, PIO, SM> {
+    fn drop(&mut self) {
+        if self.active {
+            self.sm.set_enable(false);
+            self.sm.clear_fifos();
+            self.sm.restart();
+            self.sm.set_pins(Level::Low, &[self.clk_pin]);
+            unsafe { self.sm.exec_jmp(self.origin) };
+            self.sm.set_enable(true);
+        }
     }
 }
 
@@ -427,7 +443,7 @@ impl<'d, PIO: Instance, const SM: usize, M: Mode> embedded_hal_1::spi::ErrorType
 
 impl<'d, PIO: Instance, const SM: usize, M: Mode> embedded_hal_1::spi::SpiBus<u8> for Spi<'d, PIO, SM, M> {
     fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+        self.flush()
     }
 
     fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
@@ -449,6 +465,7 @@ impl<'d, PIO: Instance, const SM: usize, M: Mode> embedded_hal_1::spi::SpiBus<u8
 
 impl<'d, PIO: Instance, const SM: usize> embedded_hal_async::spi::SpiBus<u8> for Spi<'d, PIO, SM, Async> {
     async fn flush(&mut self) -> Result<(), Self::Error> {
+        wait_tx_idle(&mut self.sm).await;
         Ok(())
     }
 

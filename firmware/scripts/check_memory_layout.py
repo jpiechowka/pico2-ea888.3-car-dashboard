@@ -8,21 +8,39 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from elf_image import ElfImage
+from typing import TYPE_CHECKING, Literal, TypedDict, overload
+from collections.abc import Sequence
+from elf_image import ElfImage, InspectableImage, MappedImage
 from validation import require
-from config_build_source import inspect_source_context, load_source_context
+from config_build_source import SourceContext, inspect_source_context, load_source_context
 from check_flash_lockout import check as check_flash_lockout
 from check_stack_budget import FrameAdmission, check as check_stack_budget
-from config_platform import current_image_policy, read_stack_result, _bounded_record
+from config_platform import StackRecord, current_image_policy, read_stack_result, _bounded_record
+from script_values import object_fields, array_items
 
 MIN_CORE0_HEADROOM = 65536
 
+if TYPE_CHECKING:
+    from practical_image import PracticalRecord
 
-def check_headroom(headroom):
+
+class FullImageRecord(TypedDict):
+    schema: int
+    gate: str
+    status: str
+    platform_policy: str
+    hardware_qualified: bool
+    elf_sha256: str
+    static_ram_bytes: int
+    headroom: int
+    stack: StackRecord
+
+
+def check_headroom(headroom: int) -> None:
     require(headroom >= MIN_CORE0_HEADROOM, "less than 64 KiB core 0 stack headroom")
 
 
-def geometry(elf):
+def geometry(elf: InspectableImage) -> tuple[int, int]:
     """Current linked RAM geometry, shared with the strict artifact reader."""
     sections, named, symbols = elf.sections, elf.named, elf.symbols
 
@@ -45,8 +63,16 @@ def geometry(elf):
     return aligned_end - ram_start, ram_end - aligned_end
 
 
-def _qualified_image(stack, elf, static_ram, headroom, expected_eav=None, source_context=None):
-    require(source_context is not None, "schema2 image requires explicit source context")
+def _qualified_image(
+    stack: object,
+    elf: MappedImage,
+    static_ram: int,
+    headroom: int,
+    expected_eav: bytes | None = None,
+    source_context: object = None,
+) -> FullImageRecord:
+    if source_context is None:
+        raise AssertionError("schema2 image requires explicit source context")
     inspect_source_context(source_context, elf)
     require(
         not isinstance(stack, FrameAdmission),
@@ -54,40 +80,39 @@ def _qualified_image(stack, elf, static_ram, headroom, expected_eav=None, source
         "named practical stack bounds are not an execution proof. "
         "Use --gate practical for production image checks; see docs/performance/memory-layout.md",
     )
-    require(
-        isinstance(stack, dict)
-        and isinstance(stack.get("policies"), list)
-        and len(stack["policies"]) == 1,
-        "full image gate has no retained stack policy",
+    fields = object_fields(stack, "full image gate has no retained stack policy")
+    policies = array_items(fields.get("policies"), "full image gate has no retained stack policy")
+    require(len(policies) == 1, "full image gate has no retained stack policy")
+    policy = current_image_policy(policies[0], elf, expected_eav)
+    checked = read_stack_result(fields, policy, headroom, source_context=source_context, elf=elf)
+    result: FullImageRecord = dict(
+        schema=2,
+        gate="full_memory_layout",
+        status="CONDITIONAL_IMAGE_PASS",
+        platform_policy="assumed_external",
+        hardware_qualified=False,
+        elf_sha256=hashlib.sha256(elf.data).hexdigest(),
+        static_ram_bytes=static_ram,
+        headroom=headroom,
+        stack=checked,
     )
-    policy = current_image_policy(stack["policies"][0], elf, expected_eav)
-    checked = read_stack_result(stack, policy, headroom, source_context=source_context, elf=elf)
-    return _bounded_record(
-        dict(
-            schema=2,
-            gate="full_memory_layout",
-            status="CONDITIONAL_IMAGE_PASS",
-            platform_policy="assumed_external",
-            hardware_qualified=False,
-            elf_sha256=hashlib.sha256(elf.data).hexdigest(),
-            static_ram_bytes=static_ram,
-            headroom=headroom,
-            stack=checked,
-        )
-    )
+    return _bounded_record(result)
 
 
-def read_image_result(record, elf, expected_eav=None, source_context=None):
+def read_image_result(
+    record: object,
+    elf: MappedImage,
+    expected_eav: bytes | None = None,
+    source_context: object = None,
+) -> FullImageRecord:
     """Validate the unchanged full-gate image record.
 
     Schema2 requires the explicit recorded source pairing and nested execution1
     receipt. Image JSON alone is not source-history or ownership evidence.
     The separate access-policy reader retains its source-independent contract.
     """
-    require(
-        isinstance(record, dict) and isinstance(record.get("stack"), dict),
-        "missing full image gate result",
-    )
+    record = object_fields(record, "missing full image gate result")
+    require(isinstance(record.get("stack"), dict), "missing full image gate result")
     static_ram, headroom = geometry(elf)
     wanted = _qualified_image(
         record["stack"], elf, static_ram, headroom, expected_eav, source_context
@@ -104,7 +129,7 @@ def read_image_result(record, elf, expected_eav=None, source_context=None):
     return wanted
 
 
-def check_boundaries(elf):
+def check_boundaries(elf: InspectableImage) -> None:
     named, symbols = elf.named, elf.symbols
     ram_start, ram_end = 0x20000000, 0x20080000
     flash_start, journal_start = 0x10000000, 0x101FE000
@@ -133,7 +158,7 @@ def check_boundaries(elf):
     check_flash_lockout(elf)
 
 
-def check(path, source_context=None):
+def check(path: str | Path, source_context: object = None) -> FullImageRecord:
     elf = ElfImage(path)
     require(source_context is not None, "schema2 image requires explicit source context")
     inspect_source_context(source_context, elf)
@@ -149,9 +174,33 @@ def check(path, source_context=None):
     return result
 
 
+@overload
 def read_selected_image_result(
-    record, elf, expected_eav=None, source_context=None, gate="practical"
-):
+    record: object,
+    elf: MappedImage,
+    expected_eav: bytes | None = None,
+    source_context: SourceContext | None = None,
+    gate: Literal["practical"] = "practical",
+) -> "PracticalRecord": ...
+
+
+@overload
+def read_selected_image_result(
+    record: object,
+    elf: MappedImage,
+    expected_eav: bytes | None = None,
+    source_context: SourceContext | None = None,
+    gate: str = "practical",
+) -> "PracticalRecord | FullImageRecord": ...
+
+
+def read_selected_image_result(
+    record: object,
+    elf: MappedImage,
+    expected_eav: bytes | None = None,
+    source_context: SourceContext | None = None,
+    gate: str = "practical",
+) -> "PracticalRecord | FullImageRecord":
     """Select an explicit contract; never fall back after a failed gate."""
     require(gate in ("practical", "experimental-full"), "unknown image gate")
     if gate == "experimental-full":
@@ -161,7 +210,14 @@ def read_selected_image_result(
     return read_result(record, elf, expected_eav, source_context)
 
 
-def main(argv=None):
+class ImageOptions(argparse.Namespace):
+    elf: str
+    result_json: Path | None
+    source_context: Path | None
+    gate: str
+
+
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf")
     parser.add_argument("--result-json", type=Path)
@@ -176,7 +232,7 @@ def main(argv=None):
         default="practical",
         help="practical static checks (default), or unfinished complete instruction proof",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=ImageOptions())
     if args.result_json is not None:
         require(not args.result_json.exists(), "image result path already exists")
     source_context = (
@@ -184,6 +240,7 @@ def main(argv=None):
         if args.source_context is not None
         else None
     )
+    result: PracticalRecord | FullImageRecord
     if args.gate == "practical":
         from practical_image import check as practical_check
 

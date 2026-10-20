@@ -5,11 +5,27 @@ The actual producer must also join source, chronological pointer lifetimes,
 child preservation, guarded partial writes and reached access requirements.
 """
 
-from config_regions import Storage, borrow, require_writes, require_disjoint
+from collections.abc import Sequence
+from typing import TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_regions import Storage, View, borrow, require_writes, require_disjoint
 from config_decode_effects import _object
 from config_abstract import SequenceInterface
 from config_source_contracts import GRAMMARS
 from validation import require
+
+
+class ParentEnvelopes(TypedDict):
+    stores: int
+    local_stores: int
+    Config_stores: int
+    static_write_bytes: int
+    writes: tuple[tuple[int, View, str], ...]
+    pointer_epochs: tuple[tuple[int, int, int, int], ...]
+    unaligned_parent_requirement: tuple[int, int, int]
+    confers_active_state: bool
+    requires_actual_source_control_pointer_epochs_and_child_effects: bool
 
 
 # (site, owner coordinate, offset, physical bytes, authored category).
@@ -109,7 +125,14 @@ POINTER_EPOCHS = (
 )
 
 
-def _parent_envelopes(objects, rows, parents, sequence, owner, protected):
+def _parent_envelopes(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    sequence: SequenceInterface,
+    owner: Storage,
+    protected: Sequence[Storage],
+) -> ParentEnvelopes:
     from config_decoded_sources import _parents
 
     require(
@@ -161,8 +184,8 @@ def _parent_envelopes(objects, rows, parents, sequence, owner, protected):
         and actual == {v[0] for v in PARENT_WRITES},
         "Sources parent store partition is incomplete or duplicated",
     )
-    guards = list(protected)
-    guards.extend(
+    guard_list = list(protected)
+    guard_list.extend(
         (
             _object(sequence.decoder.header, "stable parent D"),
             _object(sequence.decoder.payload, "immutable parent input"),
@@ -170,16 +193,16 @@ def _parent_envelopes(objects, rows, parents, sequence, owner, protected):
             _object(borrow(frame, 1500, 8, phase), "stable parent Source Q"),
         )
     )
-    for g in tuple(guards):
+    for g in tuple(guard_list):
         for space in ("address", frame.space):
             if g.space != space and not any(
                 v.space == space and v.start <= g.start and g.start + g.extent <= v.start + v.extent
-                for v in guards
+                for v in guard_list
             ):
-                guards.append(
+                guard_list.append(
                     Storage(space, "physical " + g.identity, g.start, g.extent, 1, phase, False)
                 )
-    guards = tuple(guards)
+    guards = tuple(guard_list)
     writes = []
     for site, coordinate, offset, size, category in PARENT_WRITES:
         require(coordinate in ("V", "B"), "unreviewed Sources write coordinate")

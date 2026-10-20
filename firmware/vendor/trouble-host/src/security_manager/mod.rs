@@ -11,7 +11,7 @@ use core::future::{poll_fn, Future};
 use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
-use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
+use bt_hci::event::{EncryptionChangeV1, EncryptionChangeV2, EncryptionKeyRefreshComplete, EventKind, EventPacket};
 #[cfg(feature = "central")]
 use bt_hci::param::BdAddr;
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
@@ -773,10 +773,12 @@ impl<'d> SecurityManager<'d> {
 
     /// Generate a local resolvable private address when privacy is enabled.
     #[cfg(feature = "central")]
-    pub(crate) fn generate_local_rpa(&self) -> Option<BdAddr> {
+    pub(crate) fn generate_local_rpa(&self) -> Result<Option<BdAddr>, Error> {
         let mut inner = self.inner.borrow_mut();
-        let irk = inner.state.local_irk?;
-        Some(BdAddr::new(irk.generate_resolvable_address(&mut inner.rng)))
+        let Some(irk) = inner.state.local_irk else {
+            return Ok(None);
+        };
+        Ok(Some(BdAddr::new(irk.generate_resolvable_address(&mut inner.rng)?)))
     }
 
     /// Add a bonded device
@@ -1026,11 +1028,16 @@ impl<'d> SecurityManager<'d> {
         event: EventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
-        // Extract (handle, status, encrypted) from either encryption event type
+        // Extract (handle, status, encrypted) from each enabled event version.
         let encryption_event = match event.kind {
             EventKind::EncryptionChangeV1 => {
                 let e = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
                 Some((e.handle, e.status, e.enabled != EncryptionEnabledLevel::Off))
+            }
+            EventKind::EncryptionChangeV2 => {
+                let e = EncryptionChangeV2::from_hci_bytes_complete(event.data)?;
+                // Core Vol 4 Part E 7.7.8: Encryption_Key_Size is ignored on LE.
+                Some((e.handle, e.status, e.encryption_enabled != EncryptionEnabledLevel::Off))
             }
             EventKind::EncryptionKeyRefreshComplete => {
                 let e = EncryptionKeyRefreshComplete::from_hci_bytes_complete(event.data)?;
@@ -1425,6 +1432,8 @@ mod tests {
             (EventKind::EncryptionKeyRefreshComplete, &[0x05, 0x05, 0x00][..]),
             (EventKind::EncryptionChangeV1, &[0x05, 0x05, 0x00, 0x00][..]),
             (EventKind::EncryptionChangeV1, &[0x00, 0x05, 0x00, 0x00][..]),
+            (EventKind::EncryptionChangeV2, &[0x05, 0x05, 0x00, 0x00, 0][..]),
+            (EventKind::EncryptionChangeV2, &[0x00, 0x05, 0x00, 0x00, 0][..]),
         ] {
             let mgr = setup_manager();
             let handle = ConnHandle::new(5);

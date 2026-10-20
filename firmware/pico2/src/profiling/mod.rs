@@ -6,7 +6,7 @@ mod render_work;
 pub mod target_bench;
 #[cfg(feature = "frame-trace")]
 pub mod telemetry_export;
-pub use cpu_cycles::{calc_util_percent, elapsed, init, read};
+pub use cpu_cycles::{elapsed, init, read};
 pub use log_buffer::{LOGS, LogLevel, push_log};
 pub use memory::{FRAMEBUFFER_SIZE, MemoryStats};
 pub use render_work::RenderWork;

@@ -4,13 +4,87 @@ Fixtures retain their supplied machine/source attribution. The complete
 producer, ownership and final resource result remain separate gates.
 """
 
+from __future__ import annotations
+
 import unittest
+from collections.abc import Callable, Sized, Mapping
 from dataclasses import replace
+from typing import TYPE_CHECKING, ClassVar, Never, TypeAlias, TypedDict
+from types import FrameType, FunctionType
+from weakref import ReferenceType
+from test_phase_comparison import tuple_items
+
+from config_abstract import SequenceInterface
+from config_body_types import BodyRecord, InstructionMap
+from config_build_source import SourceContext
+from config_regions import Storage, View
+from config_source_children import SourceCoverageRecord
+from config_source_access import SourceFamily
+from config_stack import DiagnosticObjects
+from config_finite_returns import ReturnNode
+from config_platform import Dependency
+from image_test_support import (
+    DiagnosticFixture,
+    fixture_fields,
+    fixture_items,
+    required_fixture,
+    dynamic_call,
+    fixture_record,
+    fixture_records,
+)
+from llvm_stack import Instruction
+from test_config_stack import LoaderFixture, decoded_fixture
+
+if TYPE_CHECKING:
+    from config_decoded_sources import (
+        _SourcesState,
+        SourceArray,
+        ArrayEffects,
+        RemainingAggregates,
+        _SourcePhasesState,
+        SourcesDescription,
+    )
+    from config_source_control import CarrierReturns, _SourceStructuralControl, _SourceActiveControl
+    from config_source_uses import _SourceUse, _SourceAccessBridge
+    from config_source_parent_effects import ParentEnvelopes
+    from config_decoded_widgets import _WidgetsState
+
+SourceFixture: TypeAlias = tuple[
+    DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture
+]
+SourceAggregateArgs: TypeAlias = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    SourceCoverageRecord,
+    SequenceInterface,
+    View,
+    Storage,
+    tuple[Storage, ...],
+]
+SourceRemainingArgs: TypeAlias = tuple[
+    DiagnosticObjects,
+    InstructionMap,
+    tuple[BodyRecord, ...],
+    SequenceInterface,
+    Storage,
+    tuple[Storage, ...],
+]
+SourceReturnFixture: TypeAlias = tuple[
+    dict[int, Instruction],
+    tuple[BodyRecord, ...],
+    dict[tuple[int, str], BodyRecord],
+    int,
+    Callable[[InstructionMap], tuple[ReturnNode, ...]],
+]
 
 
 class SourcePrivateHandoff(unittest.TestCase):
+    state: ClassVar[_WidgetsState]
+    objects: ClassVar[DiagnosticObjects]
+    rows: ClassVar[InstructionMap]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         from test_config_stack import ActualDecodedWidgets
         from config_decoded_widgets import _first_boot_decoded_widgets_state
 
@@ -19,7 +93,7 @@ class SourcePrivateHandoff(unittest.TestCase):
         cls.objects = cls.state.family_bridge.objects
         cls.rows = cls.state.family_bridge.rows
 
-    def test_actual_zero_and_nonempty_Widget_exits_retain_carriers_and_prefix(self):
+    def test_actual_zero_and_nonempty_Widget_exits_retain_carriers_and_prefix(self) -> None:
         from config_source_handoff import _source_entries
 
         entries = _source_entries(self.objects, self.rows, self.state)
@@ -88,7 +162,7 @@ class SourcePrivateHandoff(unittest.TestCase):
                 )
             self.assertFalse(e.completed_Source_issued)
 
-    def test_copied_description_or_reordered_commit_is_not_a_selected_exit(self):
+    def test_copied_description_or_reordered_commit_is_not_a_selected_exit(self) -> None:
         from config_source_handoff import _source_entries
         from config_abstract import Span
 
@@ -109,7 +183,7 @@ class SourcePrivateHandoff(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "source/commit"):
             _source_entries(self.objects, self.rows, changed)
 
-    def test_current_carrier_instruction_and_dependent_metadata_cannot_drift(self):
+    def test_current_carrier_instruction_and_dependent_metadata_cannot_drift(self) -> None:
         from config_source_handoff import _source_entries
 
         state = self.state
@@ -143,10 +217,14 @@ class SourcePrivateHandoff(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "Sources predecessor"):
             _source_entries(self.objects, self.rows, replace(state, exits=(empty,)))
 
-    def test_removed_actual_child_returns_cannot_leave_a_live_Source_handoff(self):
+    def test_removed_actual_child_returns_cannot_leave_a_live_Source_handoff(self) -> None:
         from config_source_handoff import _source_entries
         import copy
 
+        from config_decoded_widgets import _WidgetActiveControl
+
+        if not isinstance(self.state.control, _WidgetActiveControl):
+            self.fail("expected actual widget control")
         changed = replace(self.state.control, record=copy.deepcopy(self.state.control.record))
         changed.record["nested_returns"] = ()
         # The selected frontier/receiver still match. They cannot replace the
@@ -157,7 +235,7 @@ class SourcePrivateHandoff(unittest.TestCase):
 
 class SourceLiteralBodies(unittest.TestCase):
     @staticmethod
-    def fixture(delta=0):
+    def fixture(delta: int = 0) -> SourceFixture:
         import json
         from pathlib import Path
         from test_config_stack import (
@@ -172,16 +250,18 @@ class SourceLiteralBodies(unittest.TestCase):
 
             objects, rows, source, item = ActualDecodedU16Prefix().fixture(delta)
             for filename in ("config-decoded-views.json", "config-decoded-widgets.json"):
-                extra = json.loads((Path(__file__).parent / "fixtures" / filename).read_bytes())
+                extra = decoded_fixture(
+                    json.loads((Path(__file__).parent / "fixtures" / filename).read_bytes())
+                )
                 for at, encoded in extra["segments"] + extra.get("readonly", []):
                     StartupConfigurationCopy.put(objects, at, bytes.fromhex(encoded))
                 for f in extra["functions"]:
                     for name, address, extent, index in f["aliases"]:
                         objects.elf.functions[name] = (address, extent, index)
                     objects.elf.symbol_entries = list(
-                        dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in f["symbols"]])
+                        dict.fromkeys(objects.elf.symbol_entries + f["symbols"])
                     )
-                    objects.elf.mapping_symbols.extend(tuple(v) for v in f["mapping"])
+                    objects.elf.mapping_symbols.extend(f["mapping"])
                     if f["frame"] is not None:
                         objects.sizes[f["address"]] = f["frame"]
                 for r in extra["records"]:
@@ -196,8 +276,10 @@ class SourceLiteralBodies(unittest.TestCase):
                 )
         else:
             objects, rows, source, item = ActualDecodedWidgets.fixture()
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures/config-decoded-sources.json").read_bytes()
+        extra = decoded_fixture(
+            json.loads(
+                (Path(__file__).parent / "fixtures/config-decoded-sources.json").read_bytes()
+            )
         )
         for at, encoded in extra["segments"]:
             StartupConfigurationCopy.put(objects, at, bytes.fromhex(encoded))
@@ -205,10 +287,13 @@ class SourceLiteralBodies(unittest.TestCase):
             for name, address, extent, index in f["aliases"]:
                 objects.elf.functions[name] = (address, extent, index)
             objects.elf.symbol_entries = list(
-                dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in f["symbols"]])
+                dict.fromkeys(objects.elf.symbol_entries + f["symbols"])
             )
-            objects.elf.mapping_symbols.extend(tuple(v) for v in f["mapping"])
-            objects.sizes[f["address"]] = f["frame"]
+            objects.elf.mapping_symbols.extend(f["mapping"])
+            frame = f["frame"]
+            if frame is None:
+                raise AssertionError("Source fixture function requires a stack frame")
+            objects.sizes[f["address"]] = frame
         objects.elf.mapping_symbols = list(dict.fromkeys(objects.elf.mapping_symbols))
         for r in extra["records"]:
             rows[r["address"]] = Instruction(
@@ -221,7 +306,9 @@ class SourceLiteralBodies(unittest.TestCase):
                 )
         return objects, rows, SameBLoaderBoundary.rebound(objects, source), item
 
-    def test_complete_current_Source_retains_guarded_six_targets_and_saved_return_tail(self):
+    def test_complete_current_Source_retains_guarded_six_targets_and_saved_return_tail(
+        self,
+    ) -> None:
         from config_source_children import source_coverage, CHANNEL_SOURCE
         from config_stack import canonical_symbol
 
@@ -239,7 +326,7 @@ class SourceLiteralBodies(unittest.TestCase):
         self.assertTrue(any(e[0] == 364 and e[1] == "b.w" for e in proof["ordinary_edges"]))
         self.assertNotIn("completed_Source", proof)
 
-    def test_coherent_table_byte_and_BL_to_original_return_outline_reject(self):
+    def test_coherent_table_byte_and_BL_to_original_return_outline_reject(self) -> None:
         from config_source_children import source_body, CHANNEL_SOURCE
         from config_stack import canonical_symbol
         from test_config_stack import StartupConfigurationCopy
@@ -260,7 +347,7 @@ class SourceLiteralBodies(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 source_body(objects, name, rows)
 
-    def test_full_Source_activation_restores_original_PC_for_all_six_Access_arms(self):
+    def test_full_Source_activation_restores_original_PC_for_all_six_Access_arms(self) -> None:
         import config_source_children as sources
         from config_source_contracts import GRAMMARS
         from config_headers import VISITOR
@@ -271,7 +358,7 @@ class SourceLiteralBodies(unittest.TestCase):
         objects, rows, _, _ = self.fixture()
         V = 0x1001C654
 
-        def none(*args):
+        def none(*args: object) -> Never:
             self.fail("unexpected Source entry object")
 
         parent = _literal_body(
@@ -304,14 +391,18 @@ class SourceLiteralBodies(unittest.TestCase):
         # mutation above. No alternative target vector enters this solver.
         key = (0x1001B500, sources.CHANNEL_SOURCE)
         wrong = dict(children)
-        wrong[key] = dict(children[key], access_targets=children[key]["access_targets"][:-1])
+        wrong[key] = children[key].copy()
+        targets = fixture_fields(children[key])["access_targets"]
+        if not isinstance(targets, tuple):
+            self.fail("Source return fixture lost its access targets")
+        fixture_fields(wrong[key])["access_targets"] = targets[:-1]
         with self.assertRaisesRegex(AssertionError, "guarded Source Access"):
             _closed_child_returns(rows, (parent,), wrong, sp, sources.source_return_profiles(), ())
 
 
 class SourceRegisterReturns(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> SourceReturnFixture:
         from config_decoded_sources import _parents
         from config_source_children import source_children, source_return_profiles
         from config_finite_returns import _closed_child_returns
@@ -322,7 +413,7 @@ class SourceRegisterReturns(unittest.TestCase):
         children = source_children(objects, rows, parents)
         sp = 0x20070000
 
-        def evaluate(current):
+        def evaluate(current: InstructionMap) -> tuple[ReturnNode, ...]:
             return _closed_child_returns(
                 current,
                 parents,
@@ -334,7 +425,7 @@ class SourceRegisterReturns(unittest.TestCase):
 
         return rows, parents, children, sp, evaluate
 
-    def test_actual_57_calls_restore_high_carriers_but_outline338_clobbers_r4(self):
+    def test_actual_57_calls_restore_high_carriers_but_outline338_clobbers_r4(self) -> None:
         rows, parents, children, sp, evaluate = self.fixture()
         nodes = evaluate(rows)
         expected = tuple("r" + str(i) for i in range(4, 12))
@@ -365,7 +456,7 @@ class SourceRegisterReturns(unittest.TestCase):
         self.assertTrue(memcpy)
         self.assertTrue(all(n["architectural_LR_after"] != n["return_PC"] for n in memcpy))
 
-    def test_changed_unsaved_high_definition_changes_the_actual_return_transfer(self):
+    def test_changed_unsaved_high_definition_changes_the_actual_return_transfer(self) -> None:
         # Private transfer injection, not a coherent current-body mutant.
         # Complete literal matching remains a separate public prerequisite.
         rows, parents, children, sp, evaluate = self.fixture()
@@ -383,7 +474,7 @@ class SourceRegisterReturns(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "actual live high GPR"):
             _source_carrier_returns(changed, parents, children, nodes, sp)
 
-    def test_expanded_Source_graph_checks_high_FP_and_exact_57_return_members(self):
+    def test_expanded_Source_graph_checks_high_FP_and_exact_57_return_members(self) -> None:
         from config_source_control import _source_carrier_returns
 
         rows, parents, children, sp, evaluate = self.fixture()
@@ -404,7 +495,7 @@ class SourceRegisterReturns(unittest.TestCase):
 
 
 class SourceParentFamilies(unittest.TestCase):
-    def test_complete_parent_windows_bind_same_Config_and_all_eight_Source_calls(self):
+    def test_complete_parent_windows_bind_same_Config_and_all_eight_Source_calls(self) -> None:
         from config_decoded_sources import _parents
         from config_source_children import CHANNEL_SOURCE, source_children
 
@@ -432,7 +523,7 @@ class SourceParentFamilies(unittest.TestCase):
         self.assertIn((0x1001B500, CHANNEL_SOURCE), children)
         self.assertTrue(any(p.get("semantic_role") == "seq_f32" for p in children.values()))
 
-    def test_coherent_parent_Config_pool_change_is_not_another_private_allocation(self):
+    def test_coherent_parent_Config_pool_change_is_not_another_private_allocation(self) -> None:
         from config_decoded_sources import _parents
         from test_config_stack import StartupConfigurationCopy
         import struct
@@ -446,7 +537,7 @@ class SourceParentFamilies(unittest.TestCase):
 
 class SourceAggregateInterface(unittest.TestCase):
     @staticmethod
-    def fixture(count=8, extent=96):
+    def fixture(count: int = 8, extent: int = 96) -> SourceAggregateArgs:
         from config_source_children import source_coverage, CHANNEL_SOURCE
         from config_widget_children import _name
         from config_regions import Storage, borrow
@@ -480,13 +571,15 @@ class SourceAggregateInterface(unittest.TestCase):
         proof = source_coverage(objects, _name(objects, CHANNEL_SOURCE), rows)
         return objects, rows, proof, sequence, output, frame, protected
 
-    def test_grouped_Source_keeps_all_dependent_variant_payloads_and_unknown_values(self):
+    def test_grouped_Source_keeps_all_dependent_variant_payloads_and_unknown_values(self) -> None:
         from config_source_effects import channel_source_interface
 
         args = self.fixture()
         result = channel_source_interface(*args)
         normal = result["normal"]
         self.assertIsNotNone(normal)
+        if normal is None:
+            self.fail("Source fixture did not reach its normal result")
         self.assertEqual(
             normal["source_order"],
             ("definition", "access", "decoder", "evidence", "route", "poll", "freshness_ms"),
@@ -509,11 +602,13 @@ class SourceAggregateInterface(unittest.TestCase):
         self.assertFalse(result["completed_Source_issued"])
         self.assertFalse(result["semantic_Config_validated"])
 
-    def test_missing_or_short_Source_never_makes_a_complete_package(self):
+    def test_missing_or_short_Source_never_makes_a_complete_package(self) -> None:
         from config_source_effects import channel_source_interface
 
         none = channel_source_interface(*self.fixture(count=0))
         self.assertIsNone(none["normal"])
+        if none["none"] is None:
+            self.fail("Source fixture did not retain its missing-count result")
         self.assertEqual(none["none"]["tag"], 2)
         self.assertEqual(none["none"]["count_after"].lower, 0)
         short = channel_source_interface(*self.fixture(extent=6))
@@ -523,23 +618,23 @@ class SourceAggregateInterface(unittest.TestCase):
         self.assertTrue(any(v["error"] == 4 for v in short["errors"]))
         self.assertFalse(short["completed_Source_issued"])
 
-    def test_only_unwritten_padding_can_share_protection_with_output(self):
+    def test_only_unwritten_padding_can_share_protection_with_output(self) -> None:
         from config_source_effects import channel_source_interface
         from config_regions import Storage
 
-        args = list(self.fixture())
+        args = self.fixture()
         output = args[4]
         frame = args[5]
         padding = Storage(
             frame.space, "protected opaque padding", output.start + 21, 1, 1, frame.phase, False
         )
-        args[-1] = args[-1] + (padding,)
+        args = (*args[:-1], args[-1] + (padding,))
         self.assertIsNotNone(channel_source_interface(*args)["normal"])
-        args[-1] = args[-1][:-1] + (replace(padding, start=output.start + 20),)
+        args = (*args[:-1], args[-1][:-1] + (replace(padding, start=output.start + 20),))
         with self.assertRaisesRegex(AssertionError, "protected live storage"):
             channel_source_interface(*args)
 
-    def test_error_phase_retains_variant_relations_before_the_failed_final_field(self):
+    def test_error_phase_retains_variant_relations_before_the_failed_final_field(self) -> None:
         from config_source_effects import channel_source_interface
 
         result = channel_source_interface(*self.fixture(extent=6))
@@ -549,7 +644,7 @@ class SourceAggregateInterface(unittest.TestCase):
         self.assertTrue(any(v["stage"] == "freshness_ms.freshness_ms" for v in result["errors"]))
         self.assertFalse(result["completed_Source_issued"])
 
-    def test_failed_primitive_results_keep_exact_origin_and_short_arm_chain(self):
+    def test_failed_primitive_results_keep_exact_origin_and_short_arm_chain(self) -> None:
         from config_source_effects import channel_source_interface
 
         result = channel_source_interface(*self.fixture())
@@ -563,6 +658,8 @@ class SourceAggregateInterface(unittest.TestCase):
         origins = result["primitive_invocations"]
         response = next(v for v in origins if v["site"] == 448)
         request = response["predecessor"]
+        if request is None or response["predecessor_outcome"] is None:
+            self.fail("Source response lost its request predecessor")
         self.assertEqual((request["site"], request["semantic_role"]), (420, "seq_u16"))
         self.assertIs(response["before"], response["predecessor_outcome"]["state"])
         self.assertTrue(
@@ -579,7 +676,7 @@ class SourceAggregateInterface(unittest.TestCase):
         )
         error = next(v for v in result["errors"] if v["origin"] is response)
         saved = error["child_outcome"]
-        error["child_outcome"] = dict(saved)
+        error["child_outcome"] = saved.copy()
         with self.assertRaisesRegex(AssertionError, "origin"):
             _source_error_origins(result)
         error["child_outcome"] = saved
@@ -598,11 +695,12 @@ class SourceAggregateInterface(unittest.TestCase):
             ("cursor", replace(saved["cursor"], lower=0, upper=0)),
             ("count_after", replace(error["count_after"], lower=0, upper=0)),
         ):
-            prior = error[key]
-            error[key] = value
+            raw_error = fixture_fields(error)
+            prior = raw_error[key]
+            raw_error[key] = value
             with self.assertRaisesRegex(AssertionError, "origin"):
                 _source_error_origins(result)
-            error[key] = prior
+            raw_error[key] = prior
         _source_error_origins(result)
         short = channel_source_interface(*self.fixture(extent=6))
         _source_error_origins(short)
@@ -626,7 +724,7 @@ class SourceAggregateInterface(unittest.TestCase):
 
 
 class SourceArrayAdapter(unittest.TestCase):
-    def test_deepest_Source_child_may_be_exactly_adjacent_to_Config(self):
+    def test_deepest_Source_child_may_be_exactly_adjacent_to_Config(self) -> None:
         from config_decoded_sources import _parents, _source_array
         from config_regions import Storage, borrow
 
@@ -649,10 +747,10 @@ class SourceArrayAdapter(unittest.TestCase):
         result = _source_array(
             objects, rows, _parents(objects, rows, 0x1001C654, B), sequence, saved, old
         )
-        self.assertEqual(result["sequence"].count.lower, 0)
+        self.assertEqual(required_fixture(result["sequence"]).count.lower, 0)
         self.assertEqual(len(result["packages"]), 8)
 
-    def test_Source_deepest_child_cannot_alias_untouched_Config_suffix(self):
+    def test_Source_deepest_child_cannot_alias_untouched_Config_suffix(self) -> None:
         from config_decoded_sources import _parents, _source_array
         from config_regions import Storage, borrow
 
@@ -679,7 +777,7 @@ class SourceArrayAdapter(unittest.TestCase):
                 objects, rows, _parents(objects, rows, 0x1001C654, B), sequence, saved, old
             )
 
-    def test_all_eight_sources_parse_before_any_fixed_array_commit(self):
+    def test_all_eight_sources_parse_before_any_fixed_array_commit(self) -> None:
         from config_decoded_sources import _parents, _source_array
         from config_regions import Storage
 
@@ -701,8 +799,8 @@ class SourceArrayAdapter(unittest.TestCase):
             tuple(v["source"]["count_after"].lower for v in result["packages"]),
             tuple(range(7, -1, -1)),
         )
-        self.assertEqual(result["sequence"].count.lower, 0)
-        self.assertEqual(result["sequence"].decoder.cursor.lower, 56)
+        self.assertEqual(required_fixture(result["sequence"]).count.lower, 0)
+        self.assertEqual(required_fixture(result["sequence"]).decoder.cursor.lower, 56)
         self.assertEqual(result["old_array"], old)
         self.assertFalse(result["fixed_array_committed"])
         for index, p in enumerate(result["packages"]):
@@ -713,7 +811,7 @@ class SourceArrayAdapter(unittest.TestCase):
             self.assertEqual(p["source"]["after"], p["sequence_after"].decoder)
             self.assertTrue(all(e["old_array_unchanged"] for e in result["errors"]))
 
-    def test_late_source_error_keeps_only_paired_parsed_prefix_and_old_array(self):
+    def test_late_source_error_keeps_only_paired_parsed_prefix_and_old_array(self) -> None:
         from config_decoded_sources import _parents, _source_array
         from config_regions import Storage
 
@@ -735,8 +833,17 @@ class SourceArrayAdapter(unittest.TestCase):
 
 
 class SourceArrayEffects(unittest.TestCase):
+    array: ClassVar[SourceArray]
+    objects: ClassVar[DiagnosticObjects]
+    rows: ClassVar[InstructionMap]
+    parents: ClassVar[tuple[BodyRecord, ...]]
+    owner: ClassVar[Storage]
+    frame: ClassVar[Storage]
+    guards: ClassVar[tuple[Storage, ...]]
+    sequence: ClassVar[SequenceInterface]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         from config_decoded_sources import _parents, _source_array
         from config_regions import Storage
 
@@ -769,7 +876,7 @@ class SourceArrayEffects(unittest.TestCase):
         cls.guards = guards
         cls.sequence = sequence
 
-    def test_actual_copy_lineage_and_last_stores_preserve_partial_prefix(self):
+    def test_actual_copy_lineage_and_last_stores_preserve_partial_prefix(self) -> None:
         from config_decoded_sources import _array_effects
 
         result = _array_effects(
@@ -801,7 +908,7 @@ class SourceArrayEffects(unittest.TestCase):
         )
         self.assertFalse(result["complete_ordinary_Source_prefix_issued"])
 
-    def test_one_byte_deeper_child_overlap_and_source_order_splice_reject(self):
+    def test_one_byte_deeper_child_overlap_and_source_order_splice_reject(self) -> None:
         from config_decoded_sources import _array_effects
         from config_regions import Storage
 
@@ -825,11 +932,10 @@ class SourceArrayEffects(unittest.TestCase):
                 self.guards + (deepest,),
                 self.sequence,
             )
-        changed = dict(
-            self.array,
-            packages=(self.array["packages"][1], self.array["packages"][0])
-            + self.array["packages"][2:],
-        )
+        changed = self.array.copy()
+        changed["packages"] = (self.array["packages"][1], self.array["packages"][0]) + self.array[
+            "packages"
+        ][2:]
         with self.assertRaisesRegex(AssertionError, "paired Source order"):
             _array_effects(
                 self.objects,
@@ -844,7 +950,9 @@ class SourceArrayEffects(unittest.TestCase):
 
 
 class ActualSourcePrivatePhases(unittest.TestCase):
-    def test_same_private_predecessor_derives_Source_array_and_remaining_aggregates_once(self):
+    def test_same_private_predecessor_derives_Source_array_and_remaining_aggregates_once(
+        self,
+    ) -> None:
         from config_decoded_sources import _first_boot_source_phases
 
         objects, rows, source, item = SourceLiteralBodies.fixture()
@@ -866,10 +974,10 @@ class ActualSourcePrivatePhases(unittest.TestCase):
         # A detached checkpoint must retain both values and the actual shared
         # package association, even when a replacement compares equal.
         phase = next(p for p in state.phases if p.effects is not None)
-        slot = phase.effects["slots"][0]
+        slot = required_fixture(phase.effects)["slots"][0]
         original = slot["source_package"]
         self.assertIs(original, phase.array["packages"][0])
-        slot["source_package"] = dict(original)
+        slot["source_package"] = original.copy()
         try:
             with self.assertRaisesRegex(AssertionError, "record changed"):
                 state.current()
@@ -885,7 +993,7 @@ class ActualSourcePrivatePhases(unittest.TestCase):
 
 
 class ActualSourceActiveControl(unittest.TestCase):
-    def test_actual_source_phases_close_guarded_ordinary_edges_without_an_owner(self):
+    def test_actual_source_phases_close_guarded_ordinary_edges_without_an_owner(self) -> None:
         from config_decoded_sources import _first_boot_source_phases
         from config_source_control import _source_control
 
@@ -905,6 +1013,7 @@ class ActualSourceActiveControl(unittest.TestCase):
             if not guarded["complete_Source_array"]:
                 self.assertIsNone(relation)
                 continue
+            relation = required_fixture(relation)
             self.assertEqual(relation["capture_order"], (7, 0, 1, 2, 3, 4, 5, 6))
             self.assertEqual(relation["payload_lineage"][-1]["slot"]["complete_after"], V + 4796)
             for i, item in enumerate(relation["payload_lineage"]):
@@ -919,7 +1028,7 @@ class ActualSourceActiveControl(unittest.TestCase):
         )
         self.assertFalse(control.complete_ordinary_group_issued)
         with self.assertRaisesRegex(AssertionError, "actual private phase"):
-            _source_control(state.structural)
+            dynamic_call(_source_control, state.structural)
         original = control.record["successors"]
         control.record["successors"] = ()
         try:
@@ -927,29 +1036,34 @@ class ActualSourceActiveControl(unittest.TestCase):
                 control.current()
         finally:
             control.record["successors"] = original
-        original = control.source_guards[0]["parsed_sources"]
+        original_count = control.source_guards[0]["parsed_sources"]
         control.source_guards[0]["parsed_sources"] = -1
         try:
             with self.assertRaisesRegex(AssertionError, "active source/control record changed"):
                 control.current()
         finally:
-            control.source_guards[0]["parsed_sources"] = original
+            control.source_guards[0]["parsed_sources"] = original_count
         self.assertIs(control.current(), control)
+
+
+class CopyDescriptionFixture(TypedDict):
+    children: tuple[dict[str, object], ...]
+    possible_writes: tuple[tuple[int, int, int], ...]
 
 
 class SourceCopyDescriptions(unittest.TestCase):
     @staticmethod
-    def inputs():
+    def inputs() -> tuple[DiagnosticObjects, InstructionMap]:
         from config_structural import _detached_inputs
 
         objects, rows, _, _ = SourceLiteralBodies.fixture()
         return _detached_inputs(objects, rows)
 
     @staticmethod
-    def effect():
+    def effect() -> CopyDescriptionFixture:
         # Explicit post-check descriptor representation fixture. It does not
         # replace the actual API/body/provider checks in the adapter below.
-        child = dict(
+        child: dict[str, object] = dict(
             shape="copy",
             role="typed-copy",
             function=8,
@@ -968,8 +1082,9 @@ class SourceCopyDescriptions(unittest.TestCase):
         )
         return dict(children=(child,), possible_writes=((1, 2, 3),))
 
-    def test_complete_children_share_without_effect_or_mutable_backing_aliases(self):
+    def test_complete_children_share_without_effect_or_mutable_backing_aliases(self) -> None:
         from config_source_sharing import _CopyDescriptions
+        from operator import setitem
 
         objects, rows = self.inputs()
         pool = _CopyDescriptions(objects, rows)
@@ -980,11 +1095,18 @@ class SourceCopyDescriptions(unittest.TestCase):
         self.assertIsNot(first, second)
         self.assertEqual(first["possible_writes"], original["possible_writes"])
         with self.assertRaises(TypeError):
-            first["children"][0]["objects"][0]["value"] = 7
-        original["children"][0]["objects"][0]["value"] = 9
-        self.assertEqual(first["children"][0]["objects"][0]["value"], 4)
+            dynamic_call(
+                setitem,
+                fixture_records(fixture_records(first["children"])[0]["objects"])[0],
+                "value",
+                7,
+            )
+        fixture_fields(fixture_records(original["children"][0]["objects"])[0])["value"] = 9
+        self.assertEqual(
+            fixture_records(fixture_records(first["children"])[0]["objects"])[0]["value"], 4
+        )
 
-    def test_complete_context_types_fields_and_unsupported_fallback_do_not_merge(self):
+    def test_complete_context_types_fields_and_unsupported_fallback_do_not_merge(self) -> None:
         from config_source_sharing import _CopyDescriptions
 
         objects, rows = self.inputs()
@@ -1009,13 +1131,13 @@ class SourceCopyDescriptions(unittest.TestCase):
             pool.checked(self.effect(), objects, rows, 10)["children"], first["children"]
         )
         effect = self.effect()
-        effect["children"][0]["transfers"] = list(effect["children"][0]["transfers"])
+        effect["children"][0]["transfers"] = list(tuple_items(effect["children"][0]["transfers"]))
         self.assertIs(pool.checked(effect, objects, rows, 8), effect)
         custom = object()
         unshared = self.effect()
         self.assertIs(_CopyDescriptions(custom, rows).checked(unshared, custom, rows, 8), unshared)
 
-    def test_array_copies_keep_all_fresh_dynamic_checks_after_equal_descriptors(self):
+    def test_array_copies_keep_all_fresh_dynamic_checks_after_equal_descriptors(self) -> None:
         from unittest.mock import patch
         from config_source_sharing import _CopyDescriptions
         from config_structural import _detached_inputs
@@ -1040,8 +1162,8 @@ class SourceCopyDescriptions(unittest.TestCase):
             self.assertEqual(checked.call_count, 24)
             self.assertIsNot(one["transports"][0][0]["effect"], two["transports"][0][0]["effect"])
             self.assertIs(
-                one["transports"][0][0]["effect"]["children"],
-                two["transports"][0][0]["effect"]["children"],
+                fixture_fields(one["transports"][0][0]["effect"])["children"],
+                fixture_fields(two["transports"][0][0]["effect"])["children"],
             )
             deepest = Storage(
                 "address",
@@ -1065,30 +1187,34 @@ class SourceCopyDescriptions(unittest.TestCase):
                     pool,
                 )
 
-    def test_custom_reader_keeps_fresh_consumed_byte_checks_without_pool_reuse(self):
+    def test_custom_reader_keeps_fresh_consumed_byte_checks_without_pool_reuse(self) -> None:
         from config_source_sharing import _CopyDescriptions
         from config_decoded_sources import _array_effects
 
         SourceArrayEffects.setUpClass()
         a = SourceArrayEffects
 
-        class Provider:
-            def __init__(self):
+        class Provider(DiagnosticObjects):
+            def __init__(self) -> None:
                 self.elf = a.objects.elf
                 self.sizes = a.objects.sizes
                 self.calls = 0
                 self.changed = False
                 self.changed_read = False
-                self.target = None
+                self.target: int | None = None
 
-            def read_only(self, start, extent):
+            def read_only(self, start: int, extent: int) -> bytes:
                 self.calls += 1
                 raw = a.objects.read_only(start, extent)
-                if self.changed and start <= self.target < start + extent:
+                if (
+                    self.changed
+                    and self.target is not None
+                    and start <= self.target < start + extent
+                ):
                     self.changed_read = True
-                    raw = bytearray(raw)
-                    raw[self.target - start] ^= 1
-                    raw = bytes(raw)
+                    changed_raw = bytearray(raw)
+                    changed_raw[self.target - start] ^= 1
+                    raw = bytes(changed_raw)
                 return raw
 
         provider = Provider()
@@ -1102,11 +1228,14 @@ class SourceCopyDescriptions(unittest.TestCase):
         )
         self.assertGreater(provider.calls, reads)
         self.assertFalse(pool._values)
-        one = first["transports"][0][0]["effect"]["children"]
-        two = second["transports"][0][0]["effect"]["children"]
+        one = fixture_records(fixture_fields(first["transports"][0][0]["effect"])["children"])
+        two = fixture_records(fixture_fields(second["transports"][0][0]["effect"])["children"])
         self.assertEqual(one, two)
         self.assertIsNot(one, two)
-        provider.target = one[1]["function"]
+        target = one[1]["function"]
+        if type(target) is not int:
+            self.fail("expected copy function address")
+        provider.target = target
         provider.changed = True
         with self.assertRaises(AssertionError):
             _array_effects(
@@ -1118,7 +1247,40 @@ class SourceCopyDescriptions(unittest.TestCase):
 
 
 class SourceUseGraph(unittest.TestCase):
-    def test_closed_batch_checks_shared_graph_once_and_all_exact_members(self):
+    @staticmethod
+    def graph_use(
+        role: str,
+        phase: int,
+        index: int,
+        before: None,
+        after: None,
+        output: None,
+        footprint: tuple[int, int],
+        protected: tuple[()],
+        source: object,
+        continuation: tuple[()],
+    ) -> _SourceUse:
+        from config_source_uses import _SourceUse
+
+        # The graph tests deliberately omit proof fields and supply current separately.
+        value = dynamic_call(
+            _SourceUse,
+            role,
+            phase,
+            index,
+            before,
+            after,
+            output,
+            footprint,
+            protected,
+            source,
+            continuation,
+        )
+        if not isinstance(value, _SourceUse):
+            raise AssertionError("expected graph-only use class")
+        return value
+
+    def test_closed_batch_checks_shared_graph_once_and_all_exact_members(self) -> None:
         from types import SimpleNamespace
         from unittest.mock import patch
         import config_source_uses as subject
@@ -1126,7 +1288,7 @@ class SourceUseGraph(unittest.TestCase):
 
         package = {"cursor": [1, 2]}
         uses = tuple(
-            subject._SourceUse(
+            self.graph_use(
                 "graph-only fixture", 0, i, None, None, None, (0, 1), (), {"package": package}, ()
             )
             for i in range(1000)
@@ -1136,10 +1298,13 @@ class SourceUseGraph(unittest.TestCase):
         graph = _phase_graph(((family.role,), (), uses, control.source_guards, control.record))
         # The real source/current producer is intentionally supplied here;
         # only collection/alias traversal and call counts are under test.
-        bridge = subject._SourceAccessBridge(control, (family,), (), uses, graph)
+        candidate = dynamic_call(subject._SourceAccessBridge, control, (family,), (), uses, graph)
+        if not isinstance(candidate, subject._SourceAccessBridge):
+            self.fail("expected graph-only bridge class")
+        bridge = candidate
         checked = []
 
-        def current(value):
+        def current(value: _SourceAccessBridge) -> _SourceAccessBridge:
             checked.append(value)
             self.assertIs(value, bridge)
             self.assertEqual(
@@ -1173,13 +1338,13 @@ class SourceUseGraph(unittest.TestCase):
                 member.call_count, 1000, "failed fresh whole-current check must consume no members"
             )
 
-    def test_one_shared_snapshot_retains_values_and_cross_member_aliases(self):
+    def test_one_shared_snapshot_retains_values_and_cross_member_aliases(self) -> None:
         from config_decoded_sources import _phase_graph
-        from config_source_uses import _SourceUse, _member_graph
+        from config_source_uses import _member_graph
 
         package = {"cursor": [1, 2], "fields": {"selector": 1}}
         uses = tuple(
-            _SourceUse(
+            self.graph_use(
                 "graph-only fixture",
                 0,
                 i,
@@ -1195,15 +1360,23 @@ class SourceUseGraph(unittest.TestCase):
         )
         graph = _phase_graph(uses)
         root, nodes = graph
-        members = nodes[root[1]][1]
+        index = root[1]
+        if type(index) is not int:
+            self.fail("expected graph root reference")
+        members = tuple_items(nodes[index][1])
         self.assertLess(len(nodes), 2200)
-        self.assertEqual(_member_graph(graph, members[500]), _phase_graph(uses[500]))
-        different = replace(uses[500], source={"package": package, "same_package": dict(package)})
-        self.assertNotEqual(_member_graph(graph, members[500]), _phase_graph(different))
-        package["fields"]["selector"] = 2
-        self.assertNotEqual(_member_graph(graph, members[500]), _phase_graph(uses[500]))
+        self.assertEqual(_member_graph(graph, tuple_items(members[500])), _phase_graph(uses[500]))
+        different = replace(uses[500])
+        object.__setattr__(different, "source", {"package": package, "same_package": dict(package)})
+        self.assertNotEqual(
+            _member_graph(graph, tuple_items(members[500])), _phase_graph(different)
+        )
+        fixture_fields(package["fields"])["selector"] = 2
+        self.assertNotEqual(
+            _member_graph(graph, tuple_items(members[500])), _phase_graph(uses[500])
+        )
 
-    def test_projection_keeps_types_and_rejects_cyclic_or_unsupported_nodes(self):
+    def test_projection_keeps_types_and_rejects_cyclic_or_unsupported_nodes(self) -> None:
         from config_decoded_sources import _phase_graph
         from config_source_uses import _member_graph
 
@@ -1216,14 +1389,14 @@ class SourceUseGraph(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unsupported"):
             _member_graph((("reference", 0), (("unreviewed", ()),)), ("reference", 0))
 
-    def test_equal_copy_visible_only_outside_member_requires_whole_graph(self):
+    def test_equal_copy_visible_only_outside_member_requires_whole_graph(self) -> None:
         from types import SimpleNamespace
         from config_decoded_sources import _phase_graph
-        from config_source_uses import _SourceUse, _checked_bridge_graph
+        from config_source_uses import _checked_bridge_graph
 
         package = {"cursor": [1, 2]}
         uses = tuple(
-            _SourceUse(
+            self.graph_use(
                 "graph-only fixture", 0, i, None, None, None, (0, 1), (), {"package": package}, ()
             )
             for i in range(2)
@@ -1239,19 +1412,19 @@ class SourceUseGraph(unittest.TestCase):
                 control.record,
             )
         )
-        _checked_bridge_graph(bridge)
+        dynamic_call(_checked_bridge_graph, bridge)
         before = _phase_graph(uses[0])
-        uses[0].source["package"] = dict(package)
+        fixture_fields(uses[0].source)["package"] = dict(package)
         # The source has one local reference, so this alone is insufficient.
         self.assertEqual(before, _phase_graph(uses[0]))
         with self.assertRaisesRegex(AssertionError, "bridge/use record changed"):
-            _checked_bridge_graph(bridge)
-        uses[0].source["package"] = package
-        _checked_bridge_graph(bridge)
+            dynamic_call(_checked_bridge_graph, bridge)
+        fixture_fields(uses[0].source)["package"] = package
+        dynamic_call(_checked_bridge_graph, bridge)
 
 
 class ActualSourceReachedUses(unittest.TestCase):
-    def test_actual_private_allocation_and_source_reach_join_all_four_families(self):
+    def test_actual_private_allocation_and_source_reach_join_all_four_families(self) -> None:
         from config_decoded_sources import _first_boot_source_phases
         from config_source_control import _source_control
         from config_source_uses import _source_access_bridge, _check_source_use, _check_source_uses
@@ -1267,12 +1440,12 @@ class ActualSourceReachedUses(unittest.TestCase):
             flush=True,
         )
         copies = tuple(
-            event["effect"]["children"]
+            fixture_records(fixture_fields(event["effect"])["children"])
             for phase in state.phases
             if phase.effects is not None
             for event in phase.effects["transports"][0]
         ) + tuple(
-            slot["payload"]["effect"]["children"]
+            fixture_records(fixture_fields(slot["payload"]["effect"])["children"])
             for phase in state.phases
             if phase.effects is not None
             for slot in phase.effects["slots"]
@@ -1292,7 +1465,12 @@ class ActualSourceReachedUses(unittest.TestCase):
         self.assertEqual(len({id(v) for v in copies}), 1)
         self.assertEqual(len({id(child) for v in copies for child in v}), 2)
         control = _source_control(state)
-        print("Sources preparation control graph:", len(control.checkpoint[1]), "nodes", flush=True)
+        print(
+            "Sources preparation control graph:",
+            len(tuple_items(tuple_items(control.checkpoint)[1])),
+            "nodes",
+            flush=True,
+        )
         bridge = _source_access_bridge(control)
         print(
             "Sources internal graph-only measurement:",
@@ -1319,7 +1497,9 @@ class ActualSourceReachedUses(unittest.TestCase):
             self.assertFalse(use.completed_prefix_issued)
             if use.role == "source_route_output":
                 phase = state.phases[use.phase_index]
-                self.assertIs(use.source["package"], phase.array["packages"][use.source_index])
+                self.assertIs(
+                    fixture_fields(use.source)["package"], phase.array["packages"][use.source_index]
+                )
                 self.assertEqual(
                     use.footprint,
                     (
@@ -1329,44 +1509,51 @@ class ActualSourceReachedUses(unittest.TestCase):
                 )
             elif use.role == "source_route_local":
                 self.assertEqual(use.footprint, (frame.start - 47, frame.start - 45))
-                self.assertEqual(use.source["Route"]["packed_word"], "request | (response <<16)")
+                self.assertEqual(
+                    fixture_fields(fixture_fields(use.source)["Route"])["packed_word"],
+                    "request | (response <<16)",
+                )
             elif use.role == "Fuel_final_halfword":
                 self.assertEqual(
-                    use.source["assignment"]["Fuel"]["complete_store"], 0x1001C654 + 5570
+                    fixture_fields(
+                        fixture_fields(fixture_fields(use.source)["assignment"])["Fuel"]
+                    )["complete_store"],
+                    0x1001C654 + 5570,
                 )
                 self.assertIn(
-                    use.source["assignment"]["source_guard"], ((0, None), (1, None), (2, 0), (2, 1))
+                    fixture_fields(fixture_fields(use.source)["assignment"])["source_guard"],
+                    ((0, None), (1, None), (2, 0), (2, 1)),
                 )
         with self.assertRaisesRegex(AssertionError, "actual private active control"):
-            _source_access_bridge(state.structural)
+            dynamic_call(_source_access_bridge, state.structural)
         with self.assertRaisesRegex(AssertionError, "internally derived use"):
             _check_source_use(bridge, replace(bridge.uses[0]))
         output = next(u for u in bridge.uses if u.role == "source_route_output")
-        package = output.source["package"]
-        output.source["package"] = dict(package)
+        package = fixture_fields(output.source)["package"]
+        fixture_fields(output.source)["package"] = dict(fixture_record(package))
         try:
             with self.assertRaisesRegex(AssertionError, "bridge/use record changed"):
                 _check_source_use(bridge, output)
         finally:
-            output.source["package"] = package
-        old = bridge.uses[0].source["source_phase"]
-        bridge.uses[0].source["source_phase"] = "wrong epoch"
+            fixture_fields(output.source)["package"] = package
+        old = fixture_fields(bridge.uses[0].source)["source_phase"]
+        fixture_fields(bridge.uses[0].source)["source_phase"] = "wrong epoch"
         try:
             with self.assertRaisesRegex(AssertionError, "use record changed"):
                 _check_source_use(bridge, bridge.uses[0])
         finally:
-            bridge.uses[0].source["source_phase"] = old
+            fixture_fields(bridge.uses[0].source)["source_phase"] = old
 
 
 SOURCE_OUTPUTS = (1128, 516, 628, 744, 880, 940, 1000, 1064)
 
 
 class SourcePhaseSnapshot(unittest.TestCase):
-    def test_scalar_mapping_pairs_share_across_nonidentical_descriptions_only_locally(self):
+    def test_scalar_mapping_pairs_share_across_nonidentical_descriptions_only_locally(self) -> None:
         from config_decoded_sources import _phase_graph
 
-        left = {"tag": 7, "child": []}
-        right = {"tag": 7, "child": [1]}
+        left: dict[str, object] = {"tag": 7, "child": []}
+        right: dict[str, object] = {"tag": 7, "child": [1]}
         value = [left, right, left]
         graph = _phase_graph(value)
         a = graph[1][1]
@@ -1374,57 +1561,63 @@ class SourcePhaseSnapshot(unittest.TestCase):
         self.assertNotEqual(a, b)
         self.assertIsNot(a, b)
         self.assertEqual(graph[1][0][1], (("reference", 1), ("reference", 3), ("reference", 1)))
-        self.assertEqual(a[1][0], b[1][0])
+        self.assertEqual(tuple_items(a[1])[0], tuple_items(b[1])[0])
         self.assertIs(
-            a[1][0],
-            b[1][0],
+            tuple_items(a[1])[0],
+            tuple_items(b[1])[0],
             "equal freshly visited scalar mapping pairs must share local storage across different descriptions",
         )
-        self.assertIsNot(a[1][1], b[1][1], "reference-bearing pairs are not pooled")
+        self.assertIsNot(
+            tuple_items(a[1])[1], tuple_items(b[1])[1], "reference-bearing pairs are not pooled"
+        )
         again = _phase_graph(value)
         self.assertEqual(again, graph)
-        self.assertIsNot(again[1][1][1][0], a[1][0])
+        self.assertIsNot(tuple_items(again[1][1][1])[0], tuple_items(a[1])[0])
         right["tag"] = True
         self.assertNotEqual(_phase_graph(value), graph)
         right["tag"] = 7
         self.assertEqual(_phase_graph(value), graph)
         self.assertNotEqual(_phase_graph([left, dict(left), left]), graph)
 
-    def test_scalar_mapping_pool_preserves_exact_types_order_aliases_and_late_failures(self):
+    def test_scalar_mapping_pool_preserves_exact_types_order_aliases_and_late_failures(
+        self,
+    ) -> None:
         from types import MappingProxyType
         from config_decoded_sources import _phase_graph
 
-        a = {"v": True, "n": None, "s": "x", "b": b"x", "child": []}
-        b = {"v": 1, "n": None, "s": b"x", "b": "x", "child": [1]}
+        a: dict[str, object] = {"v": True, "n": None, "s": "x", "b": b"x", "child": []}
+        b: dict[str, object] = {"v": 1, "n": None, "s": b"x", "b": "x", "child": [1]}
         graph = _phase_graph([a, MappingProxyType(b)])
-        left = graph[1][1][1]
-        right = graph[1][3][1]
+        left = tuple_items(graph[1][1][1])
+        right = tuple_items(graph[1][3][1])
         self.assertIsNot(left[0], right[0])
         self.assertIs(left[1], right[1])
         self.assertNotEqual(left[0], right[0])
         self.assertNotEqual(left[2], right[2])
-        self.assertEqual(tuple(v[0][2] for v in left), ("v", "n", "s", "b", "child"))
+        self.assertEqual(
+            tuple(tuple_items(tuple_items(v)[0])[2] for v in left), ("v", "n", "s", "b", "child")
+        )
         self.assertNotEqual(_phase_graph([dict(reversed(tuple(a.items()))), b]), graph)
         self.assertNotEqual(_phase_graph([a, a]), graph)
         a["child"] = b["child"]
         self.assertNotEqual(_phase_graph([a, b]), graph)
         a["child"] = []
         self.assertEqual(_phase_graph([a, b]), graph)
-        cycle = []
+        cycle: list[object] = []
         cycle.append(cycle)
         for tail, message in ((cycle, "cyclic"), (object(), "unsupported")):
             with self.assertRaisesRegex(AssertionError, message):
                 _phase_graph([a, b, tail])
         self.assertEqual(_phase_graph([a, b]), graph)
 
-    def test_scalar_mapping_pool_saturates_without_rejecting_or_losing_existing_hits(self):
+    def test_scalar_mapping_pool_saturates_without_rejecting_or_losing_existing_hits(self) -> None:
         import sys
         from config_decoded_sources import _phase_graph
 
-        tables = []
+        tables: list[Sized] = []
         maximum = 0
 
-        def observe(frame, event, arg):
+        def observe(frame: FrameType, event: str, arg: object) -> None:
             nonlocal maximum
             if (
                 frame.f_code.co_name == "mapping_pair"
@@ -1435,7 +1628,7 @@ class SourcePhaseSnapshot(unittest.TestCase):
                 if not tables:
                     tables.append(table)
 
-        left = {str(i): i for i in range(8200)}
+        left: dict[str, object] = {str(i): i for i in range(8200)}
         right = dict(left)
         left["child"] = []
         right["child"] = [1]
@@ -1445,8 +1638,8 @@ class SourcePhaseSnapshot(unittest.TestCase):
             graph = _phase_graph([left, right])
         finally:
             sys.setprofile(old)
-        a = graph[1][1][1]
-        b = graph[1][3][1]
+        a = tuple_items(graph[1][1][1])
+        b = tuple_items(graph[1][3][1])
         self.assertEqual(maximum, 8192)
         self.assertTrue(tables)
         self.assertEqual(tables[0], {})
@@ -1460,7 +1653,9 @@ class SourcePhaseSnapshot(unittest.TestCase):
         self.assertNotEqual(a[-1], b[-1])
         self.assertEqual(a[8199], (("value", "str", "8199"), ("value", "int", 8199)))
 
-    def test_encoded_descriptions_share_storage_without_merging_input_indices_or_aliases(self):
+    def test_encoded_descriptions_share_storage_without_merging_input_indices_or_aliases(
+        self,
+    ) -> None:
         from config_decoded_sources import _phase_graph
 
         left = [1]
@@ -1482,20 +1677,22 @@ class SourcePhaseSnapshot(unittest.TestCase):
             graph[1][2],
             "equal encoded descriptions may share storage while both input node slots remain",
         )
-        edges = graph[1][0][1]
+        edges = tuple_items(graph[1][0][1])
         self.assertIs(edges[0], edges[2])
         self.assertIsNot(edges[0], edges[1])
         another = _phase_graph(value)
         self.assertEqual(graph, another)
         self.assertIsNot(graph[1][1], another[1][1])
-        self.assertIsNot(edges[0], another[1][0][1][0])
+        self.assertIsNot(edges[0], tuple_items(another[1][0][1])[0])
         left.append(2)
         self.assertEqual(graph, expected)
         self.assertNotEqual(_phase_graph(value), graph)
         self.assertNotEqual(_phase_graph([right, right, right]), graph)
         self.assertNotEqual(_phase_graph([[1], [1], [1]]), graph)
 
-    def test_description_pool_keeps_nested_references_types_order_and_metadata_fallback(self):
+    def test_description_pool_keeps_nested_references_types_order_and_metadata_fallback(
+        self,
+    ) -> None:
         from dataclasses import make_dataclass
         from types import MappingProxyType
         from config_decoded_sources import _phase_graph
@@ -1512,19 +1709,21 @@ class SourcePhaseSnapshot(unittest.TestCase):
         self.assertEqual(_phase_graph({"x": 1}), _phase_graph(MappingProxyType({"x": 1})))
         A = make_dataclass("SameMetadata", [("value", int)])
         B = make_dataclass("SameMetadata", [("value", int)])
-        A.__module__ = True
-        B.__module__ = 1
+        setattr(A, "__module__", True)
+        setattr(B, "__module__", 1)
         unusual = _phase_graph([A(7), B(7)])
         self.assertEqual(unusual[1][1], unusual[1][2])
         self.assertIsNot(unusual[1][1], unusual[1][2])
         self.assertIs(type(unusual[1][1][1]), bool)
         self.assertIs(type(unusual[1][2][1]), int)
         metadata = ["unhashable metadata"]
-        A.__module__ = metadata
+        setattr(A, "__module__", metadata)
         fallback = _phase_graph(A(7))
         self.assertIs(fallback[1][0][1], metadata)
 
-    def test_pool_eligibility_uses_captured_metadata_before_child_getters_mutate_class(self):
+    def test_pool_eligibility_uses_captured_metadata_before_child_getters_mutate_class(
+        self,
+    ) -> None:
         from dataclasses import dataclass
         from config_decoded_sources import _phase_graph
 
@@ -1534,39 +1733,48 @@ class SourcePhaseSnapshot(unittest.TestCase):
         class Changing:
             value: int
 
-            def __getattribute__(self, name):
+            def __getattribute__(self, name: str) -> object:
                 if name == "value":
                     type(self).__module__ = "changed_after_capture"
                 return object.__getattribute__(self, name)
 
-        Changing.__module__ = metadata
+        setattr(Changing, "__module__", metadata)
         graph = _phase_graph(Changing(7))
         self.assertIs(graph[1][0][1], metadata)
         self.assertEqual(graph[1][0][3], (("value", ("value", "int", 7)),))
         self.assertEqual(Changing.__module__, "changed_after_capture")
 
-    def test_construction_workspaces_release_without_cyclic_collection_on_success_and_error(self):
+    def test_construction_workspaces_release_without_cyclic_collection_on_success_and_error(
+        self,
+    ) -> None:
         import gc
         import sys
         import weakref
         from config_decoded_sources import _phase_graph
 
-        visitors = []
-        tables = []
+        visitors: list[ReferenceType[FunctionType]] = []
+        tables: list[tuple[Sized, ...]] = []
 
-        def observe(frame, event, arg):
+        def observe(frame: FrameType, event: str, arg: object) -> None:
             if (
                 event == "call"
                 and frame.f_code.co_name == "visit"
                 and frame.f_code.co_filename == _phase_graph.__code__.co_filename
             ):
                 values = frame.f_locals
-                visitor = values["visit"]
+                visitor: object = values["visit"]
+                if not isinstance(visitor, FunctionType):
+                    self.fail("expected phase visitor closure")
                 if not any(ref() is visitor for ref in visitors):
                     visitors.append(weakref.ref(visitor))
-                    pair_helper = values["mapping_pair"]
+                    pair_helper: object = values["mapping_pair"]
+                    if not isinstance(pair_helper, FunctionType):
+                        self.fail("expected phase mapping closure")
                     pair_cells = dict(
-                        zip(pair_helper.__code__.co_freevars, pair_helper.__closure__)
+                        zip(
+                            pair_helper.__code__.co_freevars,
+                            required_fixture(pair_helper.__closure__),
+                        )
                     )
                     tables.append(
                         tuple(
@@ -1584,7 +1792,7 @@ class SourcePhaseSnapshot(unittest.TestCase):
             shared = {"tag": True, "payload": [1, b"bytes", None]}
             value = (shared, shared)
             snapshots = tuple(_phase_graph(value) for _ in range(4))
-            cycle = []
+            cycle: list[object] = []
             cycle.append(cycle)
             for invalid, message in ((cycle, "cyclic"), ({"unsupported": object()}, "unsupported")):
                 with self.assertRaisesRegex(AssertionError, message):
@@ -1610,7 +1818,7 @@ class SourcePhaseSnapshot(unittest.TestCase):
 
     def test_local_scalar_tokens_share_without_changing_literal_values_types_or_container_aliases(
         self,
-    ):
+    ) -> None:
         from config_decoded_sources import _phase_graph
 
         shared = {"x": 1, "y": True, "z": [1, False, None, "x", b"x"]}
@@ -1641,28 +1849,28 @@ class SourcePhaseSnapshot(unittest.TestCase):
         )
         result = _phase_graph(value)
         self.assertEqual(result, expected)
-        scalar = result[1][1][1][0][1]
-        again = result[1][2][1][0]
+        scalar = tuple_items(tuple_items(result[1][1][1])[0])[1]
+        again = tuple_items(result[1][2][1])[0]
         self.assertIs(scalar, again, "same typed scalar token must share local immutable storage")
-        self.assertIsNot(scalar, result[1][1][1][1][1])
-        self.assertIsNot(scalar, _phase_graph(value)[1][1][1][0][1])
-        shared["z"].append("later mutation")
+        self.assertIsNot(scalar, tuple_items(tuple_items(result[1][1][1])[1])[1])
+        self.assertIsNot(scalar, tuple_items(tuple_items(_phase_graph(value)[1][1][1])[0])[1])
+        fixture_items(shared["z"]).append("later mutation")
         self.assertEqual(result, expected)
         self.assertNotEqual(_phase_graph(value), result)
 
-    def test_repeated_packages_are_independent_immutable_graph_nodes(self):
+    def test_repeated_packages_are_independent_immutable_graph_nodes(self) -> None:
         from config_decoded_sources import _phase_graph
 
         package = {"cursor": [1, 2], "fields": {"selector": 1}}
         graph = {"packages": (package,), "copies": tuple(package for _ in range(1000))}
         frozen = _phase_graph(graph)
         self.assertLess(len(frozen[1]), 10)
-        package["fields"]["selector"] = 2
+        fixture_fields(package["fields"])["selector"] = 2
         self.assertNotEqual(_phase_graph(graph), frozen)
-        package["fields"]["selector"] = 1
+        fixture_fields(package["fields"])["selector"] = 1
         self.assertEqual(_phase_graph(graph), frozen)
 
-    def test_equal_value_replacement_loses_the_actual_alias(self):
+    def test_equal_value_replacement_loses_the_actual_alias(self) -> None:
         from config_decoded_sources import _phase_graph
 
         package = {"cursor": 1}
@@ -1672,10 +1880,10 @@ class SourcePhaseSnapshot(unittest.TestCase):
         self.assertNotEqual(_phase_graph(shared), _phase_graph(independent))
         self.assertNotEqual(_phase_graph({"tag": True}), _phase_graph({"tag": 1}))
 
-    def test_cycles_and_unsupported_values_reject(self):
+    def test_cycles_and_unsupported_values_reject(self) -> None:
         from config_decoded_sources import _phase_graph
 
-        cycle = []
+        cycle: list[object] = []
         cycle.append(cycle)
         with self.assertRaisesRegex(AssertionError, "cyclic"):
             _phase_graph(cycle)
@@ -1685,7 +1893,9 @@ class SourcePhaseSnapshot(unittest.TestCase):
 
 class SourceStructuralControl(unittest.TestCase):
     @staticmethod
-    def consume(objects, rows, source):
+    def consume(
+        objects: DiagnosticObjects, rows: InstructionMap, source: SourceContext
+    ) -> _SourceStructuralControl:
         from config_source_control import _source_structural_control
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_decoded_sources import _parents
@@ -1700,7 +1910,7 @@ class SourceStructuralControl(unittest.TestCase):
         children = source_children(objects, rows, parents)
         return _source_structural_control(objects, rows, widgets, parents, children)
 
-    def test_current_complete_group_retains_pending_contexts_without_active_authority(self):
+    def test_current_complete_group_retains_pending_contexts_without_active_authority(self) -> None:
         objects, rows, source, _ = SourceLiteralBodies.fixture()
         result = self.consume(objects, rows, source)
         V = result.selection.context.headers["visitor"]["proof"]["function"]
@@ -1713,7 +1923,7 @@ class SourceStructuralControl(unittest.TestCase):
         self.assertFalse(result.confers_active_state)
         self.assertTrue(result.selection.child_contexts)
 
-    def test_coherent_pending_predecessor_interior_and_unlisted_fallthrough_reject(self):
+    def test_coherent_pending_predecessor_interior_and_unlisted_fallthrough_reject(self) -> None:
         from test_config_stack import StartupConfigurationCopy, SameBLoaderBoundary
         from llvm_stack import Instruction
 
@@ -1735,7 +1945,7 @@ class SourceStructuralControl(unittest.TestCase):
 
 class SourceParentEnvelopes(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> SourceRemainingArgs:
         objects, rows, parents, sequence, owner, protected = SourceRemainingAggregates.fixture()
         # This geometry-only adapter covers the whole Source parent, before
         # array assignment. The suffix-only fixture's completed Source guard
@@ -1748,7 +1958,7 @@ class SourceParentEnvelopes(unittest.TestCase):
         )
         return objects, rows, parents, sequence, owner, protected[:-1]
 
-    def test_all_current_parent_stores_have_owned_protected_footprints(self):
+    def test_all_current_parent_stores_have_owned_protected_footprints(self) -> None:
         from config_source_parent_effects import _parent_envelopes
 
         args = self.fixture()
@@ -1764,7 +1974,7 @@ class SourceParentEnvelopes(unittest.TestCase):
             tuple(v[0] for v in result["pointer_epochs"]), (5376, 5382, 5398, 5408, 5468, 5480)
         )
 
-    def test_parent_physical_alias_guard_is_retained(self):
+    def test_parent_physical_alias_guard_is_retained(self) -> None:
         from config_source_parent_effects import _parent_envelopes
         from config_regions import Storage
 
@@ -1782,7 +1992,9 @@ class SourceParentEnvelopes(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "overlap|intersects"):
             _parent_envelopes(objects, rows, parents, sequence, owner, protected + (guard,))
 
-    def test_saved_count_footprint_survives_selected_writes_with_exact_adjacent_captures(self):
+    def test_saved_count_footprint_survives_selected_writes_with_exact_adjacent_captures(
+        self,
+    ) -> None:
         from config_source_parent_effects import _parent_envelopes
         from config_regions import Storage
 
@@ -1812,7 +2024,7 @@ class SourceParentEnvelopes(unittest.TestCase):
 
 
 class SourceRemainingAggregates(unittest.TestCase):
-    def test_uncounted_temperature_and_failed_Colors_keep_their_paired_child_results(self):
+    def test_uncounted_temperature_and_failed_Colors_keep_their_paired_child_results(self) -> None:
         from config_decoded_sources import _remaining_aggregates
         from config_abstract import Span
 
@@ -1839,10 +2051,15 @@ class SourceRemainingAggregates(unittest.TestCase):
         tail = tuple(
             v
             for v in result["transitions"]
-            if v["field"] == "Blend gasoline_stoich" and v["before"].decoder == extra["after"]
+            if v["field"] == "Blend gasoline_stoich"
+            and isinstance(v["before"], SequenceInterface)
+            and v["before"].decoder == extra["after"]
         )
         self.assertEqual(len(tail), 1)
-        self.assertEqual(tail[0]["before"].count, Span(4, 4))
+        tail_before = tail[0]["before"]
+        if not isinstance(tail_before, SequenceInterface):
+            self.fail("expected counted Blend tail")
+        self.assertEqual(tail_before.count, Span(4, 4))
         short = _remaining_aggregates(*self.fixture(extent=60))
         self.assertFalse(short["normal"])
         self.assertTrue(short["Colors_invocations"])
@@ -1865,7 +2082,7 @@ class SourceRemainingAggregates(unittest.TestCase):
             )
 
     @staticmethod
-    def fixture(extent=160):
+    def fixture(extent: int = 160) -> SourceRemainingArgs:
         from config_decoded_sources import _parents
         from config_regions import Storage, borrow
         from config_abstract import Span
@@ -1905,14 +2122,19 @@ class SourceRemainingAggregates(unittest.TestCase):
             guards + (prefix,),
         )
 
-    def test_warning_Fuel_and_colors_keep_source_counts_unknown_bits_and_partial_stores(self):
+    def test_warning_Fuel_and_colors_keep_source_counts_unknown_bits_and_partial_stores(
+        self,
+    ) -> None:
         from config_decoded_sources import _remaining_aggregates
 
         result = _remaining_aggregates(*self.fixture())
-        self.assertEqual(result["warning"]["scope_domain"], (0, 1))
-        self.assertEqual(result["warning"]["mode_domain"], (0, 1))
-        self.assertEqual(result["warning"]["packed_word"], "page_ms | (scope <<16) | (mode <<24)")
-        self.assertEqual(result["warning"]["complete_store"], 0x1001C654 + 5040)
+        self.assertEqual(required_fixture(result["warning"])["scope_domain"], (0, 1))
+        self.assertEqual(required_fixture(result["warning"])["mode_domain"], (0, 1))
+        self.assertEqual(
+            required_fixture(result["warning"])["packed_word"],
+            "page_ms | (scope <<16) | (mode <<24)",
+        )
+        self.assertEqual(required_fixture(result["warning"])["complete_store"], 0x1001C654 + 5040)
         self.assertEqual(
             tuple((v["wire_tag"], v["emitted_tag"]) for v in result["normal"]),
             ((0, 2), (1, 3), (2, 0), (2, 1)),
@@ -1930,7 +2152,7 @@ class SourceRemainingAggregates(unittest.TestCase):
         self.assertEqual(blend["Fuel"]["remaining_sequence_counts"], (4, 3, 2, 1, 0))
         self.assertFalse(result["complete_ordinary_group_issued"])
 
-    def test_short_colors_preserve_completed_warning_and_Fuel_but_no_final_frontier(self):
+    def test_short_colors_preserve_completed_warning_and_Fuel_but_no_final_frontier(self) -> None:
         from config_decoded_sources import _remaining_aggregates
 
         result = _remaining_aggregates(*self.fixture(extent=60))
@@ -1972,7 +2194,7 @@ class SourceRemainingAggregates(unittest.TestCase):
         )
         self.assertFalse(result["complete_ordinary_group_issued"])
 
-    def test_warning_domain_errors_retain_the_actual_packed_intermediate_route(self):
+    def test_warning_domain_errors_retain_the_actual_packed_intermediate_route(self) -> None:
         from config_decoded_sources import _remaining_aggregates
 
         result = _remaining_aggregates(*self.fixture())
@@ -2024,8 +2246,20 @@ class SourceRemainingAggregates(unittest.TestCase):
 
 
 class SourceParentChronology(unittest.TestCase):
+    args: ClassVar[
+        tuple[
+            DiagnosticObjects,
+            InstructionMap,
+            tuple[BodyRecord, ...],
+            SourceArray,
+            ArrayEffects,
+            Storage,
+        ]
+    ]
+    tail: ClassVar[tuple[tuple[tuple[View, int], ...], CarrierReturns, ParentEnvelopes]]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         from config_decoded_sources import _array_effects
         from config_source_parent_effects import _parent_envelopes
         from config_source_control import _source_carrier_returns
@@ -2083,7 +2317,7 @@ class SourceParentChronology(unittest.TestCase):
             ),
         )
 
-    def test_conditional_normal_parent_keeps_real_order_and_package_aliases(self):
+    def test_conditional_normal_parent_keeps_real_order_and_package_aliases(self) -> None:
         from config_source_lineage import _publication_lineage
 
         value = _publication_lineage(*self.args, *self.tail)
@@ -2103,18 +2337,20 @@ class SourceParentChronology(unittest.TestCase):
         self.assertFalse(value["complete_ordinary_Source_prefix_issued"])
         self.assertIs(value["copied_padding_is_initialized"], False)
 
-    def test_stale_transport_package_and_missing_child_transfer_reject(self):
+    def test_stale_transport_package_and_missing_child_transfer_reject(self) -> None:
         from config_source_lineage import _publication_lineage
 
-        effects = dict(self.args[4])
+        effects = self.args[4].copy()
         chains = list(effects["transports"])
         changed = list(chains[1])
-        changed[0] = dict(changed[0], source=chains[0][1]["destination"])
+        changed[0] = changed[0].copy()
+        changed[0]["source"] = chains[0][1]["destination"]
         chains[1] = tuple(changed)
         effects["transports"] = tuple(chains)
         with self.assertRaisesRegex(AssertionError, "same-package source/destination"):
             _publication_lineage(*self.args[:4], effects, self.args[5], *self.tail)
-        transfer = dict(self.tail[1], parent_calls=self.tail[1]["parent_calls"][1:])
+        transfer = self.tail[1].copy()
+        transfer["parent_calls"] = self.tail[1]["parent_calls"][1:]
         with self.assertRaisesRegex(AssertionError, "actual child transfer"):
             _publication_lineage(*self.args, self.tail[0], transfer, self.tail[2])
         carriers = list(self.tail[0])
@@ -2122,13 +2358,14 @@ class SourceParentChronology(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "inherited pointer producer"):
             _publication_lineage(*self.args, tuple(carriers), *self.tail[1:])
 
-    def test_equal_package_copy_and_sentinel_only_domain_do_not_authorize_publication(self):
+    def test_equal_package_copy_and_sentinel_only_domain_do_not_authorize_publication(self) -> None:
         from config_source_lineage import _publication_lineage
 
         array = self.args[3]
-        effects = dict(self.args[4])
+        effects = self.args[4].copy()
         slots = list(effects["slots"])
-        slots[0] = dict(slots[0], source_package=dict(slots[0]["source_package"]))
+        slots[0] = slots[0].copy()
+        slots[0]["source_package"] = slots[0]["source_package"].copy()
         effects["slots"] = tuple(slots)
         with self.assertRaisesRegex(AssertionError, "package/tag/copy association"):
             _publication_lineage(*self.args[:4], effects, self.args[5], *self.tail)
@@ -2143,8 +2380,22 @@ class SourceParentChronology(unittest.TestCase):
 
 
 class SourceSuffixChronology(unittest.TestCase):
+    suffix: ClassVar[RemainingAggregates]
+    args: ClassVar[
+        tuple[
+            DiagnosticObjects,
+            InstructionMap,
+            tuple[BodyRecord, ...],
+            RemainingAggregates,
+            Storage,
+            Storage,
+            CarrierReturns,
+            ParentEnvelopes,
+        ]
+    ]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         from config_decoded_sources import _remaining_aggregates
         from config_source_children import source_children, source_return_profiles
         from config_source_control import _source_carrier_returns
@@ -2168,14 +2419,14 @@ class SourceSuffixChronology(unittest.TestCase):
         envelopes = _parent_envelopes(objects, rows, parents, sequence, owner, protected[:-1])
         cls.args = (objects, rows, parents, cls.suffix, frame, owner, transfer, envelopes)
 
-    def test_conditional_suffix_pairs_real_calls_guards_and_late_stores(self):
+    def test_conditional_suffix_pairs_real_calls_guards_and_late_stores(self) -> None:
         from config_source_lineage import _suffix_lineage
 
         result = _suffix_lineage(*self.args)
         V = 0x1001C654
-        self.assertEqual(result["warning"]["scope_alternatives"], (0, 1))
-        self.assertEqual(result["warning"]["mode_alternatives"], (0, 1))
-        self.assertEqual(result["warning"]["complete_store"], V + 5040)
+        self.assertEqual(required_fixture(result["warning"])["scope_alternatives"], (0, 1))
+        self.assertEqual(required_fixture(result["warning"])["mode_alternatives"], (0, 1))
+        self.assertEqual(required_fixture(result["warning"])["complete_store"], V + 5040)
         self.assertEqual(
             tuple(v["source_guard"] for v in result["Fuel"]), ((0, None), (1, None), (2, 0), (2, 1))
         )
@@ -2213,26 +2464,49 @@ class SourceSuffixChronology(unittest.TestCase):
         self.assertEqual(arguments["normal_inactive_predication"], (V + 5022, V + 5130))
         self.assertEqual(arguments["low_FP_source"], (V + 6406, V + 5562, "s0"))
 
-    def test_suffix_rejects_unpaired_child_count_and_Fuel_color_association(self):
+    def test_suffix_rejects_unpaired_child_count_and_Fuel_color_association(self) -> None:
         from config_source_lineage import _suffix_lineage
         from config_abstract import Span
 
         steps = list(self.suffix["transitions"])
         index = next(i for i, v in enumerate(steps) if v["field"] == "Blend gasoline_stoich")
-        steps[index] = dict(steps[index], before=replace(steps[index]["before"], count=Span(5, 5)))
-        changed = dict(self.suffix, transitions=tuple(steps))
+        step_before = steps[index]["before"]
+        if not isinstance(step_before, SequenceInterface):
+            self.fail("expected counted Blend step")
+        steps[index] = steps[index].copy()
+        steps[index]["before"] = replace(step_before, count=Span(5, 5))
+        changed = self.suffix.copy()
+        changed["transitions"] = tuple(steps)
         with self.assertRaisesRegex(AssertionError, "counted Blend|paired child"):
-            _suffix_lineage(*self.args[:3], changed, *self.args[4:])
+            _suffix_lineage(
+                self.args[0],
+                self.args[1],
+                self.args[2],
+                changed,
+                self.args[4],
+                self.args[5],
+                self.args[6],
+                self.args[7],
+            )
         normal = list(self.suffix["normal"])
-        normal[0] = dict(normal[0], Fuel=dict(normal[0]["Fuel"]))
-        changed = dict(self.suffix, normal=tuple(normal))
+        normal[0] = normal[0].copy()
+        normal[0]["Fuel"] = normal[0]["Fuel"].copy()
+        changed = self.suffix.copy()
+        changed["normal"] = tuple(normal)
         with self.assertRaisesRegex(AssertionError, "same completed Fuel"):
-            _suffix_lineage(*self.args[:3], changed, *self.args[4:])
-        transfer = dict(
-            self.args[-2],
-            parent_calls=tuple(
-                v for v in self.args[-2]["parent_calls"] if v[0] != 0x1001C654 + 5578
-            ),
+            _suffix_lineage(
+                self.args[0],
+                self.args[1],
+                self.args[2],
+                changed,
+                self.args[4],
+                self.args[5],
+                self.args[6],
+                self.args[7],
+            )
+        transfer = self.args[-2].copy()
+        transfer["parent_calls"] = tuple(
+            v for v in self.args[-2]["parent_calls"] if v[0] != 0x1001C654 + 5578
         )
         with self.assertRaisesRegex(AssertionError, "actual child transfer"):
             _suffix_lineage(*self.args[:-2], transfer, self.args[-1])
@@ -2240,11 +2514,12 @@ class SourceSuffixChronology(unittest.TestCase):
         position = next(i for i, v in enumerate(pairs) if v[0] == 0x1001C654 + 5578)
         site, target, role, mask = pairs[position]
         pairs[position] = (site, target + 2, role, mask)
-        transfer = dict(self.args[-2], parent_calls=tuple(pairs))
+        transfer = self.args[-2].copy()
+        transfer["parent_calls"] = tuple(pairs)
         with self.assertRaisesRegex(AssertionError, "actual child transfer"):
             _suffix_lineage(*self.args[:-2], transfer, self.args[-1])
 
-    def test_short_colors_do_not_erase_prior_reached_Fuel_or_make_outgoing_state(self):
+    def test_short_colors_do_not_erase_prior_reached_Fuel_or_make_outgoing_state(self) -> None:
         from config_decoded_sources import _remaining_aggregates
         from config_source_lineage import _suffix_lineage
 
@@ -2263,7 +2538,7 @@ class SourceSuffixChronology(unittest.TestCase):
             all(v["completed_Fuel_store"] == 0x1001C654 + 5570 for v in result["Colors"]["errors"])
         )
 
-    def test_error_only_suffix_still_binds_exact_preceding_success_input(self):
+    def test_error_only_suffix_still_binds_exact_preceding_success_input(self) -> None:
         from config_decoded_sources import _remaining_aggregates
         from config_source_lineage import _suffix_lineage
 
@@ -2278,14 +2553,16 @@ class SourceSuffixChronology(unittest.TestCase):
         )
         steps = list(suffix["transitions"])
         i = next(i for i, v in enumerate(steps) if v["field"] == "Warning mode")
-        steps[i] = dict(steps[i], before=replace(steps[i]["before"]))
-        changed = dict(suffix, transitions=tuple(steps))
+        steps[i] = steps[i].copy()
+        steps[i]["before"] = replace(steps[i]["before"])
+        changed = suffix.copy()
+        changed["transitions"] = tuple(steps)
         with self.assertRaisesRegex(AssertionError, "source chain"):
             _suffix_lineage(
                 objects, rows, parents, changed, sequence.header.storage, owner, *self.args[-2:]
             )
 
-    def test_error_carrier_keeps_packed_Warning_frontier_and_completed_Fuel(self):
+    def test_error_carrier_keeps_packed_Warning_frontier_and_completed_Fuel(self) -> None:
         from config_source_lineage import _suffix_lineage
 
         value = _suffix_lineage(*self.args)
@@ -2327,15 +2604,26 @@ class SourceSuffixChronology(unittest.TestCase):
         )
         errors = list(self.suffix["errors"])
         i = next(i for i, v in enumerate(errors) if v["stage"] == "Warning scope.domain")
-        errors[i] = dict(errors[i], frontier=0x1001C654 + 170)
-        changed = dict(self.suffix, errors=tuple(errors))
+        errors[i] = errors[i].copy()
+        errors[i]["frontier"] = 0x1001C654 + 170
+        changed = self.suffix.copy()
+        changed["errors"] = tuple(errors)
         with self.assertRaisesRegex(AssertionError, "error carrier"):
-            _suffix_lineage(*self.args[:3], changed, *self.args[4:])
+            _suffix_lineage(
+                self.args[0],
+                self.args[1],
+                self.args[2],
+                changed,
+                self.args[4],
+                self.args[5],
+                self.args[6],
+                self.args[7],
+            )
 
 
 class SourceAccessFamilies(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[DiagnosticFixture, dict[int, Instruction], tuple[SourceFamily, ...]]:
         from config_regions import Storage, borrow
         from config_source_access import (
             SourceAccessContext,
@@ -2393,7 +2681,7 @@ class SourceAccessFamilies(unittest.TestCase):
             families.append(SourceFamily(role, "sizez", parent, caller, sites, context, epochs))
         return objects, rows, tuple(families)
 
-    def test_four_conditional_families_keep_eight_paired_nonaffine_outputs(self):
+    def test_four_conditional_families_keep_eight_paired_nonaffine_outputs(self) -> None:
         from config_source_access import read_source_family, current_source_family
 
         objects, rows, families = self.fixture()
@@ -2421,7 +2709,7 @@ class SourceAccessFamilies(unittest.TestCase):
             fuel.footprints(0), ((fuel.context.config.start + 5, fuel.context.config.start + 7),)
         )
 
-    def test_width_numeric_alias_epoch_order_and_saved_cells_cannot_be_substituted(self):
+    def test_width_numeric_alias_epoch_order_and_saved_cells_cannot_be_substituted(self) -> None:
         import copy
         from config_source_access import read_source_family
 
@@ -2429,13 +2717,13 @@ class SourceAccessFamilies(unittest.TestCase):
         cases = []
         for value in (2.0, True, 4):
             record = copy.deepcopy(families[0].to_record())
-            record["sites"][0]["width"] = value
+            fixture_fields(fixture_items(record["sites"])[0])["width"] = value
             cases.append(record)
         record = copy.deepcopy(families[1].to_record())
-        record["epochs"].reverse()
+        fixture_items(record["epochs"]).reverse()
         cases.append(record)
         record = copy.deepcopy(families[0].to_record())
-        record["context"]["protected"].pop()
+        fixture_items(fixture_fields(record["context"])["protected"]).pop()
         cases.append(record)
         record = copy.deepcopy(families[2].to_record())
         record["role"] = "source_route_local"
@@ -2447,7 +2735,7 @@ class SourceAccessFamilies(unittest.TestCase):
             with self.subTest(case=i), self.assertRaises(AssertionError):
                 read_source_family(record)
 
-    def test_current_source_and_visitor_access_bytes_are_checked_separately(self):
+    def test_current_source_and_visitor_access_bytes_are_checked_separately(self) -> None:
         from config_source_access import current_source_family
         from test_config_stack import StartupConfigurationCopy
 
@@ -2464,16 +2752,16 @@ class SourceAccessFamilies(unittest.TestCase):
             ):
                 current_source_family(objects, family)
 
-    def test_full_deeper_physical_activation_stays_disjoint_beside_adjacency(self):
+    def test_full_deeper_physical_activation_stays_disjoint_beside_adjacency(self) -> None:
         _, _, families = self.fixture()
         original = families[0]
         c = original.context
         end = c.config.start + 14604
 
-        def moved(visitor_start):
+        def moved(visitor_start: int) -> SourceFamily:
             delta = visitor_start - c.visitor.start
 
-            def shift(v):
+            def shift(v: Storage) -> Storage:
                 return replace(v, start=v.start + delta) if v.space.startswith("stack:") else v
 
             return replace(
@@ -2497,7 +2785,7 @@ class SourceAccessFamilies(unittest.TestCase):
 
 class ActualDecodedSources(unittest.TestCase):
     @staticmethod
-    def fixture(extent=None, delta=0):
+    def fixture(extent: int | None = None, delta: int = 0) -> SourceFixture:
         objects, rows, source, item = SourceLiteralBodies.fixture(delta)
         if extent is None:
             return objects, rows, source, item
@@ -2520,7 +2808,9 @@ class ActualDecodedSources(unittest.TestCase):
         rows[0x1001FED8] = Instruction(0x1001FED8, raw, "addw", "r0, r12, #" + hex(12 + extent))
         return objects, rows, SameBLoaderBoundary.rebound(objects, source), item
 
-    def test_unentered_or_first_Source_error_preserves_previous_errors_without_completion(self):
+    def test_unentered_or_first_Source_error_preserves_previous_errors_without_completion(
+        self,
+    ) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
 
@@ -2555,13 +2845,13 @@ class ActualDecodedSources(unittest.TestCase):
             ):
                 self.assertEqual(
                     sum(row[-3] for row in result["error_summary"] if row[0] == origin),
-                    len(prior[key]),
+                    len(tuple_items(fixture_fields(prior)[key])),
                 )
             self.assertEqual(
                 sum(row[-3] for row in result["error_summary"]), result["error_occurrences"]
             )
 
-    def test_error_projection_counts_duplicate_labels_without_creating_source_paths(self):
+    def test_error_projection_counts_duplicate_labels_without_creating_source_paths(self) -> None:
         from config_abstract import Span
         from config_decoded_sources import _error_summary
 
@@ -2578,7 +2868,9 @@ class ActualDecodedSources(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "untyped"):
             _error_summary((("Views", (dict(first, error=True),)),))
 
-    def test_unentered_currentness_binds_retained_predecessor_and_explicit_current_source(self):
+    def test_unentered_currentness_binds_retained_predecessor_and_explicit_current_source(
+        self,
+    ) -> None:
         import json
         from config_decoded_sources import (
             _first_boot_decoded_sources_state,
@@ -2627,7 +2919,7 @@ class ActualDecodedSources(unittest.TestCase):
 
     def test_public_same_small_input_rejects_coherent_late_store_table_return_and_foreign_ingress(
         self,
-    ):
+    ) -> None:
         from config_decoded_sources import first_boot_decoded_sources
         from test_config_stack import StartupConfigurationCopy, SameBLoaderBoundary
         from llvm_stack import Instruction
@@ -2659,7 +2951,9 @@ class ActualDecodedSources(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "table|payload|mapping"):
             first_boot_decoded_sources(objects, rows, SameBLoaderBoundary.rebound(objects, source))
 
-    def test_independent_Config_Reset_S_child_and_Visitor_relocations_reach_public_boundary(self):
+    def test_independent_Config_Reset_S_child_and_Visitor_relocations_reach_public_boundary(
+        self,
+    ) -> None:
         import struct
         from config_decoded_sources import (
             _first_boot_decoded_sources_state,
@@ -2687,12 +2981,14 @@ class ActualDecodedSources(unittest.TestCase):
             objects, rows, SameBLoaderBoundary.rebound(objects, source)
         )
         self.assertTrue(result["successes"])
-        self.assertEqual(state.access_bridge.families[0].context.config.start, B)
-        self.assertEqual(state.access_bridge.families[0].context.visitor.start, sp - 544 - 1608)
+        self.assertEqual(required_fixture(state.access_bridge).families[0].context.config.start, B)
+        self.assertEqual(
+            required_fixture(state.access_bridge).families[0].context.visitor.start, sp - 544 - 1608
+        )
         self.assertTrue(
             all(
                 u.output.storage.start in (B, sp - 544 - 1608, sp - 544 - 1608 - 72)
-                for u in state.access_bridge.uses
+                for u in required_fixture(state.access_bridge).uses
             )
         )
         # Independently relocate actual child/table and full parent/pools;
@@ -2704,13 +3000,13 @@ class ActualDecodedSources(unittest.TestCase):
             objects, rows, SameBLoaderBoundary.rebound(objects, source)
         )
         self.assertTrue(moved["successes"])
-        self.assertEqual(moved["Controls_ready"]["frontier"], 0x10078000 + 5630)
+        self.assertEqual(required_fixture(moved["Controls_ready"])["frontier"], 0x10078000 + 5630)
         self.assertEqual(moved["physical_completion_sites"]["Fuel"], 0x10078000 + 5570)
         self.assertTrue(
             all(count > 0 for role, count in moved["source_guarded_accesses"]["role_counts"])
         )
 
-    def test_small_current_exit_rejects_equal_cloned_sequence_or_source_normal(self):
+    def test_small_current_exit_rejects_equal_cloned_sequence_or_source_normal(self) -> None:
         from config_decoded_sources import _first_boot_decoded_sources_state
 
         objects, rows, source, _ = self.fixture(72)
@@ -2723,12 +3019,12 @@ class ActualDecodedSources(unittest.TestCase):
         first = state.exits[0]
         for changed in (
             replace(first, sequence=replace(first.sequence)),
-            replace(first, source_normal=dict(first.source_normal)),
+            replace(first, source_normal=first.source_normal.copy()),
         ):
             with self.assertRaisesRegex(AssertionError, "outgoing state"):
                 replace(state, exits=(changed,) + state.exits[1:]).current()
 
-    def test_short_Colors_keeps_reached_Fuel_but_cannot_grant_Controls(self):
+    def test_short_Colors_keeps_reached_Fuel_but_cannot_grant_Controls(self) -> None:
         from config_decoded_sources import _first_boot_decoded_sources_state
 
         objects, rows, source, _ = self.fixture(66)
@@ -2748,7 +3044,7 @@ class ActualDecodedSources(unittest.TestCase):
         self.assertIsNone(result["Controls_ready"])
         self.assertFalse(state.exits)
 
-    def test_failed_fresh_batch_stops_before_exit_or_public_projection(self):
+    def test_failed_fresh_batch_stops_before_exit_or_public_projection(self) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
         import config_platform
@@ -2757,8 +3053,9 @@ class ActualDecodedSources(unittest.TestCase):
         projected = []
         bounded = config_platform._bounded_record
 
-        def observe(record):
-            if record.get("phase", "").startswith("first_boot_decoded_sources"):
+        def observe(record: Mapping[str, object]) -> Mapping[str, object]:
+            phase = record.get("phase", "")
+            if isinstance(phase, str) and phase.startswith("first_boot_decoded_sources"):
                 projected.append(record)
             return bounded(record)
 
@@ -2779,7 +3076,7 @@ class ActualDecodedSources(unittest.TestCase):
 
     def test_actual_public_projection_callsite_enforces_exact_wire_limit_with_supplied_padding(
         self,
-    ):
+    ) -> None:
         # Explicit diagnostic padding, not a real maximum producer envelope.
         import json
         from unittest.mock import patch
@@ -2791,8 +3088,9 @@ class ActualDecodedSources(unittest.TestCase):
             objects, rows, source, _ = self.fixture(1)
             seen = []
 
-            def padded(record):
-                if record.get("phase", "").startswith("first_boot_decoded_sources"):
+            def padded(record: Mapping[str, object]) -> Mapping[str, object]:
+                phase = record.get("phase", "")
+                if isinstance(phase, str) and phase.startswith("first_boot_decoded_sources"):
                     seen.append(True)
                     record = dict(record, fixture_padding="")
                     size = len((json.dumps(record, sort_keys=True) + "\n").encode())
@@ -2810,7 +3108,9 @@ class ActualDecodedSources(unittest.TestCase):
                     )
             self.assertEqual(len(seen), 1)
 
-    def test_public_same_input_derives_private_predecessor_once_and_stops_before_Controls(self):
+    def test_public_same_input_derives_private_predecessor_once_and_stops_before_Controls(
+        self,
+    ) -> None:
         import json
         from unittest.mock import patch
         import config_decoded_sources as subject
@@ -2870,14 +3170,14 @@ class ActualDecodedSources(unittest.TestCase):
 
 class SourceStructuralReuse(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[DiagnosticFixture, dict[int, Instruction], str]:
         from config_source_children import CHANNEL_SOURCE
         from config_widget_children import _name
 
         objects, rows, _, _ = SourceLiteralBodies.fixture()
         return objects, rows, _name(objects, CHANNEL_SOURCE)
 
-    def test_repeated_detached_coverage_keeps_complete_records_without_reauditing(self):
+    def test_repeated_detached_coverage_keeps_complete_records_without_reauditing(self) -> None:
         from unittest.mock import patch
         import config_source_children as subject
         from config_structural import _detached_inputs
@@ -2894,7 +3194,7 @@ class SourceStructuralReuse(unittest.TestCase):
         self.assertEqual(second, expected)
         self.assertIsNot(first, second)
         self.assertIsNot(first["coverage"], second["coverage"])
-        first["coverage"].clear()
+        fixture_fields(first["coverage"]).clear()
         first["ordinary_edges"] = ()
         self.assertEqual(second, expected)
         audited = sum(call.args[1] == name for call in body.call_args_list)
@@ -2902,6 +3202,10 @@ class SourceStructuralReuse(unittest.TestCase):
             audited, 1, "one exact immutable package must audit unchanged Source structure once"
         )
         self.assertEqual(subject.source_coverage(frozen, name, current), expected)
+        from config_structural import _FrozenObjects
+
+        if not isinstance(frozen, _FrozenObjects):
+            self.fail("expected owned frozen provider")
         self.assertEqual(frozen._counts[("config_source_children", "source_coverage")], (1, 2))
         with self.assertRaises(AssertionError):
             subject.source_coverage(frozen, "unreviewed name", current)
@@ -2910,7 +3214,7 @@ class SourceStructuralReuse(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "another immutable input"):
             subject.source_coverage(frozen, name, dict(current))
 
-    def test_exact_Source_extension_preserves_the_original_seven_API_inventory(self):
+    def test_exact_Source_extension_preserves_the_original_seven_API_inventory(self) -> None:
         from config_structural import _APIS
 
         original = {
@@ -2927,7 +3231,7 @@ class SourceStructuralReuse(unittest.TestCase):
         self.assertEqual(len(sources), 8)
         self.assertEqual(_APIS, sources | {("config_tail_children", "tail_coverage")})
 
-    def test_warmed_snapshot_is_independent_and_new_consumed_inputs_recheck(self):
+    def test_warmed_snapshot_is_independent_and_new_consumed_inputs_recheck(self) -> None:
         from config_source_children import source_coverage
         from config_structural import _detached_inputs
         from test_config_stack import StartupConfigurationCopy
@@ -2973,7 +3277,7 @@ class SourceStructuralReuse(unittest.TestCase):
                 if fault == "foreign_ingress":
                     self.assertIn("foreign direct ingress", str(rejected.exception))
 
-    def test_custom_provider_rechecks_consumed_non_site_bytes_after_warmup(self):
+    def test_custom_provider_rechecks_consumed_non_site_bytes_after_warmup(self) -> None:
         from config_source_children import source_coverage
         from config_structural import _detached_inputs
         from config_stack import DiagnosticObjects
@@ -2985,7 +3289,7 @@ class SourceStructuralReuse(unittest.TestCase):
             reads = 0
             changed = False
 
-            def read_only(self, at, size):
+            def read_only(self, at: int, size: int) -> bytes:
                 self.reads += 1
                 raw = super().read_only(at, size)
                 if self.changed and at <= start + 10 < at + size:
@@ -3008,7 +3312,7 @@ class SourceStructuralReuse(unittest.TestCase):
         with self.assertRaises(AssertionError):
             source_coverage(custom, name, rows)
 
-    def test_warm_structure_keeps_fresh_dynamic_source_proof_guards_and_returns(self):
+    def test_warm_structure_keeps_fresh_dynamic_source_proof_guards_and_returns(self) -> None:
         from unittest.mock import patch
         import config_source_children as children
         import config_source_effects as effects
@@ -3019,7 +3323,7 @@ class SourceStructuralReuse(unittest.TestCase):
         from config_regions import Storage
         from config_decoded_sources import _phase_graph
 
-        args = list(SourceAggregateInterface.fixture())
+        args = SourceAggregateInterface.fixture()
         objects, rows, proof, state, output, frame, guards = args
         frozen, current = _detached_inputs(objects, rows)
         name = next(n for n, e in frozen.elf.functions.items() if e[0] & ~1 == proof["function"])
@@ -3031,10 +3335,8 @@ class SourceStructuralReuse(unittest.TestCase):
             (Span(1, 2), Span(1, 4)),
         ):
             selected = replace(state, count=count, decoder=replace(state.decoder, cursor=cursor))
-            old = args[:]
-            old[3] = selected
-            new = old[:]
-            new[:2] = frozen, current
+            old = (*args[:3], selected, *args[4:])
+            new = (frozen, current, *old[2:])
             first = channel_source_interface(*old)
             second = channel_source_interface(*new)
             self.assertEqual(second, first)
@@ -3043,9 +3345,10 @@ class SourceStructuralReuse(unittest.TestCase):
             # on an equivalent fresh detached package, preserving full alias
             # comparison rather than comparing those pre-existing domains.
             baseline, before_rows = _detached_inputs(objects, rows)
-            prior = old[:]
-            prior[:2] = baseline, before_rows
-            original = children.source_coverage.__wrapped__
+            prior = (baseline, before_rows, *old[2:])
+            original: object = getattr(children.source_coverage, "__wrapped__")
+            if not callable(original):
+                self.fail("expected original structural wrapper")
             with (
                 patch.object(children, "source_coverage", original),
                 patch.object(effects, "source_coverage", original),
@@ -3059,23 +3362,20 @@ class SourceStructuralReuse(unittest.TestCase):
             )
             for value in (first, previous, second):
                 effects._source_error_origins(value)
-        new = args[:]
-        new[:2] = frozen, current
-        new[2] = dict(proof, access_targets=proof["access_targets"][:-1])
+        stale = proof.copy()
+        stale["access_targets"] = proof["access_targets"][:-1]
+        new = (frozen, current, stale, *args[3:])
         with self.assertRaisesRegex(AssertionError, "stale current body"):
             channel_source_interface(*new)
-        new = args[:]
-        new[:2] = frozen, current
-        new[-1] = guards + (
+        extra_guards = guards + (
             Storage(
                 frame.space, "protected active output", output.start + 20, 1, 1, frame.phase, False
             ),
         )
+        new = (frozen, current, *args[2:-1], extra_guards)
         with self.assertRaisesRegex(AssertionError, "protected live storage"):
             channel_source_interface(*new)
-        new = args[:]
-        new[:2] = frozen, current
-        new[4] = replace(output, offset=output.offset + 4)
+        new = (frozen, current, *args[2:4], replace(output, offset=output.offset + 4), *args[5:])
         with self.assertRaisesRegex(AssertionError, "caller ABI"):
             channel_source_interface(*new)
         from test_config_stack import StartupConfigurationCopy
@@ -3088,8 +3388,7 @@ class SourceStructuralReuse(unittest.TestCase):
         rows[site] = Instruction(site, raw, "bl", hex(target))
         fresh, new_rows = _detached_inputs(objects, rows)
         source_coverage(fresh, name, new_rows)
-        new = args[:]
-        new[:2] = fresh, new_rows
+        new = (fresh, new_rows, *args[2:])
         with self.assertRaisesRegex(AssertionError, "actual caller"):
             channel_source_interface(*new)
 
@@ -3098,23 +3397,31 @@ class SourceReturnBodySelection(unittest.TestCase):
     """Indexing-only checks; no body selection creates source authority."""
 
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[
+        DiagnosticObjects,
+        InstructionMap,
+        tuple[BodyRecord, ...],
+        dict[tuple[int, str], BodyRecord],
+        dict[str, set[int]],
+    ]:
         from config_decoded_sources import _parents
         from config_source_children import source_children, source_return_profiles
         from config_structural import _detached_inputs
 
         objects, rows, _, _ = SourceLiteralBodies.fixture()
-        objects, rows = _detached_inputs(objects, rows)
-        parents = _parents(objects, rows, 0x1001C654, 0x2000031C)
+        frozen, current = _detached_inputs(objects, rows)
+        parents = _parents(frozen, current, 0x1001C654, 0x2000031C)
         return (
-            objects,
-            rows,
+            frozen,
+            current,
             parents,
-            source_children(objects, rows, parents),
+            source_children(frozen, current, parents),
             source_return_profiles(),
         )
 
-    def test_current_frozen_walk_avoids_repeated_full_map_scans_without_caching_returns(self):
+    def test_current_frozen_walk_avoids_repeated_full_map_scans_without_caching_returns(
+        self,
+    ) -> None:
         import inspect
         import sys
         from config_finite_returns import _closed_child_returns
@@ -3124,7 +3431,7 @@ class SourceReturnBodySelection(unittest.TestCase):
         calls = []
         previous = sys.getprofile()
 
-        def observe(frame, event, value):
+        def observe(frame: FrameType, event: str, value: object) -> None:
             if (
                 event == "c_call"
                 and getattr(value, "__self__", None) is rows
@@ -3157,7 +3464,9 @@ class SourceReturnBodySelection(unittest.TestCase):
             len(calls), 0, "the parent matcher already validated this exact immutable input map"
         )
 
-    def test_fast_and_fallback_complete_records_keep_values_aliases_and_fresh_activations(self):
+    def test_fast_and_fallback_complete_records_keep_values_aliases_and_fresh_activations(
+        self,
+    ) -> None:
         from config_finite_returns import _closed_child_returns
         from config_decoded_sources import _phase_graph
         from config_widget_contracts import ROLES
@@ -3171,14 +3480,14 @@ class SourceReturnBodySelection(unittest.TestCase):
         self.assertTrue(all(a is not b for a, b in zip(original, current)))
         self.assertTrue(all(v["architectural_LR_preserved"] is False for v in current))
 
-    def test_byte_lookup_keeps_odd_and_interior_keys_with_original_body_values(self):
+    def test_byte_lookup_keeps_odd_and_interior_keys_with_original_body_values(self) -> None:
         from llvm_stack import Instruction
         from config_finite_returns import _body_selector
         from config_structural import _detached_inputs
 
         objects, _, _, _ = SourceLiteralBodies.fixture()
         start = 0x1001B500
-        rows = {
+        rows: InstructionMap = {
             start + i: Instruction(start + i, b"\x00\xbf", "nop", "")
             for i in (0, 1, 2, 5, 20, 21, 22, 23)
         }
@@ -3191,7 +3500,7 @@ class SourceReturnBodySelection(unittest.TestCase):
         self.assertIn(start + 5, select(start, 6))
         self.assertFalse(select(start + 8, 1))
 
-    def test_fresh_fast_bodies_preserve_save_and_original_PC_rejections(self):
+    def test_fresh_fast_bodies_preserve_save_and_original_PC_rejections(self) -> None:
         # Private transfer-record injections, not current-byte mutants. Public
         # complete literal matching still rejects these before the solver.
         from config_finite_returns import _closed_child_returns
@@ -3223,7 +3532,7 @@ class SourceReturnBodySelection(unittest.TestCase):
             self.assertEqual(errors[0], errors[1])
             self.assertRegex(errors[0], "save|restore|saved return PC")
 
-    def test_fast_unsaved_high_GPR_transfer_matches_fallback_and_carrier_rejection(self):
+    def test_fast_unsaved_high_GPR_transfer_matches_fallback_and_carrier_rejection(self) -> None:
         # Private transfer-record injection, not a coherent byte/literal mutant.
         from config_finite_returns import _closed_child_returns
         from config_source_control import _source_carrier_returns
@@ -3264,7 +3573,7 @@ class SourceReturnBodySelection(unittest.TestCase):
         self.assertEqual(errors[0], errors[1])
         self.assertIn("actual live high GPR", errors[0])
 
-    def test_custom_duplicate_items_malformed_and_huge_spans_preserve_eager_fallback(self):
+    def test_custom_duplicate_items_malformed_and_huge_spans_preserve_eager_fallback(self) -> None:
         from llvm_stack import Instruction
         from config_finite_returns import _body_selector
         from config_structural import _detached_inputs, _FrozenObjects
@@ -3275,13 +3584,13 @@ class SourceReturnBodySelection(unittest.TestCase):
         last = replace(first, operands="duplicate last")
 
         class ItemsOnly:
-            def items(self):
+            def items(self) -> tuple[tuple[int, Instruction], ...]:
                 return ((at, first), (at, last), (at + 2, first))
 
-            def __contains__(self, key):
+            def __contains__(self, key: object) -> Never:
                 raise AssertionError("custom provider indexing bypassed .items")
 
-            def __getitem__(self, key):
+            def __getitem__(self, key: object) -> Never:
                 raise AssertionError("custom provider indexing bypassed .items")
 
         custom = ItemsOnly()
@@ -3298,7 +3607,10 @@ class SourceReturnBodySelection(unittest.TestCase):
                     {a: r for a, r in rows.items() if start <= a < start + extent},
                 )
         # Direct construction does not inherit the factory's key validation.
-        malformed = _FrozenObjects(frozen.elf, {}, {str(at): first})
+        candidate = dynamic_call(_FrozenObjects, frozen.elf, {}, {str(at): first})
+        if not isinstance(candidate, _FrozenObjects):
+            self.fail("expected deliberately malformed frozen provider")
+        malformed = candidate
         with self.assertRaises(TypeError):
             _body_selector(malformed._rows, malformed)(at, 2)
         with self.assertRaisesRegex(AssertionError, "input package"):
@@ -3307,11 +3619,12 @@ class SourceReturnBodySelection(unittest.TestCase):
 
 class SourcePolicyV7(unittest.TestCase):
     @staticmethod
-    def augment(dependencies):
+    def augment(dependencies: tuple[Dependency, ...]) -> tuple[Dependency, ...]:
         # Supplied conditional dependency geometry only. These fixtures do
         # not derive the inherited sixteen from an actual complete producer.
         from dataclasses import fields, is_dataclass
         from config_regions import Storage, borrow
+        from config_widget_access import WidgetFamily
         from config_source_access import (
             SourceAccessContext,
             SourceFamily,
@@ -3320,14 +3633,14 @@ class SourcePolicyV7(unittest.TestCase):
             SOURCE_EPOCHS,
         )
 
-        def physical(value):
+        def physical(value: object) -> object:
             if type(value) is Storage:
                 return (
                     replace(value, start=value.start + 0x20070648)
                     if value.space.startswith("stack:")
                     else value
                 )
-            if is_dataclass(value):
+            if is_dataclass(value) and not isinstance(value, type):
                 return replace(
                     value, **{f.name: physical(getattr(value, f.name)) for f in fields(value)}
                 )
@@ -3335,8 +3648,16 @@ class SourcePolicyV7(unittest.TestCase):
                 return tuple(physical(v) for v in value)
             return value
 
-        dependencies = tuple(physical(v) for v in dependencies)
+        relocated: list[Dependency] = []
+        for value in dependencies:
+            result = physical(value)
+            if not isinstance(result, Dependency) or type(result) is not type(value):
+                raise AssertionError("physical fixture relocation changed the dependency kind")
+            relocated.append(result)
+        dependencies = tuple(relocated)
         widget = dependencies[-4]
+        if not isinstance(widget, WidgetFamily):
+            raise AssertionError("source policy fixture requires the inherited widget family")
         old = widget.context
         phase = "decoded_sources_group"
         loader = replace(old.loader, phase=phase)
@@ -3362,7 +3683,10 @@ class SourcePolicyV7(unittest.TestCase):
                 borrow(config, 0, 14576, phase),
                 protected,
             )
-            sites = tuple((parent + off, *rest) for off, *rest in SITE_SHAPES[role])
+            sites = tuple(
+                (parent + off, raw, field, width, direction, label)
+                for off, raw, field, width, direction, label in SITE_SHAPES[role]
+            )
             epochs = (
                 tuple(
                     (widget.parent + off, out, tag, 8 - i)
@@ -3376,7 +3700,7 @@ class SourcePolicyV7(unittest.TestCase):
             )
         return dependencies + tuple(sources)
 
-    def test_full_conditional_tuple_preserves_sources_without_creating_completion(self):
+    def test_full_conditional_tuple_preserves_sources_without_creating_completion(self) -> None:
         import json
         import config_platform as subject
         from test_config_stack import ValidatorPlatformFamilies, ConditionalStackPolicy
@@ -3408,7 +3732,9 @@ class SourcePolicyV7(unittest.TestCase):
             len((json.dumps(policy.to_record(), sort_keys=True) + "\n").encode()), 65536
         )
 
-    def test_current_policy_rejects_missing_duplicate_old_scope_and_cross_activation_sources(self):
+    def test_current_policy_rejects_missing_duplicate_old_scope_and_cross_activation_sources(
+        self,
+    ) -> None:
         import json
         import copy
         import config_platform as subject
@@ -3431,6 +3757,8 @@ class SourcePolicyV7(unittest.TestCase):
                 changed = changed[:20]
             else:
                 family = changed[20]
+                if not isinstance(family, SourceFamily):
+                    self.fail("expected a source family in the conditional dependency tuple")
                 c = family.context
                 if fault == "loader":
                     c = replace(c, loader=replace(c.loader, identity="another loader"))
@@ -3455,27 +3783,31 @@ class SourcePolicyV7(unittest.TestCase):
                     contradictory_effects=(),
                     owned_dependencies=tuple(changed),
                 )
-        record = json.loads(json.dumps(policy.to_record()))
+        record = fixture_fields(json.loads(json.dumps(policy.to_record())))
         for fault in ("old", "width", "bool", "kind", "complete"):
-            changed = copy.deepcopy(record)
+            changed_record = copy.deepcopy(record)
+            dependency = fixture_fields(fixture_items(changed_record["owned_dependencies"])[23])
+            site = fixture_fields(fixture_items(dependency["sites"])[0])
             if fault == "old":
-                changed.update(
+                changed_record.update(
                     schema=5,
                     scope="h2-rp2350-secure-owned-access-v6",
                     scope_sha256="627f472cf991e64d868d29eb67ef302218d57327a726cdfbc535ed5a97e6eeed",
                 )
             elif fault == "width":
-                changed["owned_dependencies"][23]["sites"][0]["width"] = 2.0
+                site["width"] = 2.0
             elif fault == "bool":
-                changed["owned_dependencies"][23]["sites"][0]["offset"] = True
+                site["offset"] = True
             elif fault == "kind":
-                changed["owned_dependencies"][23]["kind"] = "decoded_widget_access_family"
+                dependency["kind"] = "decoded_widget_access_family"
             else:
-                changed["owned_dependencies"][23]["physical_tag_is_completed_Source"] = True
+                dependency["physical_tag_is_completed_Source"] = True
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
-                subject.read_policy(changed, policy)
+                subject.read_policy(changed_record, policy)
 
-    def test_current_image_rechecks_each_Source_site_after_coherent_artifact_identity_change(self):
+    def test_current_image_rechecks_each_Source_site_after_coherent_artifact_identity_change(
+        self,
+    ) -> None:
         import hashlib
         import copy
         from config_platform import current_image_policy
@@ -3486,7 +3818,11 @@ class SourcePolicyV7(unittest.TestCase):
         self.assertEqual(len(current_image_policy(record, elf, eav).owned_dependencies), 27)
         original = elf.data
         for dependency in record["owned_dependencies"][20:24]:
-            site = dependency["sites"][0]["site"]
+            from script_values import integer_value
+
+            site = integer_value(
+                fixture_fields(fixture_items(dependency["sites"])[0])["site"], "fixture site"
+            )
             section = next(s for s in elf.sections if s[3] <= site < site + 4 <= s[3] + s[5])
             changed = bytearray(original)
             changed[section[4] + site - section[3]] ^= 1
@@ -3502,7 +3838,7 @@ class SourcePolicyV7(unittest.TestCase):
             finally:
                 elf.data = original
 
-    def test_supplied_27_family_image_obeys_exact_enclosing_wire_cap(self):
+    def test_supplied_27_family_image_obeys_exact_enclosing_wire_cap(self) -> None:
         import json
         import tempfile
         from pathlib import Path
@@ -3518,7 +3854,7 @@ class SourcePolicyV7(unittest.TestCase):
             stack, elf, static, headroom, eav, elf.fixture_source_context
         )
 
-        def size(v):
+        def size(v: object) -> int:
             return len((json.dumps(v, sort_keys=True) + "\n").encode())
 
         elf, eav, stack = supplied.image_fixture("sizez", 65536 - size(small) + 1)
@@ -3537,19 +3873,29 @@ class SourcePolicyV7(unittest.TestCase):
             path.write_bytes(wire)
             self.assertEqual(
                 capture.read_memory_gate(
-                    path, "supplied.elf", eav, elf.fixture_source_context, gate="experimental-full"
+                    path,
+                    Path("supplied.elf"),
+                    eav,
+                    elf.fixture_source_context,
+                    gate="experimental-full",
                 )["record"],
                 record,
             )
             path.write_bytes(wire + b" ")
             with self.assertRaisesRegex(ValueError, "oversized"):
                 capture.read_memory_gate(
-                    path, "supplied.elf", eav, elf.fixture_source_context, gate="experimental-full"
+                    path,
+                    Path("supplied.elf"),
+                    eav,
+                    elf.fixture_source_context,
+                    gate="experimental-full",
                 )
 
 
 class SourceClosedProducer(unittest.TestCase):
-    def test_actual_entered_raw_Source_keeps_first_full_check_without_immediate_replays(self):
+    def test_actual_entered_raw_Source_keeps_first_full_check_without_immediate_replays(
+        self,
+    ) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
 
@@ -3557,14 +3903,14 @@ class SourceClosedProducer(unittest.TestCase):
         current = subject._SourcePhasesState.current
         checks = []
 
-        def observed(state):
+        def observed(state: _SourcePhasesState) -> _SourcePhasesState:
             checks.append(state)
             return current(state)
 
         with patch.object(subject._SourcePhasesState, "current", observed):
             result, state = subject._first_boot_decoded_sources_state(objects, rows, source)
         self.assertTrue(result["successes"])
-        self.assertTrue(state.access_bridge.uses)
+        self.assertTrue(required_fixture(state.access_bridge).uses)
         self.assertTrue(result["error_occurrences"])
         self.assertTrue(all(value is state.phases for value in checks))
         self.assertEqual(
@@ -3575,8 +3921,12 @@ class SourceClosedProducer(unittest.TestCase):
 
 
 class SourceClosedProducerRelations(unittest.TestCase):
+    result: ClassVar[SourcesDescription]
+    inputs: ClassVar[tuple[DiagnosticFixture, dict[int, Instruction], SourceContext]]
+    state: ClassVar[_SourcesState]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         from config_decoded_sources import _first_boot_decoded_sources_state
 
         cls.inputs = ActualDecodedSources.fixture(72)[:3]
@@ -3584,7 +3934,7 @@ class SourceClosedProducerRelations(unittest.TestCase):
 
     def test_complete_raw_and_supplied_frozen_fallback_preserve_values_types_aliases_and_exits(
         self,
-    ):
+    ) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
         from config_structural import _detached_inputs
@@ -3594,7 +3944,7 @@ class SourceClosedProducerRelations(unittest.TestCase):
         checks = []
         original = subject._SourcePhasesState.current
 
-        def observed(state):
+        def observed(state: _SourcePhasesState) -> _SourcePhasesState:
             checks.append(state)
             return original(state)
 
@@ -3603,28 +3953,36 @@ class SourceClosedProducerRelations(unittest.TestCase):
         self.assertEqual(len(checks), 3)
         self.assertTrue(all(v is state.phases for v in checks))
         self.assertEqual(result, self.result)
-        for old, new in (
-            (self.state.phases, state.phases),
-            (self.state.control, state.control),
-            (self.state.access_bridge, state.access_bridge),
-        ):
-            self.assertEqual(old.checkpoint, new.checkpoint)
+        self.assertEqual(self.state.phases.checkpoint, state.phases.checkpoint)
+        self.assertEqual(
+            required_fixture(self.state.control).checkpoint,
+            required_fixture(state.control).checkpoint,
+        )
+        self.assertEqual(
+            required_fixture(self.state.access_bridge).checkpoint,
+            required_fixture(state.access_bridge).checkpoint,
+        )
         self.assertIsNot(state.phases.objects, self.state.phases.objects)
         self.assertIsNot(state.phases.source_context, self.state.phases.source_context)
         for value in (self.state, state):
             self.assertTrue(value.exits)
-            self.assertTrue(value.access_bridge.uses)
+            self.assertTrue(required_fixture(value.access_bridge).uses)
             self.assertTrue(
                 all(p.entry is value.phases.entries[i] for i, p in enumerate(value.phases.phases))
             )
             self.assertTrue(
-                all(u.source["source_phase"][0] == u.phase_index for u in value.access_bridge.uses)
+                all(
+                    u.source["source_phase"][0] == u.phase_index
+                    for u in required_fixture(value.access_bridge).uses
+                )
             )
             self.assertTrue(
                 all(
                     e.source_normal is normal and e.sequence is normal["after"]
                     for e in value.exits
-                    for normal in value.phases.phases[e.phase_index].remaining["normal"]
+                    for normal in required_fixture(value.phases.phases[e.phase_index].remaining)[
+                        "normal"
+                    ]
                     if normal is e.source_normal
                 )
             )
@@ -3632,7 +3990,9 @@ class SourceClosedProducerRelations(unittest.TestCase):
                 all(
                     any(
                         e.source_normal is n
-                        for n in value.phases.phases[e.phase_index].remaining["normal"]
+                        for n in required_fixture(value.phases.phases[e.phase_index].remaining)[
+                            "normal"
+                        ]
                     )
                     for e in value.exits
                 )
@@ -3642,7 +4002,9 @@ class SourceClosedProducerRelations(unittest.TestCase):
         )
         self.assertIs(self.state.current(), self.state)
 
-    def test_local_phase_and_control_faults_after_reached_derivation_stop_before_consumption(self):
+    def test_local_phase_and_control_faults_after_reached_derivation_stop_before_consumption(
+        self,
+    ) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
         import config_source_uses as access
@@ -3657,25 +4019,28 @@ class SourceClosedProducerRelations(unittest.TestCase):
             ("phase", "Sources private source/epoch/child/effect record changed"),
             ("control", "Sources active source/control record changed"),
         ):
-            restore = []
+            restore: list[Callable[[], object]] = []
             projected = []
 
-            def changed(control, families):
+            def changed(
+                control: _SourceActiveControl, families: tuple[SourceFamily, ...]
+            ) -> tuple[_SourceUse, ...]:
                 uses = original(control, families)
                 if fault == "phase":
-                    values = state.phases[0].parent_envelopes
+                    values = fixture_fields(state.phases[0].parent_envelopes)
                     self.assertNotIn("private_handoff_fault", values)
                     values["private_handoff_fault"] = True
                     restore.append(lambda: values.pop("private_handoff_fault"))
                 else:
-                    values = control.record
-                    old = values["selected_instructions"]
+                    values = fixture_fields(control.record)
+                    old = control.record["selected_instructions"]
                     values["selected_instructions"] = old + 1
                     restore.append(lambda: values.__setitem__("selected_instructions", old))
                 return uses
 
-            def observe(record):
-                if record.get("phase", "").startswith("first_boot_decoded_sources"):
+            def observe(record: Mapping[str, object]) -> Mapping[str, object]:
+                phase = record.get("phase", "")
+                if isinstance(phase, str) and phase.startswith("first_boot_decoded_sources"):
                     projected.append(record)
                 return bounded(record)
 
@@ -3697,7 +4062,9 @@ class SourceClosedProducerRelations(unittest.TestCase):
                 for action in reversed(restore):
                     action()
 
-    def test_whole_bridge_members_and_cross_use_alias_faults_reject_before_exit_then_restore(self):
+    def test_whole_bridge_members_and_cross_use_alias_faults_reject_before_exit_then_restore(
+        self,
+    ) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
         import config_source_uses as access
@@ -3706,7 +4073,7 @@ class SourceClosedProducerRelations(unittest.TestCase):
         member = access._check_member
         state = self.state.phases
 
-        def faults(bridge):
+        def faults(bridge: _SourceAccessBridge) -> None:
             original = bridge.uses
             for uses in (original[:-1], tuple(reversed(original)), original + (original[0],)):
                 object.__setattr__(bridge, "uses", uses)
@@ -3724,29 +4091,31 @@ class SourceClosedProducerRelations(unittest.TestCase):
             # Unlike the invocation wrapper (unique to this use), this Route
             # is ALSO retained by the actual guarded invocation. First prove
             # the association, then break it with an equal independent copy.
-            old = use.source["Route"]
+            old = fixture_fields(use.source)["Route"]
             guard = bridge.control.source_guards[use.phase_index]["invocations"][use.source_index]
             self.assertTrue(any(old is v for v in guard["guarded_routes"]))
-            use.source["Route"] = dict(old)
+            fixture_fields(use.source)["Route"] = dict(fixture_record(old))
             try:
                 with self.assertRaisesRegex(AssertionError, "bridge/use record changed"):
                     checked(bridge)
                 exits.assert_not_called()
                 members.assert_not_called()
             finally:
-                use.source["Route"] = old
+                fixture_fields(use.source)["Route"] = old
             use = next(u for u in bridge.uses if u.role == "source_route_output")
-            old = use.source["package"]
+            old = fixture_fields(use.source)["package"]
             lineage = bridge.control.source_guards[use.phase_index]["publication_lineage"]
-            self.assertTrue(any(v["package"] is old for v in lineage["payload_lineage"]))
-            use.source["package"] = dict(old)
+            self.assertTrue(
+                any(v["package"] is old for v in required_fixture(lineage)["payload_lineage"])
+            )
+            fixture_fields(use.source)["package"] = dict(fixture_record(old))
             try:
                 with self.assertRaisesRegex(AssertionError, "bridge/use record changed"):
                     checked(bridge)
                 exits.assert_not_called()
                 members.assert_not_called()
             finally:
-                use.source["package"] = old
+                fixture_fields(use.source)["package"] = old
             # Equal derived use wrappers themselves are not caller tickets.
             # The complete graph must still match before exact members pass.
             clones = tuple(replace(v) for v in bridge.uses)
@@ -3765,12 +4134,12 @@ class SourceClosedProducerRelations(unittest.TestCase):
         self.assertTrue(result["successes"])
         self.assertEqual(result, self.result)
         exits.assert_called_once()
-        self.assertEqual(members.call_count, len(value.access_bridge.uses))
+        self.assertEqual(members.call_count, len(required_fixture(value.access_bridge).uses))
         self.assertIs(value.current(), value)
 
 
 class SourceClosedProducerFallback(unittest.TestCase):
-    def test_custom_entered_error_reentry_and_non_site_byte_drift_keep_full_rechecks(self):
+    def test_custom_entered_error_reentry_and_non_site_byte_drift_keep_full_rechecks(self) -> None:
         from unittest.mock import patch
         import config_decoded_sources as subject
         from config_stack import DiagnosticObjects
@@ -3793,9 +4162,9 @@ class SourceClosedProducerFallback(unittest.TestCase):
         class Custom(DiagnosticObjects):
             entered = False
             changed = False
-            inner = None
+            inner: tuple[SourcesDescription, _SourcesState] | None = None
 
-            def read_only(self, address, extent):
+            def read_only(self, address: int, extent: int) -> bytes:
                 if not self.entered:
                     self.entered = True
                     self.inner = subject._first_boot_decoded_sources_state(objects, rows, source)
@@ -3813,7 +4182,7 @@ class SourceClosedProducerFallback(unittest.TestCase):
         original = subject._SourcePhasesState.current
         checks = []
 
-        def observed(state):
+        def observed(state: _SourcePhasesState) -> _SourcePhasesState:
             if state.objects is custom:
                 checks.append(state)
             return original(state)
@@ -3823,7 +4192,7 @@ class SourceClosedProducerFallback(unittest.TestCase):
         self.assertEqual(len(checks), 3)
         self.assertTrue(state.phases.entries)
         self.assertFalse(state.exits)
-        self.assertEqual(result, custom.inner[0])
+        self.assertEqual(result, required_fixture(custom.inner)[0])
         self.assertIs(state.phases.objects, custom)
         custom.changed = True
         with self.assertRaisesRegex(AssertionError, "payload"):

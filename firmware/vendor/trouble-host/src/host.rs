@@ -1,9 +1,18 @@
 //! BleHost
 //!
 //! The host module contains the main entry point for the TrouBLE host.
+#[cfg(all(test, feature = "peripheral", feature = "default-packet-pool"))]
+#[path = "host_advertise_tests.rs"]
+mod advertise_tests;
+#[cfg(all(test, feature = "default-packet-pool"))]
+#[path = "host_channel_tests.rs"]
+mod channel_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_mtu_tests.rs"]
 mod mtu_tests;
+#[cfg(all(test, not(feature = "gatt"), feature = "default-packet-pool"))]
+#[path = "host_no_gatt_tests.rs"]
+mod no_gatt_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_regression_tests.rs"]
 mod regression_tests;
@@ -87,6 +96,7 @@ use crate::connection_manager::ResolvablePrivateAddrs;
 use crate::connection_manager::{AclSendLock, ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
+#[cfg(feature = "connection-params-update")]
 use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
@@ -472,7 +482,7 @@ where
         if !self.is_rpa_rotation_ready() {
             return Ok(());
         }
-        let Some(rpa) = self.state.connections.security_manager.generate_local_rpa() else {
+        let Some(rpa) = self.state.connections.security_manager.generate_local_rpa()? else {
             return Ok(());
         };
         LeSetRandomAddr::new(rpa).exec(self.controller).await?;
@@ -822,17 +832,19 @@ where
                     #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is the start of the frame, so make sure to adjust the credits.
-                        self.state.channels.received(header.channel, 1)?;
-                        self.state.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state.channels.received(handle, header.channel, 1)?;
+                        self.state
+                            .channels
+                            .check_pdu_len(handle, header.channel, header.length)?;
 
                         self.state
                             .connections
                             .reassembly(acl.handle(), |p| {
                                 let r = if !p.in_progress() {
                                     // Init the new assembly assuming the length of the SDU.
-                                    let (first, payload) = data.split_at(2);
+                                    let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-                                    self.state.channels.check_sdu_len(header.channel, len)?;
+                                    self.state.channels.check_sdu_len(handle, header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
                                         warn!("[host] no memory for packets on channel {}", header.channel);
                                         return Err(Error::OutOfMemory);
@@ -850,13 +862,15 @@ where
                                     Ok(())
                                 }
                             })
-                            .inspect_err(|_| self.state.channels.disconnect_by_cid(header.channel))?;
+                            .inspect_err(|_| self.state.channels.disconnect_by_cid(handle, header.channel))?;
                         return Ok(());
                     }
 
                     // For dynamic channels, validate PDU length against MPS before reassembly.
                     if header.channel >= L2CAP_CID_DYN_START {
-                        self.state.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state
+                            .channels
+                            .check_pdu_len(handle, header.channel, header.length)?;
                     }
 
                     let Some(packet) = P::allocate() else {
@@ -882,17 +896,19 @@ where
                     #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is a complete L2CAP K-frame, so make sure to adjust the credits.
-                        self.state.channels.received(header.channel, 1)?;
-                        self.state.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state.channels.received(handle, header.channel, 1)?;
+                        self.state
+                            .channels
+                            .check_pdu_len(handle, header.channel, header.length)?;
 
                         if let Some((state, pdu)) = self
                             .state
                             .connections
                             .reassembly(acl.handle(), |p| {
                                 if !p.in_progress() {
-                                    let (first, payload) = data.split_at(2);
+                                    let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-                                    self.state.channels.check_sdu_len(header.channel, len)?;
+                                    self.state.channels.check_sdu_len(handle, header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
                                         warn!("[host] no memory for packets on channel {}", header.channel);
                                         return Err(Error::OutOfMemory);
@@ -903,7 +919,7 @@ where
                                     p.update(data)
                                 }
                             })
-                            .inspect_err(|_| self.state.channels.disconnect_by_cid(header.channel))?
+                            .inspect_err(|_| self.state.channels.disconnect_by_cid(handle, header.channel))?
                         {
                             result.replace((state, pdu));
                         } else {
@@ -916,7 +932,9 @@ where
                     } else {
                         // For dynamic channels, validate PDU length against MPS before reassembly.
                         if header.channel >= L2CAP_CID_DYN_START {
-                            self.state.channels.check_pdu_len(header.channel, header.length)?;
+                            self.state
+                                .channels
+                                .check_pdu_len(handle, header.channel, header.length)?;
                         }
 
                         let Some(packet) = P::allocate() else {
@@ -998,6 +1016,8 @@ where
                         .connections
                         .try_outbound(acl.handle(), Pdu::new(packet, len))?;
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
+                    #[cfg(feature = "gatt")]
+                    self.state.connections.accept_att_response(acl.handle(), pdu.as_ref())?;
                     debug!("[host] remote agreed att MTU of {}", mtu);
                     self.state.connections.exchange_att_mtu(acl.handle(), mtu);
                     #[cfg(feature = "gatt")]
@@ -1029,7 +1049,11 @@ where
                             // Confirming a value does not permit losing it locally.
                             self.state.connections.post_gatt_client(acl.handle(), pdu)?;
                         }
-                        Ok(att::Att::Server(_)) => {
+                        Ok(att::Att::Server(AttServer::Response(_))) => {
+                            self.state.connections.accept_att_response(acl.handle(), pdu.as_ref())?;
+                            self.state.connections.post_gatt_client(acl.handle(), pdu)?;
+                        }
+                        Ok(att::Att::Server(AttServer::Unsolicited(_))) => {
                             self.state.connections.post_gatt_client(acl.handle(), pdu)?;
                         }
                         Err(e) => {
@@ -1039,14 +1063,17 @@ where
                     }
                     #[cfg(not(feature = "gatt"))]
                     {
-                        if let Ok(att::Att::Client(_)) = a {
+                        if let Ok(att::Att::Client(AttClient::Command(_) | AttClient::Confirmation(_))) = a {
+                            // Commands and confirmations never elicit an error response.
+                            return Ok(());
+                        } else if let Ok(att::Att::Client(AttClient::Request(_))) = a {
                             drop(a);
 
                             let opcode = pdu.as_ref()[0];
                             let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
                                 request: opcode,
-                                handle: acl.handle().raw(),
-                                code: att::AttErrorCode::ATTRIBUTE_NOT_FOUND,
+                                handle: 0,
+                                code: att::AttErrorCode::REQUEST_NOT_SUPPORTED,
                             }));
 
                             let mut packet = pdu.into_inner();
@@ -1083,7 +1110,7 @@ where
                     .connections
                     .handle_security_channel(acl.handle(), pdu, event_handler)?;
             }
-            other if other >= L2CAP_CID_DYN_START => match self.state.channels.dispatch(header.channel, pdu) {
+            other if other >= L2CAP_CID_DYN_START => match self.state.channels.dispatch(handle, header.channel, pdu) {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
@@ -1224,11 +1251,12 @@ where
     pub(crate) async fn send_conn_param_update_res(
         &self,
         handle: ConnHandle,
+        identifier: u8,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
         self.state
             .channels
-            .send_conn_param_update_res(handle, self, param)
+            .send_conn_param_update_res(handle, identifier, self, param)
             .await
     }
 
@@ -1666,7 +1694,10 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 LeEventKind::LeRemoteConnectionParameterRequest => {
                                     let event = LeRemoteConnectionParameterRequest::from_hci_bytes_complete(event.data)
                                         .map_err(Error::from)?;
-                                    let req = ConnectionParamsRequest::new(
+                                    #[cfg(not(feature = "connection-params-update"))]
+                                    let _ = event;
+                                    #[cfg(feature = "connection-params-update")]
+                                    let req = ConnectionParamsRequest::new_link_layer(
                                         RequestedConnParams {
                                             min_connection_interval: Duration::from_micros(
                                                 event.interval_min.as_micros(),
@@ -1679,13 +1710,21 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             ..Default::default()
                                         },
                                         event.handle,
-                                        #[cfg(feature = "connection-params-update")]
-                                        false,
                                     );
-                                    let _ = host
+                                    #[cfg(feature = "connection-params-update")]
+                                    if let Err(error) = host
                                         .state
                                         .connections
-                                        .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req));
+                                        .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req))
+                                    {
+                                        // The peer is awaiting a reply. A full application queue
+                                        // must not silently strand a live controller procedure.
+                                        host.connections().record_local_disconnect_error(event.handle, &error);
+                                        host.connections().request_handle_disconnect(
+                                            event.handle,
+                                            DisconnectReason::RemoteUserTerminatedConn,
+                                        );
+                                    }
                                 }
                                 #[cfg(feature = "iso")]
                                 LeEventKind::LeCisRequest => {
@@ -1732,7 +1771,9 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             let vendor = Vendor::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                             event_handler.on_vendor(&vendor);
                         }
-                        EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {
+                        EventKind::EncryptionChangeV1
+                        | EventKind::EncryptionChangeV2
+                        | EventKind::EncryptionKeyRefreshComplete => {
                             host.state.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore
@@ -1811,7 +1852,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             let addr = host.state.address.map(|a| a.addr);
 
             #[cfg(all(feature = "security", feature = "central"))]
-            let addr = host.state.connections.security_manager.generate_local_rpa().or(addr);
+            let addr = host.state.connections.security_manager.generate_local_rpa()?.or(addr);
 
             if let Some(addr) = addr {
                 LeSetRandomAddr::new(addr).exec(host.controller).await?;

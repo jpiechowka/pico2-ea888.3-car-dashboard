@@ -5,6 +5,17 @@ continuation does not prove validator output, incoming Config/fault ownership,
 whole-caller coverage, boot visibility or the final qualified stack result.
 """
 
+from collections.abc import Iterable, Mapping
+from typing import Literal, Never, NotRequired, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_regions import Region, View
+from config_default import Writes
+from config_default_sources import SourceTerminal
+from config_default_widget import TargetRequirement
+from config_roots import WindowRecord
+from config_upstream import IssuerRecord
+from llvm_stack import Instruction
 from dataclasses import replace
 import re
 from config_continuation_contract import CONTINUATIONS
@@ -14,7 +25,6 @@ from config_entry import entry_object
 from config_finite import _literal_body
 from config_regions import (
     Storage,
-    Region,
     Transfer,
     borrow,
     require_disjoint,
@@ -27,18 +37,118 @@ from config_upstream import issuer_region
 from validation import require
 
 
-def _no_outline(*args):
+class FallbackContext(TypedDict):
+    phase: Literal["fallback"]
+    call: int
+    result: View
+    r8: int
+    r4: int
+    r10: int
+
+
+class DecodedContext(TypedDict):
+    phase: Literal["decoded"]
+    call: int
+    result: View
+    r8: int
+    requires_prior_Compare_retirement_and_complete_decode_finalize_canonical: bool
+
+
+class ErrorPayload(TypedDict):
+    view: View
+    reference_levels: int
+    opaque_padding: tuple[int, int]
+    writes: Writes
+    requires_actual_ValidationError_variant_and_callback_binding: bool
+
+
+class RetainedFault(TypedDict):
+    view: View
+    first_word: str
+    remaining_words: tuple[int, int]
+    requires_source_typed_original_fault_and_preservation: bool
+
+
+class PublicationPredecessor(TypedDict):
+    phase: str
+    fault: str
+    stoich: str
+    r10: NotRequired[int]
+    r8: NotRequired[int]
+
+
+class ReturnInterface(TypedDict):
+    parent_frame: int
+    outline: BodyRecord
+    incoming_SP: int
+    saved_intervals: tuple[tuple[int, int], ...]
+    restored_bytes: int
+    final_SP: int
+    r0: str
+    requires_actual_boot_discard_and_Dashboard_static_receiver: bool
+
+
+class PayloadFailure(TypedDict):
+    target: int
+    requires_complete_source_Payload_constructor_and_refill_join: bool
+
+
+class ValidationRefill(TypedDict):
+    target: int
+    third_word_to_P8: bool
+    second_word_to_P12: bool
+    first_word_register: str
+    leading_tag_register: str
+    requires_typed_fault_preparation_join: bool
+
+
+class LoaderContinuation(TypedDict):
+    proofs: dict[str, BodyRecord]
+    source: SourceTerminal
+    issuer: IssuerRecord
+    default_error: WindowRecord
+    regions: tuple[Region, ...]
+    config: View
+    validator_contexts: tuple[FallbackContext, DecodedContext]
+    valid_result_tags: tuple[int, ...]
+    excluded_non2_sentinel: int
+    requires_source_valid_Result_not_arbitrary_non2: bool
+    error_payload: ErrorPayload
+    retained_fault: RetainedFault
+    fallback_writes: Writes
+    decoded_writes: Writes
+    publication_writes: Writes
+    decoded_local_writes: Writes
+    publication_predecessors: tuple[PublicationPredecessor, ...]
+    return_interface: ReturnInterface
+    payload_failure: PayloadFailure
+    validation_error_refill: ValidationRefill
+    target_access_requirements: tuple[TargetRequirement, ...]
+    requires_complete_validator_typed_fault_and_boot_graph: bool
+    requires_full_parent_and_outline_ingress_coverage: bool
+    requires_default_Formatter_live_sink_PANICKED_and_activation_graph: bool
+
+
+def _no_outline(*args: object) -> Never:
     raise AssertionError("unreviewed continuation outline child")
 
 
-def _destination(row):
+def _destination(row: Instruction) -> int:
     match = re.search(r"(?<![#\w])0x([0-9a-f]+)(?:\s|$)", row.operands.split("@", 1)[0])
-    require(match is not None, "unresolved continuation transfer")
+    if match is None:
+        raise AssertionError("unresolved continuation transfer")
     return int(match[1], 16)
 
 
-def _match(objects, name, instructions, label, start, bindings):
-    contract = dict(CONTINUATIONS[label])
+def _match(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    label: str,
+    start: int,
+    bindings: Mapping[str, int],
+) -> BodyRecord:
+    contract = CONTINUATIONS[label].copy()
     operations = []
     for offset, width, text in contract["instructions"]:
         for key, value in bindings.items():
@@ -64,7 +174,13 @@ def _match(objects, name, instructions, label, start, bindings):
     )
 
 
-def _region(objects, name, instructions, label, proof):
+def _region(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    label: str,
+    proof: BodyRecord,
+) -> Region:
     start = proof["function"]
     end = start + proof["extent"]
     transfers = []
@@ -94,15 +210,27 @@ def _region(objects, name, instructions, label, proof):
     )
 
 
-def loader_continuation(objects, name, instructions, frame, ancestor_protected):
+def loader_continuation(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> LoaderContinuation:
     ancestor_protected = tuple(ancestor_protected)
     source = source_terminal(objects, name, instructions, frame, ancestor_protected)
     return _checked_continuation(objects, name, instructions, frame, ancestor_protected, source)
 
 
 def _checked_continuation(
-    objects, name, instructions, frame, ancestor_protected, source, _phase_protected=None
-):
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+    source: SourceTerminal,
+    _phase_protected: Iterable[Storage] | None = None,
+) -> LoaderContinuation:
     # Only internally recomputed source enters this private shared matcher.
     ancestor_protected = tuple(ancestor_protected)
     prepared = source["widget"]["prepared"]
@@ -199,7 +327,7 @@ def _checked_continuation(
     )
     for lo, hi in ranges:
         _ingress(instructions, parent, extent, lo, hi)
-    starts = {
+    starts: dict[int, set[int]] = {
         start: set(),
         decoded: set(),
         publication: {issuer["window"] + 46},
@@ -221,7 +349,9 @@ def _checked_continuation(
     fault = prepared["fault"]
     protected = saved + (fault,)
 
-    def writes(storage, items, guards):
+    def writes(
+        storage: Storage, items: Iterable[tuple[int, int]], guards: Iterable[Storage]
+    ) -> Writes:
         pairs = tuple((borrow(storage, o, n, frame.phase, writable=True), 0, n) for o, n in items)
         require_writes(tuple(v for v, o, n in pairs), pairs, guards)
         return pairs

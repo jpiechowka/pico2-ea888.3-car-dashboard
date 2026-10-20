@@ -260,15 +260,17 @@ Before a full window, after invalid timing, or more than two seconds after the
 latest observation, work displays `--`, never an invented idle value.
 
 The two cores publish bounded observations under one short critical section;
-snapshot time and the completion counter are captured together. No rendering,
-hardware operation or await occurs inside that lock. The current UI poll is
+snapshot time and the completion counter are captured together. The lock covers
+bounded timer reads and value copies/calculations, with no rendering or awaited
+peripheral transactions. The current UI poll is
 visible only after it returns. Stack samples can miss deeper calls between poll
 boundaries. Static memory is not total live usage: do not add the framebuffers or
 core-1 stack again. The RP2350 has 520 KiB physically; this linker leaves its two
 4 KiB scratch banks outside the displayed 512 KiB arena.
 
-See [dashboard/probe measurement audit](../performance/diagnostic-measurements.md)
-for differences between the two tools and remaining device checks.
+See the [measurement contract](../performance/diagnostic-measurements.md) and
+[detailed diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+for both firmware paths, numeric validity, tests and remaining device checks.
 
 ## What it collects and sends
 
@@ -336,6 +338,10 @@ the old result; there is no automatic retry. Available fields are:
 | Host ingress | First local ACL receive error that requested disconnect, when available; separate from the original operation failure |
 | HCI disconnect | Raw reason from a successful controller terminal event, retained even if its event queue was full; otherwise explicitly unavailable |
 
+Standard-read durations are frozen before publishing retained rows, including
+failed reads. Reliable-queue waits can lengthen the overall inspection but cannot
+inflate only the read's failure duration.
+
 Each 3-second ATT deadline covers the **whole operation**, including all pages of
 one service's characteristic query. The 30-second deadline covers the entire
 inspection after connection. A timeout may follow some successful responses.
@@ -366,6 +372,11 @@ be attributed to the selected TV/adapter. Raw AD-field decoding and rejected GAT
 records are separate checks. With no accepted peer, X opens **SCAN DIAGNOSTICS**;
 rotation/A/B scroll, Y returns to scanning, and click/X cannot connect without a
 peer. Otherwise the global block follows the peer evidence pages.
+
+A global observation newer than the UI's frame snapshot displays `age unavailable`
+instead of a fabricated zero age. Equal-time observations legitimately show zero.
+Saved evidence displays the original boot-relative time; capture admission rejects
+an observation after its capture timestamp.
 
 The final global lines show report bytes after the count field, bytes remaining
 from the failed record's start, and its declared Data_Length (or a missing header

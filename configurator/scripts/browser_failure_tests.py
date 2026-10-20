@@ -5,6 +5,7 @@ No WebDriver, JavaScript test implementation, browser extensions or global profi
 
 import argparse
 import socket
+import socketserver
 import http.server
 import pathlib
 import tempfile
@@ -13,7 +14,7 @@ import threading
 from browser_process import OwnedProcess
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", required=True)
     parser.add_argument("--dist", type=pathlib.Path, default=pathlib.Path("target/browser-tests"))
@@ -25,16 +26,21 @@ def main():
     )
     args = parser.parse_args()
     done = threading.Event()
-    results = []
+    results: list[str] = []
 
     class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, directory=str(args.dist.resolve()), **kw)
+        def __init__(
+            self,
+            request: socket.socket,
+            client_address: tuple[str, int],
+            server: socketserver.BaseServer,
+        ) -> None:
+            super().__init__(request, client_address, server, directory=str(args.dist.resolve()))
 
-        def log_message(self, *a):
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             if self.path == "/__test_environment":
                 self.send_response(200)
                 self.end_headers()
@@ -58,7 +64,7 @@ def main():
                 return
             super().do_GET()
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             if self.path not in ("/__result", "/__progress"):
                 self.send_error(404)
                 return

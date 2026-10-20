@@ -4,12 +4,99 @@ All symbolic mutable borrows remain private to this check. This is one guarded
 source alternative, not an acquired owner, whole loader or validation result.
 """
 
+from collections.abc import Iterable
+from typing import Never, TypeVar, TypedDict
+from config_body_types import BodyContract, InstructionMap
+from config_stack import DiagnosticObjects
+from config_default_sources import SourceTerminal
+from config_default import CapacityFailure
+from config_default_widget import WidgetDiagnostic
+from config_loader_boundary import LoaderBoundary, ProtectedInterval
+from config_headers import RootHeader
+from config_build_source import SourceBinding
+from config_validator_access import ValidatorContext
+from config_validator_contract import ValidatorObject
+from config_construction import ExtendResult, StringResult
+from config_refill_children import AdvancedResult, DefinitionResult, OpaqueCopyResult, PeriodResult
 from config_loader_boundary import first_boot_loader_boundary, _physical
 from config_headers import root_decoder_header, ROOT
 from config_default_sources import source_terminal
 from config_regions import Storage, borrow, require_disjoint, require_writes
 from config_stack import canonical_symbol
 from validation import require
+
+
+NormalResult = TypeVar(
+    "NormalResult",
+    ExtendResult,
+    StringResult,
+    AdvancedResult,
+    DefinitionResult,
+    OpaqueCopyResult,
+    PeriodResult,
+)
+
+
+class FaultSource(TypedDict):
+    source_variant: str
+    guard: tuple[int, str]
+    constructor: tuple[int, int]
+    fallthrough: int
+    registers_until_String_return: tuple[tuple[str, int], ...]
+    stored_words: tuple[tuple[int, str | int], ...]
+    retained: tuple[int, int]
+    meaning_from_selected_CRC_source_constructor_not_enum_ordinal: bool
+
+
+class BeforeValidator(TypedDict):
+    call: int
+    target: int
+    frame: int
+    result: tuple[int, int]
+    r0: int
+    r8: int
+    r10: int
+    r1: int
+    config: tuple[int, int]
+    phase: str
+    readonly_Config: bool
+    receiver_prefix: tuple[int, int]
+    source_typed_not_semantically_validated: bool
+
+
+class RefillDescription(TypedDict):
+    phase: str
+    mode: str
+    source_context: SourceBinding
+    fault: FaultSource
+    widgets: tuple[tuple[int, int, int], ...]
+    sources: tuple[tuple[int, int, int], ...]
+    source_groups: tuple[str, ...]
+    checksum_alternative_observed_taken: bool
+    other_loader_alternatives: tuple[str, ...]
+    before_validator: BeforeValidator
+    floating_carrier_preserving_child_bodies: tuple[tuple[int, int], ...]
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    child_stack_low: int
+    executor_contained_under_caller_guard: ProtectedInterval
+    source_active_alternatives: tuple[str, ...]
+    initial_image_facts_retired_at: int
+    retired_epochs: tuple[str, ...]
+    opaque: tuple[str, ...]
+    pending_diagnostics: tuple[tuple[str, int], ...]
+    diagnostic_closure_pending: bool
+    target_access_requirements_unresolved: bool
+    requires_complete_validator_Result_and_restore: bool
+    requires_full_parent_other_paths_ingress_and_activation_graph: bool
+    requires_complete_same_B_loader_before_owner: bool
+    source_qualification: str
+    requires_M2_pre_init_source_reconciliation: bool
+    requires_H8_consumed_input_closure: bool
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    hardware_qualified: bool
+
 
 _CHANNELS = (0, 7, 6, 2, 1, 3, 4, 5)
 _IDS = (5, 3, 1, 14, 2, 15, 4, 13)
@@ -30,7 +117,9 @@ _GROUPS = (
 )
 
 
-def _geometry(objects, boundary):
+def _geometry(
+    objects: DiagnosticObjects, boundary: LoaderBoundary
+) -> tuple[Storage, tuple[Storage, ...], int, int]:
     require(
         boundary["mode"] == "sizez",
         "checksum refill has no authored consuming variant for this mode",
@@ -81,7 +170,15 @@ def _geometry(objects, boundary):
     return frame, tuple(guards), B, S
 
 
-def _source_bridge(objects, rows, name, frame, guards, source, B):
+def _source_bridge(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    name: str,
+    frame: Storage,
+    guards: tuple[Storage, ...],
+    source: SourceTerminal,
+    B: int,
+) -> tuple[RootHeader, FaultSource]:
     header = root_decoder_header(objects, name, rows, frame, guards)
     prepared = source["widget"]["prepared"]
     failure = header["checksum_failure"]
@@ -155,35 +252,51 @@ def _source_bridge(objects, rows, name, frame, guards, source, B):
     )
 
 
-def _normal(result, frames, label):
+def _normal(result: NormalResult, frames: tuple[int, ...], label: str) -> NormalResult:
     require(
         result["conservative_activation_frames"] == frames
         and {"r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "sp"}
         <= set(result["normal_preserves"]),
         label + " loses its complete current normal-return/frame interface",
     )
-    outcomes = result.get("outcomes", ())
-    if outcomes and "kind" in outcomes[0]:
-        require(
-            len([v for v in outcomes if v["kind"] == "success"]) == 1
-            and all(v["kind"] in ("success", "capacity_error") for v in outcomes),
-            label + " has an unbound return alternative",
-        )
+    # Only construction results have tagged success/capacity alternatives.
+    raw: object = result
+    if not isinstance(raw, dict):
+        raise AssertionError(label + " has an unbound return alternative")
+    outcomes: object = raw.get("outcomes", ())
+    if outcomes and not isinstance(outcomes, (tuple, list)):
+        raise AssertionError(label + " has an unbound return alternative")
+    if isinstance(outcomes, (tuple, list)) and outcomes:
+        first: object = outcomes[0]
+        if isinstance(first, dict) and "kind" in first:
+            kinds: list[object] = []
+            for outcome in outcomes:
+                if not isinstance(outcome, dict):
+                    raise AssertionError(label + " has an unbound return alternative")
+                kinds.append(outcome.get("kind"))
+            require(
+                kinds.count("success") == 1
+                and all(kind in ("success", "capacity_error") for kind in kinds),
+                label + " has an unbound return alternative",
+            )
     return result
 
 
-def _floating_carriers(source, rows):
+def _floating_carriers(source: SourceTerminal, rows: InstructionMap) -> tuple[tuple[int, int], ...]:
     # Preparation loads s17..s30 for all Widget cases. Complete matched normal
     # children in this closed family contain no FP instruction at all, hence
     # cannot alter those live carriers. Child save/return proofs are separate.
     # Inspect only proofs already returned by the invoked checked APIs.
-    checked = set()
+    checked: set[tuple[int, int]] = set()
 
-    def walk(value):
+    def walk(value: object) -> None:
         if isinstance(value, dict):
             if {"function", "extent", "ordinary_edges"} <= value.keys():
-                lo = value["function"]
-                hi = lo + value["extent"]
+                lo: object = value["function"]
+                extent: object = value["extent"]
+                if type(lo) is not int or type(extent) is not int:
+                    raise AssertionError("refill child has invalid function extent")
+                hi = lo + extent
                 checked.add((lo, hi))
                 require(
                     not any(
@@ -203,15 +316,19 @@ def _floating_carriers(source, rows):
         for child in item["child_history"].values():
             walk(child)
         walk(item["opaque_copies"])
-    for item in source["iterations"]:
-        for child in item["child_history"].values():
+    for source_item in source["iterations"]:
+        for child in source_item["child_history"].values():
             walk(child)
-        walk(item["opaque_copy"])
+        walk(source_item["opaque_copy"])
     require(checked, "no current normally returning child bodies")
     return tuple(sorted(checked))
 
 
-def _induction(source, frame, B):
+def _induction(
+    source: SourceTerminal, frame: Storage, B: int
+) -> tuple[
+    tuple[tuple[int, int, int], ...], tuple[tuple[int, int, int], ...], tuple[tuple[int, ...], ...]
+]:
     widget = source["widget"]
     prepared = widget["prepared"]
     handoff = prepared["widget_handoff"]
@@ -225,7 +342,7 @@ def _induction(source, frame, B):
         "prepared Widget loop lacks its actual entry state",
     )
     _normal(prepared["child"], (48, 16, 24), "View String14")
-    paths = {(48, 16, 24)}
+    paths: set[tuple[int, ...]] = {(48, 16, 24)}
     widgets = []
     offset = -1760
     count = 0
@@ -282,29 +399,29 @@ def _induction(source, frame, B):
         len(source["iterations"]) == 8 and source["normal_exit_count"] == 8,
         "Source loop is not the eight paired constructor family",
     )
-    for item, identifier in zip(source["iterations"], _IDS):
+    for source_item, identifier in zip(source["iterations"], _IDS):
         require(
             (
-                item["index"],
-                item["id"],
-                item["channel"],
-                item["offset"],
-                item["source"].start,
-                item["source"].extent,
+                source_item["index"],
+                source_item["id"],
+                source_item["channel"],
+                source_item["offset"],
+                source_item["source"].start,
+                source_item["source"].extent,
             )
             == (count, identifier, count, 32 + offset, B + 32 + offset, 22),
             "Source ID/Channel/cursor/stride relation differs",
         )
-        history = item["child_history"]
-        definition = _normal(history["definition"], (52,), "Definition")
-        period = _normal(history["possible_period"], (8,), "period")
-        copy = _normal(item["opaque_copy"], (8, 72), "Source Access copy")
+        source_history = source_item["child_history"]
+        definition = _normal(source_history["definition"], (52,), "Definition")
+        period = _normal(source_history["possible_period"], (8,), "period")
+        source_copy = _normal(source_item["opaque_copy"], (8, 72), "Source Access copy")
         require(
             len(definition["outcomes"]) == 1
             and definition["outcomes"][0]["id"] == identifier
             and len(period["outcomes"]) == 1
             and period["outcomes"][0]["channel"] == count
-            and copy["physical_activation_paths"] == ((8,), (72,)),
+            and source_copy["physical_activation_paths"] == ((8,), (72,)),
             "Source child argument/return alternative differs",
         )
         paths.update(((52,), (8,), (72,)))
@@ -318,15 +435,17 @@ def _induction(source, frame, B):
     return tuple(widgets), tuple(sources), tuple(sorted(paths))
 
 
-def _groups(source, frame, B, guards):
+def _groups(
+    source: SourceTerminal, frame: Storage, B: int, guards: tuple[Storage, ...]
+) -> tuple[str, ...]:
     prepared = source["widget"]["prepared"]
     widget = source["widget"]
     writes = list(prepared["config_writes"] + widget["possible_writes"] + source["possible_writes"])
     for item in widget["iterations"]:
         for copied in item["opaque_copies"]:
             writes.extend(copied["possible_writes"])
-    for item in source["iterations"]:
-        writes.extend(item["opaque_copy"]["possible_writes"])
+    for source_item in source["iterations"]:
+        writes.extend(source_item["opaque_copy"]["possible_writes"])
     owner = prepared["config"].storage
     all_writes = []
     for view, o, n in writes:
@@ -348,7 +467,7 @@ def _groups(source, frame, B, guards):
     # capacity slack and inactive enum payload stay opaque.
     for label, lo, n in _GROUPS:
         if label == "sources":
-            points = {32 + 22 * i + a for i in range(8) for a in range(21)}
+            points: Iterable[int] = {32 + 22 * i + a for i in range(8) for a in range(21)}
         elif label == "views":
             points = set(range(244, 260)) | {268}
         elif label == "widgets":
@@ -363,7 +482,7 @@ def _groups(source, frame, B, guards):
                     | set(range(149, 152))
                 )
                 ignored |= set(range(36 + length, 56)) | set(range(156 + length, 180))
-                points.update(item["offset"] + a for a in range(220) if a not in ignored)
+                points = set(points) | {item["offset"] + a for a in range(220) if a not in ignored}
         else:
             points = range(lo, lo + n)
         require(
@@ -373,7 +492,9 @@ def _groups(source, frame, B, guards):
     return tuple(label for label, lo, n in _GROUPS)
 
 
-def _checksum_refill_state(objects, instructions, source_context):
+def _checksum_refill_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[RefillDescription, SourceTerminal, ValidatorContext, LoaderBoundary]:
     boundary = first_boot_loader_boundary(objects, instructions, source_context)
     frame, guards, B, S = _geometry(objects, boundary)
     names = [
@@ -419,13 +540,13 @@ def _checksum_refill_state(objects, instructions, source_context):
     ]
     require(len(names) == 1, "before-validator target is not its unique specialized receiver")
     entry = CONTRACTS["entry"]
-    prefix = dict(
+    prefix: BodyContract[ValidatorObject] = dict(
         extent=22,
         instructions=tuple(v for v in entry["instructions"] if v[0] < 22),
         objects=entry["objects"][:1],
     )
 
-    def no_child(*args):
+    def no_child(*args: object) -> Never:
         raise AssertionError("unexpected child in validator receiver prefix")
 
     receiver = _literal_body(
@@ -484,10 +605,10 @@ def _checksum_refill_state(objects, instructions, source_context):
         and context.result.start == result.start,
         "before-validator epoch loses readonly Config or separate writable Result",
     )
-    diagnostics = (source["widget"]["prepared"]["capacity_failure"],) + tuple(
-        source["widget"]["diagnostics"].values()
-    )
-    description = dict(
+    diagnostics: tuple[CapacityFailure | WidgetDiagnostic, ...] = (
+        source["widget"]["prepared"]["capacity_failure"],
+    ) + tuple(source["widget"]["diagnostics"].values())
+    description: RefillDescription = dict(
         phase="checksum_refill_pending_validator_and_diagnostic_closure",
         mode="sizez",
         source_context=boundary["history"]["source_context"],
@@ -563,6 +684,8 @@ def _checksum_refill_state(objects, instructions, source_context):
     return description, source, context, boundary
 
 
-def checksum_refill_handoff(objects, instructions, source_context):
+def checksum_refill_handoff(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> RefillDescription:
     """Readonly pending description; internal views never cross this API."""
     return _checksum_refill_state(objects, instructions, source_context)[0]

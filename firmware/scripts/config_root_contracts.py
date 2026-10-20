@@ -5,7 +5,31 @@ C0/tagged object. Only typed operands relocate. Changed code/source/ABI requires
 fresh full review, mutations and varied links; no learned hash or budget change.
 """
 
-ROOT_WRAPPER_ROLES = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+
+
+class ArgumentsCallbackObject(TypedDict):
+    kind: Literal["raw_arguments_callback"]
+    role: str
+    extent: int
+    frame: int
+
+
+class DefaultTemplateObject(TypedDict):
+    kind: Literal["default_template"]
+    role: str
+
+
+class TaggedLiteralObject(TypedDict):
+    kind: Literal["tagged_literal"]
+    hex: str
+    word: int
+
+
+RootObject = ArgumentsCallbackObject | DefaultTemplateObject | TaggedLiteralObject
+
+ROOT_WRAPPER_ROLES: dict[str, str] = {
     "_RNvNtNtCs_4core5slice5index16slice_index_fail": "_RNvNtNtCs_4core5slice5index16slice_index_fail:126:32",
     "_RNvNtCs_4core9panicking5panic": "_RNvNtCs_4core9panicking5panic:12:8",
     "_RNvNtCs_4core9panicking18panic_bounds_check": "_RNvNtCs_4core9panicking18panic_bounds_check:40:32",
@@ -16,7 +40,7 @@ ROOT_WRAPPER_ROLES = {
     "@outline:occupied_bounds8": "@outline:occupied_bounds8:6:0",
 }
 
-ROOT_WRAPPERS = {
+ROOT_WRAPPERS: dict[str, BodyContract[RootObject]] = {
     "_RNvNtNtCs_4core5slice5index16slice_index_fail:126:32": {
         "extent": 126,
         "frame": 32,

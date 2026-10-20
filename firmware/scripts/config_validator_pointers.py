@@ -6,11 +6,19 @@ child ingress outside these regions, or the final ordinary/diagnostic graph.
 No JSON input can supply these grammars or turn their obligations into a pass.
 """
 
+from typing import Never, NotRequired, TypedDict
+from config_body_types import BodyContract, BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_regions import Storage, View
+from config_default import Writes
+from config_validator_access import ValidatorContext
+from config_validator_writes import ValidatorWrites
+from config_validator_pointer_contracts import SourceRegion
 from dataclasses import replace
 import re
 import struct
 from config_finite import _literal_body
-from config_regions import Storage, borrow, require_disjoint, require_writes
+from config_regions import borrow, require_disjoint, require_writes
 from config_stack import canonical_symbol, typed_function, _typed_function_extent, transfer_family
 from config_validator_pointer_contracts import REGIONS, CHILDREN, STORES, SOURCE_INGRESS
 from config_validator_writes import validator_local_writes
@@ -18,7 +26,53 @@ from llvm_stack import mapping_ranges
 from validation import require
 
 
-_GEOMETRY = {
+PoolEvidence = tuple[int, int, int, str]
+
+
+class PlacementAlternative(TypedDict):
+    tag: int
+    writes: Writes
+    inactive: NotRequired[tuple[int, int]]
+
+
+class PointerBody(BodyRecord, total=False):
+    pools: tuple[PoolEvidence, ...]
+    owned_frame: Storage
+    parent_SP_required: bool
+    save_bytes: int
+    clobbers: tuple[str, ...]
+    first_alias: str
+    writes: Writes
+    requires_actual_initialized_Widget_at_Q180: bool
+    alternatives: tuple[PlacementAlternative, ...]
+    requires_actual_packed_Placement_argument_and_output_transport: bool
+    requires_paired_ControlPage_domain_0_to_2: bool
+    guarded_table_indices: tuple[int, ...]
+    padding_index_excluded: int
+    preserves_captured_r0: bool
+
+
+class PointerFamily(TypedDict):
+    view: View
+    owner_offsets: tuple[int, int] | None
+    source_phase: str
+
+
+class PointerRegions(TypedDict):
+    local: ValidatorWrites
+    regions: dict[str, PointerBody]
+    children: dict[str, PointerBody]
+    families: dict[str, PointerFamily]
+    pointer_writes: tuple[tuple[int, str, View, int, int], ...]
+    requires_actual_source_typed_parent_entry_and_full_graph: bool
+    requires_edges_to_occupied_retirement_and_R8_preservation_across_uncovered_children: bool
+    requires_current_widget_Channel_band_and_fuel_source_loop_selector_states: bool
+    requires_each_source_ingress_argument_and_first_typed_variant_pair: bool
+    requires_all_remaining_helper_and_computed_ingress_closure: bool
+    platform_requirements_unresolved: bool
+
+
+_GEOMETRY: dict[str, tuple[int, int] | None] = {
     "result": None,
     "page_array": (120, 123),
     "edges": (104, 107),
@@ -42,11 +96,29 @@ _PHASES = {
 }
 
 
-def _no_object(objects, value, descriptor):
+def _pointer_body(proof: BodyRecord) -> PointerBody:
+    result: PointerBody = {
+        "shape": proof["shape"],
+        "role": proof["role"],
+        "function": proof["function"],
+        "extent": proof["extent"],
+        "frame": proof["frame"],
+        "objects": proof["objects"],
+        "callbacks": proof["callbacks"],
+        "ordinary_edges": proof["ordinary_edges"],
+        "indirect_sites": proof["indirect_sites"],
+        "requires_parent_outline_abi": proof["requires_parent_outline_abi"],
+    }
+    if "caller_extent" in proof:
+        result["caller_extent"] = proof["caller_extent"]
+    return result
+
+
+def _no_object(objects: DiagnosticObjects, value: int, descriptor: object) -> Never:
     raise AssertionError("unexpected validator leaf object descriptor")
 
 
-def _leaf(objects, name, rows, label):
+def _leaf(objects: DiagnosticObjects, name: str, rows: InstructionMap, label: str) -> PointerBody:
     require(label in CHILDREN, "unreviewed validator leaf role")
     item = CHILDREN[label]
     role = item["role"]
@@ -62,7 +134,7 @@ def _leaf(objects, name, rows, label):
     else:
         typed_function(objects, start, role)
 
-    def function(objects, target, raw_role):
+    def function(objects: DiagnosticObjects, target: int, raw_role: str) -> tuple[int, int, str]:
         if target == start and role.startswith("@outline:"):
             extent, actual = _typed_function_extent(objects, target, raw_role)
             require(
@@ -72,7 +144,7 @@ def _leaf(objects, name, rows, label):
             return extent, 0, actual
         return typed_function(objects, target, raw_role)
 
-    def unexpected(*args):
+    def unexpected(*args: object) -> Never:
         raise AssertionError("unexpected nested validator leaf call")
 
     proof = _literal_body(
@@ -90,10 +162,17 @@ def _leaf(objects, name, rows, label):
         not proof["ordinary_edges"] and not proof["indirect_sites"],
         "validator leaf gains another activation or callback",
     )
-    return proof
+    return _pointer_body(proof)
 
 
-def _source_contract(objects, name, rows, parent, config, item):
+def _source_contract(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    parent: int,
+    config: View,
+    item: SourceRegion,
+) -> tuple[int, BodyContract[object], tuple[PoolEvidence, ...]]:
     """Bind a fixed source window's parent transfers and typed literal slots."""
     start = parent + item["offset"]
     operations = []
@@ -110,7 +189,8 @@ def _source_contract(objects, name, rows, parent, config, item):
         if pool:
             at = start + offset
             row = rows.get(at)
-            require(row is not None, "missing validator readonly producer")
+            if row is None:
+                raise AssertionError("missing validator readonly producer")
             operation, _, operand = text.partition(" ")
             register = operand.partition(",")[0]
             actual = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
@@ -121,6 +201,8 @@ def _source_contract(objects, name, rows, parent, config, item):
                 and operation in ("ldr", "ldr.w", "vldr"),
                 "validator typed scalar/Config pool producer differs",
             )
+            if match is None:
+                raise AssertionError("validator typed scalar/Config pool producer differs")
             slot = ((at + 4) & ~3) + int(match[1], 0)
             require(
                 slot % 4 == 0
@@ -134,17 +216,34 @@ def _source_contract(objects, name, rows, parent, config, item):
             text = operation + " " + actual
             pools.append((at, slot, value, descriptor["kind"]))
         operations.append((offset, width, text))
-    contract = dict(extent=item["extent"], instructions=operations, objects=())
-    for key in ("mapping", "data"):
-        if key in item:
-            contract[key] = item[key]
+    contract: BodyContract[object] = dict(
+        extent=item["extent"], instructions=operations, objects=()
+    )
+    if "mapping" in item:
+        contract["mapping"] = item["mapping"]
+    if "data" in item:
+        contract["data"] = item["data"]
     return start, contract, tuple(pools)
 
 
-def _region(objects, name, rows, parent, config, item, children):
+def _region(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    parent: int,
+    config: View,
+    item: SourceRegion,
+    children: dict[str, PointerBody],
+) -> PointerBody:
     start, contract, pools = _source_contract(objects, name, rows, parent, config, item)
 
-    def outline(objects, child, records, role, ancestry):
+    def outline(
+        objects: DiagnosticObjects,
+        child: str,
+        records: InstructionMap,
+        role: str,
+        ancestry: tuple[int, ...],
+    ) -> PointerBody:
         require(
             role.startswith("@outline:") and role[9:] in CHILDREN,
             "unreviewed validator outline interface",
@@ -172,11 +271,18 @@ def _region(objects, name, rows, parent, config, item, children):
         require(len(labels) == 1, "validator region gains an unsupported ordinary leaf")
         child = typed_function(objects, target, role)[2]
         children[labels[0]] = _leaf(objects, child, rows, labels[0])
-    proof["pools"] = tuple(pools)
-    return proof
+    result = _pointer_body(proof)
+    result["pools"] = tuple(pools)
+    return result
 
 
-def validator_pointer_regions(objects, name, instructions, context, call):
+def validator_pointer_regions(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    context: ValidatorContext,
+    call: int,
+) -> PointerRegions:
     """Current region/effect proof conditional on actual source-owner joins.
 
     Incoming source scalar states remain unknown unions. Exact phase sequences
@@ -191,7 +297,7 @@ def validator_pointer_regions(objects, name, instructions, context, call):
         a: replace(r, operands=r.operands.split("@", 1)[0].split("<", 1)[0].strip())
         for a, r in instructions.items()
     }
-    children = {}
+    children: dict[str, PointerBody] = {}
     proofs = {
         x["label"]: _region(objects, name, rows, parent, context.config, x, children)
         for x in REGIONS
@@ -222,7 +328,7 @@ def validator_pointer_regions(objects, name, instructions, context, call):
             ("valid byte", 95, 1),
         )
     )
-    families = {}
+    families: dict[str, PointerFamily] = {}
     writes = []
     for family, offsets in _GEOMETRY.items():
         view = (
@@ -233,11 +339,12 @@ def validator_pointer_regions(objects, name, instructions, context, call):
         families[family] = dict(view=view, owner_offsets=offsets, source_phase=_PHASES[family])
     for offset, family, width, text, footprint in STORES:
         at = parent + offset
-        row = rows.get(at)
+        store_row = rows.get(at)
         operation, _, operand = text.partition(" ")
         require(
-            row is not None
-            and (len(row.raw), row.mnemonic, row.operands) == (width, operation, operand),
+            store_row is not None
+            and (len(store_row.raw), store_row.mnemonic, store_row.operands)
+            == (width, operation, operand),
             "validator pointer store/source family differs",
         )
         view = families[family]["view"]
@@ -272,41 +379,51 @@ def validator_pointer_regions(objects, name, instructions, context, call):
         )
         for live in (q, context.result.storage, context.config.storage) + context.protected:
             require_disjoint((child, live))
-        proof.update(owned_frame=child, parent_SP_required=True, save_bytes=proof["frame"])
+        proof.update(
+            {"owned_frame": child, "parent_SP_required": True, "save_bytes": proof["frame"]}
+        )
     children["first_capture"].update(
-        clobbers=("r0", "r1", "lr", "flags"),
-        first_alias="r0=[Q88]",
-        writes=((first, 10, 1),),
-        parent_SP_required=True,
+        {
+            "clobbers": ("r0", "r1", "lr", "flags"),
+            "first_alias": "r0=[Q88]",
+            "writes": ((first, 10, 1),),
+            "parent_SP_required": True,
+        }
     )
     children["band_capture"].update(
-        clobbers=("r0", "r1", "r2", "r3", "r4", "lr", "flags"),
-        first_alias="r3=[Q88]",
-        writes=((first, 10, 1),),
-        requires_actual_initialized_Widget_at_Q180=True,
-        parent_SP_required=True,
+        {
+            "clobbers": ("r0", "r1", "r2", "r3", "r4", "lr", "flags"),
+            "first_alias": "r3=[Q88]",
+            "writes": ((first, 10, 1),),
+            "requires_actual_initialized_Widget_at_Q180": True,
+            "parent_SP_required": True,
+        }
     )
     children["placement_rect"].update(
-        clobbers=("r1", "r2", "r3", "lr", "flags"),
-        writes=((rect, 0, 10),),
-        alternatives=(
-            dict(tag=0, writes=((rect, 0, 2),), inactive=(2, 10)),
-            dict(tag=1, writes=((rect, 0, 10),)),
-        ),
-        requires_actual_packed_Placement_argument_and_output_transport=True,
+        {
+            "clobbers": ("r1", "r2", "r3", "lr", "flags"),
+            "writes": ((rect, 0, 10),),
+            "alternatives": (
+                dict(tag=0, writes=((rect, 0, 2),), inactive=(2, 10)),
+                dict(tag=1, writes=((rect, 0, 10),)),
+            ),
+            "requires_actual_packed_Placement_argument_and_output_transport": True,
+        }
     )
     children["action_destination"].update(
-        clobbers=("r0", "r1", "r2", "lr", "flags"),
-        writes=(),
-        requires_paired_ControlPage_domain_0_to_2=True,
-        guarded_table_indices=(0, 1, 2, 3, 4),
-        padding_index_excluded=5,
+        {
+            "clobbers": ("r0", "r1", "r2", "lr", "flags"),
+            "writes": (),
+            "requires_paired_ControlPage_domain_0_to_2": True,
+            "guarded_table_indices": (0, 1, 2, 3, 4),
+            "padding_index_excluded": 5,
+        }
     )
     children["fuel_compare_bits"].update(
-        clobbers=("r1", "lr", "flags"), writes=(), preserves_captured_r0=True
+        {"clobbers": ("r1", "lr", "flags"), "writes": (), "preserves_captured_r0": True}
     )
     children["fuel_compare_flags"].update(
-        clobbers=("lr", "flags"), writes=(), preserves_captured_r0=True
+        {"clobbers": ("lr", "flags"), "writes": (), "preserves_captured_r0": True}
     )
     return dict(
         local=local,

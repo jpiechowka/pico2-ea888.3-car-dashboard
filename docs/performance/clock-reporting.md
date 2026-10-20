@@ -4,6 +4,9 @@ The profiling page shows **configured/requested** CPU and SPI rates. SPI
 preserves its fractional MHz digit, including 37.5 MHz at the stock clock.
 The divider calculation uses `clk_peri`, matching the locked HAL's SPI
 prescaler implementation. These are calculated settings, not scope readings.
+An unavailable peripheral clock or invalid CPSDVSR encoding displays `--`.
+The shared decoder admits only even prescalers from 2 through 254 and the
+encoded SCR divisor from 1 through 256; it never converts a missing rate to zero.
 
 `Vset` shows the regulator selection in millivolts and the requested selection.
 An unknown register encoding displays `--`. The HAL's checked `core_voltage()`
@@ -21,3 +24,6 @@ The software pipeline now counts completed transfers and exports coherent
 [frame/input windows](telemetry-windows.md). [Target CPU benchmarks](target-benchmarks.md)
 record configured clock metadata. Physical clock frequency, voltage, panel FPS
 and overclock stability still require device acceptance checks.
+
+The [20 October diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+traces these values through both firmware routes and the synthetic preview.

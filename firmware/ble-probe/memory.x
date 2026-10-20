@@ -18,8 +18,8 @@ MEMORY {
      * of access times.
      * Example: Separate stacks for core0 and core1.
      */
-    SRAM4 : ORIGIN = 0x20080000, LENGTH = 4K
-    SRAM5 : ORIGIN = 0x20081000, LENGTH = 4K
+    SRAM8 : ORIGIN = 0x20080000, LENGTH = 4K
+    SRAM9 : ORIGIN = 0x20081000, LENGTH = 4K
 }
 
 __settings_start = 0x101FE000;
@@ -44,9 +44,9 @@ SECTIONS {
 
 } INSERT AFTER .vector_table;
 
-/* Move .text after boot info. cortex-m-rt 0.7.7 checks section alignment;
- * the boot info size alone can leave _stext at a four-byte-only address. */
-_stext = ALIGN(ADDR(.start_block) + SIZEOF(.start_block), 16);
+/* Match the actual .text alignment, including stricter aligned functions.
+ * Embassy upstream 1948c4146aacd005459989ea4d2d24f8a5e32188. */
+_stext = ALIGN(ADDR(.start_block) + SIZEOF(.start_block), ALIGNOF(.text));
 
 SECTIONS {
     .probe_identity : ALIGN(4) { KEEP(*(.probe_identity)); } > FLASH

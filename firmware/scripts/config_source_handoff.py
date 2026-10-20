@@ -6,6 +6,15 @@ Neither this record nor a public predecessor description grants ownership.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from config_body_types import InstructionMap
+from config_regions import View
+from config_stack import DiagnosticObjects
+
+if TYPE_CHECKING:
+    from config_decoded_widgets import _WidgetsState, _WidgetExit, ScratchEffects, AdvancedSource
+
+from config_decoded_prefix import _PrefixState
 from config_abstract import Span, SequenceInterface
 from config_regions import Storage, borrow, require_writes
 from config_decode_effects import _object
@@ -25,7 +34,7 @@ _CARRIERS = (
 )
 
 
-def _source_carrier_cells(context):
+def _source_carrier_cells(context: _PrefixState) -> tuple[Storage, ...]:
     frame = context.headers["visitor_frame"]
     return tuple(
         _object(borrow(frame, cell, 4, frame.phase), "reserved Sources pointer " + str(cell))
@@ -33,7 +42,9 @@ def _source_carrier_cells(context):
     )
 
 
-def _carrier_contents(objects, rows, state):
+def _carrier_contents(
+    objects: DiagnosticObjects, rows: InstructionMap, state: "_WidgetsState"
+) -> tuple[tuple[tuple[View, int], ...], "ScratchEffects"]:
     """Initialization is one exact store; every subsequent write preserves it."""
     from config_decoded_widgets import _scratch_effects
     from config_widget_effect_contracts import LOCAL_STORES, INLINE_COPIES, FIXED_ALIAS_STORES
@@ -101,19 +112,21 @@ def _carrier_contents(objects, rows, state):
 
 @dataclass(frozen=True)
 class _SourceEntry:
-    predecessor: object
-    exit: object
+    predecessor: "_WidgetsState"
+    exit: "_WidgetExit"
     sequence: SequenceInterface
-    carriers: tuple
-    protected: tuple
-    old_Source_array: object
+    carriers: tuple[tuple[View, int], ...]
+    protected: tuple[Storage, ...]
+    old_Source_array: View
     call_site: int
-    call_arguments: tuple
-    saved_top_count: tuple
+    call_arguments: tuple[tuple[str, int], ...]
+    saved_top_count: tuple[View, Span, int]
     completed_Source_issued: bool = False
 
 
-def _source_entries(objects, rows, state):
+def _source_entries(
+    objects: DiagnosticObjects, rows: InstructionMap, state: "_WidgetsState"
+) -> tuple[_SourceEntry, ...]:
     """Check each actual ordered predecessor; a receipt cannot replace it."""
     from config_decoded_widgets import (
         _WidgetsState,
@@ -139,14 +152,14 @@ def _source_entries(objects, rows, state):
     V = c.headers["visitor"]["proof"]["function"]
     if not state.exits:
         return ()
-    require(
+    if not (
         type(state.control) is _WidgetActiveControl
         and state.control.state is state.views
         and state.control.parents is state.parents
         and state.control.children is state.children
-        and V + 4376 in state.control["stopped_frontiers"],
-        "Sources predecessor lacks its actual guarded ordinary frontier",
-    )
+        and V + 4376 in state.control["stopped_frontiers"]
+    ):
+        raise AssertionError("Sources predecessor lacks its actual guarded ordinary frontier")
     receiver = {
         4348: ("ldr", "r0, [sp, #0x124]"),
         4352: ("subs", "r0, #0x1"),
@@ -179,7 +192,7 @@ def _source_entries(objects, rows, state):
     # same current predecessor; never authorize from a frontier label alone.
     first = bridge.entries[0].sequence.decoder
     source = _widget_source_prefix(objects, rows, state.views, state.parents, state.children, first)
-    advanced = (
+    advanced: AdvancedSource = (
         dict(normal=(), errors=())
         if source.decoder is None
         else _advanced_source(

@@ -4,7 +4,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
+from check_program_image import ProgramMap
+from image_test_support import ImageFixture, section_fields, segment_fields
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +14,28 @@ import build_ble_probe as build
 
 
 class ProbeAdmission(unittest.TestCase):
-    def test_release_options_are_scoped_to_the_selected_binary(self):
+    def test_manifest_requires_object_and_exact_integer_schema_before_source_access(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "manifest.json"
+            malformed_manifests: tuple[object, ...] = (
+                [],
+                None,
+                {"gate": image.GATE, "schema": True, "sources": {}},
+            )
+            for malformed in malformed_manifests:
+                manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+                with (
+                    self.subTest(manifest=malformed),
+                    patch.object(
+                        image, "check_sources", side_effect=AssertionError("source access reached")
+                    ) as sources,
+                    self.assertRaisesRegex(AssertionError, "utility manifest schema"),
+                ):
+                    image.check(root / "missing.elf", root / "missing.uf2", manifest_path, root)
+                sources.assert_not_called()
+
+    def test_release_options_are_scoped_to_the_selected_binary(self) -> None:
         for profile in ("stock", "280-70"):
             args = build.build_command(profile)
             separator = args.index("--")
@@ -30,7 +52,7 @@ class ProbeAdmission(unittest.TestCase):
         with self.assertRaises(AssertionError):
             build.build_command("unknown")
 
-    def test_build_environment_is_owned_and_bounded(self):
+    def test_build_environment_is_owned_and_bounded(self) -> None:
         original = {
             "PATH": "kept",
             "DEFMT_LOG": "trace",
@@ -63,7 +85,7 @@ class ProbeAdmission(unittest.TestCase):
         ):
             self.assertNotIn(key, env)
 
-    def test_canonical_source_digest_is_order_independent_and_strict(self):
+    def test_canonical_source_digest_is_order_independent_and_strict(self) -> None:
         source = {"z": "11" * 32, "a": "00" * 32}
         self.assertEqual(
             image.source_digest(source),
@@ -77,16 +99,16 @@ class ProbeAdmission(unittest.TestCase):
                 image.source_digest(invalid)
 
     @staticmethod
-    def identity_elf(digest=bytes(range(32))):
+    def identity_elf(digest: bytes = bytes(range(32))) -> ImageFixture:
         section = (0, 1, 2, 0x10000100, 16, 32, 0, 0, 4, 0)
-        return SimpleNamespace(
+        return ImageFixture(
             data=bytes(16) + digest,
             section_entries=[(1, ".probe_identity", section)],
             symbol_entries=[("BLE_PROBE_SOURCE_DIGEST", 0x10000100, 32, 0x11, 1)],
             segments=[(1, 16, 0x10000100, 0x10000100, 32, 32, 4, 4)],
         )
 
-    def test_linked_identity_is_unique_read_only_file_backed_and_exact(self):
+    def test_linked_identity_is_unique_read_only_file_backed_and_exact(self) -> None:
         elf = self.identity_elf()
         self.assertEqual(
             image.linked_identity(elf, bytes(range(32)).hex())["digest"], bytes(range(32)).hex()
@@ -111,20 +133,25 @@ class ProbeAdmission(unittest.TestCase):
             elif fault == "duplicate":
                 bad.symbol_entries *= 2
             elif fault in ("size", "index"):
-                row = list(bad.symbol_entries[0])
-                row[2 if fault == "size" else 4] += 1
-                bad.symbol_entries[0] = tuple(row)
+                name, address, size, info, index = bad.symbol_entries[0]
+                bad.symbol_entries[0] = (
+                    name,
+                    address,
+                    size + (fault == "size"),
+                    info,
+                    index + (fault == "index"),
+                )
             elif fault in ("flags", "type"):
                 index, name, section = bad.section_entries[0]
                 row = list(section)
                 row[2 if fault == "flags" else 1] = 3 if fault == "flags" else 8
-                bad.section_entries[0] = (index, name, tuple(row))
+                bad.section_entries[0] = (index, name, section_fields(row))
             elif fault == "load":
                 bad.segments *= 2
             elif fault == "lma":
                 row = list(bad.segments[0])
                 row[3] = 0x101E6000
-                bad.segments[0] = tuple(row)
+                bad.segments[0] = segment_fields(row)
             else:
                 bad.data = bad.data[:-1]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
@@ -134,13 +161,13 @@ class ProbeAdmission(unittest.TestCase):
         with self.assertRaises(AssertionError):
             image.linked_identity(zero, "00" * 32)
 
-    def test_retained_identity_remains_read_only_and_rejects_other_flags(self):
+    def test_retained_identity_remains_read_only_and_rejects_other_flags(self) -> None:
         for flags in (0x200002, 0, 0x200003, 0x200006, 0x200012):
             elf = self.identity_elf()
             index, name, section = elf.section_entries[0]
             row = list(section)
             row[2] = flags
-            elf.section_entries[0] = (index, name, tuple(row))
+            elf.section_entries[0] = (index, name, section_fields(row))
             with self.subTest(flags=flags):
                 if flags == 0x200002:
                     self.assertTrue(image.linked_identity(elf)["available"])
@@ -149,8 +176,8 @@ class ProbeAdmission(unittest.TestCase):
                         image.linked_identity(elf)
 
     @staticmethod
-    def reserved_elf():
-        return SimpleNamespace(
+    def reserved_elf() -> ImageFixture:
+        return ImageFixture(
             symbol_entries=[
                 (name, value, 0, 0x10, 0xFFF1)
                 for name, value in (
@@ -163,9 +190,10 @@ class ProbeAdmission(unittest.TestCase):
             segments=[(1, 0, 0x20000000, 0x101E5F00, 256, 256, 6, 4)],
         )
 
-    def test_all_physical_payload_erase_and_uf2_pages_preserve_captures(self):
+    def test_all_physical_payload_erase_and_uf2_pages_preserve_captures(self) -> None:
         elf = self.reserved_elf()
-        mapping = {
+        mapping: ProgramMap = {
+            "payload_sha256": "unused synthetic digest",
             "fragments": [(0x101E5F00, bytes(256))],
             "erase_ranges": [(0x101E5000, 0x101E6000)],
             "pages": {0x101E5F00: bytes(256)},
@@ -190,9 +218,8 @@ class ProbeAdmission(unittest.TestCase):
                 else:
                     bad.segments.append(segment)
             elif fault == "symbol":
-                row = list(bad.symbol_entries[0])
-                row[1] += 4096
-                bad.symbol_entries[0] = tuple(row)
+                name, address, size, info, index = bad.symbol_entries[0]
+                bad.symbol_entries[0] = (name, address + 4096, size, info, index)
             elif fault == "duplicate_symbol":
                 bad.symbol_entries.append(bad.symbol_entries[0])
             elif fault == "erase":
@@ -206,7 +233,7 @@ class ProbeAdmission(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 image.capture_reservation(bad, badmap)
 
-    def test_full_gate_binds_manifest_digest_and_executes_shared_flash_gate(self):
+    def test_full_gate_binds_manifest_digest_and_executes_shared_flash_gate(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "firmware/ble-probe/src/main.rs"
@@ -216,7 +243,8 @@ class ProbeAdmission(unittest.TestCase):
             digest = image.source_digest(sources)
             elf = self.identity_elf(bytes.fromhex(digest))
             elf.symbol_entries.extend(self.reserved_elf().symbol_entries)
-            mapping = {
+            mapping: ProgramMap = {
+                "payload_sha256": "unused synthetic digest",
                 "fragments": [(0x10000100, bytes.fromhex(digest))],
                 "erase_ranges": [(0x10000000, 0x10001000)],
                 "verification_ranges": [(0x10000100, 0x10000120)],
@@ -238,7 +266,7 @@ class ProbeAdmission(unittest.TestCase):
                 uf2_sha256=image.sha(uf2_path.read_bytes()),
             )
 
-            def write_manifest(value):
+            def write_manifest(value: object) -> None:
                 manifest_path.write_text(json.dumps(value))
 
             write_manifest(manifest)
@@ -275,10 +303,13 @@ class ProbeAdmission(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     image.check(elf_path, uf2_path, manifest_path, root)
 
-    def test_elf_only_allows_unavailable_identity_but_still_gates_flash_and_reservations(self):
+    def test_elf_only_allows_unavailable_identity_but_still_gates_flash_and_reservations(
+        self,
+    ) -> None:
         elf = self.identity_elf(bytes(32))
         elf.symbol_entries.extend(self.reserved_elf().symbol_entries)
-        mapping = {
+        mapping: ProgramMap = {
+            "payload_sha256": "unused synthetic digest",
             "fragments": [(0x10000100, bytes(32))],
             "erase_ranges": [(0x10000000, 0x10001000)],
             "verification_ranges": [(0x10000100, 0x10000120)],
@@ -303,7 +334,7 @@ class ProbeAdmission(unittest.TestCase):
             ):
                 image.inspect_elf(elf)
 
-    def test_generated_clock_layouts_and_ambiguity(self):
+    def test_generated_clock_layouts_and_ambiguity(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             flat = root / "dashboard-pico2-hash/out/clock_profile.json"
@@ -323,7 +354,7 @@ class ProbeAdmission(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 build.find_clock_metadata(root)
 
-    def test_changed_or_added_source_rejected(self):
+    def test_changed_or_added_source_rejected(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "firmware/ble-probe/src").mkdir(parents=True)
@@ -339,7 +370,7 @@ class ProbeAdmission(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 image.check_sources(root, before)
 
-    def test_stack_limits_do_not_accept_largest_frame_alone(self):
+    def test_stack_limits_do_not_accept_largest_frame_alone(self) -> None:
         values = dict(boot=4000, core0=12000, radio=24000, render=20000)
         image.stack_budgets(values, 65536)
         for name, value in (("boot", 60000), ("core0", 60000), ("radio", 60000), ("render", 30000)):
@@ -347,8 +378,8 @@ class ProbeAdmission(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(AssertionError):
                 image.stack_budgets(bad, 65536)
 
-    def test_exact_objects_and_nonoverlap(self):
-        elf = SimpleNamespace(
+    def test_exact_objects_and_nonoverlap(self) -> None:
+        elf = ImageFixture(
             symbol_entries=[
                 ("BLE_PROBE_FRAMEBUFFER_0", 0x20000000, 153600, 1, 1),
                 ("BLE_PROBE_FRAMEBUFFER_1", 0x20025800, 153600, 1, 1),
@@ -358,19 +389,17 @@ class ProbeAdmission(unittest.TestCase):
         image.objects(elf)
         for index, size in ((0, 153601), (1, 153599), (2, 16384)):
             bad = deepcopy(elf)
-            row = list(bad.symbol_entries[index])
-            row[2] = size
-            bad.symbol_entries[index] = tuple(row)
+            name, address, _, info, section = bad.symbol_entries[index]
+            bad.symbol_entries[index] = (name, address, size, info, section)
             with self.assertRaises(AssertionError):
                 image.objects(bad)
         bad = deepcopy(elf)
-        row = list(bad.symbol_entries[1])
-        row[1] -= 4
-        bad.symbol_entries[1] = tuple(row)
+        name, address, size, info, index = bad.symbol_entries[1]
+        bad.symbol_entries[1] = (name, address - 4, size, info, index)
         with self.assertRaises(AssertionError):
             image.objects(bad)
 
-    def test_named_paths_and_metadata_are_required(self):
+    def test_named_paths_and_metadata_are_required(self) -> None:
         names = (
             "embassy_main_task",
             "probe_ui_task",
@@ -389,11 +418,11 @@ class ProbeAdmission(unittest.TestCase):
         functions["probe_core1"] = (0x10002000, 4, 1)
         functions["Executor_run_probe_core1_closure"] = (0x10002004, 4, 1)
         sizes = {address: 128 for address, _, _ in functions.values()}
-        elf = SimpleNamespace(
-            named={".stack_sizes": (0, 1, 0, 0, 100, 16)},
+        elf = ImageFixture(
+            named={".stack_sizes": (0, 1, 0, 0, 100, 16, 0, 0, 1, 0)},
             segments=[],
             functions=functions,
-            section_bytes=lambda _: b"metadata",
+            section_data={".stack_sizes": b"metadata"},
         )
         with patch.object(image, "frames", return_value=sizes):
             result = image.stack_check(elf, 65536)
@@ -407,13 +436,14 @@ class ProbeAdmission(unittest.TestCase):
             del functions["TaskStorage4pollprobe_radio_task"]
             with self.assertRaises(AssertionError):
                 image.stack_check(elf, 65536)
-        elf.named[".stack_sizes"] = (0, 1, 2, 0, 100, 16)
+        elf.named[".stack_sizes"] = (0, 1, 2, 0, 100, 16, 0, 0, 1, 0)
         with self.assertRaises(AssertionError):
             image.stack_check(elf, 65536)
 
-    def test_load_metadata_overlap_rejected(self):
-        elf = SimpleNamespace(
-            named={".stack_sizes": (0, 1, 0, 0, 100, 16)}, segments=[(1, 80, 0, 0, 40, 40, 0, 0)]
+    def test_load_metadata_overlap_rejected(self) -> None:
+        elf = ImageFixture(
+            named={".stack_sizes": (0, 1, 0, 0, 100, 16, 0, 0, 1, 0)},
+            segments=[(1, 80, 0, 0, 40, 40, 0, 0)],
         )
         with self.assertRaises(AssertionError):
             image.stack_check(elf, 65536)

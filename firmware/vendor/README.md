@@ -3,13 +3,16 @@
 Base: the complete published `embassy-rp 0.10.0` crate, upstream commit
 `84444a19eb57d978e3c09fcdc8e60cdd7278eb03`. Both original licenses are retained.
 `embassy-rp-provenance.json` records the download URL, archive SHA-256, all 73
-original file hashes and all ten patched/added file hashes. `.gitattributes`
-preserves these bytes across platforms. UART, multicore and flash have runtime corrections. PWM has only a period-comment
-correction (phase-correct factor2, ordinary factor1); UART ring operations and the fixed JEDEC transaction have
-additional shared helpers compiled by the host tests.
+original file hashes and the complete reviewed overlay. `.gitattributes`
+preserves these bytes across platforms. The current
+[HAL patch summary](embassy-rp/LOCAL_PATCHES.md) and
+[20 October source audit](../../docs/dependencies/full-code-audit-2026-10-20.md)
+extend the historical UART, multicore, flash and PWM work below with runtime
+and cancellation fixes. Shared helpers are compiled by host/native tests.
 
-Run `python scripts/check_vendor.py` from `firmware`. Supply
-`--archive /path/to/embassy-rp-0.10.0.crate` to also verify the original archive.
+Run `cargo run --locked -p dashboard-provenance -- hal --vendor-root firmware/vendor`
+from the repository root, or `python scripts/check_vendor.py` from `firmware`.
+Supply `--archive /path/to/embassy-rp-0.10.0.crate` to also verify the original archive.
 CI verifies the fork tree. A future upstream upgrade must repeat the source,
 ownership, interrupt and hardware review before removing this patch.
 
@@ -57,9 +60,9 @@ that same dependency and `src/uart/buffered_io.rs`.
   a second FIFO consumer. `BufRead::consume` checks the contiguous readable
   length before changing indices. Cancelling an async read/write/flush retains
   no DMA or user slice pointer; only complete copied ring bytes remain.
-- Async `flush` completes when the **software ring** is empty. The owner must
-  separately wait for BUSY to clear, under a deadline, before acknowledging a
-  complete wire write or changing baud. UART completion is not a CAN TX ACK.
+- Async `flush` waits for the software ring, hardware FIFO and shifter to finish.
+  The application still supplies the operation deadline; hardware-stalled output
+  is not an unbounded application wait. UART completion is not a CAN TX ACK.
 
 ## Checks and remaining limitations
 
@@ -71,10 +74,11 @@ control and rejects stack buffers, reborrowed peripherals, borrowed conversions,
 cross-core moves and shared handles. All six invalid control cases compiled
 against the initial released API before the ownership patch.
 
-The async acquisition wrapper must exclude blocking/legacy NB TX methods and
-`send_break`: those inherited methods can spin; cancelling `send_break` after
-assertion leaves the break asserted. This fork does not claim those APIs are
-cancellation safe. Hardware FIFOs, interrupt latency and recovery are not tested
+The async acquisition wrapper still excludes blocking methods. The 20 October
+audit corrected legacy nonblocking TX/flush to return `WouldBlock` and added a
+drop guard that clears an asserted break on cancellation. Break setup still
+performs a blocking pre-flush, so it is not a fully nonblocking operation.
+Hardware FIFOs, interrupt latency and recovery are not tested
 by the host model. At 115200 8N1 with the published 28/32 RX threshold, four byte
 times are about 347 us; a 1024-byte software ring cannot compensate for long IRQ
 masking. Measure that budget and error injection on the actual RP2350/adapter.
@@ -142,20 +146,22 @@ have no software-returning timeout. Debug persistence is disabled until its
 distinct machine code is reviewed. Physical flash and recovery validation is
 pending; host protocol tests do not exercise QMI registers.
 
-## PWM documentation correction (13 October 2026)
+## Historical PWM documentation correction (13 October 2026)
 
 The `Config` period comment now agrees with RP2350 section12.5.2.6:
 `(top + 1) * (phase_correct ? 2 : 1) * divider`. No PWM instructions or API
 changed. Five original files are modified and two helpers added; the provenance
 manifest retains the original PWM hash alongside its exact corrected hash.
 The PIM715 RGB adapter uses the existing constructor and independent compare
-configuration with owned slices5/6, inversion, TOP9999 and divider1.
+configuration with owned slices5/6, inversion, TOP9999 and divider1. The later
+20 October audit also corrects PWM teardown and split ownership; this paragraph
+records only the earlier documentation checkpoint.
 
 ## PIO and startup compatibility backports (16 October 2026)
 
-The base remains the published 0.10.0 archive; this is not an unreviewed update
-of the complete HAL. Original hashes remain immutable. The prior UART,
-multicore, flash, flash-probe and PWM patch bytes are unchanged.
+At that checkpoint the base remained the published 0.10.0 archive and the prior
+UART, multicore, flash, flash-probe and PWM patch bytes were unchanged. Original
+hashes remain immutable; the current overlay is described in the 20 October note.
 
 - [Embassy commit 8c38d7e](https://github.com/embassy-rs/embassy/commit/8c38d7e55d00732a9d5cb0b5255bae80d1891781)
   updates PIO to 0.4. Both local Cargo manifests now agree. Upstream's additional

@@ -352,3 +352,7 @@ features = [
 
 [dev-dependencies.static_cell]
 version = "2"
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies.embassy-time]
+version = "0.5.1"
+features = ["mock-driver", "generic-queue-8"]

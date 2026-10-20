@@ -5,7 +5,26 @@ only; the first-detached-batch ownership contract is contextual, never a global
 rawpoll callback whitelist. Changed compiler/source/ABI requires fresh review.
 """
 
-ENTRY_ROLES = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+from config_root_windows import WindowObject
+
+
+class EntryStaticObject(TypedDict):
+    kind: Literal["entry_static"]
+    role: str
+
+
+class EntryCallbackObject(TypedDict):
+    kind: Literal["entry_callback"]
+    role: str
+    extent: int
+    frame: int
+
+
+EntryObject = EntryStaticObject | EntryCallbackObject | WindowObject
+
+ENTRY_ROLES: dict[str, list[str]] = {
     "_RINvMNtNtCs_16embassy_executor3raw4utilINtB3_10UninitCellNCNvNvCs_5pico221_____embassy_main_task36_____embassy_main_task_inner_function0E14write_in_placeNCNvB1a_14___embassy_main0EB1a_": [
         "speed2_0",
         "sizez_0",
@@ -45,7 +64,7 @@ ENTRY_ROLES = {
     "@outline:entry_install_boot_callback": ["sizez_9"],
 }
 
-ENTRY_GRAMMARS = {
+ENTRY_GRAMMARS: dict[str, BodyContract[EntryObject]] = {
     "speed2_0": {
         "extent": 22,
         "frame": 8,

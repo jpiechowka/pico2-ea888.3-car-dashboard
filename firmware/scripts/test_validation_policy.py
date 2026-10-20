@@ -13,38 +13,70 @@ import json
 import struct
 import tempfile
 import zlib
-from types import SimpleNamespace
 from contextlib import redirect_stdout
+from image_test_support import QualifiedImageFixture, section_fields
+from config_platform import PlatformPolicy, StackBounds, StackRecord
+from config_build_source import SourceContext
+from elf_image import ImageBytes
+from script_values import object_fields, array_items, integer_value
 
 
-def supplied_stack_record(bounds, headroom, policy, elf, source_context=None):
+def supplied_stack_record(
+    bounds: StackBounds,
+    headroom: int,
+    policy: PlatformPolicy,
+    elf: QualifiedImageFixture,
+    source_context: SourceContext | None = None,
+) -> StackRecord:
     """Explicit synthetic stage facts for strict real readers, not analysis."""
     from config_platform import _execution_receipt
 
     if source_context is None:
         source_context = MemoryQualification.source_context(MemoryQualification(), elf)
     elf.fixture_source_context = source_context
-    return dict(
+    return StackRecord(
         schema=2,
         status="CONDITIONAL_STACK_PASS",
         platform_policy="assumed_external",
         hardware_qualified=False,
-        stack_bounds=dict(bounds),
+        stack_bounds=bounds.copy(),
         headroom=headroom,
         policies=[policy.to_record()],
         execution_scope=_execution_receipt(policy, source_context, elf).to_record(),
     )
 
 
+def mutable_policy(
+    value: object,
+) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
+    """Copy valid wire output into raw negative-test data before corrupting it."""
+    from copy import deepcopy
+
+    record = deepcopy(object_fields(value, "fixture record"))
+    stack = object_fields(record["stack"], "fixture stack") if "stack" in record else record
+    policies = array_items(stack["policies"], "fixture policies")
+    policy = object_fields(policies[0], "fixture policy")
+    dependencies = [
+        object_fields(v, "fixture dependency")
+        for v in array_items(policy["owned_dependencies"], "fixture dependencies")
+    ]
+    policy["owned_dependencies"] = dependencies
+    policies[0] = policy
+    stack["policies"] = policies
+    if "stack" in record:
+        record["stack"] = stack
+    return record, policy, dependencies
+
+
 class ValidationPolicy(unittest.TestCase):
-    def test_configuration_stack_budget_has_exact_64k_boundary(self):
+    def test_configuration_stack_budget_has_exact_64k_boundary(self) -> None:
         for headroom in (-1, 0, 32768, 65535):
             with self.assertRaises(AssertionError):
                 check_memory_layout.check_headroom(headroom)
         for headroom in (65536, 65544, 131072):
             check_memory_layout.check_headroom(headroom)
 
-    def test_modified_vendor_source_is_rejected(self):
+    def test_modified_vendor_source_is_rejected(self) -> None:
         # Real filesystem corruption must fail in the Rust subprocess as well.
         import shutil
 
@@ -58,14 +90,21 @@ class ValidationPolicy(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "vendor mismatch"):
                     check_vendor.check()
 
-    def test_invalid_feature_compile_success_is_rejected(self):
+    def test_invalid_feature_compile_success_is_rejected(self) -> None:
         accepted = subprocess.CompletedProcess([], 0, "", "")
         catalogue = json.dumps(
-            {"profiles": [{"profile": {"feature": "fixture_" + str(i)}} for i in range(8)]}
+            {
+                "profiles": [
+                    {"profile": {"feature": "fixture_" + str(i), "aliases": []}} for i in range(8)
+                ]
+            }
         ).encode()
         with (
-            patch("subprocess.check_output", return_value=catalogue),
-            patch("subprocess.run", return_value=accepted),
+            patch(
+                "owned_process.run_bounded",
+                return_value=subprocess.CompletedProcess([], 0, catalogue, b""),
+            ),
+            patch("owned_process.run_checked", return_value=accepted),
         ):
             with self.assertRaises(AssertionError):
                 runpy.run_path(
@@ -74,11 +113,11 @@ class ValidationPolicy(unittest.TestCase):
 
 
 class MemoryQualification(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.stdout = io.StringIO()
         self.enterContext(redirect_stdout(self.stdout))
 
-    def fixture(self):
+    def fixture(self) -> tuple[QualifiedImageFixture, bytes, StackRecord]:
         from config_platform import PlatformPolicy
 
         payload = b"current payload"
@@ -88,7 +127,7 @@ class MemoryQualification(unittest.TestCase):
         bss = (0, 8, 3, 0x20000080, 0, 128, 0, 0, 4, 0)
         uninit = (0, 8, 3, 0x20000100, 0, 256, 0, 0, 4, 0)
         flash = (0, 1, 2, 0x10000000, 0, len(eav), 0, 0, 1, 0)
-        elf = SimpleNamespace(
+        elf = QualifiedImageFixture(
             data=eav + bytes(128),
             sections=[data, bss, uninit, flash],
             segments=[],
@@ -113,7 +152,7 @@ class MemoryQualification(unittest.TestCase):
         )
         return elf, eav, stack
 
-    def owned_fixture(self):
+    def owned_fixture(self) -> tuple[QualifiedImageFixture, bytes, StackRecord]:
         # A deliberately synthetic full-image consumer fixture. Only the
         # declared source producer is mocked; readers really check policy,
         # geometry, exact instruction sites and current ELF/EAV identities.
@@ -144,7 +183,7 @@ class MemoryQualification(unittest.TestCase):
         bss = (0, 8, 3, 0x2000390C, 0, 128, 0, 0, 4, 0)
         uninit = (0, 8, 3, 0x2000398C, 0, 256, 0, 0, 4, 0)
         role = "_RNvMs2_NtCs_16dashboard_config8advancedNtB5_15AdvancedDisplay11for_channel"
-        elf = SimpleNamespace(
+        elf = QualifiedImageFixture(
             data=bytes(raw),
             sections=[flash, text, data, bss, uninit],
             segments=[],
@@ -217,7 +256,7 @@ class MemoryQualification(unittest.TestCase):
         )
         return elf, eav, stack
 
-    def test_actual_image_reader_preserves_owned_family_and_rejects_lost_context(self):
+    def test_actual_image_reader_preserves_owned_family_and_rejects_lost_context(self) -> None:
         from copy import deepcopy
 
         elf, eav, stack = self.owned_fixture()
@@ -252,34 +291,39 @@ class MemoryQualification(unittest.TestCase):
             "operation",
             "width",
         ):
-            changed = deepcopy(record)
-            p = changed["stack"]["policies"][0]
+            changed, p, dependencies = mutable_policy(record)
             if fault == "missing":
                 p.pop("owned_dependencies")
             elif fault == "empty":
                 p["owned_dependencies"] = []
             elif fault == "one_lost":
-                p["owned_dependencies"].pop()
+                dependencies.pop()
             elif fault == "duplicate":
-                p["owned_dependencies"][-1] = deepcopy(p["owned_dependencies"][-2])
+                dependencies[-1] = deepcopy(dependencies[-2])
             elif fault == "old":
                 p["scope"] = "h2-rp2350-secure-owned-access-v2"
             elif fault == "receiver":
-                p["owned_dependencies"][1]["receiver_start"] += 4
+                dependencies[1]["receiver_start"] = (
+                    integer_value(dependencies[1]["receiver_start"], "fixture receiver") + 4
+                )
             elif fault == "pair":
-                p["owned_dependencies"][-1]["loop_index"] = 0
+                dependencies[-1]["loop_index"] = 0
             elif fault == "phase":
-                p["owned_dependencies"][0]["owner"]["storage"]["phase"] = "published"
+                owner = object_fields(dependencies[0]["owner"], "fixture owner")
+                storage = object_fields(owner["storage"], "fixture storage")
+                storage["phase"] = "published"
+                owner["storage"] = storage
+                dependencies[0]["owner"] = owner
             elif fault == "operation":
-                p["owned_dependencies"][0]["operation"] = "STREX"
+                dependencies[0]["operation"] = "STREX"
             else:
-                p["owned_dependencies"][0]["width"] = 8
+                dependencies[0]["width"] = 8
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 check_memory_layout.read_image_result(changed, elf, eav, elf.fixture_source_context)
 
-    def test_actual_memory_path_returns_record_only_after_all_checks(self):
+    def test_actual_memory_path_returns_record_only_after_all_checks(self) -> None:
         elf, eav, stack = self.fixture()
-        events = []
+        events: list[str] = []
         with (
             patch.object(check_memory_layout, "ElfImage", return_value=elf),
             patch.object(check_memory_layout, "check_stack_budget", return_value=stack),
@@ -304,11 +348,9 @@ class MemoryQualification(unittest.TestCase):
             self.stdout.getvalue(),
         )
 
-    def test_missing_lost_stale_and_intermediate_stack_result_reject(self):
-        from copy import deepcopy
-
+    def test_missing_lost_stale_and_intermediate_stack_result_reject(self) -> None:
         elf, eav, stack = self.fixture()
-        cases = [
+        cases: list[object] = [
             None,
             dict(stack, status="STACK_PASS"),
             dict(stack, headroom=65536),
@@ -322,14 +364,14 @@ class MemoryQualification(unittest.TestCase):
             ("security", "nonsecure"),
             ("core", 1),
         ):
-            changed = deepcopy(stack)
-            changed["policies"][0][field] = value
+            changed, policy, _ = mutable_policy(stack)
+            policy[field] = value
             cases.append(changed)
-        for value in cases:
+        for case in cases:
             with (
-                self.subTest(value=value),
+                self.subTest(value=case),
                 patch.object(check_memory_layout, "ElfImage", return_value=elf),
-                patch.object(check_memory_layout, "check_stack_budget", return_value=value),
+                patch.object(check_memory_layout, "check_stack_budget", return_value=case),
                 patch.object(check_memory_layout, "check_flash_lockout"),
             ):
                 with self.assertRaises(AssertionError):
@@ -337,7 +379,7 @@ class MemoryQualification(unittest.TestCase):
                         "fixture.elf", source_context=elf.fixture_source_context
                     )
 
-    def test_failed_later_gate_does_not_return_ready_record(self):
+    def test_failed_later_gate_does_not_return_ready_record(self) -> None:
         elf, eav, stack = self.fixture()
         with (
             patch.object(check_memory_layout, "ElfImage", return_value=elf),
@@ -351,7 +393,7 @@ class MemoryQualification(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "flash failed"):
                 check_memory_layout.check("fixture.elf", source_context=elf.fixture_source_context)
 
-    def test_cli_writes_only_complete_success_and_refuses_stale_output(self):
+    def test_cli_writes_only_complete_success_and_refuses_stale_output(self) -> None:
         elf, eav, stack = self.fixture()
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / "result.json"
@@ -415,7 +457,7 @@ class MemoryQualification(unittest.TestCase):
                 )
             gate.assert_not_called()
 
-    def test_input_policy_rejects_partial_allocated_alias_and_wrapped_owner(self):
+    def test_input_policy_rejects_partial_allocated_alias_and_wrapped_owner(self) -> None:
         for fault in ("alias", "wrapped_owner"):
             elf, eav, stack = self.fixture()
             if fault == "alias":
@@ -423,7 +465,7 @@ class MemoryQualification(unittest.TestCase):
             else:
                 owner = list(elf.sections[-1])
                 owner[5] = 0xFFFFFFFF
-                elf.sections[-1] = tuple(owner)
+                elf.sections[-1] = section_fields(owner)
             with (
                 self.subTest(fault=fault),
                 patch.object(check_memory_layout, "ElfImage", return_value=elf),
@@ -433,7 +475,7 @@ class MemoryQualification(unittest.TestCase):
             ):
                 check_memory_layout.check("fixture.elf", source_context=elf.fixture_source_context)
 
-    def test_reader_rejects_stack_only_record_and_changed_image_input_or_status(self):
+    def test_reader_rejects_stack_only_record_and_changed_image_input_or_status(self) -> None:
         from copy import deepcopy
 
         elf, eav, stack = self.fixture()
@@ -464,7 +506,7 @@ class MemoryQualification(unittest.TestCase):
         with self.assertRaises(AssertionError):
             check_memory_layout.read_image_result(result, elf, eav, elf.fixture_source_context)
 
-    def source_context(self, elf):
+    def source_context(self, elf: ImageBytes) -> SourceContext:
         from config_build_source import SOURCE_PATHS, make_source_context
 
         root = Path(__file__).resolve().parents[2]
@@ -475,7 +517,7 @@ class MemoryQualification(unittest.TestCase):
             {name: (root / name).read_bytes() for name in SOURCE_PATHS},
         )
 
-    def test_explicit_source_context_flows_through_memory_stack_and_result_reader(self):
+    def test_explicit_source_context_flows_through_memory_stack_and_result_reader(self) -> None:
         elf, eav, stack = self.fixture()
         value = self.source_context(elf)
         with (
@@ -507,7 +549,7 @@ class MemoryQualification(unittest.TestCase):
             current_image_policy(stack["policies"][0], elf, eav).to_record(), stack["policies"][0]
         )
 
-    def test_CLI_requires_explicit_source_path_and_rejects_bad_pair_before_output(self):
+    def test_CLI_requires_explicit_source_path_and_rejects_bad_pair_before_output(self) -> None:
         from config_build_source import write_source_context
         from dataclasses import replace
 
@@ -539,7 +581,7 @@ class MemoryQualification(unittest.TestCase):
 
 class NamedOrdinaryExecution(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[QualifiedImageFixture, PlatformPolicy, SourceContext]:
         from config_platform import current_image_policy
 
         policy_test = MemoryQualification()
@@ -550,7 +592,7 @@ class NamedOrdinaryExecution(unittest.TestCase):
             policy_test.source_context(elf),
         )
 
-    def test_receipt_binds_current_ELF_input_and_exact_source_attempt(self):
+    def test_receipt_binds_current_ELF_input_and_exact_source_attempt(self) -> None:
         import config_platform as platform
         from dataclasses import replace
 
@@ -606,7 +648,7 @@ class NamedOrdinaryExecution(unittest.TestCase):
             ),
         )
 
-    def test_strict_receipt_rejects_lost_frontier_schema_aliases_and_stronger_use(self):
+    def test_strict_receipt_rejects_lost_frontier_schema_aliases_and_stronger_use(self) -> None:
         import config_platform as platform
         from copy import deepcopy
 
@@ -633,7 +675,7 @@ class NamedOrdinaryExecution(unittest.TestCase):
             "H8",
             "M2",
         ):
-            bad = deepcopy(record)
+            bad = deepcopy(dict(record))
             if fault == "schema_bool":
                 bad["schema"] = True
             elif fault == "schema_float":
@@ -655,11 +697,17 @@ class NamedOrdinaryExecution(unittest.TestCase):
             elif fault == "domain":
                 bad["domain"] = "all_observers"
             elif fault == "frontier_order":
-                bad["pending_exception_frontier"].reverse()
+                bad["pending_exception_frontier"] = list(
+                    reversed(array_items(bad["pending_exception_frontier"], "fixture frontier"))
+                )
             elif fault == "frontier_lost":
-                bad["pending_exception_frontier"].pop()
+                bad["pending_exception_frontier"] = array_items(
+                    bad["pending_exception_frontier"], "fixture frontier"
+                )[:-1]
             elif fault == "exception_limit":
-                bad["exception_graph_limit"].pop()
+                bad["exception_graph_limit"] = array_items(
+                    bad["exception_graph_limit"], "fixture limit"
+                )[:-1]
             else:
                 bad[
                     {

@@ -7,6 +7,13 @@ unresolved until the enclosing producer composes them. No ISA execution or
 policy is performed here.
 """
 
+from typing import TypedDict
+from config_body_types import InstructionMap
+from config_stack import DiagnosticObjects
+from config_default import Writes
+from config_validator_access import ValidatorContext
+from config_validator_result import ValidatorResult
+from llvm_stack import Instruction
 import re
 from config_validator_result import validator_result_boundary
 from config_regions import borrow, require_writes
@@ -30,7 +37,25 @@ _IMMEDIATE = r"-?(?:0x[0-9a-f]+|[0-9]+)"
 _WIDTHS = {"str": 4, "strh": 2, "strb": 1, "strd": 8}
 
 
-def _frame_base(offset, row):
+class ValidatorWrites(TypedDict):
+    boundary: ValidatorResult
+    local_ranges: tuple[tuple[int, int, int], ...]
+    spill_writers: tuple[tuple[int, int, int], ...]
+    capture_writers: tuple[tuple[int, int, int], ...]
+    valid_writers: tuple[tuple[int, int, int], ...]
+    local_writes: Writes
+    unresolved_pointer_writes: tuple[Instruction, ...]
+    code_bytes: int
+    mapped_data_bytes: int
+    natural_local_alignment: bool
+    current_body_has_no_other_SP_R7_write: bool
+    requires_all_child_SP_R7_and_pointer_effects: bool
+    requires_whole_parent_control_entry_and_source_domains: bool
+    requires_first_typed_constructors_and_valid_boolean_producers: bool
+    platform_requirements_unresolved: bool
+
+
+def _frame_base(offset: int, row: Instruction) -> None:
     """Only the reviewed prologue/restore may change this local SP/R7 map."""
     operation = row.mnemonic
     operand = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
@@ -77,14 +102,20 @@ def _frame_base(offset, row):
         )
 
 
-def validator_local_writes(objects, name, rows, context, call):
+def validator_local_writes(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    context: ValidatorContext,
+    call: int,
+) -> ValidatorWrites:
     boundary = validator_result_boundary(objects, name, rows, context, call)
     parent = objects.elf.functions[name][0] & ~1
     extent = objects.elf.functions[name][1]
     q = context.frame
     mapping = mapping_ranges(objects.elf, name)
     code = {a for lo, hi, kind in mapping if kind == "t" for a in range(lo, hi)}
-    covered = set()
+    covered: set[int] = set()
     local = []
     pending = []
     for at, row in sorted(rows.items()):
@@ -135,7 +166,7 @@ def validator_local_writes(objects, name, rows, context, call):
         "validator fixed/pointer store family inventory differs",
     )
 
-    def writers(start, end):
+    def writers(start: int, end: int) -> tuple[tuple[int, int, int], ...]:
         return tuple((at, lo, hi) for at, lo, hi in local if lo < end and start < hi)
 
     spill = writers(60, 64)

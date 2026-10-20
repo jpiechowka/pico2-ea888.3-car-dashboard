@@ -16,8 +16,8 @@ pub fn mark_maintenance_gap() { TE_OBSERVATIONS.lock(|edges| edges.borrow_mut().
 #[embassy_executor::task]
 pub async fn observe_te(mut pin: Input<'static>) {
     loop {
-        // The locked HAL edge future has no Drop cleanup. Keep one waiter on
-        // core 0 and never cancel it for a timeout or switch its trigger type.
+        // Keep one core0 waiter; the reviewed HAL disarms its originating IRQ
+        // bank on Drop. This observer never cancels or switches trigger type.
         pin.wait_for_rising_edge().await;
         let observed_us = Instant::now().as_micros();
         TE_OBSERVATIONS.lock(|edges| {

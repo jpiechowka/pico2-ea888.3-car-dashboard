@@ -16,6 +16,13 @@ pub struct PioI2sInProgram<'d, PIO: Instance> {
 
 const PIO_I2S_IN_PROGRAM_CLK_MULTIPLIER: u32 = 2;
 
+fn input_clock(sample_rate: u32, bit_depth: u32, channels: u32) -> u32 {
+    assert!(sample_rate > 0);
+    assert_eq!(bit_depth, 16, "the input PIO program samples 16 bits per channel");
+    assert_eq!(channels, 2, "the input PIO program samples two channels");
+    sample_rate.checked_mul(16 * 2 * PIO_I2S_IN_PROGRAM_CLK_MULTIPLIER).expect("I2S clock overflow")
+}
+
 impl<'d, PIO: Instance> PioI2sInProgram<'d, PIO> {
     /// Load the input program into the given pio
     pub fn new(common: &mut Common<'d, PIO>) -> Self {
@@ -63,6 +70,7 @@ impl<'d, P: Instance, const S: usize> PioI2sIn<'d, P, S> {
         channels: u32,
         program: &PioI2sInProgram<'d, P>,
     ) -> Self {
+        let divider = calculate_pio_clock_divider(input_clock(sample_rate, bit_depth, channels));
         let mut data_pin = common.make_pio_pin(data_pin);
         if data_pulldown {
             data_pin.set_pull(Pull::Down);
@@ -74,8 +82,7 @@ impl<'d, P: Instance, const S: usize> PioI2sIn<'d, P, S> {
             let mut cfg = Config::default();
             cfg.use_program(&program.prg, &[&bit_clock_pin, &lr_clock_pin]);
             cfg.set_in_pins(&[&data_pin]);
-            let clock_frequency = sample_rate * bit_depth * channels;
-            cfg.clock_divider = calculate_pio_clock_divider(clock_frequency * PIO_I2S_IN_PROGRAM_CLK_MULTIPLIER);
+            cfg.clock_divider = divider;
             cfg.shift_in = ShiftConfig {
                 threshold: 32,
                 direction: ShiftDirection::Left,
@@ -102,7 +109,7 @@ impl<'d, P: Instance, const S: usize> PioI2sIn<'d, P, S> {
 
     /// Stop the i2s interface
     pub fn stop(&mut self) {
-        self.sm.set_enable(true);
+        self.sm.set_enable(false);
     }
 
     /// Start at the the same as other drivers
@@ -118,6 +125,20 @@ impl<'d, P: Instance, const S: usize> PioI2sIn<'d, P, S> {
     /// Return an in-progress dma transfer future. Awaiting it will guarantee a complete transfer.
     pub fn read<'b>(&'b mut self, buff: &'b mut [u32]) -> Transfer<'b> {
         self.sm.rx().dma_pull(&mut self.dma, buff, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn input_program_requires_its_fixed_stereo_sixteen_bit_format() {
+        assert_eq!(input_clock(48_000, 16, 2), 3_072_000);
+        for (rate, depth, channels) in [(0, 16, 2), (48_000, 24, 2), (48_000, 16, 1)] {
+            assert!(std::panic::catch_unwind(|| input_clock(rate, depth, channels)).is_err());
+        }
     }
 }
 
@@ -162,7 +183,10 @@ pub struct PioI2sOut<'d, P: Instance, const S: usize> {
 }
 
 impl<'d, P: Instance, const S: usize> PioI2sOut<'d, P, S> {
-    /// Configure a state machine to output I2S
+    /// Configure stereo I2S with 2..=32 bits per sample.
+    ///
+    /// DMA words contain a continuous, MSB-first packed bitstream. Samples whose
+    /// width does not divide32 span words; they are not padded to32 bits.
     pub fn new<D: dma::ChannelInstance>(
         common: &mut Common<'d, P>,
         mut sm: StateMachine<'d, P, S>,
@@ -175,17 +199,21 @@ impl<'d, P: Instance, const S: usize> PioI2sOut<'d, P, S> {
         bit_depth: u32,
         program: &PioI2sOutProgram<'d, P>,
     ) -> Self {
+        assert!((2..=32).contains(&bit_depth));
+        assert!(sample_rate > 0);
+        let pio_frequency = sample_rate
+            .checked_mul(bit_depth * 2 * PIO_I2S_OUT_PROGRAM_CLK_MULTIPLIER)
+            .expect("I2S clock overflow");
+        let divider = calculate_pio_clock_divider(pio_frequency);
         let data_pin = common.make_pio_pin(data_pin);
         let bit_clock_pin = common.make_pio_pin(bit_clock_pin);
         let lr_clock_pin = common.make_pio_pin(lr_clock_pin);
-
-        let bclk_frequency: u32 = sample_rate * bit_depth * 2;
 
         let cfg = {
             let mut cfg = Config::default();
             cfg.use_program(&program.prg, &[&bit_clock_pin, &lr_clock_pin]);
             cfg.set_out_pins(&[&data_pin]);
-            cfg.clock_divider = calculate_pio_clock_divider(bclk_frequency * PIO_I2S_OUT_PROGRAM_CLK_MULTIPLIER);
+            cfg.clock_divider = divider;
             cfg.shift_out = ShiftConfig {
                 threshold: 32,
                 direction: ShiftDirection::Left,

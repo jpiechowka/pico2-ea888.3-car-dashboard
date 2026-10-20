@@ -37,6 +37,64 @@ impl WorkObservation {
     }
 }
 
+/// One completed UI iteration. Publish this value only after waits/maintenance
+/// decisions so a discarded render cannot replace just the cycle numerator.
+#[derive(Clone, Copy)]
+pub struct FrameWorkObservation {
+    work: WorkObservation,
+    cycles: Option<u32>,
+}
+impl FrameWorkObservation {
+    pub const EMPTY: Self = Self {
+        work: WorkObservation::EMPTY,
+        cycles: None,
+    };
+
+    pub fn new(
+        at_us: u64,
+        cpu_hz: u32,
+        cycles: Option<u64>,
+        elapsed_us: u64,
+    ) -> Self {
+        Self {
+            work: WorkObservation {
+                at_us: Some(at_us),
+                work_tenths: cycles.and_then(|value| crate::cpu_math::checked_utilization(cpu_hz, value, elapsed_us)),
+                stack_bytes: None,
+            },
+            cycles: cycles.and_then(|value| u32::try_from(value).ok()),
+        }
+    }
+
+    pub fn work(
+        self,
+        now_us: u64,
+    ) -> Option<u32> {
+        self.work.work(now_us)
+    }
+
+    pub fn cycles(
+        self,
+        now_us: u64,
+    ) -> Option<u32> {
+        self.work(now_us).and(self.cycles)
+    }
+}
+
+/// RP2350 SSP divider metadata, not a physical measurement. CPSDVSR must be
+/// even in 2..=254; SCR encodes an additional divisor in 1..=256.
+pub fn spi_clock_hz(
+    peripheral_hz: u32,
+    cpsdvsr: u8,
+    scr: u8,
+) -> Option<u32> {
+    if cpsdvsr < 2 || !cpsdvsr.is_multiple_of(2) {
+        return None;
+    }
+    let hz = peripheral_hz / (u32::from(cpsdvsr) * (u32::from(scr) + 1));
+    (hz != 0).then_some(hz)
+}
+
 /// Rounded KiB for a checked pair; rounding cannot reverse used <= capacity.
 pub fn memory_kib(
     used: u32,

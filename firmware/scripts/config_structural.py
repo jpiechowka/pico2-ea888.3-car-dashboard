@@ -11,8 +11,10 @@ from types import MappingProxyType, SimpleNamespace
 import copy
 import hashlib
 import inspect
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import ParamSpec, Protocol, TypeVar, TypedDict, cast
 from config_stack import DiagnosticObjects
-from elf_image import ElfImage
+from elf_image import ElfImage, MappedImage, Section, SectionEntry, Segment, Symbol
 from llvm_stack import Instruction
 from validation import require
 
@@ -31,11 +33,50 @@ _APIS = frozenset(
     )
 )
 
+P = ParamSpec("P")
+R = TypeVar("R")
+Api = tuple[str, str]
+MemoKey = tuple[Api, tuple[tuple[str, object], ...]]
+FrozenValue = (
+    str
+    | bytes
+    | int
+    | bool
+    | None
+    | Instruction
+    | tuple["FrozenValue", ...]
+    | Mapping["FrozenValue", "FrozenValue"]
+)
 
-def _freeze(value):
-    if type(value) in (str, bytes, int, bool, type(None)):
+
+class ElfAttributes(TypedDict, total=False):
+    """Fields of an already typed image, before recursive immutable copying.
+
+    Partial synthetic fixtures retain missing-attribute errors at consumption.
+    This schema is internal; it does not admit an ELF from unvalidated JSON.
+    """
+
+    data: bytes
+    sections: Sequence[Section]
+    segments: Sequence[Segment]
+    section_entries: Sequence[SectionEntry]
+    symbol_entries: Sequence[Symbol]
+    named: Mapping[str, Section]
+    symbols: Mapping[str, int]
+    functions: Mapping[str, tuple[int, int, int]]
+    mapping_symbols: Sequence[tuple[str, int, int]]
+
+
+def _freeze(value: object) -> FrozenValue:
+    if (
+        type(value) is str
+        or type(value) is bytes
+        or type(value) is int
+        or type(value) is bool
+        or value is None
+    ):
         return value
-    if type(value) in (list, tuple):
+    if type(value) is list or type(value) is tuple:
         return tuple(_freeze(v) for v in value)
     if type(value) is dict:
         return MappingProxyType({_freeze(k): _freeze(v) for k, v in value.items()})
@@ -54,16 +95,28 @@ def _freeze(value):
 class _FrozenElf:
     __slots__ = ("_attributes",)
 
-    def __init__(self, attributes):
+    _attributes: Mapping[FrozenValue, FrozenValue]
+    # __getattr__ serves these same typed fields from the detached mapping.
+    data: bytes
+    sections: Sequence[Section]
+    segments: Sequence[Segment]
+    section_entries: Sequence[SectionEntry]
+    symbol_entries: Sequence[Symbol]
+    named: Mapping[str, Section]
+    symbols: Mapping[str, int]
+    functions: Mapping[str, tuple[int, int, int]]
+    mapping_symbols: Sequence[tuple[str, int, int]]
+
+    def __init__(self, attributes: ElfAttributes) -> None:
         object.__setattr__(self, "_attributes", _freeze(attributes))
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> FrozenValue:
         try:
             return self._attributes[name]
         except KeyError:
             raise AttributeError(name) from None
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("immutable detached ELF")
 
     function_bytes = ElfImage.function_bytes
@@ -83,7 +136,24 @@ class _FrozenObjects(DiagnosticObjects):
         "_instruction_index",
     )
 
-    def __init__(self, elf, sizes, rows):
+    _image: _FrozenElf
+    _sizes: Mapping[int, int]
+    _rows: Mapping[int, Instruction]
+    _memo: dict[MemoKey, object]
+    _counts: dict[Api, tuple[int, int]]
+    _hashes: dict[str | tuple[int, int], str]
+    _typed_names: (
+        tuple[
+            Mapping[str, tuple[int, int, int]],
+            Mapping[str, tuple[tuple[str, int], ...]],
+        ]
+        | None
+    )
+    _instruction_index: tuple[Mapping[int, Instruction], tuple[int, ...]] | None
+
+    def __init__(
+        self, elf: _FrozenElf, sizes: Mapping[int, int], rows: Mapping[int, Instruction]
+    ) -> None:
         object.__setattr__(self, "_image", elf)
         object.__setattr__(self, "_sizes", _freeze(sizes))
         object.__setattr__(self, "_rows", _freeze(rows))
@@ -94,18 +164,28 @@ class _FrozenObjects(DiagnosticObjects):
         object.__setattr__(self, "_instruction_index", None)
 
     @property
-    def elf(self):
+    def elf(self) -> MappedImage:
         return self._image
 
+    @elf.setter
+    def elf(self, value: MappedImage) -> None:
+        raise AttributeError("immutable detached objects")
+
     @property
-    def sizes(self):
+    def sizes(self) -> Mapping[int, int]:
         return self._sizes
 
-    def __setattr__(self, name, value):
+    @sizes.setter
+    def sizes(self, value: Mapping[int, int]) -> None:
+        raise AttributeError("immutable detached objects")
+
+    def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("immutable detached objects")
 
 
-def _detached_inputs(objects, rows):
+def _detached_inputs(
+    objects: DiagnosticObjects, rows: Mapping[int, Instruction]
+) -> tuple[DiagnosticObjects, Mapping[int, Instruction]]:
     """Detach supported providers; custom readers keep the original rechecks.
 
     The complete raw image, all metadata and all rows are copied. No mutable
@@ -122,7 +202,10 @@ def _detached_inputs(objects, rows):
     ):
         return objects, rows
     try:
-        elf = _FrozenElf(vars(objects.elf))
+        # The input image already has the read-only typed image contract.
+        # vars() erases that schema; freezing preserves every field value and
+        # only replaces mutable containers with their immutable equivalents.
+        elf = _FrozenElf(cast(ElfAttributes, vars(objects.elf)))
         frozen = _FrozenObjects(elf, objects.sizes, rows)
     except TypeError:
         return objects, rows
@@ -136,7 +219,7 @@ def _detached_inputs(objects, rows):
     return frozen, frozen._rows
 
 
-def _raw_composition_inputs(objects, instructions, source_context):
+def _raw_composition_inputs(objects: object, instructions: object, source_context: object) -> bool:
     """Select canonical raw inputs, never a supplied checked-state flag.
 
     Actual fresh detachment is checked separately after the real producer
@@ -155,7 +238,14 @@ def _raw_composition_inputs(objects, instructions, source_context):
     )
 
 
-def _fresh_composition_inputs(objects, instructions, source_context, owned, rows, current_context):
+def _fresh_composition_inputs(
+    objects: object,
+    instructions: object,
+    source_context: object,
+    owned: object,
+    rows: object,
+    current_context: object,
+) -> bool:
     """Compare only the original and actually derived input triples.
 
     No private state, approval token or evaluated result enters this predicate.
@@ -172,10 +262,10 @@ def _fresh_composition_inputs(objects, instructions, source_context, owned, rows
     )
 
 
-def _structural(rows_index):
+def _structural(rows_index: int) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Wrap only an explicitly listed structural API, preserving its signature."""
 
-    def decorate(function):
+    def decorate(function: Callable[P, R]) -> Callable[P, R]:
         api = (function.__module__, function.__name__)
         require(api in _APIS, "unreviewed structural reuse API")
         signature = inspect.signature(function)
@@ -183,10 +273,10 @@ def _structural(rows_index):
         row_parameter = parameters[rows_index]
 
         @wraps(function)
-        def checked(*args, **kwargs):
+        def checked(*args: P.args, **kwargs: P.kwargs) -> R:
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
-            objects = bound.arguments["objects"]
+            objects: object = bound.arguments["objects"]
             if type(objects) is not _FrozenObjects:
                 return function(*args, **kwargs)
             require(
@@ -195,7 +285,7 @@ def _structural(rows_index):
             )
             # These APIs take only names, roles, ancestry and contextual scalar
             # tuples in addition to their exact objects/map. Preserve all keys.
-            key = (
+            key: MemoKey = (
                 api,
                 tuple(
                     (name, value)
@@ -210,7 +300,9 @@ def _structural(rows_index):
             misses, hits = objects._counts.get(api, (0, 0))
             if key in objects._memo:
                 objects._counts[api] = (misses, hits + 1)
-                return copy.deepcopy(objects._memo[key])
+                # Only this exact API writes its return value under this key;
+                # the store lives on the detached invocation, not the wrapper.
+                return copy.deepcopy(cast(R, objects._memo[key]))
             result = function(*args, **kwargs)
             objects._memo[key] = copy.deepcopy(result)
             misses, hits = objects._counts.get(api, (0, 0))
@@ -222,7 +314,13 @@ def _structural(rows_index):
     return decorate
 
 
-def _instruction_addresses(objects, rows):
+class InstructionItems(Protocol):
+    def items(self) -> Iterable[tuple[int, Instruction]]: ...
+
+
+def _instruction_addresses(
+    objects: DiagnosticObjects | None, rows: InstructionItems
+) -> tuple[int, ...] | None:
     """Only exact immutable row inputs share an address index, never a proof.
 
     Direct private construction does not grant the factory's key invariant.
@@ -242,26 +340,30 @@ def _instruction_addresses(objects, rows):
         for at, row in rows.items()
     ):
         return None
-    addresses = tuple(sorted(rows))
+    addresses = tuple(sorted(objects._rows))
     object.__setattr__(objects, "_instruction_index", (rows, addresses))
     return addresses
 
 
-def _instruction_items(objects, rows, start, extent):
+def _instruction_items(
+    objects: DiagnosticObjects | None, rows: InstructionItems, start: float, extent: float
+) -> Iterator[tuple[int, Instruction]]:
     """Fresh complete span selection, including odd/interior instruction keys."""
     addresses = _instruction_addresses(objects, rows)
     if (
         addresses is not None
+        and type(objects) is _FrozenObjects
         and type(start) is type(extent) is int
         and 0 <= start < start + extent <= 2**32
     ):
         end = start + extent
         selected = addresses[bisect_left(addresses, start) : bisect_left(addresses, end)]
-        return ((at, rows[at]) for at in selected)
+        indexed_rows = objects._rows
+        return ((at, indexed_rows[at]) for at in selected)
     return ((at, row) for at, row in rows.items() if start <= at < start + extent)
 
 
-def _image_hash(objects):
+def _image_hash(objects: DiagnosticObjects) -> str:
     if type(objects) is not _FrozenObjects:
         return hashlib.sha256(objects.elf.data).hexdigest()
     if "image" not in objects._hashes:
@@ -269,7 +371,7 @@ def _image_hash(objects):
     return objects._hashes["image"]
 
 
-def _readonly_hash(objects, start, extent):
+def _readonly_hash(objects: DiagnosticObjects, start: int, extent: int) -> str:
     if type(objects) is not _FrozenObjects:
         return hashlib.sha256(objects.read_only(start, extent)).hexdigest()
     key = (start, extent)

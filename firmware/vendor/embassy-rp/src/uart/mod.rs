@@ -164,6 +164,97 @@ pub struct UartRx<'d, M: Mode> {
     phantom: PhantomData<M>,
 }
 
+fn baud_divisors(clk_base: u32, baudrate: u32) -> (u32, u32) {
+    assert!(clk_base != 0 && baudrate != 0, "UART clock and baudrate must be nonzero");
+    // Round the entire 16.6 divisor, so a fractional carry reaches IBRD.
+    let divisor = ((4 * u64::from(clk_base) + u64::from(baudrate) / 2) / u64::from(baudrate))
+        .clamp(64, 65535 * 64);
+    ((divisor >> 6) as u32, (divisor & 63) as u32)
+}
+
+fn bit_duration_us(bits: u32, divx64: u32, clock_hz: u32) -> u64 {
+    assert!(clock_hz != 0, "UART clock must be nonzero");
+    // u32 bit counts and the full 16.6 hardware divisor can exceed u64
+    // before division, even though the resulting duration fits.
+    let micros = (u128::from(bits) * u128::from(divx64) * 250_000).div_ceil(u128::from(clock_hz));
+    u64::try_from(micros).expect("UART duration exceeds timer range")
+}
+
+fn disable_rx_dma(regs: pac::uart::Uart) {
+    regs.uartdmacr().write_clear(|reg| {
+        reg.set_rxdmae(true);
+        reg.set_dmaonerr(true);
+    });
+}
+
+fn tx_drained(regs: pac::uart::Uart) -> bool {
+    let flags = regs.uartfr().read();
+    flags.txfe() && !flags.busy()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BreakProgress {
+    Continue(usize),
+    Complete(usize),
+}
+
+fn break_progress(transferred: usize, capacity: usize, last_was_break: bool, min_count: usize) -> Result<BreakProgress, ReadToBreakError> {
+    if transferred == capacity && !last_was_break {
+        // A break after a full data buffer may have intervening data in FIFO.
+        // Keep that boundary for the next read instead of claiming completion.
+        Err(ReadToBreakError::MissingBreak(capacity))
+    } else {
+        let count = transferred.saturating_sub(1);
+        if count < min_count {
+            Ok(BreakProgress::Continue(count))
+        } else {
+            Ok(BreakProgress::Complete(count))
+        }
+    }
+}
+
+fn clear_consumed_break(regs: pac::uart::Uart) {
+    // ECR clears the receive DMA error gate. The break's zero byte has already
+    // been consumed; any later FIFO error remains attached to its own byte.
+    regs.uartrsr().write_value(pac::uart::regs::Uartrsr(0));
+    regs.uarticr().write(|w| {
+        w.set_beic(true);
+        w.set_feic(true);
+    });
+}
+
+fn arm_rx_errors(regs: pac::uart::Uart) {
+    regs.uartimsc().write_set(|w| {
+        w.set_oeim(true);
+        w.set_beim(true);
+        w.set_peim(true);
+        w.set_feim(true);
+    });
+}
+
+struct BreakGuard(pac::uart::Uart);
+
+impl BreakGuard {
+    fn new(regs: pac::uart::Uart) -> Self {
+        regs.uartlcr_h().write_set(|w| w.set_brk(true));
+        Self(regs)
+    }
+}
+
+impl Drop for BreakGuard {
+    fn drop(&mut self) {
+        self.0.uartlcr_h().write_clear(|w| w.set_brk(true));
+    }
+}
+
+fn break_duration_us(regs: pac::uart::Uart, bits: u32) -> u64 {
+    let lcr = regs.uartlcr_h().read();
+    let frame_bits = 1 + u32::from(lcr.wlen()) + 5 + u32::from(lcr.pen()) + 1 + u32::from(lcr.stp2());
+    let divx64 = (u32::from(regs.uartibrd().read().baud_divint()) << 6)
+        + u32::from(regs.uartfbrd().read().baud_divfrac());
+    bit_duration_us(bits.max(2 * frame_bits), divx64, clk_peri_freq())
+}
+
 impl<'d, M: Mode> UartTx<'d, M> {
     fn new_inner(info: &'static Info, tx_dma: Option<Channel<'d>>) -> Self {
         Self {
@@ -185,7 +276,7 @@ impl<'d, M: Mode> UartTx<'d, M> {
 
     /// Flush UART TX blocking execution until done.
     pub fn blocking_flush(&mut self) -> Result<(), Error> {
-        while !self.info.regs.uartfr().read().txfe() {}
+        while !tx_drained(self.info.regs) {}
         Ok(())
     }
 
@@ -203,23 +294,11 @@ impl<'d, M: Mode> UartTx<'d, M> {
     /// for the transmit fifo to empty, which may take a while on slow links.
     pub async fn send_break(&mut self, bits: u32) {
         let regs = self.info.regs;
-        let bits = bits.max({
-            let lcr = regs.uartlcr_h().read();
-            let width = lcr.wlen() as u32 + 5;
-            let parity = lcr.pen() as u32;
-            let stops = 1 + lcr.stp2() as u32;
-            2 * (1 + width + parity + stops)
-        });
-        let divx64 = (((regs.uartibrd().read().baud_divint() as u32) << 6)
-            + regs.uartfbrd().read().baud_divfrac() as u32) as u64;
-        let div_clk = clk_peri_freq() as u64 * 64;
-        let wait_usecs = (1_000_000 * bits as u64 * divx64 * 16 + div_clk - 1) / div_clk;
+        let wait_usecs = break_duration_us(regs, bits);
 
         self.blocking_flush().unwrap();
-        while self.busy() {}
-        regs.uartlcr_h().write_set(|w| w.set_brk(true));
+        let _guard = BreakGuard::new(regs);
         Timer::after_micros(wait_usecs).await;
-        regs.uartlcr_h().write_clear(|w| w.set_brk(true));
     }
 }
 
@@ -348,11 +427,7 @@ impl<'d, M: Mode> Drop for UartRx<'d, M> {
         if self.rx_dma.is_some() {
             self.info.interrupt.disable();
             // clear dma flags. irq handlers use these to disambiguate among themselves.
-            self.info.regs.uartdmacr().write_clear(|reg| {
-                reg.set_rxdmae(true);
-                reg.set_txdmae(true);
-                reg.set_dmaonerr(true);
-            });
+            disable_rx_dma(self.info.regs);
         }
     }
 }
@@ -603,6 +678,7 @@ impl<'d> UartRx<'d, Async> {
             // We got a break WHILE draining the FIFO, return what we did get before the break
             Err((len, Error::Break)) => {
                 if len < min_count && len < buffer.len() {
+                    clear_consumed_break(self.info.regs);
                     &mut buffer[len..]
                 } else {
                     return Ok(len);
@@ -615,18 +691,15 @@ impl<'d> UartRx<'d, Async> {
         // start a dma transfer. if errors have happened in the interim some error
         // interrupt flags will have been raised, and those will be picked up immediately
         // by the interrupt handler.
-        self.info.regs.uartimsc().write_set(|w| {
-            w.set_oeim(true);
-            w.set_beim(true);
-            w.set_peim(true);
-            w.set_feim(true);
-        });
         self.info.regs.uartdmacr().write_set(|reg| {
             reg.set_rxdmae(true);
             reg.set_dmaonerr(true);
         });
 
         loop {
+            // The error handler masks these bits. Every continued DMA segment
+            // must rearm them after acknowledging an ignored early break.
+            arm_rx_errors(self.info.regs);
             let transfer = unsafe {
                 // If we don't assign future to a variable, the data register pointer
                 // is held across an await and makes the future non-Send.
@@ -678,6 +751,10 @@ impl<'d> UartRx<'d, Async> {
                 // No errors? That means we filled the buffer without a line break.
                 // For THIS function, that's a problem.
                 return Err(ReadToBreakError::MissingBreak(buffer.len()));
+            } else if errors.oeris() {
+                return Err(ReadToBreakError::Other(Error::Overrun));
+            } else if errors.peris() {
+                return Err(ReadToBreakError::Other(Error::Parity));
             } else if errors.beris() {
                 // We got a Line Break! By this point, we've finished/aborted the DMA
                 // transaction, which means that we need to figure out where it left off
@@ -699,13 +776,7 @@ impl<'d> UartRx<'d, Async> {
                     unreachable!("UART DMA reported invalid `write_addr`");
                 }
 
-                if (next_addr - sval) < min_count {
-                    sbuffer = &mut buffer[(next_addr - sval)..];
-                    continue;
-                }
-
                 let regs = self.info.regs;
-                let all_full = next_addr == eval;
 
                 // NOTE: This is off label usage of RSR! See the issue below for
                 // why I am not checking if there is an "extra" FIFO byte, and why
@@ -716,36 +787,14 @@ impl<'d> UartRx<'d, Async> {
                 // issue: https://github.com/raspberrypi/pico-feedback/issues/367
                 let last_was_break = regs.uartrsr().read().be();
 
-                return match (all_full, last_was_break) {
-                    (true, true) | (false, _) => {
-                        // We got less than the full amount + a break, or the full amount
-                        // and the last byte was a break. Subtract the break off by adding one to sval.
-                        Ok(next_addr.saturating_sub(1 + sval))
+                match break_progress(next_addr - sval, buffer.len(), last_was_break, min_count)? {
+                    BreakProgress::Continue(offset) => {
+                        clear_consumed_break(regs);
+                        sbuffer = &mut buffer[offset..];
+                        continue;
                     }
-                    (true, false) => {
-                        // We finished the whole DMA, and the last DMA'd byte was NOT a break
-                        // character. This is an error.
-                        //
-                        // NOTE: we COULD potentially return Ok(buffer.len()) here, since we
-                        // know a line break occured at SOME POINT after the DMA completed.
-                        //
-                        // However, we have no way of knowing if there was extra data BEFORE
-                        // that line break, so instead return an Err to signal to the caller
-                        // that there are "leftovers", and they'll catch the actual line break
-                        // on the next call.
-                        //
-                        // Doing it like this also avoids racyness: now whether you finished
-                        // the full read BEFORE the line break occurred or AFTER the line break
-                        // occurs, you still get `MissingBreak(buffer.len())` instead of sometimes
-                        // getting `Ok(buffer.len())` if you were "late enough" to observe the
-                        // line break.
-                        Err(ReadToBreakError::MissingBreak(buffer.len()))
-                    }
-                };
-            } else if errors.oeris() {
-                return Err(ReadToBreakError::Other(Error::Overrun));
-            } else if errors.peris() {
-                return Err(ReadToBreakError::Other(Error::Parity));
+                    BreakProgress::Complete(count) => return Ok(count),
+                }
             } else if errors.feris() {
                 return Err(ReadToBreakError::Other(Error::Framing));
             }
@@ -1072,17 +1121,7 @@ impl<'d, M: Mode> Uart<'d, M> {
 
         let clk_base = crate::clocks::clk_peri_freq();
 
-        let baud_rate_div = (8 * clk_base) / baudrate;
-        let mut baud_ibrd = baud_rate_div >> 7;
-        let mut baud_fbrd = ((baud_rate_div & 0x7f) + 1) / 2;
-
-        if baud_ibrd == 0 {
-            baud_ibrd = 1;
-            baud_fbrd = 0;
-        } else if baud_ibrd >= 65535 {
-            baud_ibrd = 65535;
-            baud_fbrd = 0;
-        }
+        let (baud_ibrd, baud_fbrd) = baud_divisors(clk_base, baudrate);
 
         // Load PL011's baud divisor registers
         r.uartibrd().write_value(pac::uart::regs::Uartibrd(baud_ibrd));
@@ -1200,8 +1239,7 @@ impl<'d, M: Mode> embedded_hal_02::serial::Write<u8> for UartTx<'d, M> {
     }
 
     fn flush(&mut self) -> Result<(), nb::Error<Self::Error>> {
-        let r = self.info.regs;
-        if !r.uartfr().read().txfe() {
+        if !tx_drained(self.info.regs) {
             return Err(nb::Error::WouldBlock);
         }
         Ok(())
@@ -1300,11 +1338,11 @@ impl<'d, M: Mode> embedded_hal_nb::serial::Read for UartRx<'d, M> {
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Write for UartTx<'d, M> {
     fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
-        self.blocking_write(&[char]).map_err(nb::Error::Other)
+        embedded_hal_02::serial::Write::write(self, char)
     }
 
     fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        self.blocking_flush().map_err(nb::Error::Other)
+        embedded_hal_02::serial::Write::flush(self)
     }
 }
 
@@ -1330,11 +1368,11 @@ impl<'d, M: Mode> embedded_hal_nb::serial::Read for Uart<'d, M> {
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Write for Uart<'d, M> {
     fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
-        self.blocking_write(&[char]).map_err(nb::Error::Other)
+        embedded_hal_nb::serial::Write::write(&mut self.tx, char)
     }
 
     fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        self.blocking_flush().map_err(nb::Error::Other)
+        embedded_hal_nb::serial::Write::flush(&mut self.tx)
     }
 }
 
@@ -1357,6 +1395,110 @@ struct Info {
     tx_dreq: pac::dma::vals::TreqSel,
     rx_dreq: pac::dma::vals::TreqSel,
     interrupt: Interrupt,
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    extern crate std;
+    use std::boxed::Box;
+
+    fn fake_info(regs: pac::uart::Uart) -> &'static Info {
+        Box::leak(Box::new(Info {
+            regs,
+            tx_dreq: pac::dma::vals::TreqSel::UART0_TX,
+            rx_dreq: pac::dma::vals::TreqSel::UART0_RX,
+            interrupt: Interrupt::UART0_IRQ,
+        }))
+    }
+
+    #[test]
+    fn baud_rounding_carries_into_integer_and_handles_large_clocks() {
+        assert_eq!(baud_divisors(150_000_000, 115_200), (81, 24));
+        assert_eq!(baud_divisors(1023, 32), (2, 0));
+        assert_eq!(baud_divisors(u32::MAX, 1_000_000), (268, 28));
+        assert_eq!(baud_divisors(150_000_000, u32::MAX), (1, 0));
+        assert_eq!(baud_divisors(150_000_000, 1), (65535, 0));
+    }
+
+    #[test]
+    fn long_break_duration_does_not_overflow() {
+        assert_eq!(bit_duration_us(20, 64, 16_000_000), 20);
+        assert_eq!(bit_duration_us(1, 64, 150_000_000), 1);
+        assert_eq!(bit_duration_us(u32::MAX, 65535 * 64, 150_000_000), 30_023_539_378_968);
+    }
+
+    #[test]
+    fn receive_dma_cleanup_preserves_transmit_enable() {
+        let mut storage = [0u32; 4096];
+        let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
+        disable_rx_dma(regs);
+        // PAC atomic clear alias records the mask; this is not an MMIO emulator.
+        assert_eq!(storage[(0x3000 + 0x48) / 4], 0b101);
+    }
+
+    #[test]
+    fn both_nonblocking_traits_return_pending_for_full_or_busy_transmitter() {
+        let mut storage = [0u32; 4096];
+        let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
+        let mut tx = UartTx::<Blocking>::new_inner(fake_info(regs), None);
+        regs.uartfr().write(|w| w.set_txff(true));
+        assert_eq!(embedded_hal_02::serial::Write::write(&mut tx, 42), Err(nb::Error::WouldBlock));
+        assert_eq!(embedded_hal_nb::serial::Write::write(&mut tx, 42), Err(nb::Error::WouldBlock));
+        regs.uartfr().write(|w| {
+            w.set_txfe(true);
+            w.set_busy(true);
+        });
+        assert_eq!(embedded_hal_02::serial::Write::flush(&mut tx), Err(nb::Error::WouldBlock));
+        assert_eq!(embedded_hal_nb::serial::Write::flush(&mut tx), Err(nb::Error::WouldBlock));
+        regs.uartfr().write(|w| w.set_txfe(true));
+        assert_eq!(embedded_hal_nb::serial::Write::flush(&mut tx), Ok(()));
+        assert_eq!(embedded_hal_nb::serial::Write::write(&mut tx, 42), Ok(()));
+        assert_eq!(regs.uartdr().read().data(), 42);
+    }
+
+    #[test]
+    fn break_guard_clears_break_when_scope_is_canceled() {
+        let mut storage = [0u32; 4096];
+        let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
+        let guard = BreakGuard::new(regs);
+        assert_eq!(storage[(0x2000 + 0x2c) / 4], 1);
+        assert_eq!(storage[(0x3000 + 0x2c) / 4], 0);
+        drop(guard);
+        assert_eq!(storage[(0x3000 + 0x2c) / 4], 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be nonzero")]
+    fn zero_baud_is_rejected_before_programming() {
+        baud_divisors(150_000_000, 0);
+    }
+
+    #[test]
+    fn early_break_does_not_count_its_zero_byte_toward_minimum() {
+        assert_eq!(break_progress(1, 8, true, 1), Ok(BreakProgress::Continue(0)));
+        assert_eq!(break_progress(4, 8, true, 3), Ok(BreakProgress::Complete(3)));
+        assert_eq!(break_progress(8, 8, true, 8), Ok(BreakProgress::Continue(7)));
+        assert_eq!(break_progress(0, 8, true, 1), Ok(BreakProgress::Continue(0)));
+    }
+
+    #[test]
+    fn full_data_buffer_never_restarts_empty_dma_for_unmet_minimum() {
+        assert_eq!(break_progress(8, 8, false, 9), Err(ReadToBreakError::MissingBreak(8)));
+        assert_eq!(break_progress(8, 8, false, 0), Err(ReadToBreakError::MissingBreak(8)));
+    }
+
+    #[test]
+    fn continuing_after_break_clears_dma_gate_and_rearms_error_mask() {
+        let mut storage = [0u32; 4096];
+        let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
+        regs.uartrsr().write(|w| w.set_be(true));
+        clear_consumed_break(regs);
+        assert_eq!(regs.uartrsr().read().0, 0);
+        assert_eq!(regs.uarticr().read().0, (1 << 9) | (1 << 7));
+        arm_rx_errors(regs);
+        assert_eq!(storage[(0x2000 + 0x38) / 4], 0xf << 7);
+    }
 }
 
 trait SealedMode {}

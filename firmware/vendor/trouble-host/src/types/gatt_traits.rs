@@ -179,8 +179,22 @@ impl<const N: usize> AsGatt for [u8; N] {
 
 impl<const N: usize> FromGatt for String<N> {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        String::from_utf8(unwrap!(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)))
+        String::from_utf8(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)?)
             .map_err(|_| FromGattError::InvalidCharacter)
+    }
+}
+
+#[cfg(test)]
+mod bounded_string_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_and_utf8_errors_are_results() {
+        assert_eq!(String::<0>::from_gatt(b"").unwrap().as_str(), "");
+        assert_eq!(String::<4>::from_gatt("éé".as_bytes()).unwrap().as_str(), "éé");
+        assert_eq!(String::<4>::from_gatt(b"abcde"), Err(FromGattError::InvalidLength));
+        assert_eq!(String::<0>::from_gatt(b"a"), Err(FromGattError::InvalidLength));
+        assert_eq!(String::<4>::from_gatt(&[0xff]), Err(FromGattError::InvalidCharacter));
     }
 }
 

@@ -115,12 +115,18 @@ pub fn run(frame: &mut FrameBuffer) {
     let mut samples = [None; 4];
     let address = frame.as_ptr() as usize;
     let cpu = clocks::clk_sys_freq();
+    let spi_hz = crate::get_actual_spi_freq(clocks::clk_peri_freq());
+    let vreg_mv = crate::vreg_setting_mv();
     let watchdog_before = pac::WATCHDOG.ctrl().read().time();
     let pause_before = pac::TIMER0.dbgpause().read().0;
     let core1_before = crate::tasks::recovery::ACQUISITION_PROGRESS.load(Ordering::Relaxed);
     let (dwt, demcr) = controls();
     let result = (|| {
         context()?;
+        // Missing divider metadata rejects the run, never becoming a 0-Hz
+        // successful record or silently using the requested SPI frequency.
+        spi_hz.ok_or(Error::Frequency)?;
+        vreg_mv.ok_or(Error::Context)?;
         if cfg!(debug_assertions)
             || address < 0x20000000
             || !address.is_multiple_of(4)
@@ -180,15 +186,17 @@ pub fn run(frame: &mut FrameBuffer) {
         env!("BENCH_TARGET"),
         env!("BENCH_FEATURES")
     );
-    defmt::info!(
-        "BENCHCLOCK1,{},{},{},{},{},{}",
-        cpu,
-        clocks::clk_peri_freq(),
-        clocks::clk_ref_freq(),
-        crate::vreg_setting_mv().unwrap_or(0),
-        crate::display_spi_config().frequency,
-        crate::get_actual_spi_freq(clocks::clk_peri_freq())
-    );
+    if let (Some(spi_hz), Some(vreg_mv)) = (spi_hz, vreg_mv) {
+        defmt::info!(
+            "BENCHCLOCK1,{},{},{},{},{},{}",
+            cpu,
+            clocks::clk_peri_freq(),
+            clocks::clk_ref_freq(),
+            vreg_mv,
+            crate::display_spi_config().frequency,
+            spi_hz
+        );
+    }
     defmt::info!(
         "BENCHENV1,{},{},{},{},{},{},{},{}",
         address as u32,

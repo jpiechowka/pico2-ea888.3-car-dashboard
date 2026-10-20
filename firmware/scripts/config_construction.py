@@ -7,6 +7,11 @@ all-ingress, source validity and whole graph remain parent obligations.
 """
 
 from dataclasses import dataclass, replace
+from collections.abc import Iterable, Sequence
+from typing import Generic, NotRequired, TypeVar, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord
+from config_stack import DiagnosticObjects
 from config_abstract import Span
 from config_abstract_compare import InitializedPrefix, _source
 from config_decode_effects import _current, _object
@@ -22,7 +27,7 @@ class VecInterface:
     capacity: int
     length: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             type(self.capacity) is int
             and self.capacity in (14, 20, 24)
@@ -47,7 +52,7 @@ class String5Interface:
     view: View
     length: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.length, Span)
             and self.length.upper <= 5
@@ -60,11 +65,11 @@ class String5Interface:
         )
 
     @property
-    def capacity(self):
+    def capacity(self) -> int:
         return 5
 
 
-def _frame(parent, semantic, size):
+def _frame(parent: Storage, semantic: str, size: int) -> Storage:
     return Storage(
         parent.space,
         parent.identity + ":" + semantic,
@@ -76,7 +81,12 @@ def _frame(parent, semantic, size):
     )
 
 
-def _child(objects, instructions, proof, semantic):
+def _child(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    semantic: str,
+) -> HelperCoverageRecord:
     allowed = {
         "string_try14": ("vec_extend14",),
         "vec_extend14": ("vec_extend_inner",),
@@ -102,7 +112,57 @@ def _child(objects, instructions, proof, semantic):
     )
 
 
-def _return(proof, outcomes, children, frames, local_writes=()):
+Writes = tuple[tuple[View, int, int], ...]
+
+
+class ExtendOutcome(TypedDict):
+    kind: str
+    status: int
+    length: Span
+    state: VecInterface | String5Interface
+    possible_writes: Writes
+    initialized_prefix: NotRequired[InitializedPrefix]
+    error_payload_bytes: NotRequired[int]
+
+
+class StringOutcome(TypedDict):
+    kind: str
+    tag: int
+    possible_writes: Writes
+    opaque_copy: NotRequired[tuple[int, int]]
+    semantic_string_header: NotRequired[tuple[int, int]]
+    initialized_prefix: NotRequired[InitializedPrefix]
+    error_payload_bytes: NotRequired[int]
+
+
+ConstructionOutcome = TypeVar("ConstructionOutcome", ExtendOutcome, StringOutcome)
+
+
+class ConstructionResult(TypedDict, Generic[ConstructionOutcome]):
+    proof: HelperCoverageRecord
+    outcomes: tuple[ConstructionOutcome, ...]
+    children: tuple["ConstructionResult[ExtendOutcome]", ...]
+    conservative_activation_frames: tuple[int, ...]
+    local_writes: Writes
+    normal_preserves: tuple[str, ...]
+    requires_actual_stage_receiver_transport_and_complete_parent_graph: bool
+    capacity_r2_argument: NotRequired[int]
+    incoming_stack_source_length: NotRequired[Span]
+    requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join: NotRequired[bool]
+    requires_source_valid_str: NotRequired[bool]
+
+
+ExtendResult = ConstructionResult[ExtendOutcome]
+StringResult = ConstructionResult[StringOutcome]
+
+
+def _return(
+    proof: HelperCoverageRecord,
+    outcomes: Sequence[ConstructionOutcome],
+    children: Sequence[ExtendResult],
+    frames: tuple[int, ...],
+    local_writes: Writes = (),
+) -> ConstructionResult[ConstructionOutcome]:
     return dict(
         proof=proof,
         outcomes=tuple(outcomes),
@@ -114,7 +174,15 @@ def _return(proof, outcomes, children, frames, local_writes=()):
     )
 
 
-def extend_interface(objects, instructions, proof, state, source, frame, ancestor_protected):
+def extend_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: VecInterface,
+    source: InitializedPrefix,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> ExtendResult:
     """Vec append union, including all capacity errors and zero-count return.
 
     The existing prefix and source lengths are paired unknown domains. A
@@ -129,8 +197,14 @@ def extend_interface(objects, instructions, proof, state, source, frame, ancesto
 
 
 def extend_string5_interface(
-    objects, instructions, proof, state, source, frame, ancestor_protected
-):
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: String5Interface,
+    source: InitializedPrefix,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> ExtendResult:
     """Actual inner24 call: caller r2=5 and S+0 is the paired source length."""
     require(
         isinstance(state, String5Interface)
@@ -142,14 +216,24 @@ def extend_string5_interface(
         objects, instructions, proof, state, source, frame, ancestor_protected
     )
     result.update(
-        capacity_r2_argument=5,
-        incoming_stack_source_length=source.length,
-        requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join=True,
+        {
+            "capacity_r2_argument": 5,
+            "incoming_stack_source_length": source.length,
+            "requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join": True,
+        }
     )
     return result
 
 
-def _extend_interface(objects, instructions, proof, state, source, frame, ancestor_protected):
+def _extend_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: VecInterface | String5Interface,
+    source: InitializedPrefix,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> ExtendResult:
     # Called only after one of the two explicit typed entry interfaces above.
     # Their shared byte-copy/count equations do not widen VecInterface.
     proof = _current(objects, instructions, proof)
@@ -176,9 +260,11 @@ def _extend_interface(objects, instructions, proof, state, source, frame, ancest
     require_writes(
         (state.view,), ((state.view, 0, state.view.extent),), active["protected"] + (guard,)
     )
-    children = []
-    locals = ()
+    children: list[ExtendResult] = []
+    locals: Writes = ()
     if semantic != "vec_extend_inner":
+        if not isinstance(state, VecInterface):
+            raise AssertionError("construction wrapper and Vec capacity differ")
         child = _child(objects, instructions, proof, "vec_extend_inner")
         children.append(
             extend_interface(
@@ -197,13 +283,13 @@ def _extend_interface(objects, instructions, proof, state, source, frame, ancest
         require_writes(
             active["scratch"], locals, active["protected"] + (_object(state.view, "Vec"), guard)
         )
-    outcomes = []
+    outcomes: list[ExtendOutcome] = []
     if state.length.lower + source.length.lower <= state.capacity:
         length = Span(
             state.length.lower + source.length.lower,
             min(state.capacity, state.length.upper + source.length.upper),
         )
-        writes = ()
+        writes: Writes = ()
         if source.length.upper:
             # Union envelope; each concrete append starts at its own oldlen.
             end = length.upper
@@ -241,7 +327,15 @@ def _extend_interface(objects, instructions, proof, state, source, frame, ancest
     )
 
 
-def string_interface(objects, instructions, proof, source, output, frame, ancestor_protected):
+def string_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    source: InitializedPrefix,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> StringResult:
     """String14::try_from Result24; opaque padding copy is not initialization."""
     proof = _current(objects, instructions, proof)
     require(proof["semantic_role"] == "string_try14", "unreviewed string constructor")
@@ -276,7 +370,7 @@ def string_interface(objects, instructions, proof, source, output, frame, ancest
         _frame(frame, "extend14", 16),
         active["protected"] + (_object(output, "Result"),),
     )
-    outcomes = []
+    outcomes: list[StringOutcome] = []
     for alternative in appended["outcomes"]:
         if alternative["kind"] == "success":
             prefix = InitializedPrefix(

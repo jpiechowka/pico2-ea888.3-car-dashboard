@@ -1,6 +1,16 @@
 """Source completeness and emitted-artifact contracts; no target execution."""
 
 import json
+import hashlib
+import zipfile
+from collections.abc import Sequence
+from config_build_source import SourceContext
+from image_test_support import (
+    QualifiedImageFixture,
+    fixture_fields as fixture_fields,
+    fixture_items as fixture_items,
+)
+from script_values import array_items, integer_value, string_value
 from pathlib import Path
 import unittest
 import tempfile
@@ -11,10 +21,64 @@ import io
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from unittest.mock import patch
 import capture_target_bench as capture
+from owned_process import run_checked
+
+
+def fixture_json(raw: str | bytes) -> dict[str, object]:
+    value: object = json.loads(raw)
+    return fixture_fields(value)
+
+
+def stack_policy(record: dict[str, object]) -> dict[str, object]:
+    return fixture_fields(fixture_items(fixture_fields(record["stack"])["policies"])[0])
 
 
 class CaptureTests(unittest.TestCase):
-    def test_diagnostic_sink_failure_stops_descendants(self):
+    def test_cargo_identity_rejects_duplicate_keys_and_non_boolean_success(self) -> None:
+        executable = (capture.FIRMWARE / "target/alternative/pico2").resolve()
+        artifact = dict(
+            reason="compiler-artifact",
+            manifest_path=str(capture.FIRMWARE / "pico2/Cargo.toml"),
+            target=dict(name="pico2", kind=["bin"]),
+            profile=dict(test=False),
+            executable=str(executable),
+        )
+        for finish in (
+            '{"reason":"build-finished","success":1}',
+            '{"reason":"build-finished","success":false,"success":true}',
+        ):
+            with self.subTest(finish=finish), self.assertRaises(ValueError):
+                capture.emitted_elf(json.dumps(artifact) + "\n" + finish)
+
+    def test_cargo_identity_rejects_malformed_nested_fields(self) -> None:
+        malformed: list[object] = [None, [], True, 2, "invalid"]
+        for value in malformed:
+            row = dict(
+                reason="compiler-artifact",
+                manifest_path=str(capture.FIRMWARE / "pico2/Cargo.toml"),
+                target=value,
+                profile=dict(test=False),
+            )
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                capture.firmware_package(json.dumps(row))
+
+    def test_embedded_config_rejects_duplicate_environment_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            build = Path(folder).resolve()
+            data = b"configuration"
+            (build / "dashboard.eav").write_bytes(data)
+            row = dict(
+                reason="build-script-executed",
+                out_dir=str(build),
+                env=[
+                    ["DASHBOARD_CONFIG_SHA256", "different"],
+                    ["DASHBOARD_CONFIG_SHA256", hashlib.sha256(data).hexdigest()],
+                ],
+            )
+            with self.assertRaises(ValueError):
+                capture.embedded_config(json.dumps(row), build)
+
+    def test_diagnostic_sink_failure_stops_descendants(self) -> None:
         import time
 
         sys.path.insert(0, str(capture.REPO / "host/scripts"))
@@ -64,19 +128,19 @@ class CaptureTests(unittest.TestCase):
                         heartbeat.read_bytes(), stopped, "compiler descendant survived sink failure"
                     )
 
-    def test_rust_capture_options_consumer_accepts_ble_and_explicit_legacy_envelopes(self):
+    def test_rust_capture_options_consumer_accepts_ble_and_explicit_legacy_envelopes(self) -> None:
         for feature, legacy in [("ble-obd", False), ("longan-rx12", True), ("", False)]:
             _, options = capture.fixed_json_tool(["--features", feature], os.environ.copy())
             self.assertEqual(options["schema_version"], 2)
             self.assertEqual(options["legacy_longan_backend"], legacy)
             self.assertEqual(options["legacy_unavailable_backend"], feature == "")
             if feature:
-                self.assertIn(feature, options["features"])
+                self.assertIn(feature, array_items(options["features"], "features"))
             else:
-                self.assertNotIn("ble-obd", options["features"])
-                self.assertNotIn("longan-rx12", options["features"])
+                self.assertNotIn("ble-obd", array_items(options["features"], "features"))
+                self.assertNotIn("longan-rx12", array_items(options["features"], "features"))
 
-    def test_native_scratch_is_fixed_empty_and_path_bounded(self):
+    def test_native_scratch_is_fixed_empty_and_path_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             attempt = Path(folder).resolve()
             repo = attempt / "source"
@@ -100,7 +164,7 @@ class CaptureTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(os.name == "nt", "Windows path budget")
-    def test_native_scratch_rejects_too_long_repository_before_cargo(self):
+    def test_native_scratch_rejects_too_long_repository_before_cargo(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             attempt = Path(folder).resolve() / ("a" * 90)
             repo = attempt / "source"
@@ -112,7 +176,7 @@ class CaptureTests(unittest.TestCase):
                     capture.build_directories(firmware / "target/bench-captures/native", True)
 
     @unittest.skipUnless(os.name == "nt", "Windows source path boundary")
-    def test_verbatim_import_inputs_match_ordinary_names_and_hashes(self):
+    def test_verbatim_import_inputs_match_ordinary_names_and_hashes(self) -> None:
         script = str(Path(capture.__file__).resolve())
         extended = script if script.startswith("\\\\?\\") else "\\\\?\\" + script
         code = (
@@ -120,15 +184,18 @@ class CaptureTests(unittest.TestCase):
             'print(json.dumps({k:hashlib.sha256(v).hexdigest() for k,v in m["inputs"]().items()},sort_keys=True))'
         )
 
-        def snapshot(path):
-            return subprocess.run(
-                [sys.executable, "-I", "-c", code, path], capture_output=True, text=True, check=True
+        def snapshot(path: str | Path) -> str:
+            return run_checked(
+                [sys.executable, "-I", "-c", code, str(path)],
+                capture_output=True,
+                text=True,
+                check=True,
             ).stdout
 
         self.assertEqual(snapshot(extended), snapshot(script))
 
     @unittest.skipUnless(os.name == "nt", "Windows external-tool path boundary")
-    def test_extended_script_path_keeps_identity_without_exporting_prefix(self):
+    def test_extended_script_path_keeps_identity_without_exporting_prefix(self) -> None:
         script = str(Path(capture.__file__).resolve())
         extended = script if script.startswith("\\\\?\\") else "\\\\?\\" + script
         command = [
@@ -138,13 +205,13 @@ class CaptureTests(unittest.TestCase):
             'import runpy,sys; print(runpy.run_path(sys.argv[1])["FIRMWARE"])',
             extended,
         ]
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        result = run_checked(command, capture_output=True, text=True, check=True)
         directory = Path(result.stdout.strip())
         self.assertFalse(str(directory).startswith("\\\\?\\"))
         self.assertTrue(directory.samefile(Path(script).parents[1]))
 
     @unittest.skipUnless(os.name == "nt", "Windows external-tool path boundary")
-    def test_tool_directory_rejects_changed_identity(self):
+    def test_tool_directory_rejects_changed_identity(self) -> None:
         directory = str(Path(capture.__file__).resolve().parent)
         extended = directory if directory.startswith("\\\\?\\") else "\\\\?\\" + directory
         with patch.object(Path, "samefile", return_value=False):
@@ -152,7 +219,9 @@ class CaptureTests(unittest.TestCase):
                 capture.external_tool_path(extended)
 
     @unittest.skipUnless(os.name == "nt", "Windows 8.3 path identity")
-    def test_short_name_import_uses_the_same_canonical_inventory(self):
+    def test_short_name_import_uses_the_same_canonical_inventory(self) -> None:
+        if sys.platform != "win32":
+            self.skipTest("Windows 8.3 path identity")
         import ctypes
 
         script = Path(capture.__file__).resolve()
@@ -174,8 +243,8 @@ class CaptureTests(unittest.TestCase):
             'print(json.dumps({k:hashlib.sha256(v).hexdigest() for k,v in m["inputs"]().items()},sort_keys=True))'
         )
 
-        def snapshot(path):
-            return subprocess.run(
+        def snapshot(path: str | Path) -> str:
+            return run_checked(
                 [sys.executable, "-I", "-c", code, str(path)],
                 capture_output=True,
                 text=True,
@@ -184,19 +253,19 @@ class CaptureTests(unittest.TestCase):
 
         self.assertEqual(snapshot(alias), snapshot(script))
 
-    def test_tool_directory_requires_existing_path(self):
+    def test_tool_directory_requires_existing_path(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder).resolve()
             self.assertTrue(capture.external_tool_path(directory).samefile(directory))
             with self.assertRaises(FileNotFoundError):
                 capture.external_tool_path(directory / "missing")
 
-    def test_custom_environment_presence_is_rejected_even_when_empty(self):
+    def test_custom_environment_presence_is_rejected_even_when_empty(self) -> None:
         for key in ["DASHBOARD_CPU_HZ", "DASHBOARD_SPI_HZ", "DASHBOARD_VSEL_MV"]:
             with self.assertRaises(ValueError):
                 capture.check_clock_environment({key: ""})
 
-    def test_every_ambient_compiler_override_is_rejected_by_presence(self):
+    def test_every_ambient_compiler_override_is_rejected_by_presence(self) -> None:
         from benchmark_environment import ENV_PREFIXES
 
         for key in [
@@ -212,7 +281,7 @@ class CaptureTests(unittest.TestCase):
             {"PATH": "ordinary PATH", "DASHBOARD_CONFIG": "selected.eav"}
         )
 
-    def test_failed_build_keeps_raw_stdout_before_raising(self):
+    def test_failed_build_keeps_raw_stdout_before_raising(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             command = [
@@ -228,7 +297,7 @@ class CaptureTests(unittest.TestCase):
                 {"reason": "build-finished", "success": False},
             )
 
-    def test_failed_build_streams_safe_rendered_diagnostics_and_retains_them(self):
+    def test_failed_build_streams_safe_rendered_diagnostics_and_retains_them(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             stream = io.StringIO()
@@ -248,7 +317,7 @@ class CaptureTests(unittest.TestCase):
             self.assertNotIn("\x00", stream.getvalue())
             self.assertEqual((destination / "cargo-diagnostics.log").read_text(), stream.getvalue())
 
-    def test_diagnostics_are_bounded_utf8_and_do_not_forward_artifact_json(self):
+    def test_diagnostics_are_bounded_utf8_and_do_not_forward_artifact_json(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             stream = io.StringIO()
@@ -277,7 +346,7 @@ class CaptureTests(unittest.TestCase):
             self.assertNotIn("after cap", stream.getvalue())
             self.assertTrue(all(len(line) <= 2048 for line in stream.getvalue().splitlines()))
 
-    def test_diagnostic_sink_failure_joins_the_owned_child(self):
+    def test_diagnostic_sink_failure_joins_the_owned_child(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             record = json.dumps(
                 dict(reason="compiler-message", message=dict(rendered="error: sink fixture"))
@@ -296,7 +365,7 @@ class CaptureTests(unittest.TestCase):
                 "compiler-message", (Path(folder).resolve() / "cargo-messages.jsonl").read_text()
             )
 
-    def test_diagnostic_is_published_before_compiler_exit(self):
+    def test_diagnostic_is_published_before_compiler_exit(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             stream = io.StringIO()
@@ -318,7 +387,7 @@ class CaptureTests(unittest.TestCase):
             self.assertIn("error: live fixture", stream.getvalue())
             self.assertEqual(json.loads(result.stdout)["reason"], "compiler-message")
 
-    def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self):
+    def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             build = Path(folder).resolve() / "build"
             out = build / "out"
@@ -371,16 +440,28 @@ pub const LEGACY_ROUNDING: bool = false;
                 package_id="firmware-id",
                 out_dir=str(out),
                 env=[
-                    ["DASHBOARD_CLOCK_SOURCE_SHA256", capture.hashlib.sha256(source).hexdigest()],
+                    ["DASHBOARD_CLOCK_SOURCE_SHA256", hashlib.sha256(source).hexdigest()],
                     [
                         "DASHBOARD_CLOCK_METADATA_SHA256",
-                        capture.hashlib.sha256(encoded).hexdigest(),
+                        hashlib.sha256(encoded).hexdigest(),
                     ],
                 ],
             )
             line = json.dumps(record)
             evidence = capture.generated_clock(line, build, "firmware-id", options)
             self.assertEqual(evidence["source"], source)
+            wrong_metadata = encoded.replace(b'"legacy_rounding": false', b'"legacy_rounding": 0')
+            (out / "clock_profile.json").write_bytes(wrong_metadata)
+            wrong_record = dict(
+                record,
+                env=[
+                    ["DASHBOARD_CLOCK_SOURCE_SHA256", hashlib.sha256(source).hexdigest()],
+                    ["DASHBOARD_CLOCK_METADATA_SHA256", hashlib.sha256(wrong_metadata).hexdigest()],
+                ],
+            )
+            with self.assertRaisesRegex(ValueError, "clock/options"):
+                capture.generated_clock(json.dumps(wrong_record), build, "firmware-id", options)
+            (out / "clock_profile.json").write_bytes(encoded)
             for stream, package, attempt in [
                 ("", "firmware-id", options),
                 (line + "\n" + line, "firmware-id", options),
@@ -396,11 +477,14 @@ pub const LEGACY_ROUNDING: bool = false;
                 capture.generated_clock(line, build, "firmware-id", options)
             wrong = source.replace(b"fbdiv: 125", b"fbdiv: 124")
             (out / "clock_profile.rs").write_bytes(wrong)
-            record["env"][0][1] = capture.hashlib.sha256(wrong).hexdigest()
+            environment = record["env"]
+            if not isinstance(environment, list):
+                self.fail("fixture environment is not a list")
+            fixture_items(environment[0])[1] = hashlib.sha256(wrong).hexdigest()
             with self.assertRaises(ValueError):
                 capture.generated_clock(json.dumps(record), build, "firmware-id", options)
 
-    def test_new_clock_and_protocol_producers_are_capture_inputs(self):
+    def test_new_clock_and_protocol_producers_are_capture_inputs(self) -> None:
         data = capture.inputs()
         for path in [
             "Cargo.lock",
@@ -413,7 +497,7 @@ pub const LEGACY_ROUNDING: bool = false;
         ]:
             self.assertEqual(data[path], (capture.REPO / path).read_bytes())
 
-    def test_only_matching_build_snapshot_is_archived(self):
+    def test_only_matching_build_snapshot_is_archived(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             build = Path(folder).resolve() / "build"
             out = build / "out"
@@ -423,7 +507,7 @@ pub const LEGACY_ROUNDING: bool = false;
             record = dict(
                 reason="build-script-executed",
                 out_dir=str(out),
-                env=[["DASHBOARD_CONFIG_SHA256", capture.hashlib.sha256(data).hexdigest()]],
+                env=[["DASHBOARD_CONFIG_SHA256", hashlib.sha256(data).hexdigest()]],
             )
             line = json.dumps(record)
             self.assertEqual(capture.embedded_config(line, build), data)
@@ -440,7 +524,7 @@ pub const LEGACY_ROUNDING: bool = false;
             with self.assertRaises(ValueError):
                 capture.embedded_config(line, build)
 
-    def test_external_configuration_is_bounded_frozen_and_captured_by_content(self):
+    def test_external_configuration_is_bounded_frozen_and_captured_by_content(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             selected = root / "external.eav"
@@ -452,9 +536,7 @@ pub const LEGACY_ROUNDING: bool = false;
             out.mkdir()
             frozen, metadata = capture.freeze_config(before, out, environment)
             self.assertEqual(Path(frozen["DASHBOARD_CONFIG"]).read_bytes(), b"first snapshot")
-            self.assertEqual(
-                metadata["sha256"], capture.hashlib.sha256(b"first snapshot").hexdigest()
-            )
+            self.assertEqual(metadata["sha256"], hashlib.sha256(b"first snapshot").hexdigest())
             selected.write_bytes(b"changed snapshot")
             self.assertNotEqual(before, capture.selected_config(environment))
             self.assertEqual(Path(frozen["DASHBOARD_CONFIG"]).read_bytes(), b"first snapshot")
@@ -469,22 +551,22 @@ pub const LEGACY_ROUNDING: bool = false;
             with self.assertRaises(ValueError):
                 capture.selected_config(environment)
 
-    def test_migration_compares_canonical_bytes_and_keeps_original_identity(self):
+    def test_migration_compares_canonical_bytes_and_keeps_original_identity(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             original, upgraded = b"original v1", b"canonical v2"
             (root / "selected.eav").write_bytes(original)
-            record = dict(selection="explicit", sha256=capture.hashlib.sha256(original).hexdigest())
+            record: capture.ConfigRecord = dict(
+                selection="explicit", sha256=hashlib.sha256(original).hexdigest()
+            )
 
-            def compile_stub(*args, **kwargs):
+            def compile_stub(*args: object, **kwargs: object) -> None:
                 (root / "normalized.eav").write_bytes(upgraded)
 
             with patch.object(capture, "run_checked", side_effect=compile_stub):
                 capture.verify_selected_config(root, {}, upgraded, record)
-                self.assertEqual(record["sha256"], capture.hashlib.sha256(original).hexdigest())
-                self.assertEqual(
-                    record["normalized_sha256"], capture.hashlib.sha256(upgraded).hexdigest()
-                )
+                self.assertEqual(record["sha256"], hashlib.sha256(original).hexdigest())
+                self.assertEqual(record["normalized_sha256"], hashlib.sha256(upgraded).hexdigest())
                 with self.assertRaises(ValueError):
                     capture.verify_selected_config(root, {}, original, record)
                 (root / "selected.eav").write_bytes(b"changed")
@@ -492,7 +574,7 @@ pub const LEGACY_ROUNDING: bool = false;
                     capture.verify_selected_config(root, {}, upgraded, record)
             capture.verify_selected_config(root, {}, upgraded, dict(selection="default"))
 
-    def test_native_canonicalizer_reuses_host_build_and_preserves_failure_checks(self):
+    def test_native_canonicalizer_reuses_host_build_and_preserves_failure_checks(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             original, canonical = b"old input", b"canonical output"
@@ -500,12 +582,10 @@ pub const LEGACY_ROUNDING: bool = false;
             environment = {"RUSTC": "selected-host-compiler"}
             target = root / "b/h"
 
-            def record():
-                return dict(
-                    selection="explicit", sha256=capture.hashlib.sha256(original).hexdigest()
-                )
+            def record() -> capture.ConfigRecord:
+                return dict(selection="explicit", sha256=hashlib.sha256(original).hexdigest())
 
-            def child(command, **kwargs):
+            def child(command: Sequence[str], **kwargs: object) -> None:
                 self.assertNotIn("--release", command)
                 self.assertIn("--offline", command)
                 self.assertEqual(Path(command[command.index("--target-dir") + 1]), target)
@@ -520,7 +600,7 @@ pub const LEGACY_ROUNDING: bool = false;
                     root, environment, canonical, evidence, target, reuse_host=True
                 )
                 self.assertEqual(
-                    evidence["normalized_sha256"], capture.hashlib.sha256(canonical).hexdigest()
+                    evidence["normalized_sha256"], hashlib.sha256(canonical).hexdigest()
                 )
                 with self.assertRaises(ValueError):
                     capture.verify_selected_config(
@@ -540,7 +620,7 @@ pub const LEGACY_ROUNDING: bool = false;
                 capture.verify_selected_config(root, environment, canonical, record())
                 self.assertIn("--release", run.call_args.args[0])
 
-    def test_archive_contains_portable_crates_and_workspace_inputs(self):
+    def test_archive_contains_portable_crates_and_workspace_inputs(self) -> None:
         before = capture.inputs()
         keys = [
             "Cargo.toml",
@@ -565,7 +645,30 @@ pub const LEGACY_ROUNDING: bool = false;
         ):
             self.assertNotEqual(before, capture.inputs(), "portable source escaped archive")
 
-    def test_archive_contains_crate_root_compile_inputs(self):
+    def test_archive_binds_unselected_firmware_workspace_member(self) -> None:
+        before = capture.inputs()
+        member = capture.FIRMWARE / "ble-probe"
+        for path in member.rglob("*"):
+            if not path.is_file() or any(
+                part in ("target", ".git", "__pycache__") for part in path.relative_to(member).parts
+            ):
+                continue
+            key = path.relative_to(capture.REPO).as_posix()
+            self.assertTrue(key in before, "Cargo resolves the unselected workspace member: " + key)
+            self.assertEqual(before[key], path.read_bytes())
+        original = Path.read_bytes
+        manifest = member / "Cargo.toml"
+        with patch.object(
+            Path,
+            "read_bytes",
+            lambda path: (
+                original(path)
+                + (b"\n# dependency resolution changed\n" if path == manifest else b"")
+            ),
+        ):
+            self.assertNotEqual(before, capture.inputs())
+
+    def test_archive_contains_crate_root_compile_inputs(self) -> None:
         data = capture.inputs()
         for name in ("README.md", "link-rp.x.in", "build.rs", "Cargo.toml"):
             key = "firmware/vendor/embassy-rp/" + name
@@ -573,12 +676,15 @@ pub const LEGACY_ROUNDING: bool = false;
         for name in ("memory.x", "rp235x_riscv.x", "build.rs"):
             self.assertIn("firmware/pico2/" + name, data)
 
-    def test_archive_includes_complete_radio_vendor_trees_and_binary_changes(self):
+    def test_archive_includes_complete_radio_vendor_trees_and_binary_changes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             names = (
                 "Cargo.toml",
                 "firmware/pico2/Cargo.toml",
+                "firmware/ble-probe/Cargo.toml",
+                "firmware/ble-probe/build.rs",
+                "firmware/ble-probe/src/main.rs",
                 "firmware/vendor/embassy-rp/Cargo.toml",
                 "firmware/vendor/cyw43/src/lib.rs",
                 "firmware/vendor/trouble-host/Cargo.toml",
@@ -607,7 +713,7 @@ pub const LEGACY_ROUNDING: bool = false;
                 self.assertNotEqual(before, capture.inputs())
                 self.assertEqual(capture.inputs()[binary], b"changed radio")
 
-    def test_source_inventory_notices_root_compile_input_changes(self):
+    def test_source_inventory_notices_root_compile_input_changes(self) -> None:
         original = Path.read_bytes
         before = capture.inputs()
         with patch.object(
@@ -617,7 +723,7 @@ pub const LEGACY_ROUNDING: bool = false;
         ):
             self.assertTrue(before != capture.inputs(), "changed README escaped source inventory")
 
-    def test_complete_advanced_runtime_and_seeded_decoder_are_capture_inputs(self):
+    def test_complete_advanced_runtime_and_seeded_decoder_are_capture_inputs(self) -> None:
         data = capture.inputs()
         for crate, names in [
             (
@@ -637,7 +743,7 @@ pub const LEGACY_ROUNDING: bool = false;
                 key = f"crates/{crate}/src/{name}"
                 self.assertEqual(data[key], (capture.REPO / key).read_bytes())
 
-    def test_only_cargo_emitted_firmware_executable_is_selected(self):
+    def test_only_cargo_emitted_firmware_executable_is_selected(self) -> None:
         executable = (capture.FIRMWARE / "target/alternative/pico2").resolve()
         artifact = dict(
             reason="compiler-artifact",
@@ -648,7 +754,7 @@ pub const LEGACY_ROUNDING: bool = false;
         )
         unrelated = dict(artifact, manifest_path=str(capture.FIRMWARE / "other/Cargo.toml"))
 
-        def stream(*records):
+        def stream(*records: object) -> str:
             return "\n".join(json.dumps(record) for record in records)
 
         finish = dict(reason="build-finished", success=True)
@@ -670,11 +776,11 @@ pub const LEGACY_ROUNDING: bool = false;
 
 
 class CaptureMemoryQualification(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.stdout = io.StringIO()
         self.enterContext(redirect_stdout(self.stdout))
 
-    def fixture(self):
+    def fixture(self) -> tuple[QualifiedImageFixture, bytes, dict[str, object]]:
         from test_validation_policy import MemoryQualification
         import check_memory_layout
 
@@ -683,13 +789,17 @@ class CaptureMemoryQualification(unittest.TestCase):
         return (
             elf,
             eav,
-            check_memory_layout._qualified_image(
-                stack, elf, static, headroom, source_context=elf.fixture_source_context
+            dict(
+                check_memory_layout._qualified_image(
+                    stack, elf, static, headroom, source_context=elf.fixture_source_context
+                )
             ),
         )
 
     @staticmethod
-    def bound_context(destination, elf, record):
+    def bound_context(
+        destination: Path, elf: QualifiedImageFixture, record: dict[str, object]
+    ) -> tuple[SourceContext, Path, dict[str, object]]:
         # Rebind supplied stage facts to the actual attempt's explicit source.
         from dataclasses import replace
         from config_build_source import write_source_context
@@ -698,12 +808,14 @@ class CaptureMemoryQualification(unittest.TestCase):
         value = replace(elf.fixture_source_context, attempt=destination.name)
         path = destination / "source-context.json"
         write_source_context(path, value)
-        record = json.loads(json.dumps(record))
-        policy = current_image_policy(record["stack"]["policies"][0], elf)
-        record["stack"]["execution_scope"] = _execution_receipt(policy, value, elf).to_record()
+        record = fixture_json(json.dumps(record))
+        policy = current_image_policy(stack_policy(record), elf)
+        fixture_fields(record["stack"])["execution_scope"] = _execution_receipt(
+            policy, value, elf
+        ).to_record()
         return value, path, record
 
-    def test_actual_child_result_is_retained_and_rechecked_against_current_input(self):
+    def test_actual_child_result_is_retained_and_rechecked_against_current_input(self) -> None:
         elf, eav, record = self.fixture()
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
@@ -711,7 +823,7 @@ class CaptureMemoryQualification(unittest.TestCase):
             frozen.write_bytes(elf.data)
             source, path, record = self.bound_context(destination, elf, record)
 
-            def child(argv, **kwargs):
+            def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                 self.assertEqual(Path(argv[argv.index("--source-context") + 1]), path.resolve())
                 self.assertTrue(kwargs["check"])
                 Path(argv[argv.index("--result-json") + 1]).write_text(json.dumps(record))
@@ -750,7 +862,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         frozen, destination, eav, source, path, gate="experimental-full"
                     )
 
-    def test_nonzero_missing_and_intermediate_child_output_never_admit(self):
+    def test_nonzero_missing_and_intermediate_child_output_never_admit(self) -> None:
         elf, eav, record = self.fixture()
         for kind in (
             "nonzero",
@@ -768,8 +880,8 @@ class CaptureMemoryQualification(unittest.TestCase):
                 frozen.write_bytes(elf.data)
                 source, path, record = self.bound_context(destination, elf, record)
 
-                def child(argv, **kwargs):
-                    value = json.loads(
+                def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                    value = fixture_json(
                         json.dumps(record["stack"] if kind == "intermediate" else record)
                     )
                     if kind == "lost":
@@ -777,11 +889,14 @@ class CaptureMemoryQualification(unittest.TestCase):
                     if kind == "stale":
                         value["elf_sha256"] = "0" * 64
                     if kind == "owned_lost":
-                        value["stack"]["policies"][0]["owned_dependencies"].pop()
+                        fixture_items(stack_policy(value)["owned_dependencies"]).pop()
                     if kind == "owned_changed":
-                        value["stack"]["policies"][0]["owned_dependencies"][1][
-                            "receiver_start"
-                        ] += 4
+                        dependency = fixture_fields(
+                            fixture_items(stack_policy(value)["owned_dependencies"])[1]
+                        )
+                        dependency["receiver_start"] = (
+                            integer_value(dependency["receiver_start"], "receiver") + 4
+                        )
                     if kind != "missing":
                         Path(argv[argv.index("--result-json") + 1]).write_text(
                             json.dumps(value) + (" " * 65537 if kind == "oversized" else "")
@@ -806,16 +921,16 @@ class CaptureMemoryQualification(unittest.TestCase):
                         frozen, destination, eav, source, path, gate="experimental-full"
                     )
 
-    def test_real_nonzero_child_preserves_file_without_admitting_it(self):
+    def test_real_nonzero_child_preserves_file_without_admitting_it(self) -> None:
         elf, eav, record = self.fixture()
-        real_run = capture.run_checked
+        real_run = run_checked
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             frozen = destination / "pico2.elf"
             frozen.write_bytes(elf.data)
             source, path, record = self.bound_context(destination, elf, record)
 
-            def child(argv, **kwargs):
+            def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                 return real_run(
                     [
                         sys.executable,
@@ -824,7 +939,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         argv[argv.index("--result-json") + 1],
                         json.dumps(record),
                     ],
-                    check=kwargs["check"],
+                    check=bool(kwargs["check"]),
                     timeout=10,
                 )
 
@@ -839,7 +954,7 @@ class CaptureMemoryQualification(unittest.TestCase):
             self.assertEqual(error.exception.returncode, 7)
             self.assertEqual(json.loads((destination / "memory-layout.json").read_text()), record)
 
-    def test_actual_manifest_path_retains_qualifier_and_rejects_final_drift(self):
+    def test_actual_manifest_path_retains_qualifier_and_rejects_final_drift(self) -> None:
         elf, eav, record = self.fixture()
         from config_build_source import SOURCE_PATHS, load_source_context
 
@@ -857,10 +972,10 @@ class CaptureMemoryQualification(unittest.TestCase):
                 firmware = Path(folder).resolve()
                 destination = firmware / "target/bench-captures/fixture"
                 emitted = firmware / "short/firmware.elf"
-                calls = []
-                input_calls = []
+                calls: list[str] = []
+                input_calls: list[str] = []
 
-                def snapshot():
+                def snapshot() -> dict[str, bytes]:
                     input_calls.append("inputs")
                     if drift == "captured_sources" and len(input_calls) > 1:
                         changed = dict(before_sources)
@@ -869,12 +984,12 @@ class CaptureMemoryQualification(unittest.TestCase):
                         return changed
                     return before_sources
 
-                def build(*args):
+                def build(*args: object) -> subprocess.CompletedProcess[str]:
                     emitted.parent.mkdir()
                     emitted.write_bytes(elf.data)
                     return subprocess.CompletedProcess([], 0, "messages")
 
-                def child(argv, **kwargs):
+                def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                     if "scripts/check_memory_layout.py" in argv:
                         self.assertIn("--source-context", argv)
                         context_path = Path(argv[argv.index("--source-context") + 1])
@@ -886,14 +1001,14 @@ class CaptureMemoryQualification(unittest.TestCase):
                         self.assertEqual(dict(parsed.sources), before_sources)
                         from config_platform import current_image_policy, _execution_receipt
 
-                        policy = current_image_policy(record["stack"]["policies"][0], elf)
-                        record["stack"]["execution_scope"] = _execution_receipt(
+                        policy = current_image_policy(stack_policy(record), elf)
+                        fixture_fields(record["stack"])["execution_scope"] = _execution_receipt(
                             policy, parsed, elf
                         ).to_record()
                         Path(argv[argv.index("--result-json") + 1]).write_text(json.dumps(record))
                     return subprocess.CompletedProcess(argv, 0)
 
-                def clock(*args):
+                def clock(*args: object) -> dict[str, bytes]:
                     calls.append("clock")
                     if drift and drift != "captured_sources" and len(calls) == 2:
                         if drift is True:
@@ -907,12 +1022,15 @@ class CaptureMemoryQualification(unittest.TestCase):
                             path.write_bytes(path.read_bytes() + b" ")
                         else:
                             path = destination / "source-context.json"
-                            changed = json.loads(path.read_bytes())
-                            source = changed["sources"][0]
-                            source["utf8"] += "\n// late changed source bytes"
-                            raw = source["utf8"].encode()
+                            changed = fixture_json(path.read_bytes())
+                            source = fixture_fields(fixture_items(changed["sources"])[0])
+                            source["utf8"] = (
+                                string_value(source["utf8"], "source")
+                                + "\n// late changed source bytes"
+                            )
+                            raw = string_value(source["utf8"], "source").encode()
                             source["length"] = len(raw)
-                            source["sha256"] = capture.hashlib.sha256(raw).hexdigest()
+                            source["sha256"] = hashlib.sha256(raw).hexdigest()
                             path.write_text(json.dumps(changed))
                     return dict(source=b"clock source", metadata=b"clock metadata")
 
@@ -922,8 +1040,21 @@ class CaptureMemoryQualification(unittest.TestCase):
                     optimization="3",
                     custom_clock=dict(cpu_hz="150000000", spi_hz="62500000", vsel_mv="1100"),
                 )
+
+                def verify_selection(
+                    dest: Path,
+                    env: dict[str, str],
+                    embedded: bytes,
+                    rec: capture.ConfigRecord,
+                    target: Path,
+                    **kw: object,
+                ) -> None:
+                    self.assertEqual(env, {"RUSTC": "rustc"})
+                    self.assertEqual(target, firmware / "host")
+                    self.assertEqual(kw, {"reuse_host": True})
+
                 with ExitStack() as patches:
-                    for context in (
+                    for context_patch in (
                         patch.object(capture, "FIRMWARE", firmware),
                         patch.object(
                             capture,
@@ -958,11 +1089,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         patch.object(
                             capture,
                             "verify_selected_config",
-                            side_effect=lambda dest, env, embedded, rec, target, **kw: (
-                                self.assertEqual(env, {"RUSTC": "rustc"}),
-                                self.assertEqual(target, firmware / "host"),
-                                self.assertEqual(kw, {"reuse_host": True}),
-                            ),
+                            side_effect=verify_selection,
                         ),
                         patch.object(capture, "run_build", side_effect=build),
                         patch.object(capture, "emitted_elf", return_value=emitted),
@@ -991,14 +1118,14 @@ class CaptureMemoryQualification(unittest.TestCase):
                         ),
                         patch.dict(os.environ, {}, clear=True),
                     ):
-                        patches.enter_context(context)
+                        patches.enter_context(context_patch)
                     if drift:
                         with self.assertRaises((AssertionError, ValueError)):
                             capture.main()
                         self.assertFalse((destination / "manifest.json").exists())
                     else:
                         capture.main()
-                        manifest = json.loads((destination / "manifest.json").read_text())
+                        manifest = fixture_json((destination / "manifest.json").read_text())
                         self.assertEqual(manifest["schema"], 2)
                         self.assertEqual(
                             manifest["program_image"],
@@ -1009,10 +1136,17 @@ class CaptureMemoryQualification(unittest.TestCase):
                         )
                         self.assertEqual(manifest["memory_layout"], record)
                         self.assertEqual(
-                            manifest["memory_layout"]["stack"]["execution_scope"]["schema"], 1
+                            fixture_fields(
+                                fixture_fields(fixture_fields(manifest["memory_layout"])["stack"])[
+                                    "execution_scope"
+                                ]
+                            )["schema"],
+                            1,
                         )
                         self.assertNotIn("execution_scope", manifest)
-                        self.assertNotIn("execution_scope", manifest["memory_layout"])
+                        self.assertNotIn(
+                            "execution_scope", fixture_fields(manifest["memory_layout"])
+                        )
                         source_path = destination / "source-context.json"
                         self.assertTrue(
                             source_path.is_file(),
@@ -1027,32 +1161,38 @@ class CaptureMemoryQualification(unittest.TestCase):
                         self.assertEqual(
                             {name: raw for name, raw in context.sources}, before_sources
                         )
-                        self.assertEqual(manifest["source_context"]["binding"], context.binding())
                         self.assertEqual(
-                            manifest["source_context"]["sha256"],
-                            capture.hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                            fixture_fields(manifest["source_context"])["binding"], context.binding()
                         )
-                        with capture.zipfile.ZipFile(destination / "source.zip") as archive:
+                        self.assertEqual(
+                            fixture_fields(manifest["source_context"])["sha256"],
+                            hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                        )
+                        with zipfile.ZipFile(destination / "source.zip") as archive:
                             self.assertEqual(
                                 archive.read("build-config/source-context.json"),
                                 source_path.read_bytes(),
                             )
                         self.assertEqual(
                             len(
-                                manifest["memory_layout"]["stack"]["policies"][0][
-                                    "owned_dependencies"
-                                ]
+                                fixture_items(
+                                    stack_policy(fixture_fields(manifest["memory_layout"]))[
+                                        "owned_dependencies"
+                                    ]
+                                )
                             ),
                             10,
                         )
                         self.assertEqual(
                             manifest["memory_layout_json_sha256"],
-                            capture.hashlib.sha256(
+                            hashlib.sha256(
                                 (destination / "memory-layout.json").read_bytes()
                             ).hexdigest(),
                         )
 
-    def test_explicit_source_sidecar_route_rejects_missing_changed_and_unproved_semantics(self):
+    def test_explicit_source_sidecar_route_rejects_missing_changed_and_unproved_semantics(
+        self,
+    ) -> None:
         from config_build_source import SOURCE_PATHS, make_source_context, write_source_context
 
         elf, eav, record = self.fixture()
@@ -1079,13 +1219,13 @@ class CaptureMemoryQualification(unittest.TestCase):
                 write_source_context(path, value)
                 from config_platform import current_image_policy, _execution_receipt
 
-                record["stack"]["execution_scope"] = _execution_receipt(
-                    current_image_policy(record["stack"]["policies"][0], elf), value, elf
+                fixture_fields(record["stack"])["execution_scope"] = _execution_receipt(
+                    current_image_policy(stack_policy(record), elf), value, elf
                 ).to_record()
                 if fault == "changed_bytes":
                     path.write_bytes(path.read_bytes() + b"not JSON")
 
-                def child(argv, **kwargs):
+                def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                     self.assertEqual(Path(argv[argv.index("--source-context") + 1]), path)
                     Path(argv[argv.index("--result-json") + 1]).write_text(json.dumps(record))
                     return subprocess.CompletedProcess(argv, 0)
@@ -1115,11 +1255,13 @@ class CaptureMemoryQualification(unittest.TestCase):
                         run.assert_not_called()
                         self.assertFalse((destination / "memory-layout.json").exists())
 
-    def test_real_python_child_reads_explicit_source_bytes_before_supplied_image_output(self):
+    def test_real_python_child_reads_explicit_source_bytes_before_supplied_image_output(
+        self,
+    ) -> None:
         from config_build_source import SOURCE_PATHS, make_source_context, write_source_context
 
         elf, eav, record = self.fixture()
-        real_run = capture.run_checked
+        real_run = run_checked
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             frozen = destination / "pico2.elf"
@@ -1130,8 +1272,8 @@ class CaptureMemoryQualification(unittest.TestCase):
             write_source_context(source, value)
             from config_platform import current_image_policy, _execution_receipt
 
-            record["stack"]["execution_scope"] = _execution_receipt(
-                current_image_policy(record["stack"]["policies"][0], elf), value, elf
+            fixture_fields(record["stack"])["execution_scope"] = _execution_receipt(
+                current_image_policy(stack_policy(record), elf), value, elf
             ).to_record()
             code = (
                 "import sys;from pathlib import Path;from types import SimpleNamespace;"
@@ -1141,7 +1283,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                 "inspect_source_context(context,elf);Path(sys.argv[5]).write_text(sys.argv[6])"
             )
 
-            def child(argv, **kwargs):
+            def child(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                 return real_run(
                     [
                         sys.executable,
@@ -1155,7 +1297,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         argv[argv.index("--result-json") + 1],
                         json.dumps(record),
                     ],
-                    check=kwargs["check"],
+                    check=bool(kwargs["check"]),
                     timeout=10,
                 )
 

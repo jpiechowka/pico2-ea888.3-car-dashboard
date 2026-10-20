@@ -543,21 +543,20 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
             AttClient::Request(AttReq::ReadBlob { offset, .. }) => (att::ATT_READ_BLOB_RSP, offset as usize),
             _ => unreachable!(),
         };
+        let Some(value) = data.as_gatt().get(offset..) else {
+            return self.reject(AttErrorCode::INVALID_OFFSET);
+        };
         self.data.pdu = None;
 
         let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
         let mut w = WriteCursor::new(tx.as_mut());
         let (mut header, mut payload) = w.split(4)?;
-        // Limit the buffer given to process() so that multi-entry ATT responses
-        // (ReadByType, ReadByGroupType, FindInformation) are bounded by the
-        // negotiated ATT MTU. Without this, entries are written into the full
-        // packet-pool buffer and then post-hoc truncated, which can split an
-        // entry in half and produce a malformed PDU.
+        // The value starts at the requested offset and shares the ATT MTU with
+        // one opcode byte. Also respect the physical packet buffer capacity.
         let mtu = self.data.connection.get_att_mtu() as usize;
-        let len = payload.len().saturating_sub(offset).min(mtu - 1);
-
         payload.write(rsp)?;
-        payload.append(&data.as_gatt()[offset..][..len])?;
+        let len = value.len().min(mtu.saturating_sub(1)).min(payload.available());
+        payload.append(&value[..len])?;
         header.write(payload.len() as u16)?;
         header.write(4_u16)?;
 
@@ -925,6 +924,11 @@ fn process_reject<'stack, P: PacketPool>(
     let Att::Client(att) = att else {
         unreachable!("Expected Att::Client, got {:?}", att)
     };
+    // Commands and confirmations never receive an ATT Error Response, even
+    // when application or attribute permission checks reject them.
+    if !matches!(att, AttClient::Request(_)) {
+        return Ok(Reply::new(connection.clone(), None));
+    }
     // An Execute Write empties the prepare queue regardless of outcome (Core
     // Spec Vol 3, Part F, §3.4.6.3). `process_accept` clears it via the attribute
     // server (`handle_execute_write`), and `accept_unprocessed` clears it too, but
@@ -937,7 +941,6 @@ fn process_reject<'stack, P: PacketPool>(
     }
     let handle = match att {
         AttClient::Request(AttReq::Write { handle, .. }) => handle,
-        AttClient::Command(AttCmd::Write { handle, .. }) => handle,
         AttClient::Request(AttReq::Read { handle }) => handle,
         AttClient::Request(AttReq::ReadBlob { handle, .. }) => handle,
         _ => 0, // As per spec, if the incoming ATT does not have an ATT handle, we should report with handle 0
@@ -1058,14 +1061,71 @@ const NOTIF_MTU: usize = config::GATT_CLIENT_NOTIFICATION_MTU;
 pub(crate) const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A GATT client capable of using the GATT protocol.
+///
+/// One live client owns the connection's fixed ATT bearer. Concurrent requests
+/// return `Error::Busy`. Dropping an unfinished request closes the connection:
+/// ATT responses have no transaction identifier that permits safe reuse.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
     _phantom: PhantomData<T>,
-    connection: Connection<'reference, P>,
+    connection: ClientConnection<'reference, P>,
     response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), 1>,
 
     // TODO: Wait for something like https://github.com/rust-lang/rust/issues/132980 (min_generic_const_args) to allow using P::MTU
     notifications: PubSubChannel<NoopRawMutex, Notification<NOTIF_MTU>, NOTIF_QSIZE, MAX_NOTIF, 1>,
+}
+
+struct ClientConnection<'d, P: PacketPool>(Connection<'d, P>);
+
+impl<'d, P: PacketPool> ClientConnection<'d, P> {
+    fn acquire(connection: &Connection<'d, P>) -> Result<Self, Error> {
+        connection.manager().acquire_gatt_client(connection.index())?;
+        Ok(Self(connection.clone()))
+    }
+}
+
+impl<'d, P: PacketPool> core::ops::Deref for ClientConnection<'d, P> {
+    type Target = Connection<'d, P>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<P: PacketPool> Drop for ClientConnection<'_, P> {
+    fn drop(&mut self) {
+        self.manager().release_gatt_client(self.index());
+    }
+}
+
+struct AttRequestGuard<'a, 'd, P: PacketPool> {
+    connection: &'a Connection<'d, P>,
+    complete: bool,
+}
+
+impl<'a, 'd, P: PacketPool> AttRequestGuard<'a, 'd, P> {
+    fn begin(connection: &'a Connection<'d, P>, opcode: u8) -> Result<Self, Error> {
+        connection.manager().begin_att_request(connection.index(), opcode)?;
+        Ok(Self {
+            connection,
+            complete: false,
+        })
+    }
+
+    fn finish(mut self) {
+        self.connection.manager().finish_att_request(self.connection.index());
+        self.complete = true;
+    }
+}
+
+impl<P: PacketPool> Drop for AttRequestGuard<'_, '_, P> {
+    fn drop(&mut self) {
+        if !self.complete {
+            // Even cancellation while enqueueing cannot prove that no request
+            // reached the bearer. Quarantine until controller disconnect.
+            self.connection.disconnect();
+        }
+    }
 }
 
 /// A notification payload.
@@ -1146,6 +1206,7 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
         let data = Att::Client(AttClient::Request(req));
 
         let (request_opcode, pdu) = Self::encode_att_data(data)?;
+        let transaction = AttRequestGuard::begin(&self.connection, request_opcode)?;
         self.connection.send(pdu).await;
 
         // BT Core Spec Vol 3, Part F, Section 3.3.3: 30-second ATT transaction timeout.
@@ -1159,10 +1220,16 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
                 BleHostError::BleHost(Error::Timeout)
             })?;
 
-        assert_eq!(h, self.connection.handle());
+        if !self.connection.is_connected() {
+            return Err(Error::Disconnected.into());
+        }
+        if h != self.connection.handle() {
+            return Err(Error::UnexpectedGattResponse.into());
+        }
         if pdu.as_ref().first() == Some(&att::ATT_ERROR_RSP) {
             validate_error_response(pdu.as_ref(), request_opcode)?;
         }
+        transaction.finish();
         Ok(Response { handle: h, pdu })
     }
 
@@ -1207,6 +1274,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         _stack: &Stack<'_, C, P>,
         connection: &Connection<'reference, P>,
     ) -> Result<GattClient<'reference, C, P, MAX_SERVICES>, BleHostError<C::Error>> {
+        let connection = ClientConnection::acquire(connection)?;
         if !connection.is_att_mtu_exchanged() {
             let l2cap = L2capHeader { channel: 4, length: 3 };
             let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
@@ -1217,6 +1285,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             })))?;
 
             let len = w.len();
+            let transaction = AttRequestGuard::begin(&connection, att::ATT_EXCHANGE_MTU_REQ)?;
             connection.send(Pdu::new(buf, len)).await;
 
             // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
@@ -1259,6 +1328,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 connection.disconnect();
                 BleHostError::BleHost(Error::Timeout)
             })??;
+            transaction.finish();
         }
 
         // Enable encryption with bonded peers before starting GATT operations
@@ -1277,7 +1347,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
             _phantom: PhantomData,
-            connection: connection.clone(),
+            connection,
 
             response_channel: Channel::new(),
 
@@ -2115,7 +2185,7 @@ mod tests {
         GattClient {
             known_services: RefCell::new(heapless::Vec::new()),
             _phantom: PhantomData,
-            connection: connection.clone(),
+            connection: ClientConnection::acquire(connection).unwrap(),
             response_channel: Channel::new(),
             notifications: PubSubChannel::new(),
         }
@@ -2134,6 +2204,161 @@ mod tests {
             panic!()
         };
         conn
+    }
+
+    fn custom_read(value: &[u8], offset: Option<u16>, mtu: u16) -> std::vec::Vec<u8> {
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let characteristic = table
+            .add_service(Service {
+                uuid: Uuid::new_short(0x180a),
+            })
+            .add_characteristic_ro::<u8, _>(Uuid::new_short(0x2a29), &0)
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+        let conn = test_connection();
+        conn.set_att_mtu(mtu);
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        let bytes = packet.as_mut();
+        bytes[0] = if offset.is_some() {
+            att::ATT_READ_BLOB_REQ
+        } else {
+            att::ATT_READ_REQ
+        };
+        bytes[1..3].copy_from_slice(&characteristic.handle.to_le_bytes());
+        let len = if let Some(offset) = offset {
+            bytes[3..5].copy_from_slice(&offset.to_le_bytes());
+            5
+        } else {
+            3
+        };
+        let GattEvent::Read(event) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
+            panic!("read should pass attribute permission checks")
+        };
+        let mut reply = event.accept_unprocessed(value).unwrap();
+        let pdu = reply.pdu.take().expect("read response");
+        let bytes = pdu.as_ref();
+        assert_eq!(u16::from_le_bytes([bytes[0], bytes[1]]) as usize, bytes.len() - 4);
+        assert_eq!(&bytes[2..4], &[4, 0]);
+        let result = bytes[4..].to_vec();
+        drop(reply);
+        let mut outbound = pin!(conn.manager().outbound());
+        assert!(outbound
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        result
+    }
+
+    #[test]
+    fn custom_read_returns_values_and_valid_blob_suffixes() {
+        assert_eq!(custom_read(&[10, 20, 30], None, 23), [att::ATT_READ_RSP, 10, 20, 30]);
+        assert_eq!(
+            custom_read(&[10, 20, 30], Some(1), 23),
+            [att::ATT_READ_BLOB_RSP, 20, 30]
+        );
+        assert_eq!(custom_read(&[], None, 23), [att::ATT_READ_RSP]);
+        assert_eq!(custom_read(&[], Some(0), 23), [att::ATT_READ_BLOB_RSP]);
+        assert_eq!(custom_read(&[10, 20, 30], Some(3), 23), [att::ATT_READ_BLOB_RSP]);
+    }
+
+    #[test]
+    fn custom_read_respects_negotiated_mtu_and_packet_capacity() {
+        let value = [0x42; DefaultPacketPool::MTU + 10];
+        let read = custom_read(&value, None, 23);
+        assert_eq!(read.len(), 23);
+        assert_eq!(read[0], att::ATT_READ_RSP);
+        assert_eq!(&read[1..], &[0x42; 22]);
+        let blob = custom_read(&value, Some(1), u16::MAX);
+        assert_eq!(blob.len(), DefaultPacketPool::MTU - 4);
+        assert_eq!(blob[0], att::ATT_READ_BLOB_RSP);
+        assert!(blob[1..].iter().all(|byte| *byte == 0x42));
+    }
+
+    #[test]
+    fn custom_read_rejects_excess_offset_without_panicking() {
+        for offset in [4, u16::MAX] {
+            // The table's first value handle is 3; the error must name it and
+            // the actual Blob request, without an automatic second response.
+            assert_eq!(custom_read(&[10, 20, 30], Some(offset), 23), [0x01, 0x0c, 3, 0, 0x07]);
+        }
+        assert_eq!(custom_read(&[], Some(1), 23), [0x01, 0x0c, 3, 0, 0x07]);
+    }
+
+    #[test]
+    fn rejected_write_commands_are_silent_and_requests_keep_their_error() {
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+
+        for command in [true, false] {
+            for permission_denied in [true, false] {
+                for automatic_drop in [true, false] {
+                    if automatic_drop && !permission_denied {
+                        continue;
+                    }
+                    let mut storage = [0x11];
+                    let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+                    let props = if permission_denied {
+                        [CharacteristicProp::Read, CharacteristicProp::Read]
+                    } else {
+                        [CharacteristicProp::Write, CharacteristicProp::WriteWithoutResponse]
+                    };
+                    let characteristic = table
+                        .add_service(Service {
+                            uuid: Uuid::new_short(0x180a),
+                        })
+                        .add_characteristic(Uuid::new_short(0x2a29), props, 0x11u8, &mut storage)
+                        .build();
+                    let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+                    let conn = test_connection();
+                    let (mut packet, len) = build_write_cmd_pdu(characteristic.handle, &[0x22]);
+                    if !command {
+                        packet.as_mut()[0] = att::ATT_WRITE_REQ;
+                    }
+                    let event = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server);
+                    if permission_denied {
+                        assert!(matches!(event, GattEvent::NotAllowed(_)));
+                    } else {
+                        assert!(matches!(event, GattEvent::Write(_)));
+                    }
+                    if automatic_drop {
+                        drop(event);
+                    } else if permission_denied {
+                        drop(event.accept().unwrap());
+                    } else {
+                        drop(event.reject(AttErrorCode::WRITE_NOT_PERMITTED).unwrap());
+                    }
+                    let mut outbound = pin!(conn.manager().outbound());
+                    let result = outbound.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+                    if command {
+                        assert!(
+                            result.is_pending(),
+                            "rejected Write Command must not receive a response"
+                        );
+                    } else {
+                        let Poll::Ready((_, packet)) = result else {
+                            panic!("Write Request error response")
+                        };
+                        assert_eq!(&packet.as_ref()[4..], &[0x01, 0x12, 3, 0, 0x03]);
+                        let mut next = pin!(conn.manager().outbound());
+                        assert!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+                    }
+                    assert_eq!(server.table().get(&characteristic), Ok(0x11));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_confirmation_does_not_create_a_response() {
+        let conn = test_connection();
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        packet.as_mut()[0] = att::ATT_HANDLE_VALUE_CFM;
+        let mut reply = process_reject(&Pdu::new(packet, 1), &conn, AttErrorCode::REQUEST_NOT_SUPPORTED).unwrap();
+        let response = reply.pdu.take();
+        assert!(response.is_none(), "only requests can receive an Error Response");
     }
 
     #[test]

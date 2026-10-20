@@ -96,6 +96,17 @@ pub fn poll_write(
         return Poll::Ready(0);
     }
     waker.register(cx.waker());
+    try_write(writer, input, pend)
+}
+
+pub fn try_write(
+    writer: &mut Writer<'_>,
+    input: &[u8],
+    pend: impl FnOnce(),
+) -> Poll<usize> {
+    if input.is_empty() {
+        return Poll::Ready(0);
+    }
     let n = writer.push(|data| {
         let n = data.len().min(input.len());
         data[..n].copy_from_slice(&input[..n]);
@@ -170,4 +181,28 @@ pub fn fill_rx(
         writer.push_done(count);
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn nonblocking_write_preserves_full_ring_and_recovers_after_drain() {
+        use super::*;
+        let mut bytes = [0u8; 2];
+        let ring = RingBuffer::new();
+        unsafe { ring.init(bytes.as_mut_ptr(), bytes.len()) };
+        let mut writer = unsafe { ring.writer() };
+        let mut kicks = 0;
+        assert_eq!(try_write(&mut writer, &[1, 2, 3], || kicks += 1), Poll::Ready(2));
+        assert_eq!(try_write(&mut writer, &[3], || kicks += 1), Poll::Pending);
+        assert_eq!(try_write(&mut writer, &[], || kicks += 1), Poll::Ready(0));
+        assert_eq!(kicks, 2);
+        let mut reader = unsafe { ring.reader() };
+        assert_eq!(reader.pop_slice(), &[1, 2]);
+        reader.pop_done(2);
+        assert_eq!(try_write(&mut writer, &[3], || kicks += 1), Poll::Ready(1));
+        assert_eq!(reader.pop_slice(), &[3]);
+        reader.pop_done(1);
+        unsafe { ring.deinit() };
+    }
 }

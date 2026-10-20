@@ -7,9 +7,16 @@ No acquired owner, exception-handler theorem or whole-image pass is emitted.
 """
 
 import re
+from collections.abc import Mapping, Sequence
+from typing import Literal, NotRequired, TypeAlias, TypedDict
+from config_body_types import BodyContract, BodyRecord, InstructionMap
+from config_boot_source import BootSourceContract
+from config_build_source import SourceBinding
+from config_entry_contracts import EntryObject
+from config_stack import DiagnosticObjects
 from config_build_source import inspect_source_context, validate_source_context
 from config_entry_contracts import ENTRY_GRAMMARS
-from config_preclaim import preclaim_configuration_preservation, _activation
+from config_preclaim import PreclaimRecord, preclaim_configuration_preservation, _activation
 from config_owner_entry import _direct_target
 from config_regions import _control
 from config_startup_contracts import STARTUP
@@ -18,7 +25,7 @@ from validation import require
 
 # (offset, target phase/diagnostic, temporal scope). All current ordinary
 # edges must occur exactly once. Targets are rebound to this SAME composition.
-_EDGES = {
+_EDGES: dict[str, tuple[tuple[int, str, str], ...]] = {
     "speed2_5": ((4, "cortex_main", "before"),),
     "speed2_3": ((18, "run", "before"),),
     "sizes_3": ((18, "run", "before"),),
@@ -93,18 +100,156 @@ _EXTERNAL = (
 )
 
 
-def _edges(preclaim):
+GuardRule: TypeAlias = (
+    tuple[Literal["exclusive"], int, int | None]
+    | tuple[Literal["source_false"], str, int]
+    | tuple[Literal["literal"], bool, int]
+    | tuple[Literal["retry_if_failed", "nonempty_detach"]]
+)
+GuardDecision: TypeAlias = tuple[str, int, str, str] | tuple[str, str | bool, int] | tuple[str, str]
+Bodies: TypeAlias = Mapping[str, BodyRecord]
+
+
+class HistoryEdge(TypedDict):
+    site: int
+    operation: str
+    target: int
+    phase: str
+    scope: str
+    frame: int
+
+
+Edges: TypeAlias = Mapping[tuple[str, int], HistoryEdge]
+
+
+class SuccessorRecord(TypedDict):
+    phase: str
+    site: int
+    operation: str
+    successors: tuple[int, ...]
+    kind: NotRequired[str]
+    target: NotRequired[int]
+    target_phase: NotRequired[str]
+    continuation: NotRequired[str | int]
+    receiver: NotRequired[int]
+
+
+class ReturnRecord(TypedDict):
+    phase: str
+    call_site: int
+    continuation: int
+    LR_value: int
+    entry_SP: int
+    return_SP: int
+    saved_LR: tuple[int, int] | None
+    return_site: int
+    preserves: NotRequired[tuple[str, ...]]
+
+
+class FamilyRecord(TypedDict):
+    phase: str
+    family: str
+    start: int
+    exit: int
+    reached_offsets: tuple[int, ...]
+    guard_relations: dict[int, GuardDecision]
+    exit_exclusive_success: tuple[bool, ...]
+    nonterminating_retry_has_no_successor: bool
+
+
+class HistoryDiagnostic(TypedDict):
+    kind: str
+    edges: tuple[tuple[str, int, int, str, int], ...]
+    status: str
+    contradiction: tuple[str, ...]
+    not_globally_unreachable: bool
+    exceptional_or_other_invocation_effects_remain_unresolved: bool
+
+
+class OutsideInvocation(TypedDict):
+    site: int
+    operation: str
+    target_phase: str
+    target: int
+    status: str
+    caller_context: tuple[tuple[str, int, int], ...]
+    caller_effects_remain_unreviewed: bool
+    reason: str
+    grants_target_or_caller_permission: bool
+
+
+class CallbackBinding(TypedDict):
+    site: int
+    target: int
+    receiver: int
+    scope: str
+    global_whitelist: bool
+
+
+class OnceTransport(TypedDict):
+    continuation: int
+    saved_LR: tuple[int, int]
+    LR_value: int
+    restored_SP: int
+    restore: int
+    restored_before_specialized_tail: bool
+
+
+class NonreturnPrefix(TypedDict):
+    main_cortex_and_run_have_no_return_before_claim: bool
+    Reset_UDF_not_reached_by_selected_prefix: bool
+
+
+class HistoryRecord(TypedDict):
+    phase: str
+    mode: str
+    scope: str
+    source_context: SourceBinding
+    source_semantics: BootSourceContract
+    preclaim: PreclaimRecord
+    successors: tuple[SuccessorRecord, ...]
+    families: tuple[FamilyRecord, ...]
+    temporal_joins: tuple[tuple[str, int, str], ...]
+    actual_state_writers: tuple[tuple[int, str, str, int, int], ...]
+    executor_constructor: tuple[tuple[int, str, str, int, int], ...]
+    selected_returns: tuple[ReturnRecord, ...]
+    protected_save_intervals: dict[str, tuple[int, int]]
+    publication_attempts: tuple[int, ...]
+    state_induction: tuple[str, ...]
+    diagnostics: tuple[HistoryDiagnostic, ...]
+    outside_shared_invocations: tuple[OutsideInvocation, ...]
+    boot_initialize_call: int
+    callback_binding: CallbackBinding
+    once_return_transport: OnceTransport
+    nonreturn_prefix: NonreturnPrefix
+    callback_expiry: str
+    later_invocations_require_separate_context: bool
+    initial_state_expires_at_decode_refill_or_publication: bool
+    requires_complete_same_B_loader_effects: bool
+    requires_H8_consumed_input_closure: bool
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    source_qualification: str
+    requires_M2_pre_init_source_reconciliation: bool
+    hardware_qualified: bool
+    existing_conservative_frame_arithmetic_unchanged: bool
+
+
+def _edges(
+    preclaim: PreclaimRecord,
+) -> tuple[dict[str, BodyRecord], dict[tuple[str, int], HistoryEdge]]:
     startup = preclaim["startup"]
     phases = startup["entry"]["entry"]["phases"]
-    bodies = dict(phases, Reset=startup["reset"], pre_init=startup["pre_init"])
-    classified = {}
+    bodies: dict[str, BodyRecord] = dict(
+        phases, Reset=startup["reset"], pre_init=startup["pre_init"]
+    )
+    classified: dict[tuple[str, int], HistoryEdge] = {}
     diagnostics = {v["kind"]: v["edges"][0] for v in preclaim["pending_diagnostics"]}
     for phase, proof in bodies.items():
         expected = () if phase == "pre_init" else _EDGES.get(proof["shape"])
-        require(
-            expected is not None and len(expected) == len(proof["ordinary_edges"]),
-            "history has an unclassified ordinary edge",
-        )
+        if expected is None or len(expected) != len(proof["ordinary_edges"]):
+            raise AssertionError("history has an unclassified ordinary edge")
         for actual, (offset, target, scope) in zip(proof["ordinary_edges"], expected):
             off, op, address, role, frame = actual
             require(
@@ -143,7 +288,9 @@ def _edges(preclaim):
     return bodies, classified
 
 
-def _successors(preclaim, rows, bodies, edges):
+def _successors(
+    preclaim: PreclaimRecord, rows: InstructionMap, bodies: Bodies, edges: Edges
+) -> tuple[SuccessorRecord, ...]:
     """Exhaustive literal PC-effect partition, including unused later code.
 
     Local loops keep the existing source-family invariants (zero/copy, claim,
@@ -151,12 +298,12 @@ def _successors(preclaim, rows, bodies, edges):
     Diagnostic and post-initialize successors are retained but not followed
     as predecessors of the selected successful claim.
     """
-    result = []
+    result: list[SuccessorRecord] = []
     mode = preclaim["mode"]
     callback = preclaim["callback"]
     entry = preclaim["startup"]["entry"]["entry"]
     for phase, proof in bodies.items():
-        contract = (
+        contract: BodyContract[object] | BodyContract[EntryObject] = (
             STARTUP[proof["shape"]]
             if phase == "pre_init"
             else STARTUP["Reset"]
@@ -173,7 +320,9 @@ def _successors(preclaim, rows, bodies, edges):
             row = rows[start + offset]
             family, conditional = _control(row)
             following = offset + width
-            record = dict(phase=phase, site=start + offset, operation=row.mnemonic, successors=())
+            record: SuccessorRecord = dict(
+                phase=phase, site=start + offset, operation=row.mnemonic, successors=()
+            )
             if (phase, offset) in edges:
                 edge = edges[(phase, offset)]
                 used.add(offset)
@@ -181,7 +330,9 @@ def _successors(preclaim, rows, bodies, edges):
                     family in ("bl", "b") and not conditional,
                     "history ordinary edge has a new PC effect",
                 )
-                record.update(kind=edge["scope"], target=edge["target"], target_phase=edge["phase"])
+                record.update(
+                    {"kind": edge["scope"], "target": edge["target"], "target_phase": edge["phase"]}
+                )
                 if edge["scope"] == "before":
                     nonreturn = edge["phase"] in (
                         "main",
@@ -209,13 +360,17 @@ def _successors(preclaim, rows, bodies, edges):
                     target - start in points,
                     "history local branch enters data/padding/outside code",
                 )
-                successors = (target,)
+                successors: tuple[int, ...] = (target,)
                 if conditional:
                     require(following in points, "history conditional falls out of mapped code")
                     successors += (start + following,)
                 record.update(
-                    kind="local_source_family_loop" if target <= row.address else "local_guard",
-                    successors=successors,
+                    {
+                        "kind": "local_source_family_loop"
+                        if target <= row.address
+                        else "local_guard",
+                        "successors": successors,
+                    }
                 )
             elif family == "blx":
                 require(
@@ -232,10 +387,12 @@ def _successors(preclaim, rows, bodies, edges):
                     "history callback target is not the initialized Boot poll",
                 )
                 record.update(
-                    kind="same_node_callback",
-                    target=callback[1],
-                    receiver=callback[2],
-                    continuation="no callback return before selected claim",
+                    {
+                        "kind": "same_node_callback",
+                        "target": callback[1],
+                        "receiver": callback[2],
+                        "continuation": "no callback return before selected claim",
+                    }
                 )
             elif family == "return" or family == "bx":
                 require(
@@ -245,17 +402,19 @@ def _successors(preclaim, rows, bodies, edges):
                     "history has an unclassified saved-PC/LR consumer",
                 )
                 record.update(
-                    kind="selected_child_return"
-                    if phase
-                    in (
-                        "pre_init",
-                        "boot_initializer",
-                        "callback_install",
-                        "raw_spawn",
-                        "queue_push",
-                    )
-                    else "post_initialize_or_empty_batch_return",
-                    continuation="bound selected LR/save slot, never arbitrary PC",
+                    {
+                        "kind": "selected_child_return"
+                        if phase
+                        in (
+                            "pre_init",
+                            "boot_initializer",
+                            "callback_install",
+                            "raw_spawn",
+                            "queue_push",
+                        )
+                        else "post_initialize_or_empty_batch_return",
+                        "continuation": "bound selected LR/save slot, never arbitrary PC",
+                    }
                 )
             elif family == "udf":
                 require(
@@ -263,15 +422,17 @@ def _successors(preclaim, rows, bodies, edges):
                     "unclassified history exceptional instruction",
                 )
                 record.update(
-                    kind="Reset_UDF_after_nonreturning_main",
-                    continuation="not reached in this selected ordinary prefix",
+                    {
+                        "kind": "Reset_UDF_after_nonreturning_main",
+                        "continuation": "not reached in this selected ordinary prefix",
+                    }
                 )
             else:
                 require(
                     family is None, "unknown implicit/computed/security/exception history transfer"
                 )
                 if following in points:
-                    record.update(kind="sequential", successors=(start + following,))
+                    record.update({"kind": "sequential", "successors": (start + following,)})
                 else:
                     # Only the exact two-byte NOP after an unreachable diagnostic
                     # call precedes mapped data in the reviewed Z shapes.
@@ -285,8 +446,10 @@ def _successors(preclaim, rows, bodies, edges):
                         "unbound function/data fallthrough in history",
                     )
                     record.update(
-                        kind="padding_after_unselected_diagnostic",
-                        continuation="no selected predecessor",
+                        {
+                            "kind": "padding_after_unselected_diagnostic",
+                            "continuation": "no selected predecessor",
+                        }
                     )
             result.append(record)
         require(
@@ -296,7 +459,7 @@ def _successors(preclaim, rows, bodies, edges):
     return tuple(result)
 
 
-def _save_protection(preclaim, bodies):
+def _save_protection(preclaim: PreclaimRecord, bodies: Bodies) -> dict[str, tuple[int, int]]:
     """Actual saved return/carrier cells, protected by the full write partition."""
     sp = preclaim["startup"]["copy"]["initial_sp"]
     mode = preclaim["mode"]
@@ -363,14 +526,16 @@ def _save_protection(preclaim, bodies):
     return saves
 
 
-def _returns(preclaim, bodies, edges, saves):
+def _returns(
+    preclaim: PreclaimRecord, bodies: Bodies, edges: Edges, saves: Mapping[str, tuple[int, int]]
+) -> tuple[ReturnRecord, ...]:
     mode = preclaim["mode"]
     sp = preclaim["startup"]["copy"]["initial_sp"]
-    selected = []
+    selected: list[ReturnRecord] = []
     # The exact current hook preserves LR without stack writes; historical
     # Rust bodies retain their independently checked PUSH/POP contract.
     hook = bodies["pre_init"]
-    contract = STARTUP[hook["shape"]]
+    contract: BodyContract[object] | BodyContract[EntryObject] = STARTUP[hook["shape"]]
     ret = contract["instructions"][-1][0]
     assembly = hook["shape"] == "assembly_rp235x"
     require(
@@ -435,7 +600,18 @@ def _returns(preclaim, bodies, edges, saves):
     return tuple(selected)
 
 
-def _family(rows, body, inventory, label, intervals, begin, end, rules, returns, require_success):
+def _family(
+    rows: InstructionMap,
+    body: BodyRecord,
+    inventory: Sequence[SuccessorRecord],
+    label: tuple[str, str],
+    intervals: Sequence[tuple[int, int]],
+    begin: int,
+    end: int,
+    rules: Mapping[int, GuardRule],
+    returns: Sequence[ReturnRecord],
+    require_success: bool,
+) -> FamilyRecord:
     """One authored guard family, not instruction/value interpretation.
 
     Only its named zero/literal/exclusive-status guards refine the already
@@ -453,7 +629,7 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
     pending = [(begin, False)]
     seen = set()
     exits = set()
-    decisions = {}
+    decisions: dict[int, GuardDecision] = {}
     calls = {v["call_site"]: v for v in returns}
     while pending:
         offset, success = pending.pop()
@@ -483,7 +659,7 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
             )
             kind = rule[0]
             target, fallthrough = destinations
-            if kind == "exclusive":
+            if rule[0] == "exclusive":
                 producer = rows[start + rule[1]]
                 operand = producer.operands.split("@", 1)[0].strip()
                 status = operand.split(",", 1)[0]
@@ -499,6 +675,8 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
                         "exclusive branch consumes another status",
                     )
                 else:
+                    if rule[2] is None:
+                        raise AssertionError("exclusive compare lacks its authored producer")
                     compare = rows[start + rule[2]]
                     require(
                         row.mnemonic == "bne"
@@ -514,7 +692,7 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
                     "failure=no write/retry; fallthrough=successful exclusive store",
                 )
                 continue
-            if kind == "source_false":
+            if rule[0] == "source_false":
                 # The producer and source fact belong to this exact reviewed
                 # family. Facts are established by the prior causal stage,
                 # never supplied as caller booleans or general assumptions.
@@ -524,7 +702,7 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
                 )
                 take = False
                 decisions[offset] = (kind, rule[1], start + rule[2])
-            elif kind == "literal":
+            elif rule[0] == "literal":
                 producer = rows[start + rule[2]]
                 require(
                     producer.mnemonic == "movs" and producer.operands.endswith(("#0x0", "#0x1")),
@@ -571,16 +749,30 @@ def _family(rows, body, inventory, label, intervals, begin, end, rules, returns,
     )
 
 
-def _families(preclaim, rows, bodies, inventory, returns):
+def _families(
+    preclaim: PreclaimRecord,
+    rows: InstructionMap,
+    bodies: Bodies,
+    inventory: Sequence[SuccessorRecord],
+    returns: Sequence[ReturnRecord],
+) -> tuple[FamilyRecord, ...]:
     """Causal claim -> initialize -> publish -> detach -> guard -> once.
 
     All offsets/rules are authored for the already admitted complete shapes.
     Source parameters are same typed objects, not concrete Config field values.
     """
     mode = preclaim["mode"]
-    result = []
+    result: list[FamilyRecord] = []
 
-    def add(phase, label, intervals, begin, end, rules=(), exclusive=False):
+    def add(
+        phase: str,
+        label: str,
+        intervals: Sequence[tuple[int, int]],
+        begin: int,
+        end: int,
+        rules: Sequence[tuple[int, GuardRule]] = (),
+        exclusive: bool = False,
+    ) -> None:
         result.append(
             _family(
                 rows,
@@ -750,12 +942,14 @@ def _families(preclaim, rows, bodies, inventory, returns):
     return tuple(result)
 
 
-def _joins(preclaim, bodies, families, edges):
+def _joins(
+    preclaim: PreclaimRecord, bodies: Bodies, families: Sequence[FamilyRecord], edges: Edges
+) -> tuple[tuple[str, int, str], ...]:
     by_name = {v["family"]: v for v in families}
     mode = preclaim["mode"]
-    joins = []
+    joins: list[tuple[str, int, str]] = []
 
-    def adjacent(left, right):
+    def adjacent(left: str, right: str) -> None:
         a, b = by_name[left], by_name[right]
         require(
             a["phase"] == b["phase"] and a["exit"] == b["start"],
@@ -808,7 +1002,9 @@ def _joins(preclaim, bodies, families, edges):
     return tuple(joins)
 
 
-def _state_writers(preclaim, bodies):
+def _state_writers(
+    preclaim: PreclaimRecord, bodies: Bodies
+) -> tuple[tuple[int, str, str, int, int], ...]:
     """All active Boot/P field writers, with the constructor scratch epoch."""
     boot = preclaim["task"][0]
     P = preclaim["executor"][0]
@@ -863,7 +1059,9 @@ def _state_writers(preclaim, bodies):
     return tuple(records)
 
 
-def first_boot_history(objects, instructions, source_context):
+def first_boot_history(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> HistoryRecord:
     """Close only the selected ordinary history; never issue a Config owner.
 
     Conditional exceptional/noninterference limits remain explicit. Unknown
@@ -935,7 +1133,7 @@ def first_boot_history(objects, instructions, source_context):
             "only successful STREXB changes taken; failed exclusive retries without a write",
         ),
     }
-    diagnostics = tuple(
+    diagnostics: tuple[HistoryDiagnostic, ...] = tuple(
         dict(
             kind=v["kind"],
             edges=v["edges"],
@@ -946,7 +1144,7 @@ def first_boot_history(objects, instructions, source_context):
         )
         for v in p["pending_diagnostics"]
     )
-    outside = tuple(
+    outside: tuple[OutsideInvocation, ...] = tuple(
         dict(
             site=at,
             operation=op,

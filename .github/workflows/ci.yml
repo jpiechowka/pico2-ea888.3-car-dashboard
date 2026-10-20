@@ -27,12 +27,16 @@ jobs:
           cache-dependency-path: python-quality-requirements.txt
       - name: Install hash-locked quality tools
         run: python -m pip install --require-hashes -r python-quality-requirements.txt
-      - name: Lint maintained Python
-        run: python -m ruff check .
+      - name: Lint all Python sources
+        run: python host/scripts/check_python.py lint
       - name: Check Python formatting
-        run: python -m ruff format --check .
-      - name: Strict production-boundary types
-        run: python -m mypy
+        run: python host/scripts/check_python.py format
+      - name: Strict types for all Python sources
+        run: python host/scripts/check_python.py mypy
+      - name: Python inventory coverage
+        run: |
+          python host/scripts/test_python_inventory.py
+          python -O host/scripts/test_python_inventory.py
       - name: ELF and UF2 admission regressions
         run: python firmware/scripts/test_program_image.py
       - name: BLE utility admission regressions
@@ -45,6 +49,18 @@ jobs:
         run: python -m unittest discover -s configurator/scripts -p test_browser_process.py
       - name: Shared process ownership and stream bounds
         run: python -m unittest discover -s host/scripts -p test_owned_process.py
+      - name: Typed tools and export regressions
+        run: |
+          python firmware/scripts/test_cargo_diagnostics.py
+          python firmware/scripts/test_image_fixture.py
+          python host/scripts/test_benchmark_capture.py
+          python host/scripts/test_selected_comparison.py
+          python host/scripts/test_startup_gallery.py
+          python -O firmware/scripts/test_cargo_diagnostics.py
+          python -O firmware/scripts/test_image_fixture.py
+          python -O host/scripts/test_benchmark_capture.py
+          python -O host/scripts/test_selected_comparison.py
+          python -O host/scripts/test_startup_gallery.py
 
   fmt:
     name: Format
@@ -239,6 +255,11 @@ jobs:
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only,firmware-logs
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,security,default-packet-pool -- --test-threads=1
+      - name: Advertising, channels and compiled hardware harness
+        # Physical serial tests are explicitly ignored unless requested on hardware.
+        run: |
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --no-default-features --features peripheral,extended-advertising,gatt,derive,central,default-packet-pool,security,att-queued-writes,l2cap-sdu-reassembly-optimization,connection-params-update --tests -- --test-threads=1
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features peripheral,central,default-packet-pool -- --test-threads=1
       - name: Discovery-only GATT regressions and forbidden security unification
         run: |
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool -- --test-threads=1
@@ -276,6 +297,30 @@ jobs:
         run: python3 scripts/test_telemetry_export.py
         working-directory: host
 
+  vendor-hal:
+    name: HAL contracts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-18
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: firmware/vendor/embassy-rp
+      - name: Native register and timer contracts
+        run: cargo test --locked --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib -- --test-threads=1
+      - name: Release arithmetic and UART cancellation
+        run: cargo test --locked --release --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib pio_programs::uart::tests -- --test-threads=1
+
   clippy-pico2:
     name: Clippy (Pico 2 W)
     runs-on: ubuntu-latest
@@ -298,6 +343,11 @@ jobs:
         working-directory: firmware
       - name: UART ownership compile guards
         run: python3 scripts/check_uart_api.py
+        working-directory: firmware
+      - name: Actual ARM linker alignment and reserved regions
+        run: |
+          python3 scripts/test_linker_layout.py
+          python3 -O scripts/test_linker_layout.py
         working-directory: firmware
       - name: Logging feature and flush policy
         run: |

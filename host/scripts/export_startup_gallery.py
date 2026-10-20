@@ -5,21 +5,32 @@ documentation dependency only; Pico firmware draws these scenes directly.
 """
 
 import argparse
+from collections.abc import Sequence
+from typing import cast
 import hashlib
 import json
 from pathlib import Path
 
-from PIL import Image, __version__ as pillow_version
+from PIL import Image, GifImagePlugin, __version__ as pillow_version
 
 
-def digest(path):
+def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def animation(frames, output):
+def rgb_pixels(frame: Image.Image) -> tuple[tuple[int, int, int], ...]:
+    if frame.mode != "RGB":
+        raise ValueError("gallery frames must be RGB")
+    # Pillow returns exactly three integer components for the checked RGB mode.
+    return cast(tuple[tuple[int, int, int], ...], frame.get_flattened_data())
+
+
+def animation(frames: Sequence[Image.Image], output: Path) -> None:
+    if not frames or any(frame.size != frames[0].size for frame in frames):
+        raise ValueError("gallery animation requires equally sized frames")
     # Preserve every renderer colour. Refuse lossy quantization if art grows
     # beyond GIF's palette, rather than silently degrading the published image.
-    colours = sorted({pixel for frame in frames for pixel in frame.get_flattened_data()})
+    colours = sorted({pixel for frame in frames for pixel in rgb_pixels(frame)})
     if len(colours) > 256:
         raise ValueError(f"{output.name}: {len(colours)} colours exceed lossless GIF palette")
     lookup = {colour: index for index, colour in enumerate(colours)}
@@ -27,9 +38,7 @@ def animation(frames, output):
     palette += [0] * (768 - len(palette))
     indexed = []
     for frame in frames:
-        item = Image.frombytes(
-            "P", frame.size, bytes(lookup[pixel] for pixel in frame.get_flattened_data())
-        )
+        item = Image.frombytes("P", frame.size, bytes(lookup[pixel] for pixel in rgb_pixels(frame)))
         item.putpalette(palette)
         indexed.append(item)
     indexed[0].save(
@@ -44,13 +53,15 @@ def animation(frames, output):
     # Encoders can coalesce identical frames. Verify decoded pixels and the
     # complete two-second timeline, including those merged intervals.
     with Image.open(output) as decoded:
+        if not isinstance(decoded, GifImagePlugin.GifImageFile):
+            raise ValueError(f"{output.name}: expected GIF output")
         if decoded.info.get("loop") != 0:
             raise ValueError(f"{output.name}: loop flag lost")
         sample = 0
         for index in range(decoded.n_frames):
             decoded.seek(index)
-            duration = decoded.info["duration"]
-            if duration <= 0 or duration % 50:
+            duration: object = decoded.info.get("duration")
+            if type(duration) is not int or duration <= 0 or duration % 50:
                 raise ValueError(f"{output.name}: unexpected frame duration {duration}")
             pixels = decoded.convert("RGB").tobytes()
             for _ in range(duration // 50):
@@ -61,7 +72,7 @@ def animation(frames, output):
             raise ValueError(f"{output.name}: incomplete timeline {sample}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="startup_gallery --animation output")
     parser.add_argument("destination", type=Path)

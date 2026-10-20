@@ -228,7 +228,13 @@ impl L2capSignal for LeCreditConnRes {
 
 unsafe impl FixedSizeValue for LeCreditConnRes {
     fn is_valid(data: &[u8]) -> bool {
-        true
+        let offset = core::mem::offset_of!(Self, result);
+        let Some(&[first, second]) = data.get(offset..offset + 2) else {
+            return false;
+        };
+        // FixedSizeValue decodes with read_unaligned, so validate the native
+        // enum representation before bt-hci constructs the enclosing value.
+        matches!(u16::from_ne_bytes([first, second]), 0x0000 | 0x0002 | 0x0004..=0x000b)
     }
 }
 
@@ -350,5 +356,52 @@ unsafe impl FixedSizeValue for ConnParamUpdateRes {
 impl L2capSignal for ConnParamUpdateRes {
     fn code() -> L2capSignalCode {
         L2capSignalCode::CONN_PARAM_UPDATE_RES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bt_hci::{FromHciBytes, FromHciBytesError};
+
+    use super::*;
+
+    #[test]
+    fn credit_response_validates_every_result_before_enum_decode() {
+        for result in 0u16..=u16::MAX {
+            let mut bytes = [0x40, 0, 23, 0, 23, 0, 1, 0, 0, 0];
+            bytes[8..10].copy_from_slice(&result.to_le_bytes());
+            let valid = [0, 2, 4, 5, 6, 7, 8, 9, 10, 11].contains(&result);
+            // Fail before decoding: an invalid enum representation must never
+            // be constructed, including when this regression catches a bug.
+            assert_eq!(LeCreditConnRes::is_valid(&bytes), valid, "result {result:#06x}");
+            if valid {
+                let response = LeCreditConnRes::from_hci_bytes_complete(&bytes).unwrap();
+                assert_eq!(response.result as u16, result);
+                assert_eq!(
+                    (response.dcid, response.mtu, response.mps, response.credits),
+                    (64, 23, 23, 1)
+                );
+            } else {
+                assert!(matches!(
+                    LeCreditConnRes::from_hci_bytes_complete(&bytes),
+                    Err(FromHciBytesError::InvalidValue)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn credit_response_decoder_handles_truncation_and_remaining_bytes() {
+        let bytes = [0x40, 0, 23, 0, 23, 0, 1, 0, 0, 0, 0xa5];
+        for length in 0..10 {
+            assert!(matches!(
+                LeCreditConnRes::from_hci_bytes_complete(&bytes[..length]),
+                Err(FromHciBytesError::InvalidSize)
+            ));
+        }
+        let (response, rest) = LeCreditConnRes::from_hci_bytes(&bytes).unwrap();
+        assert_eq!(response.result, LeCreditConnResultCode::Success);
+        assert_eq!(rest, [0xa5]);
+        assert!(LeCreditConnRes::from_hci_bytes_complete(&bytes).is_err());
     }
 }

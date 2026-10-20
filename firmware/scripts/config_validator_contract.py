@@ -6,9 +6,25 @@ traversal, typed error construction, alias/child preservation and source
 ownership remain the separate enclosing conservative graph's obligations.
 """
 
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+
+
+class ValidatorNamed(TypedDict):
+    kind: Literal["config", "hold_range"]
+
+
+class FirstLiteral(TypedDict):
+    kind: Literal["first_literal"]
+    value: int
+
+
+ValidatorObject = ValidatorNamed | FirstLiteral
+
+
 RANGE = "_RINvMs8_NtNtCs_4core3ops5rangeINtB6_14RangeInclusivetE8containstECs_14dashboard_core"
 FIRST = "_RNCINvNtCs_16dashboard_config8validate16visit_validationNCNvB4_12validate_ref0E0B6_"
-CONTRACTS = {
+CONTRACTS: dict[str, BodyContract[ValidatorObject]] = {
     "default_call": dict(
         extent=14,
         instructions=(

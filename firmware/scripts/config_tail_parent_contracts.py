@@ -4,7 +4,10 @@ Parent-relative destinations retain exact current instruction boundaries.
 All caller effects, source guards, original returns and ingress remain required.
 """
 
-GRAMMARS = {
+from config_body_types import BodyContract
+from config_source_contracts import SameConfig
+
+GRAMMARS: dict[str, BodyContract[SameConfig]] = {
     "visitor_170": {
         "extent": 4,
         "frame": 1608,

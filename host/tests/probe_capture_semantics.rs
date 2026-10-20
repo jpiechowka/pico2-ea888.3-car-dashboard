@@ -64,6 +64,52 @@ fn capture_rejects_reversed_boot_timeline() {
         "end/capture precede start and peer observation"
     );
 }
+
+#[test]
+fn global_scan_time_may_predate_peer_but_cannot_follow_capture() {
+    let mut p = probe();
+    for at_ms in [0, 9, 10, 12, 13] {
+        p.scan_diagnostics.last = Some(ScanFailure {
+            kind: ScanErrorKind::InvalidSize,
+            revision: 1,
+            index: 0,
+            total_reports: 1,
+            report_bytes: 3,
+            remaining_bytes: 3,
+            declared_data_len: None,
+            at_ms,
+        });
+        assert_eq!(encode_probe(&p, 12).is_ok(), at_ms <= 12, "scan at {at_ms}");
+    }
+    p.scan_diagnostics.last.as_mut().unwrap().at_ms = 1001;
+    let mut buffer = [0; 8192];
+    let len = encode(
+        &p,
+        BuildIdentity {
+            source_digest: [1; 32],
+            cpu_hz: 150_000_000,
+            spi_hz: 75_000_000,
+            profile: BuildProfile::Stock,
+            source_identity_available: true,
+        },
+        2000,
+        &mut buffer,
+    )
+    .unwrap();
+    let offsets: Vec<_> = buffer[..len]
+        .windows(8)
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == 1001u64.to_le_bytes()).then_some(offset))
+        .collect();
+    assert_eq!(offsets.len(), 1, "unique scan timestamp in this fixture");
+    let offset = offsets[0];
+    buffer[offset..offset + 8].copy_from_slice(&2001u64.to_le_bytes());
+    let body = capture_store::crc32(&buffer[24..len]);
+    buffer[16..20].copy_from_slice(&body.to_le_bytes());
+    let header = capture_store::crc32(&buffer[..20]);
+    buffer[20..24].copy_from_slice(&header.to_le_bytes());
+    assert_eq!(decode(&buffer[..len]).unwrap_err(), CaptureError::InvalidState);
+}
 #[test]
 fn passive_capture_rejects_orphan_cleanup_evidence() {
     let mut p = probe();

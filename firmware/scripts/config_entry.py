@@ -7,11 +7,13 @@ No callback target is authorized merely because it occurs elsewhere in an ELF.
 """
 
 import re
-from config_entry_contracts import ENTRY_GRAMMARS, ENTRY_ROLES
+from typing import TypedDict
+from config_entry_contracts import ENTRY_GRAMMARS, ENTRY_ROLES, EntryObject
+from config_body_types import BodyRecord, Callback, InstructionMap
 from config_finite import _complete_body
 from config_logger import _object_symbol, _initialized
-from config_roots import _window_object, root_adapter
-from config_stack import canonical_symbol, typed_function
+from config_roots import RootRecord, _window_object, root_adapter
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
 from validation import require
 
 BOOT_POOL = "_RNvNvCs_5pico214___embassy_main4POOL"
@@ -81,13 +83,43 @@ COMPATIBLE_PHASES = {
 }
 
 
-def static_role(name):
+class EntryRecord(BodyRecord):
+    requires_first_batch_source_and_task_ownership: bool
+    requires_parent_alias_lifetime_and_diagnostic_closure: bool
+    callback_scope: str
+
+
+class CallbackEdge(TypedDict):
+    caller: int
+    offset: int
+    target: int
+    scope: str
+
+
+class BootEntryRecord(TypedDict):
+    entry_frame: int
+    entry_chain: tuple[tuple[int, int], ...]
+    boot_poll: int
+    boot_poll_frame: int
+    initialize: int
+    initialize_frame: int
+    callback_edge: CallbackEdge
+    later_dashboard_callback: int
+    retired_callback: int
+    phases: dict[str, EntryRecord]
+    external_edges: tuple[tuple[str, int, int, str, int], ...]
+    requires_frozen_executor_source_ownership: bool
+    requires_configuration_and_diagnostic_memory_closure: bool
+
+
+def static_role(name: str) -> str:
     return re.sub(r"Cs[A-Za-z0-9]+_", "Cs_", name)
 
 
-def entry_object(objects, address, descriptor):
-    kind = descriptor["kind"]
-    if kind == "entry_static":
+def entry_object(
+    objects: DiagnosticObjects, address: int, descriptor: EntryObject
+) -> tuple[Callback, ...]:
+    if descriptor["kind"] == "entry_static":
         role = descriptor["role"]
         require(role in STATICS and address % 4 == 0, "unreviewed or unaligned entry static")
         extent, section = STATICS[role]
@@ -101,13 +133,13 @@ def entry_object(objects, address, descriptor):
                 "Issuer initialization differs",
             )
         return ()
-    if kind == "entry_callback":
+    if descriptor["kind"] == "entry_callback":
         # Descriptor interfaces are fixed in the complete producer grammars.
         allowed = {
             (v["role"], v["extent"], v["frame"])
             for g in ENTRY_GRAMMARS.values()
             for v in g["objects"]
-            if v["kind"] == kind
+            if v["kind"] == "entry_callback"
         }
         require(
             (descriptor["role"], descriptor["extent"], descriptor["frame"]) in allowed
@@ -123,7 +155,13 @@ def entry_object(objects, address, descriptor):
     return _window_object(objects, address, descriptor)
 
 
-def entry_body(objects, name, instructions, outline_role=None, _ancestry=()):
+def entry_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: str | None = None,
+    _ancestry: tuple[int, ...] = (),
+) -> EntryRecord:
     """Bind the entire emitted entry body; do not grant later-batch authority."""
     require(name in objects.elf.functions, "missing entry body")
     start = objects.elf.functions[name][0] & ~1
@@ -134,7 +172,7 @@ def entry_body(objects, name, instructions, outline_role=None, _ancestry=()):
         "entry outline origin differs",
     )
     require(role in ENTRY_ROLES, "unreviewed exact entry role")
-    results = []
+    results: list[EntryRecord] = []
     for shape in ENTRY_ROLES[role]:
         try:
             proof = _complete_body(
@@ -150,23 +188,31 @@ def entry_body(objects, name, instructions, outline_role=None, _ancestry=()):
             )
         except AssertionError:
             continue
-        proof.update(
-            requires_first_batch_source_and_task_ownership=True,
-            requires_parent_alias_lifetime_and_diagnostic_closure=True,
-            callback_scope="first detached boot batch, never subsequent executor iterations",
+        results.append(
+            {
+                **proof,
+                "requires_first_batch_source_and_task_ownership": True,
+                "requires_parent_alias_lifetime_and_diagnostic_closure": True,
+                "callback_scope": "first detached boot batch, never subsequent executor iterations",
+            }
         )
-        results.append(proof)
     require(len(results) == 1, "missing, changed or ambiguous complete entry shape")
     return results[0]
 
 
-def _entry_outline(objects, name, instructions, role, ancestry):
+def _entry_outline(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    role: str,
+    ancestry: tuple[int, ...],
+) -> EntryRecord | RootRecord:
     if role == "@outline:initialize_clrex_panic":
         return root_adapter(objects, name, instructions, role, ancestry)
     return entry_body(objects, name, instructions, role, ancestry)
 
 
-def boot_entry(objects, instructions):
+def boot_entry(objects: DiagnosticObjects, instructions: InstructionMap) -> BootEntryRecord:
     """Compose the finite first-batch entry interface.
 
     Full bodies prove the reviewed local queue/claim and register effects.
@@ -175,10 +221,10 @@ def boot_entry(objects, instructions):
     must preserve these live objects before this interface is admitted by the
     final graph. Later executor iterations receive no boot callback binding.
     """
-    proofs = {}
-    external = []
+    proofs: dict[str, EntryRecord] = {}
+    external: list[tuple[str, int, int, str, int]] = []
 
-    def visit(target, role):
+    def visit(target: int, role: str) -> EntryRecord:
         names = [
             n
             for n, e in objects.elf.functions.items()

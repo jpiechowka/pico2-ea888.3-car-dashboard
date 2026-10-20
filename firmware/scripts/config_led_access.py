@@ -12,6 +12,11 @@ fresh finite-contract review; byte rebinding never extends these roles.
 """
 
 from dataclasses import dataclass, asdict
+from typing import TYPE_CHECKING
+from script_values import object_fields, array_items, string_value, integer_value
+
+if TYPE_CHECKING:
+    from config_stack import DiagnosticObjects
 from config_regions import Storage, View, require_disjoint
 from config_owned_access import _storage, _view
 from validation import require
@@ -77,9 +82,9 @@ class LedContext:
     frame: Storage
     config: View
     owner: View
-    protected: tuple
+    protected: tuple[Storage, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.mode, str)
             and self.mode in _LOADERS
@@ -153,10 +158,10 @@ class LedFamily:
     role: str
     mode: str
     parent: int
-    sites: tuple
-    contexts: tuple
+    sites: tuple[tuple[int, str, int, str], ...]
+    contexts: tuple[LedContext, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.role, str)
             and isinstance(self.mode, str)
@@ -202,6 +207,7 @@ class LedFamily:
             "LED loses separate successful source epochs",
         )
         physical = []
+        guards: tuple[tuple[int, int], ...]
         for c in self.contexts:
             p = c.loader.start
             require(
@@ -278,7 +284,7 @@ class LedFamily:
             "LED sequential epochs mix actual owners or activations",
         )
 
-    def footprints(self, epoch):
+    def footprints(self, epoch: str) -> tuple[tuple[int, int], ...]:
         require(
             isinstance(epoch, str) and epoch in tuple(v.epoch for v in self.contexts),
             "LED read before success or after retirement",
@@ -290,8 +296,8 @@ class LedFamily:
             if which in (epoch, "pattern")
         )
 
-    def to_record(self):
-        record = asdict(self)
+    def to_record(self) -> dict[str, object]:
+        record: dict[str, object] = asdict(self)
         record["sites"] = [
             dict(site=at, encoding=raw, offset=o, epoch=e) for at, raw, o, e in self.sites
         ]
@@ -318,13 +324,13 @@ class LedFamily:
             source_outcome="same_epoch_complete_kind_0_to_3_pattern"
             if self.mode == "sizez" and self.role != "normal_config_words"
             else "complete_two_patterns_and_five_bools",
-            opaque_payload_padding=(5, 9),
+            opaque_payload_padding=[5, 9],
         )
-        record["opaque_payload_padding"] = list(record["opaque_payload_padding"])
         return record
 
 
-def read_led_family(record):
+def read_led_family(value: object) -> LedFamily:
+    record = object_fields(value, "malformed LedFamily record")
     keys = set(LedFamily.__dataclass_fields__) | {
         "kind",
         "operation",
@@ -339,52 +345,68 @@ def read_led_family(record):
         and set(record) == keys
         and record["kind"] == "decoded_led_access_family"
         and isinstance(record["sites"], list)
-        and 1 <= len(record["sites"]) <= 6
+        and 1 <= len(array_items(record["sites"], "malformed sites")) <= 6
         and isinstance(record["contexts"], list)
-        and 1 <= len(record["contexts"]) <= 2,
+        and 1 <= len(array_items(record["contexts"], "malformed contexts")) <= 2,
         "malformed LED dependency record",
     )
     contexts = []
-    for c in record["contexts"]:
+    for raw_context in array_items(record["contexts"], "malformed contexts"):
+        c = object_fields(raw_context, "malformed context")
         require(
             isinstance(c, dict)
             and set(c) == set(LedContext.__dataclass_fields__)
             and isinstance(c["protected"], list)
-            and 1 <= len(c["protected"]) <= 16,
+            and 1 <= len(array_items(c["protected"], "malformed protected")) <= 16,
             "malformed LED context",
         )
         contexts.append(
             LedContext(
-                c["mode"],
-                c["epoch"],
+                string_value(c["mode"], "malformed mode"),
+                string_value(c["epoch"], "malformed epoch"),
                 _storage(c["loader"]),
                 _storage(c["frame"]),
                 _view(c["config"]),
                 _view(c["owner"]),
-                tuple(_storage(v) for v in c["protected"]),
+                tuple(_storage(v) for v in array_items(c["protected"], "malformed protected")),
             )
         )
     sites = []
-    for v in record["sites"]:
+    for raw_site in array_items(record["sites"], "malformed sites"):
+        v = object_fields(raw_site, "malformed site")
         require(
             isinstance(v, dict) and set(v) == {"site", "encoding", "offset", "epoch"},
             "malformed LED site",
         )
-        sites.append((v["site"], v["encoding"], v["offset"], v["epoch"]))
+        sites.append(
+            (
+                integer_value(v["site"], "malformed site"),
+                string_value(v["encoding"], "malformed encoding"),
+                integer_value(v["offset"], "malformed offset"),
+                string_value(v["epoch"], "malformed epoch"),
+            )
+        )
     value = LedFamily(
-        record["role"], record["mode"], record["parent"], tuple(sites), tuple(contexts)
+        string_value(record["role"], "malformed role"),
+        string_value(record["mode"], "malformed mode"),
+        integer_value(record["parent"], "malformed parent"),
+        tuple(sites),
+        tuple(contexts),
     )
     require(
         type(record["width"]) is int
         and isinstance(record["opaque_payload_padding"], list)
-        and all(type(v) is int for v in record["opaque_payload_padding"])
+        and all(
+            type(v) is int
+            for v in array_items(record["opaque_payload_padding"], "malformed padding")
+        )
         and record == value.to_record(),
         "LED dependency loses exact operation/source/padding requirements",
     )
     return value
 
 
-def current_led_family(objects, value):
+def current_led_family(objects: "DiagnosticObjects", value: LedFamily) -> LedFamily:
     """Current byte/role binding only; does not reconstruct source success."""
     from config_entry import CONFIG, entry_object
     from config_stack import typed_function

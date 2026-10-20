@@ -5,7 +5,17 @@ suffix vary. Previous values and exclusive-store status have distinct roles.
 Parent ingress, phase and full coverage remain composition requirements.
 """
 
-ISSUER_GRAMMARS = {
+from config_body_types import BodyContract
+from config_entry_contracts import EntryStaticObject
+
+
+class IssuerContract(BodyContract[EntryStaticObject]):
+    caller: str
+    previous_register: str
+    attempts: int
+
+
+ISSUER_GRAMMARS: dict[str, IssuerContract] = {
     "speed2": {
         "caller": "_RNvMNtNtCs_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot",
         "extent": 166,

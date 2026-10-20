@@ -235,12 +235,6 @@ pub async fn inventory(
     for &(service_start, uuid, handle) in &readable {
         let mut bytes = [0u8; 64];
         let started = Instant::now();
-        let failure = |reason| {
-            let mut failure = InspectionFailure::new(FailureStage::DeviceInfo, reason);
-            failure.range = Some((handle, handle));
-            failure.elapsed_ms = Some(elapsed_ms(started));
-            failure
-        };
         let read = async {
             if uuid == 0x2B2A {
                 // Core Vol3 PartG7.3 requires ReadUsingCharacteristicUUID.
@@ -279,6 +273,8 @@ pub async fn inventory(
             }
             Ok(Err(error)) => (ReadResult::Error, Payload::empty(), Some(error)),
         };
+        // Retain operation time before event-channel backpressure can suspend us.
+        let read_elapsed_ms = elapsed_ms(started);
         emit(Event::Item {
             revision,
             item: InspectionItem::Value(InfoValue {
@@ -288,14 +284,17 @@ pub async fn inventory(
                 value,
                 result,
                 failure: read_failure,
-                elapsed_ms: elapsed_ms(started),
+                elapsed_ms: read_elapsed_ms,
             }),
         })
         .await;
         if result == ReadResult::Error
             && let Some(reason) = read_failure
         {
-            return Err(failure(reason));
+            let mut failure = InspectionFailure::new(FailureStage::DeviceInfo, reason);
+            failure.range = Some((handle, handle));
+            failure.elapsed_ms = Some(read_elapsed_ms);
+            return Err(failure);
         }
     }
     if reads_complete {

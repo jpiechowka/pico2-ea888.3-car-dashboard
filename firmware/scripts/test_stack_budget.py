@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import struct
 import unittest
+from typing import TypeAlias
+from unittest.mock import patch
+from script_values import array_items, integer_value, object_fields, string_value
 from check_stack_budget import (
     frames,
     budgets,
@@ -13,6 +16,23 @@ from check_stack_budget import (
     FrameAdmission,
     REVIEWED_STARTUP_FRAMES,
 )
+
+
+StackFixture: TypeAlias = tuple[dict[str, tuple[int, int, int]], dict[int, int]]
+
+
+def load_fixture(path: Path) -> StackFixture:
+    record = object_fields(json.loads(path.read_text()), "stack fixture object")
+    functions: dict[str, tuple[int, int, int]] = {}
+    sizes: dict[int, int] = {}
+    for member in array_items(record["functions"], "stack fixture functions"):
+        row = object_fields(member, "stack fixture row")
+        name = string_value(row["name"], "stack fixture name")
+        address = integer_value(row["address"], "stack fixture address")
+        frame = integer_value(row["frame"], "stack fixture frame")
+        functions[name] = (address | 1, 4, 0)
+        sizes[address] = frame
+    return functions, sizes
 
 
 # Literal .stack_sizes/symbol evidence from slot2-demo280-probe2.
@@ -58,14 +78,16 @@ SLOT_CAPTURE = """
 
 
 class StackBudget(unittest.TestCase):
-    def ble_fixture(self, name="compact"):
-        record = json.loads((Path(__file__).parent / f"fixtures/ble-stack-{name}.json").read_text())
-        return (
-            {r["name"]: (r["address"] | 1, 4, 0) for r in record["functions"]},
-            {r["address"]: r["frame"] for r in record["functions"]},
-        )
+    def ble_fixture(self, name: str = "compact") -> StackFixture:
+        return load_fixture(Path(__file__).parent / f"fixtures/ble-stack-{name}.json")
 
-    def test_ble_config_capture_and_large_fields_remain_counted(self):
+    def radio_bound(self, functions: dict[str, tuple[int, int, int]], sizes: dict[int, int]) -> int:
+        result = radio_frames(functions, sizes)
+        if result is None:
+            self.fail("fixture must include radio stack paths")
+        return result
+
+    def test_ble_config_capture_and_large_fields_remain_counted(self) -> None:
         functions, sizes = self.ble_fixture()
         baseline = configuration_frames(functions, sizes)
         self.assertGreater(baseline, 0)
@@ -93,9 +115,9 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed config"):
             configuration_frames(functions, sizes)
 
-    def test_radio_capture_bound_and_legacy_record_compatibility(self):
+    def test_radio_capture_bound_and_legacy_record_compatibility(self) -> None:
         functions, sizes = self.ble_fixture()
-        bound = radio_frames(functions, sizes)
+        bound = self.radio_bound(functions, sizes)
         self.assertEqual(bound, 16856)
         self.assertIsNone(radio_frames(*self.orientation_fixture()))
         old = FrameAdmission(1, 2, 3, 4).to_record()
@@ -107,9 +129,9 @@ class StackBudget(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 FrameAdmission(1, 2, 3, 4, bad).to_record()
 
-    def test_radio_named_frames_grow_or_reject_missing_and_ambiguous(self):
+    def test_radio_named_frames_grow_or_reject_missing_and_ambiguous(self) -> None:
         functions, sizes = self.ble_fixture()
-        baseline = radio_frames(functions, sizes)
+        baseline = self.radio_bound(functions, sizes)
         for token in (
             "9SecretKey6dh_key",
             "6Double6double",
@@ -134,7 +156,7 @@ class StackBudget(unittest.TestCase):
                     metadata[0x30000000] = 4
                 with self.subTest(token=token, fault=fault):
                     if fault == "growth":
-                        self.assertGreater(radio_frames(changed, metadata), baseline + 10000)
+                        self.assertGreater(self.radio_bound(changed, metadata), baseline + 10000)
                     else:
                         with self.assertRaises(AssertionError):
                             radio_frames(changed, metadata)
@@ -143,26 +165,26 @@ class StackBudget(unittest.TestCase):
         functions[name + ".alias"] = functions[name]
         self.assertEqual(radio_frames(functions, sizes), baseline)
 
-    def test_partial_radio_symbols_cannot_silently_select_non_radio_admission(self):
+    def test_partial_radio_symbols_cannot_silently_select_non_radio_admission(self) -> None:
         functions, sizes = self.ble_fixture()
         functions = {n: v for n, v in functions.items() if "radio_task_task" not in n}
         with self.assertRaisesRegex(AssertionError, "task poll"):
             radio_frames(functions, sizes)
 
-    def test_radio_serial_poll_siblings_take_maximum_not_sum(self):
+    def test_radio_serial_poll_siblings_take_maximum_not_sum(self) -> None:
         functions, sizes = self.ble_fixture()
         transaction = next(a & ~1 for n, (a, _, _) in functions.items() if "6Serial8transact" in n)
         gap = next(a & ~1 for n, (a, _, _) in functions.items() if "6Serial3gap" in n)
         sizes[transaction] = 20000
-        bound = radio_frames(functions, sizes)
+        bound = self.radio_bound(functions, sizes)
         sizes[gap] = 20000
         self.assertEqual(radio_frames(functions, sizes), bound)
         sizes[gap] += 256
         self.assertEqual(radio_frames(functions, sizes), bound + 256)
 
-    def test_radio_mutex_capture_counts_join_with_inlined_host_select(self):
+    def test_radio_mutex_capture_counts_join_with_inlined_host_select(self) -> None:
         functions, sizes = self.ble_fixture("mutex")
-        bound = radio_frames(functions, sizes)
+        bound = self.radio_bound(functions, sizes)
         self.assertEqual(bound, 16656)
         name = next(n for n in functions if "4Join" in n and "Future4poll" in n)
         address = functions[name][0] & ~1
@@ -172,29 +194,23 @@ class StackBudget(unittest.TestCase):
         with self.assertRaises(AssertionError):
             radio_frames(functions, sizes)
 
-    def test_radio_reserve_is_additive_and_unchanged(self):
+    def test_radio_reserve_is_additive_and_unchanged(self) -> None:
         budgets(0, 0, 0, 0, 65536, radio=65536 - 8192)
         with self.assertRaisesRegex(AssertionError, "radio.*8 KiB"):
             budgets(0, 0, 0, 0, 65536, radio=65536 - 8192 + 1)
 
-    def slot_fixture(self):
+    def slot_fixture(self) -> StackFixture:
         rows = [line.split(maxsplit=2) for line in SLOT_CAPTURE.splitlines() if line]
         return (
             {n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
             {int(a, 16): int(size) for a, size, _ in rows},
         )
 
-    def orientation_fixture(self):
+    def orientation_fixture(self) -> StackFixture:
         # Literal linked symbols/.stack_sizes from ELF SHA in this fixture.
-        record = json.loads(
-            (Path(__file__).parent / "fixtures/orientation-stack-demo280.json").read_text()
-        )
-        return (
-            {r["name"]: (r["address"] | 1, 4, 0) for r in record["functions"]},
-            {r["address"]: r["frame"] for r in record["functions"]},
-        )
+        return load_fixture(Path(__file__).parent / "fixtures/orientation-stack-demo280.json")
 
-    def test_orientation_capture_inlined_widget_and_exact_children(self):
+    def test_orientation_capture_inlined_widget_and_exact_children(self) -> None:
         functions, sizes = self.orientation_fixture()
         self.assertEqual(configuration_frames(functions, sizes), 2288)
         self.assertFalse(any("12next_element" in n and "6WidgetE" in n for n in functions))
@@ -203,7 +219,7 @@ class StackBudget(unittest.TestCase):
         sizes[loader] += 4096
         self.assertEqual(configuration_frames(functions, sizes), 6384)
 
-    def test_orientation_serializer_folded_secondary_keeps_widget_parent(self):
+    def test_orientation_serializer_folded_secondary_keeps_widget_parent(self) -> None:
         functions, sizes = self.orientation_fixture()
         child = next(
             a & ~1
@@ -219,7 +235,7 @@ class StackBudget(unittest.TestCase):
         functions["dashboard_config_15serialize_field_9Secondary"] = (child | 1, 4, 0)
         self.assertEqual(configuration_frames(functions, sizes), 5664)
 
-    def test_orientation_required_boundaries_fail_missing_ambiguous_or_metadata(self):
+    def test_orientation_required_boundaries_fail_missing_ambiguous_or_metadata(self) -> None:
         functions, sizes = self.orientation_fixture()
         for tokens in [
             ("12load_at_boot",),
@@ -258,7 +274,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed config stack helpers"):
             configuration_frames(functions, sizes)
 
-    def test_exact_startup_helpers_count_and_reject_drift(self):
+    def test_exact_startup_helpers_count_and_reject_drift(self) -> None:
         functions, sizes = self.slot_fixture()
         baseline = configuration_frames(functions, sizes)
         for index, (name, ceiling) in enumerate(REVIEWED_STARTUP_FRAMES.items()):
@@ -273,8 +289,8 @@ class StackBudget(unittest.TestCase):
             address = functions[name][0] & ~1
             old = sizes[address]
             for invalid in [old + 4, -1, True, None]:
-                sizes[address] = invalid
-                with self.assertRaises(AssertionError):
+                # Deliberately corrupt the typed fixture at its runtime boundary.
+                with patch.dict(sizes, {address: invalid}), self.assertRaises(AssertionError):
                     configuration_frames(functions, sizes)
             del sizes[address]
             with self.assertRaises(AssertionError):
@@ -291,7 +307,7 @@ class StackBudget(unittest.TestCase):
                 configuration_frames(functions, sizes)
             del functions[name.replace("CsReviewed_", "CsOther_")]
 
-    def guarded_fixture(self):
+    def guarded_fixture(self) -> StackFixture:
         functions, sizes = self.slot_fixture()
         replacements = {
             "12WidgetColors12invalid_role": (
@@ -314,7 +330,7 @@ class StackBudget(unittest.TestCase):
         sizes[adapter] = 288
         return functions, sizes
 
-    def test_guarded_helpers_embedding_adapter_name_are_counted_as_siblings(self):
+    def test_guarded_helpers_embedding_adapter_name_are_counted_as_siblings(self) -> None:
         functions, sizes = self.guarded_fixture()
         self.assertEqual(configuration_frames(functions, sizes), 1292)
         color = next(a & ~1 for n, (a, _, _) in functions.items() if "19visit_invalid_roles" in n)
@@ -325,7 +341,7 @@ class StackBudget(unittest.TestCase):
         # loader768 + adapter288 + max(colour2000, fuel2400), not their sum.
         self.assertEqual(configuration_frames(functions, sizes), 3456)
 
-    def test_guarded_helpers_require_exact_symbols_metadata_and_review_new_outlining(self):
+    def test_guarded_helpers_require_exact_symbols_metadata_and_review_new_outlining(self) -> None:
         functions, sizes = self.guarded_fixture()
         for token in ["8validate12validate_ref", "19visit_invalid_roles", "19visit_stoichiometry"]:
             name = next(n for n in functions if token in n)
@@ -343,7 +359,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed config stack helpers"):
             configuration_frames(functions, sizes)
 
-    def test_v4_visitors_led_history_and_serializer_children_are_counted(self):
+    def test_v4_visitors_led_history_and_serializer_children_are_counted(self) -> None:
         functions, sizes = self.slot_fixture()
         old = next(n for n in functions if "12next_elementA" in n)
         address, _, _ = functions.pop(old)
@@ -381,7 +397,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "missing config frame metadata"):
             configuration_frames(functions, missing)
 
-    def test_runtime_generic_snapshot_is_not_a_boot_config_child(self):
+    def test_runtime_generic_snapshot_is_not_a_boot_config_child(self) -> None:
         functions, sizes = self.slot_fixture()
         # Exact new runtime symbol, whose generic config pointee appears in its name.
         owner = "_RNvMs6_NtCsd7SjC8HJ0mV_14dashboard_core11acquisitionINtB5_16AcquisitionOwnerRNtNtCsfF7AG8So2wt_16dashboard_config8validate15ValidatedConfigE8snapshotB7_"
@@ -394,7 +410,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed config stack helpers"):
             configuration_frames(functions, sizes)
 
-    def test_slot_capture_counts_nested_children_and_sibling_maximum(self):
+    def test_slot_capture_counts_nested_children_and_sibling_maximum(self) -> None:
         functions, sizes = self.slot_fixture()
         # 768 loader + 296 Widget + 144 warning + 48 text + 36 UTF-8.
         self.assertEqual(configuration_frames(functions, sizes), 1292)
@@ -403,7 +419,7 @@ class StackBudget(unittest.TestCase):
         sizes[source & ~1] = 1000
         self.assertEqual(configuration_frames(functions, sizes), 1856)
 
-    def test_each_required_slot_child_needs_a_symbol_and_frame(self):
+    def test_each_required_slot_child_needs_a_symbol_and_frame(self) -> None:
         functions, sizes = self.slot_fixture()
         for name, (address, _, _) in functions.items():
             with self.subTest(name=name):
@@ -416,7 +432,7 @@ class StackBudget(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "missing or ambiguous"):
                     configuration_frames(without_symbol, sizes)
 
-    def test_emitted_seed_and_fallback_frames_are_counted(self):
+    def test_emitted_seed_and_fallback_frames_are_counted(self) -> None:
         for symbol, frame, expected in (
             ("dashboard_config_ConfigSeed_visit_seq", 64, 1356),
             ("dashboard_config_VecSeed_6Widget_visit_seq", 64, 1356),
@@ -430,7 +446,7 @@ class StackBudget(unittest.TestCase):
                 sizes[0] = frame
                 self.assertEqual(configuration_frames(functions, sizes), expected)
 
-    def test_outlined_decode_wraps_canonical_and_validation_too(self):
+    def test_outlined_decode_wraps_canonical_and_validation_too(self) -> None:
         functions, sizes = self.slot_fixture()
         functions["dashboard_config_19decode_current_into"] = (1, 4, 0)
         sizes[0] = 64
@@ -438,7 +454,7 @@ class StackBudget(unittest.TestCase):
         sizes[validator & ~1] = 2000
         self.assertEqual(configuration_frames(functions, sizes), 2964)
 
-    def test_emitted_validation_children_require_metadata_and_count_with_parent(self):
+    def test_emitted_validation_children_require_metadata_and_count_with_parent(self) -> None:
         for symbol in (
             "_RNvNtCsfF7AG8So2wt_16dashboard_config8controls17validate_controls",
             "_RNvNtCsfF7AG8So2wt_16dashboard_config8validate10text_valid",
@@ -457,7 +473,7 @@ class StackBudget(unittest.TestCase):
                         # Loader 768 + validator 200 + its emitted child 9000.
                         self.assertEqual(configuration_frames(functions, sizes), 9968)
 
-    def test_unreviewed_validation_descendants_cannot_hide_by_module_or_name(self):
+    def test_unreviewed_validation_descendants_cannot_hide_by_module_or_name(self) -> None:
         for suffix in (
             "8validate8in_range",
             "8controls13ControlAction10allowed_on",
@@ -475,7 +491,7 @@ class StackBudget(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, "unreviewed config stack helpers"):
                         configuration_frames(functions, sizes)
 
-    def test_explicit_runtime_comparisons_and_bounded_panic_formatting(self):
+    def test_explicit_runtime_comparisons_and_bounded_panic_formatting(self) -> None:
         functions, sizes = self.slot_fixture()
         runtime = (
             "_RNvXsS_NtCsfF7AG8So2wt_16dashboard_config5modelNtB5_14DisplayOptions"
@@ -497,7 +513,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "config panic formatting frame"):
             configuration_frames(functions, sizes)
 
-    def test_aliases_deduplicate_but_unknown_or_ambiguous_paths_fail(self):
+    def test_aliases_deduplicate_but_unknown_or_ambiguous_paths_fail(self) -> None:
         functions, sizes = self.slot_fixture()
         name = next(n for n in functions if "12load_at_boot" in n)
         functions[name + ".alias"] = functions[name]
@@ -511,7 +527,7 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed config stack helpers"):
             configuration_frames(functions, sizes)
 
-    def test_outlined_future_body_cannot_hide_behind_small_poll_shim(self):
+    def test_outlined_future_body_cannot_hide_behind_small_poll_shim(self) -> None:
         functions = {
             "TaskStorage_dashboard_task_4poll": (101, 1, 0),
             "dashboard_task_body": (201, 1, 0),
@@ -524,10 +540,10 @@ class StackBudget(unittest.TestCase):
         with self.assertRaises(AssertionError):
             task_frames({}, {}, "dashboard_task")
 
-    def test_metadata_decodes_thumb_addresses_and_variable_sizes(self):
+    def test_metadata_decodes_thumb_addresses_and_variable_sizes(self) -> None:
         self.assertEqual(frames(struct.pack("<I", 0x10000101) + b"\xac\x02"), {0x10000100: 300})
 
-    def test_metadata_rejects_truncation_overflow_and_conflicting_duplicates(self):
+    def test_metadata_rejects_truncation_overflow_and_conflicting_duplicates(self) -> None:
         for data in (
             b"",
             b"abc",
@@ -540,16 +556,16 @@ class StackBudget(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(AssertionError):
                 frames(data)
 
-    def test_original_overflow_and_incomplete_helper_fix_are_rejected(self):
+    def test_original_overflow_and_incomplete_helper_fix_are_rejected(self) -> None:
         for poll, constructor in ((38576, 0), (22528, 31808), (5400, 31520)):
             with self.subTest(poll=poll), self.assertRaises(AssertionError):
                 budgets(50344, poll + constructor + 1024, 10056, 30000, 68648)
 
-    def test_boot_nested_decode_regression_is_rejected(self):
+    def test_boot_nested_decode_regression_is_rejected(self) -> None:
         with self.assertRaises(AssertionError):
             budgets(87124, 25456, 10056, 30000, 68648)
 
-    def test_final_candidate_and_exact_reserve_boundaries(self):
+    def test_final_candidate_and_exact_reserve_boundaries(self) -> None:
         budgets(50344, 25456, 10056, 30000, 68648)
         budgets(65536 - 8192, 32768 - 4096, 32768 - 4096, 65536 - 8192, 65536)
         for boot, construct, runtime, dashboard, headroom in (
@@ -563,7 +579,9 @@ class StackBudget(unittest.TestCase):
 
 
 class PublicationFrames(unittest.TestCase):
-    def test_outlined_publication_counts_nested_snapshot_helpers_and_requires_metadata(self):
+    def test_outlined_publication_counts_nested_snapshot_helpers_and_requires_metadata(
+        self,
+    ) -> None:
         from check_stack_budget import publication_frames
 
         functions = {
@@ -590,7 +608,7 @@ class PublicationFrames(unittest.TestCase):
 
 
 class OwnerPublicationFrames(unittest.TestCase):
-    def test_fixed_variants_and_measured_source_origin_children_are_counted(self):
+    def test_fixed_variants_and_measured_source_origin_children_are_counted(self) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {
@@ -616,7 +634,7 @@ class OwnerPublicationFrames(unittest.TestCase):
             increased[address] += 32
             self.assertEqual(constructor_frames(functions, increased), 40364)
 
-    def test_borrowed_initialization_and_constant_base_frames_require_metadata(self):
+    def test_borrowed_initialization_and_constant_base_frames_require_metadata(self) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {
@@ -640,7 +658,9 @@ class OwnerPublicationFrames(unittest.TestCase):
             ):
                 constructor_frames(functions, reduced)
 
-    def test_demo_and_unavailable_constructor_boundary_is_counted_and_requires_metadata(self):
+    def test_demo_and_unavailable_constructor_boundary_is_counted_and_requires_metadata(
+        self,
+    ) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {"pico2_tasks_acquisition_configured_model": (0x101, 4, 0)}
@@ -648,7 +668,7 @@ class OwnerPublicationFrames(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "missing constructor frame metadata"):
             constructor_frames(functions, {})
 
-    def test_prepared_session_assembly_is_counted_and_requires_metadata(self):
+    def test_prepared_session_assembly_is_counted_and_requires_metadata(self) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {"dashboard_core_diagnostics_session_PreparedSession_8assemble": (0x101, 4, 0)}
@@ -656,7 +676,7 @@ class OwnerPublicationFrames(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "missing constructor frame metadata"):
             constructor_frames(functions, {})
 
-    def test_whole_vehicle_preparation_and_assembly_are_counted(self):
+    def test_whole_vehicle_preparation_and_assembly_are_counted(self) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {
@@ -670,7 +690,7 @@ class OwnerPublicationFrames(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "missing constructor frame metadata"):
                 constructor_frames(functions, reduced)
 
-    def fixture(self):
+    def fixture(self) -> StackFixture:
         functions = {
             "pico2_tasks_acquisition_publish_snapshot": (0x101, 4, 0),
             "dashboard_core_AcquisitionOwner_8snapshot": (0x201, 4, 0),
@@ -680,7 +700,7 @@ class OwnerPublicationFrames(unittest.TestCase):
         }
         return functions, {0x100: 100, 0x200: 8, 0x300: 4000, 0x400: 168, 0x500: 16}
 
-    def test_owner_and_storage_nested_frames_include_forwarders_once(self):
+    def test_owner_and_storage_nested_frames_include_forwarders_once(self) -> None:
         from check_stack_budget import publication_frames
 
         functions, sizes = self.fixture()
@@ -689,7 +709,7 @@ class OwnerPublicationFrames(unittest.TestCase):
         ]
         self.assertEqual(publication_frames(functions, sizes), 4292)
 
-    def test_owner_storage_boundaries_and_every_frame_fail_closed(self):
+    def test_owner_storage_boundaries_and_every_frame_fail_closed(self) -> None:
         from check_stack_budget import publication_frames
 
         functions, sizes = self.fixture()
@@ -709,15 +729,15 @@ class OwnerPublicationFrames(unittest.TestCase):
             ):
                 publication_frames(duplicate, sizes)
         for address in sizes:
-            without = dict(sizes)
-            del without[address]
+            without_frame = dict(sizes)
+            del without_frame[address]
             with (
                 self.subTest(metadata=address),
                 self.assertRaisesRegex(AssertionError, "publication frame metadata"),
             ):
-                publication_frames(functions, without)
+                publication_frames(functions, without_frame)
 
-    def test_emitted_owner_storage_policy_constructors_all_require_metadata(self):
+    def test_emitted_owner_storage_policy_constructors_all_require_metadata(self) -> None:
         from check_stack_budget import constructor_frames
 
         functions = {

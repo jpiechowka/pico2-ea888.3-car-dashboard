@@ -5,24 +5,172 @@ source effects, protection, original returns and active ordinary control are
 separate checked obligations. Public descriptions cannot initialize state.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from config_abstract import SequenceInterface, Span
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypeAlias, TypedDict, cast
+from config_build_source import SourceBinding, SourceContext
+from config_platform import ExecutionRecord
+from config_tail_parent_effects import ParentEnvelopes
+from config_tail_source import (
+    ControlsSource,
+    ControlsEffects,
+    SuffixSource,
+    SuffixEffects,
+    SuffixNormal,
+)
+
+if TYPE_CHECKING:
+    from config_decoded_sources import (
+        _SourcesState,
+        _SourcesExit,
+        _SourcePhasesState,
+        SourcesDescription,
+        PhaseGraph,
+        ErrorSummaryRow,
+    )
+    from config_tail_control import _TailStructuralControl, _TailActiveControl
+    from config_tail_uses import _TailAccessBridge, _TailUse
+    from config_decoded_widgets import _WidgetErrorOrigin
+
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_abstract import DecoderInterface, SequenceInterface, Span
 from config_decode_effects import _object
 from config_headers import VISITOR
-from config_regions import Storage, borrow, require_disjoint
+from config_regions import Storage, View, borrow, require_disjoint
 from config_structural import _raw_composition_inputs
-from config_tail_children import tail_coverage
+from config_tail_children import is_parent_literals, tail_coverage
 from config_tail_parent_contracts import GRAMMARS
 from config_widget_children import _name
 from validation import require
 
 
+class TailEntryData(TypedDict):
+    exit_index: int
+    sequence: SequenceInterface
+    frontier: int
+    protected: tuple[Storage, ...]
+    r4_pointer: tuple[int, int, int]
+    second_screen_pointer: tuple[View, int]
+    retired_saved_count: tuple[View, int, int, int]
+    old_controls: View
+    full_config: Storage
+    Controls_sequence: None
+    completed_ordinary_group_issued: bool
+
+
+class TailPhaseData(TypedDict):
+    entry: TailEntryData
+    controls: ControlsSource
+    control_effects: ControlsEffects
+    suffix: SuffixSource | None
+    suffix_effects: SuffixEffects | None
+    parent_envelopes: ParentEnvelopes
+
+
+class TailPhaseGraphData(TypedDict):
+    parents: tuple[BodyRecord, ...]
+    children: Mapping[tuple[int, str], BodyRecord]
+    phases: tuple[TailPhaseData, ...]
+    predecessor_description: SourcesDescription
+    payload_sha256: str
+
+
+class VisitorReturn(TypedDict):
+    frontier: int
+    return_SP: int
+    original_saved_PC: bool
+    normal_returns: int
+    error_returns: int
+    original_saved_bytes: int
+    retired_Visitor_bytes: int
+    Visitor_local_borrows_retired: bool
+    loader_successor_executed: bool
+
+
+class DeclaredFrontier(TypedDict):
+    frontier: int
+    reached: bool
+
+
+class TailCompletionSites(TypedDict):
+    Controls: int
+    history: int
+    reduced_motion: int
+    LED: int
+
+
+class ConditionalTailAccesses(TypedDict):
+    families: tuple[str, ...]
+    descriptors_are_reached_uses: bool
+    actual_inherited16_and_complete_policy_pending: bool
+
+
+class GuardedAccesses(TypedDict):
+    role_counts: tuple[tuple[str, int], ...]
+    completed_prefix_issued: bool
+    runtime_observation: bool
+
+
+class TailStructuralDescription(TypedDict):
+    selected_instructions: int
+    outside_shared_context_count: int
+    separate_restore_context_count: int
+    pending_contexts_confer_state: bool
+    unentered: bool
+
+
+class TailDescription(TypedDict):
+    phase: str
+    mode: str
+    successes: tuple[tuple[int, int, int, int, int], ...]
+    success_columns: tuple[str, ...]
+    error_summary: tuple[ErrorSummaryRow, ...]
+    error_occurrences: int
+    error_columns: tuple[str, ...]
+    diagnostic_error_envelopes_are_not_paths: bool
+    exact_error_relations_retained_privately: bool
+    Visitor_return: VisitorReturn | None
+    declared_return_frontier: DeclaredFrontier
+    physical_completion_sites: TailCompletionSites
+    conditional_Tail_accesses: ConditionalTailAccesses
+    source_guarded_accesses: GuardedAccesses
+    structural_control: TailStructuralDescription
+    ordinary_domain: str
+    execution_scope: ExecutionRecord
+    source_context: SourceBinding
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exceptional_resume_established: bool
+    exception_absence_established: bool
+    all_observers_compatible: bool
+    exception_safe_completion: bool
+    unconditional_owner: bool
+    hardware_qualified: bool
+    initial_facts_reinitialized: bool
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    complete_policy_and_resource_producer_pending: bool
+    pending: tuple[str, ...]
+
+
+# Diagnostic relations are retained and compared, never executed or decoded.
+ErrorTransport: TypeAlias = tuple[tuple[int, ...], tuple[object, ...]]
+
+
 _WINDOWS = (170, 5630, 5922, 6018, 6412, 6450, 7000, 56)
 
 
-def _parents(objects, rows, V, B):
+def _parents(
+    objects: DiagnosticObjects, rows: InstructionMap, V: int, B: int
+) -> tuple[BodyRecord, ...]:
     """All current selected Tail windows, with the same private Config pool."""
     bundle = tail_coverage(objects, _name(objects, VISITOR, V), rows)
+    if not is_parent_literals(bundle):
+        raise AssertionError("Tail parent literals belong to another current source parent")
     require(
         bundle["kind"] == "tail_parent_literal_windows_only"
         and bundle["role"] == VISITOR
@@ -58,27 +206,33 @@ def _parents(objects, rows, V, B):
 
 @dataclass(frozen=True)
 class _TailEntry:
-    predecessor: object
-    exit: object
+    predecessor: _SourcesState
+    exit: _SourcesExit
     sequence: SequenceInterface
     frontier: int
-    protected: tuple
-    r4_pointer: tuple
-    second_screen_pointer: tuple
-    retired_saved_count: tuple
-    old_controls: object
+    protected: tuple[Storage, ...]
+    r4_pointer: tuple[int, int, int]
+    second_screen_pointer: tuple[View, int]
+    retired_saved_count: tuple[View, int, int, int]
+    old_controls: View
     full_config: Storage
-    Controls_sequence: object = None
+    Controls_sequence: None = None
     completed_ordinary_group_issued: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             self.Controls_sequence is None and self.completed_ordinary_group_issued is False,
             "Tail entry cannot fabricate a local header or ordinary completion",
         )
 
 
-def _incoming_r4(objects, rows, phases, frame, V):
+def _incoming_r4(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    phases: _SourcePhasesState,
+    frame: Storage,
+    V: int,
+) -> tuple[int, int, int]:
     """Actual producer and checked returned value, not ABI preservation alone."""
     from config_finite_returns import _high_definitions
     from config_regions import _control
@@ -118,7 +272,9 @@ def _incoming_r4(objects, rows, phases, frame, V):
     return (frame.start + 1064, V + 5538, V + 5578)
 
 
-def _tail_entries(objects, rows, state):
+def _tail_entries(
+    objects: DiagnosticObjects, rows: InstructionMap, state: _SourcesState
+) -> tuple[_TailEntry, ...]:
     """Fresh actual private predecessor; no public receipt or equal exit clone."""
     from config_decoded_sources import _SourcesState
     from config_tail_effects import _guards
@@ -193,7 +349,8 @@ def _tail_entries(objects, rows, state):
         color = normal["colors"]
         invocation = color["invocation"]
         require(
-            any(invocation is v for v in phase.remaining["Colors_invocations"])
+            phase.remaining is not None
+            and any(invocation is v for v in phase.remaining["Colors_invocations"])
             and invocation["site"] == V + 5578
             and color["source"] is invocation["child"]
             and any(
@@ -261,15 +418,15 @@ def _tail_entries(objects, rows, state):
 @dataclass(frozen=True)
 class _TailPhase:
     entry: _TailEntry
-    controls: dict
-    control_effects: dict
-    suffix: object
-    suffix_effects: object
-    parent_envelopes: dict
+    controls: ControlsSource
+    control_effects: ControlsEffects
+    suffix: SuffixSource | None
+    suffix_effects: SuffixEffects | None
+    parent_envelopes: ParentEnvelopes
     completed_ordinary_group_issued: bool = False
 
 
-def _entry_data(entry, predecessor):
+def _entry_data(entry: _TailEntry, predecessor: _SourcesState) -> TailEntryData:
     require(
         type(entry) is _TailEntry
         and entry.predecessor is predecessor
@@ -293,8 +450,14 @@ def _entry_data(entry, predecessor):
 
 
 def _phase_data(
-    predecessor, entries, parents, children, phases, predecessor_description, payload_sha256
-):
+    predecessor: _SourcesState,
+    entries: tuple[_TailEntry, ...],
+    parents: tuple[BodyRecord, ...],
+    children: Mapping[tuple[int, str], BodyRecord],
+    phases: tuple[_TailPhase, ...],
+    predecessor_description: SourcesDescription,
+    payload_sha256: str,
+) -> TailPhaseGraphData:
     require(
         len(entries) == len(phases)
         and all(
@@ -302,7 +465,7 @@ def _phase_data(
         ),
         "Tail private phase changed its selected entry association",
     )
-    data = tuple(
+    data: tuple[TailPhaseData, ...] = tuple(
         dict(
             entry=_entry_data(p.entry, predecessor),
             controls=p.controls,
@@ -323,8 +486,14 @@ def _phase_data(
 
 
 def _phase_checkpoint(
-    predecessor, entries, parents, children, phases, predecessor_description, payload_sha256
-):
+    predecessor: _SourcesState,
+    entries: tuple[_TailEntry, ...],
+    parents: tuple[BodyRecord, ...],
+    children: Mapping[tuple[int, str], BodyRecord],
+    phases: tuple[_TailPhase, ...],
+    predecessor_description: SourcesDescription,
+    payload_sha256: str,
+) -> PhaseGraph:
     from config_decoded_sources import _phase_graph
 
     return _phase_graph(
@@ -336,20 +505,20 @@ def _phase_checkpoint(
 
 @dataclass(frozen=True)
 class _TailPhasesState:
-    predecessor: object
-    objects: object
-    rows: object
-    source_context: object
-    parents: tuple
-    children: dict
-    entries: tuple
-    phases: tuple
-    predecessor_description: dict
+    predecessor: _SourcesState
+    objects: DiagnosticObjects
+    rows: InstructionMap
+    source_context: SourceContext
+    parents: tuple[BodyRecord, ...]
+    children: Mapping[tuple[int, str], BodyRecord]
+    entries: tuple[_TailEntry, ...]
+    phases: tuple[_TailPhase, ...]
+    predecessor_description: SourcesDescription
     payload_sha256: str
-    checkpoint: object
+    checkpoint: PhaseGraph
     completed_ordinary_group_issued: bool = False
 
-    def current(self):
+    def current(self) -> _TailPhasesState:
         from config_tail_children import tail_children
         from config_structural import _readonly_hash
 
@@ -400,7 +569,9 @@ class _TailPhasesState:
         return self
 
 
-def _first_boot_tail_phases(objects, rows, source_context):
+def _first_boot_tail_phases(
+    objects: DiagnosticObjects, rows: InstructionMap, source_context: object
+) -> _TailPhasesState:
     """Derive the actual private Sources chain once; no ordinary return yet."""
     from config_decoded_sources import _first_boot_decoded_sources_state
     from config_tail_source import (
@@ -424,19 +595,20 @@ def _first_boot_tail_phases(objects, rows, source_context):
     parents = _parents(objects, rows, V, owner.start)
     children = tail_children(objects, rows, parents)
     entries = _tail_entries(objects, rows, predecessor)
-    phases = []
+    phase_list = []
     for entry in entries:
         envelopes = _parent_envelopes(objects, rows, parents, entry, owner)
         controls = _controls_source(
             objects, rows, parents, entry.sequence, frame, entry.protected + (entry.full_config,)
         )
         effect = _controls_effects(objects, rows, parents, controls, owner, frame, entry.protected)
-        suffix = suffix_effects = None
+        suffix: SuffixSource | None = None
+        suffix_effects: SuffixEffects | None = None
         if effect["complete_after"] is not None:
             suffix = _history_led_source(objects, rows, parents, effect, frame, entry.protected)
             suffix_effects = _suffix_effects(objects, rows, parents, suffix, frame, entry.protected)
-        phases.append(_TailPhase(entry, controls, effect, suffix, suffix_effects, envelopes))
-    phases = tuple(phases)
+        phase_list.append(_TailPhase(entry, controls, effect, suffix, suffix_effects, envelopes))
+    phases = tuple(phase_list)
     payload = c.headers["visitor"]["sequence_state"].decoder.payload
     digest = _readonly_hash(objects, payload.start, payload.extent)
     checkpoint = _phase_checkpoint(
@@ -460,12 +632,14 @@ def _first_boot_tail_phases(objects, rows, source_context):
 @dataclass(frozen=True)
 class _TailExit:
     phase_index: int
-    decoder: object
-    source_normal: dict
-    original_return: tuple
+    decoder: DecoderInterface
+    source_normal: SuffixNormal
+    original_return: tuple[int, ...]
 
 
-def _tail_exits(state, bridge, uses):
+def _tail_exits(
+    state: _TailPhasesState, bridge: _TailAccessBridge, uses: tuple[_TailUse, ...]
+) -> tuple[_TailExit, ...]:
     """Original normal Visitor returns after the closed reached-use batch.
 
     The outgoing carrier is the live caller D, never a Visitor-local Q or
@@ -484,6 +658,15 @@ def _tail_exits(state, bridge, uses):
         and len(bridge.control.guards) == len(state.phases),
         "Tail exit lacks its actual current source/control/access collection",
     )
+    from config_tail_uses import (
+        is_screen_output_source,
+        is_screen_scratch_source,
+        is_screen_config_source,
+        is_led_output_source,
+        is_led_read_source,
+        is_led_config_source,
+    )
+
     c = state.predecessor.phases.widgets.views.context
     V = c.headers["visitor"]["proof"]["function"]
     frame = c.headers["visitor_frame"]
@@ -492,6 +675,12 @@ def _tail_exits(state, bridge, uses):
         if phase.suffix is None or phase.suffix["normal"] is None:
             continue
         normal = phase.suffix["normal"]
+        if (
+            phase.suffix_effects is None
+            or phase.controls["normal"] is None
+            or phase.suffix["LED"] is None
+        ):
+            raise AssertionError("Tail normal return lacks its completed control/suffix effects")
         decoder = normal["after"].decoder
         require(
             guard["entry_index"] == i
@@ -517,6 +706,7 @@ def _tail_exits(state, bridge, uses):
             require(
                 sum(
                     u.role == "Screen_output_words"
+                    and is_screen_output_source(u.source)
                     and u.source["invocation"] is screen["invocation"]
                     for u in local
                 )
@@ -526,14 +716,22 @@ def _tail_exits(state, bridge, uses):
         first = phase.controls["normal"]["screens"][0]
         for role in ("first_Screen_scratch_words", "first_Config_Screen_words"):
             require(
-                sum(u.role == role and u.source["Screen"] is first for u in local) == 1,
+                sum(
+                    u.role == role
+                    and (is_screen_scratch_source(u.source) or is_screen_config_source(u.source))
+                    and u.source["Screen"] is first
+                    for u in local
+                )
+                == 1,
                 "Tail original return omits its first-only Screen words",
             )
         for pattern in phase.suffix["LED"]["patterns"]:
             for role in ("result_words", "pattern_words"):
                 require(
                     sum(
-                        u.role == role and u.source["invocation"] is pattern["invocation"]
+                        u.role == role
+                        and (is_led_output_source(u.source) or is_led_read_source(u.source))
+                        and u.source["invocation"] is pattern["invocation"]
                         for u in local
                     )
                     == 1,
@@ -542,6 +740,7 @@ def _tail_exits(state, bridge, uses):
         require(
             sum(
                 u.role == "normal_config_words"
+                and is_led_config_source(u.source)
                 and u.source["LED"] is phase.suffix["LED"]["normal"]
                 and u.continuation[-1] == V + 7112
                 for u in local
@@ -565,15 +764,20 @@ def _tail_exits(state, bridge, uses):
 class _VisitorErrorReturn:
     group: str
     origin: object
-    decoder: object
+    decoder: DecoderInterface
     error: int
     carrier: int
-    transport: tuple
-    original_return: tuple
+    transport: ErrorTransport
+    original_return: tuple[int, ...]
     return_SP: int
 
 
-def _error_parent_path(state, raw, segments, island):
+def _error_parent_path(
+    state: _TailPhasesState,
+    raw: _TailStructuralControl,
+    segments: tuple[tuple[int, int], ...],
+    island: int,
+) -> tuple[int, ...]:
     """Authored finite carrier path, including each current helper return.
 
     Source-derived predicates choose these paths; this checks their current
@@ -586,7 +790,7 @@ def _error_parent_path(state, raw, segments, island):
     V = c.headers["visitor"]["proof"]["function"]
     frame = c.headers["visitor_frame"]
     rows = raw.selection.selected
-    path = []
+    path: list[int] = []
     for first, last in segments:
         require(
             V + first in rows and V + last in rows,
@@ -630,14 +834,17 @@ def _error_parent_path(state, raw, segments, island):
             "earlier error selects another authored carrier island",
         )
         loader = rows.get(V + island)
-        require(loader is not None, "earlier error lost its carrier loader")
+        if loader is None:
+            raise AssertionError("earlier error lost its carrier loader")
         suffix[island] = (island, island + len(loader.raw), 4340, 4342, 4344, 56)
     path.extend(V + off for off in suffix[island])
     require(len(path) == len(set(path)), "earlier error carrier path repeats a parent instruction")
     for at, following in zip(path, path[1:]):
         row = rows.get(at)
+        if row is None:
+            raise AssertionError("earlier error carrier has stale current bytes")
         require(
-            row is not None and state.objects.read_only(at, len(row.raw)) == row.raw,
+            state.objects.read_only(at, len(row.raw)) == row.raw,
             "earlier error carrier has stale current bytes",
         )
         family, conditional = _control(row)
@@ -671,7 +878,9 @@ def _error_parent_path(state, raw, segments, island):
     return tuple(path)
 
 
-def _widget_error_transport(state, raw, origin):
+def _widget_error_transport(
+    state: _TailPhasesState, raw: _TailStructuralControl, origin: _WidgetErrorOrigin
+) -> ErrorTransport:
     from config_decoded_widgets import _WidgetCallOrigin, _checked_widget_origin
 
     c = raw.selection.context
@@ -823,9 +1032,14 @@ def _widget_error_transport(state, raw, origin):
                         None,
                     )
                 )
+                if (
+                    first is None
+                    or not isinstance(first.before, SequenceInterface)
+                    or not isinstance(call.before, SequenceInterface)
+                ):
+                    raise AssertionError("Fixed float error lost its actual sequence predecessor")
                 require(
-                    first is not None
-                    and any(
+                    any(
                         v["kind"] == "success" and v["state"] is first.before.decoder
                         for v in selector.choices
                     )
@@ -838,7 +1052,17 @@ def _widget_error_transport(state, raw, origin):
                 state, raw, ((site + 4, site + (10 if band else 8)),), 4244 if band else 4218
             ), ("f32 Result tag2; initialized error byte", 1444 if band else 1068)
         if site == 2544:
-            option = call.choices[origin.choice_index]
+            from config_widget_children import WarningColorsOutcome
+
+            if origin.choice_index is None or not isinstance(call.before, SequenceInterface):
+                raise AssertionError("Widget WarningColors error lost its actual source sequence")
+            candidate = call.choices[origin.choice_index]
+            if "nested_origin" not in candidate:
+                raise AssertionError(
+                    "Widget WarningColors error lost its actual nested Color occurrence"
+                )
+            # Only WarningColors outcomes from the checked call carry this field.
+            option = cast(WarningColorsOutcome, candidate)
             require(
                 code in (4, 5)
                 and "nested_origin" in option
@@ -891,10 +1115,14 @@ def _widget_error_transport(state, raw, origin):
             ((site + 4, site + (20 if site in (574, 2736, 3162, 3196) else 22)),),
             packed[site],
         ), ("packed u16/Color tag2; EQ skips ANDNE; extracted error16", (code << 16) | 2)
-    require(
-        type(call) is tuple and call and type(call[0]) is int,
-        "Widget conditional error lost its actual source operation",
-    )
+    if (
+        type(call) is not tuple
+        or not isinstance(call, tuple)
+        or not call
+        or type(call[0]) is not int
+        or not isinstance(origin.condition, str)
+    ):
+        raise AssertionError("Widget conditional error lost its actual source operation")
     site = call[0] - V
     if site in (852, 1598, 2828):
         require(
@@ -956,7 +1184,9 @@ def _widget_error_transport(state, raw, origin):
     )
 
 
-def _earlier_error_returns(state, raw):
+def _earlier_error_returns(
+    state: _TailPhasesState, raw: _TailStructuralControl
+) -> tuple[_VisitorErrorReturn, ...]:
     """Join actual retained earlier origins within a fresh enclosing boundary.
 
     No diagnostic tuple or independent caller-supplied owner can enter. The
@@ -996,7 +1226,16 @@ def _earlier_error_returns(state, raw):
     actual = c.headers["visitor"]["sequence_state"].decoder
     out = []
 
-    def emit(group, origin, decoder, error, carrier, path, saved, relation):
+    def emit(
+        group: str,
+        origin: object,
+        decoder: DecoderInterface,
+        error: int,
+        carrier: int,
+        path: tuple[int, ...],
+        saved: Storage,
+        relation: tuple[object, ...],
+    ) -> None:
         require(
             type(error) is int
             and error in (4, 5, 6, 8, 14)
@@ -1017,6 +1256,8 @@ def _earlier_error_returns(state, raw):
 
     for error in c.error_frontiers:
         code = error.outcome["error"]
+        if code is None:
+            raise AssertionError("prefix error lost its actual error code")
         require(
             error.packed_r0 == (code << 8) | 1, "prefix error lost its packed actual child result"
         )
@@ -1037,14 +1278,21 @@ def _earlier_error_returns(state, raw):
                 error.original_child_return,
             ),
         )
-    for error in widgets.views.error_frontiers:
-        cause = error.origin
-        code = error.summary["error"]
+    abi: tuple[object, ...]
+    for views_error in widgets.views.error_frontiers:
+        if not isinstance(views_error.origin, tuple) or not views_error.origin:
+            raise AssertionError("Views error lost its actual source operation")
+        cause = cast(tuple[object, ...], views_error.origin)
+        code = views_error.summary["error"]
         if type(cause[0]) is int:
             site = cause[0] - V
-            choice = cause[3]
+            if len(cause) < 4 or not isinstance(cause[3], Mapping):
+                raise AssertionError("Views error lost its actual child outcome")
+            choice_state: object = cause[3].get("state")
+            if not isinstance(choice_state, (DecoderInterface, SequenceInterface)):
+                raise AssertionError("Views error lost its actual child decoder")
             require(
-                _widget_decoder(choice["state"]) is error.after,
+                _widget_decoder(choice_state) is views_error.after,
                 "Views error changed its exact child decoder",
             )
             require(site in (82, 130, 214, 246), "Views error has another current source call")
@@ -1061,6 +1309,8 @@ def _earlier_error_returns(state, raw):
                 abi = ("Result8 tag1; initialized error1065", code)
         else:
             kind = cause[0]
+            if not isinstance(kind, str):
+                raise AssertionError("Views conditional error has another actual source guard")
             table = {
                 "preclear": (((154, 168),), 170, 14),
                 "short string": (((260, 264),), 4188, 4),
@@ -1072,18 +1322,35 @@ def _earlier_error_returns(state, raw):
             segments, island, wanted = table[kind]
             require(code == wanted, "Views conditional carrier changed")
             path = _error_parent_path(state, raw, segments, island)
-            abi = (kind, cause, error.summary["guard"])
-        emit("Views", error, error.after, code, code, path, error.saved, abi)
-    for path in widgets.error_frontiers:
-        origin = path.summary["_origin"]
+            abi = (kind, cause, views_error.summary["guard"])
+        emit("Views", views_error, views_error.after, code, code, path, views_error.saved, abi)
+    for widget_path in widgets.error_frontiers:
+        origin = widget_path.summary["_origin"]
         transport, abi = _widget_error_transport(state, raw, origin)
         emit(
-            "Widgets", path, origin.after, origin.error, origin.error, transport, origin.saved, abi
+            "Widgets",
+            widget_path,
+            origin.after,
+            origin.error,
+            origin.error,
+            transport,
+            origin.saved,
+            abi,
         )
     return tuple(out)
 
 
-def _checked_error_exit(state, raw, group, origin, decoder, error, carrier, transport, protected):
+def _checked_error_exit(
+    state: _TailPhasesState,
+    raw: _TailStructuralControl,
+    group: str,
+    origin: object,
+    decoder: DecoderInterface,
+    error: int,
+    carrier: int,
+    transport: ErrorTransport,
+    protected: tuple[Storage, ...],
+) -> _VisitorErrorReturn:
     c = state.predecessor.phases.widgets.views.context
     frame = c.headers["visitor_frame"]
     V = c.headers["visitor"]["proof"]["function"]
@@ -1127,7 +1394,9 @@ def _checked_error_exit(state, raw, group, origin, decoder, error, carrier, tran
     )
 
 
-def _source_error_returns(state, raw):
+def _source_error_returns(
+    state: _TailPhasesState, raw: _TailStructuralControl
+) -> tuple[_VisitorErrorReturn, ...]:
     """Actual eight-call errors and checked suffix carriers, occurrence by occurrence."""
     from config_tail_control import _structural_data
     from config_source_control import _SourceActiveControl
@@ -1148,6 +1417,8 @@ def _source_error_returns(state, raw):
         and len(previous.control.source_guards) == len(phases.phases),
         "Source error return lost its actual guarded predecessor",
     )
+    if previous.control is None:
+        raise AssertionError("Source error return lost its actual guarded predecessor")
     c = phases.widgets.views.context
     V = c.headers["visitor"]["proof"]["function"]
     frame = c.headers["visitor_frame"]
@@ -1171,7 +1442,16 @@ def _source_error_returns(state, raw):
             and len(guard["invocations"]) == len(phase.array["invocations"]),
             "Source error return changes its actual phase/call association",
         )
-        for error in phase.array["errors"]:
+        for candidate_error in phase.array["errors"]:
+            from config_decoded_sources import ArraySourceError
+
+            if "origin" not in candidate_error:
+                raise AssertionError("Source error return lost its actual failed primitive")
+            # A missing-count alternative has no origin; current source errors do.
+            error = cast(ArraySourceError, candidate_error)
+            code = error["error"]
+            if code is None:
+                raise AssertionError("Source error return lost its actual error code")
             index = error["index"]
             require(
                 type(index) is int and 0 <= index < len(phase.array["invocations"]),
@@ -1224,7 +1504,7 @@ def _source_error_returns(state, raw):
                 decoder.cursor == error["cursor"],
                 "Source error return changed its actual failed-child cursor",
             )
-            transport = (
+            transport: ErrorTransport = (
                 path,
                 (
                     "tag65535; tag-helper EQ; captured STR preserves flags; BNE not taken",
@@ -1241,8 +1521,8 @@ def _source_error_returns(state, raw):
                     "Sources",
                     error,
                     decoder,
-                    error["error"],
-                    error["error"],
+                    code,
+                    code,
                     transport,
                     phase.entry.protected,
                 )
@@ -1255,20 +1535,24 @@ def _source_error_returns(state, raw):
         )
         if suffix is None:
             continue
+        if lineage is None:
+            raise AssertionError("Source suffix error lost its publication/entry guard")
         require(
             len(lineage["error_carriers"]) == len(suffix["errors"]),
             "Source suffix error occurrence collection changed",
         )
-        for error, edge in zip(suffix["errors"], lineage["error_carriers"]):
-            option = error["child_outcome"]
-            code = error["error"]
+        for suffix_error, edge in zip(suffix["errors"], lineage["error_carriers"]):
+            option = suffix_error["child_outcome"]
+            code = suffix_error["error"]
+            if code is None:
+                raise AssertionError("Source suffix error lost its actual error code")
             require(
-                edge["error"] is error
+                edge["error"] is suffix_error
                 and edge["outcome"] is option
                 and edge["stopped_before"] == V + 56
                 and edge["whole_register_narrowed"] is False
                 and edge["path"]
-                and error["cursor"] == option["cursor"],
+                and suffix_error["cursor"] == option["cursor"],
                 "Source suffix error changed its actual origin/whole carrier",
             )
             packed = edge["carrier"] == "packed_0x02000000_or_error_u8"
@@ -1286,7 +1570,7 @@ def _source_error_returns(state, raw):
                     state,
                     raw,
                     "suffix",
-                    error,
+                    suffix_error,
                     _widget_decoder(option["state"]),
                     code,
                     carrier,
@@ -1297,7 +1581,9 @@ def _source_error_returns(state, raw):
     return tuple(out)
 
 
-def _tail_error_returns(state, bridge):
+def _tail_error_returns(
+    state: _TailPhasesState, bridge: _TailAccessBridge
+) -> tuple[_VisitorErrorReturn, ...]:
     """Consume already checked actual Tail caller paths after the fresh batch."""
     from config_tail_uses import _TailAccessBridge
 
@@ -1317,6 +1603,10 @@ def _tail_error_returns(state, bridge):
             "Tail error occurrence collection changed",
         )
         for error, edge in zip(errors, guard["lineage"]["errors"]):
+            code = error["error"]
+            carrier = edge["return_carrier"]
+            if code is None or carrier is None:
+                raise AssertionError("Tail error return lost its actual error code")
             require(
                 edge["source_error"] is error
                 and edge["call"] is error["origin"]
@@ -1333,8 +1623,8 @@ def _tail_error_returns(state, bridge):
                     "Tail",
                     error,
                     error["after"].decoder,
-                    error["error"],
-                    edge["return_carrier"],
+                    code,
+                    carrier,
                     (
                         edge["path"],
                         (
@@ -1349,7 +1639,9 @@ def _tail_error_returns(state, bridge):
     return tuple(out)
 
 
-def _tail_error_summary(prior, control):
+def _tail_error_summary(
+    prior: SourcesDescription, control: _TailActiveControl | None
+) -> tuple[tuple[ErrorSummaryRow, ...], int]:
     """Preserve every prior and new diagnostic occurrence exactly once."""
     from config_decoded_sources import _error_summary
 
@@ -1374,7 +1666,13 @@ def _tail_error_summary(prior, control):
     return tuple(existing) + rows, count + total
 
 
-def _tail_description(state, bridge, uses, exits, raw):
+def _tail_description(
+    state: _TailPhasesState,
+    bridge: _TailAccessBridge | None,
+    uses: tuple[_TailUse, ...],
+    exits: tuple[_TailExit, ...],
+    raw: _TailStructuralControl,
+) -> TailDescription:
     from collections import Counter
     from config_platform import _bounded_record
 
@@ -1394,7 +1692,7 @@ def _tail_description(state, bridge, uses, exits, raw):
         )
         for e in exits
     )
-    result = dict(
+    result: TailDescription = dict(
         phase="first_boot_decoded_visitor_return_pending_finalize_canonical_validation_and_loader_routes",
         mode="sizez",
         successes=successes,
@@ -1467,7 +1765,9 @@ def _tail_description(state, bridge, uses, exits, raw):
     return _bounded_record(result)
 
 
-def _visitor_error_returns(state, raw, bridge):
+def _visitor_error_returns(
+    state: _TailPhasesState, raw: _TailStructuralControl, bridge: _TailAccessBridge | None
+) -> tuple[_VisitorErrorReturn, ...]:
     errors = _earlier_error_returns(state, raw) + _source_error_returns(state, raw)
     if bridge is not None:
         errors += _tail_error_returns(state, bridge)
@@ -1483,12 +1783,12 @@ def _visitor_error_returns(state, raw, bridge):
 @dataclass(frozen=True)
 class _TailState:
     phases: _TailPhasesState
-    access_bridge: object
-    exits: tuple
-    error_exits: tuple
-    unentered_structure: object = None
+    access_bridge: _TailAccessBridge | None
+    exits: tuple[_TailExit, ...]
+    error_exits: tuple[_VisitorErrorReturn, ...]
+    unentered_structure: PhaseGraph | None = None
 
-    def current(self):
+    def current(self) -> _TailState:
         from config_tail_uses import _check_tail_uses
         from config_tail_control import _tail_structural, _structural_data
         from config_decoded_sources import _phase_graph
@@ -1498,6 +1798,8 @@ class _TailState:
                 self.unentered_structure is None and self.access_bridge is not None,
                 "Active Tail cannot substitute an unentered structure",
             )
+            if self.access_bridge is None:
+                raise AssertionError("Active Tail lacks its access bridge")
             # The fresh batch already checks control -> phases -> same actual
             # Source predecessor. Do not traverse that boundary a second time.
             uses = _check_tail_uses(self.access_bridge)
@@ -1543,7 +1845,9 @@ class _TailState:
         return self
 
 
-def _first_boot_decoded_visitor_return_state(objects, instructions, source_context):
+def _first_boot_decoded_visitor_return_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[TailDescription, _TailState]:
     """This component checks the admitted named ordinary/callback segment.
 
     Actual private predecessor/source/control/effects and original returns
@@ -1558,8 +1862,8 @@ def _first_boot_decoded_visitor_return_state(objects, instructions, source_conte
     raw_inputs = _raw_composition_inputs(objects, instructions, source_context)
     state = _first_boot_tail_phases(objects, instructions, source_context)
     bridge = None
-    uses = ()
-    exits = ()
+    uses: tuple[_TailUse, ...] = ()
+    exits: tuple[_TailExit, ...] = ()
     unentered = None
     if state.entries:
         if raw_inputs and _fresh_composition_inputs(
@@ -1628,5 +1932,7 @@ def _first_boot_decoded_visitor_return_state(objects, instructions, source_conte
     return description, _TailState(state, bridge, exits, errors, unentered)
 
 
-def first_boot_decoded_visitor_return(objects, instructions, source_context):
+def first_boot_decoded_visitor_return(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> TailDescription:
     return _first_boot_decoded_visitor_return_state(objects, instructions, source_context)[0]

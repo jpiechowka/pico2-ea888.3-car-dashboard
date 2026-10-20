@@ -1,14 +1,13 @@
 //! [ws2812](https://www.sparkfun.com/categories/tags/ws2812)
 
 use embassy_time::Timer;
-use fixed::types::U24F8;
 use smart_leds::{RGB8, RGBW};
 
-use crate::clocks::clk_sys_freq;
 use crate::pio::{
     Common, Config, FifoJoin, Instance, LoadedProgram, PioPin, ShiftConfig, ShiftDirection, StateMachine,
 };
 use crate::{Peri, dma, interrupt};
+use crate::pio_programs::{clock_divider::calculate_pio_clock_divider, wait_tx_idle};
 
 const T1: u8 = 2; // start bit
 const T2: u8 = 5; // data bit
@@ -147,11 +146,7 @@ where
 
         cfg.use_program(&program.prg, &[&out_pin]);
 
-        // Clock config, measured in kHz to avoid overflows
-        let clock_freq = U24F8::from_num(clk_sys_freq() / 1000);
-        let ws2812_freq = U24F8::from_num(800);
-        let bit_freq = ws2812_freq * CYCLES_PER_BIT;
-        cfg.clock_divider = clock_freq / bit_freq;
+        cfg.clock_divider = calculate_pio_clock_divider(800_000 * CYCLES_PER_BIT);
 
         // FIFO config
         cfg.fifo_join = FifoJoin::TxOnly;
@@ -173,6 +168,11 @@ where
 
     /// Write a buffer of [smart_leds::RGB8] to the ws2812 string
     pub async fn write(&mut self, colors: &[RGB8; N]) {
+        if N == 0 {
+            return;
+        }
+        // Also covers a previous write canceled during DMA or its reset delay.
+        reset_interval(&mut self.sm).await;
         // Precompute the word bytes from the colors
         let mut words = [0u32; N];
         for i in 0..N {
@@ -182,7 +182,7 @@ where
         // DMA transfer
         self.sm.tx().dma_push(&mut self.dma, &words, false).await;
 
-        Timer::after_micros(55).await;
+        reset_interval(&mut self.sm).await;
     }
 }
 
@@ -237,11 +237,7 @@ where
 
         cfg.use_program(&program.prg, &[&out_pin]);
 
-        // Clock config, measured in kHz to avoid overflows
-        let clock_freq = U24F8::from_num(clk_sys_freq() / 1000);
-        let ws2812_freq = U24F8::from_num(800);
-        let bit_freq = ws2812_freq * CYCLES_PER_BIT;
-        cfg.clock_divider = clock_freq / bit_freq;
+        cfg.clock_divider = calculate_pio_clock_divider(800_000 * CYCLES_PER_BIT);
 
         // FIFO config
         cfg.fifo_join = FifoJoin::TxOnly;
@@ -263,6 +259,10 @@ where
 
     /// Write a buffer of [smart_leds::RGBW] to the ws2812 string
     pub async fn write(&mut self, colors: &[RGBW<u8>; N]) {
+        if N == 0 {
+            return;
+        }
+        reset_interval(&mut self.sm).await;
         // Precompute the word bytes from the colors
         let mut words = [0u32; N];
         for i in 0..N {
@@ -272,6 +272,13 @@ where
         // DMA transfer
         self.sm.tx().dma_push(&mut self.dma, &words, false).await;
 
-        Timer::after_micros(55).await;
+        reset_interval(&mut self.sm).await;
     }
+}
+
+async fn reset_interval<P: Instance, const S: usize>(sm: &mut StateMachine<'_, P, S>) {
+    // DMA completion leaves up to eight FIFO words plus OSR on the wire.
+    wait_tx_idle(sm).await;
+    // Cover the longer reset interval of recent WS2812B revisions as well.
+    Timer::after_micros(300).await;
 }

@@ -25,7 +25,7 @@ use dashboard_pico2::backlight::Backlight;
 use dashboard_pico2::control_session::ControlSession;
 use dashboard_pico2::controls::ControlGestures;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
-use dashboard_pico2::diagnostic_values::{WorkObservation, memory_kib, rate_text, work_text};
+use dashboard_pico2::diagnostic_values::{FrameWorkObservation, memory_kib, rate_text, work_text};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
@@ -405,8 +405,7 @@ async fn dashboard_task(
     let mut warning_requests = WarningRequests::new();
     let mut last_profile_log = Instant::now();
 
-    let mut frame_cycles_used = None;
-    let mut core0_work = WorkObservation::EMPTY;
+    let mut core0_work = FrameWorkObservation::EMPTY;
 
     let mut flush_in_progress = None;
 
@@ -845,7 +844,7 @@ async fn dashboard_task(
                             ram_total_kb: mem_stats.ram_total / 1024,
                             cpu0_util_percent: core0_work.work(observed_at),
                             cpu1_util_percent: core1.work(observed_at),
-                            frame_cycles: core0_work.work(observed_at).and(frame_cycles_used),
+                            frame_cycles: core0_work.cycles(observed_at),
                             requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
                             configured_cpu_hz: cpu_freq_hz,
                             requested_spi_hz,
@@ -880,7 +879,6 @@ async fn dashboard_task(
         let work_cycles = input_cycles
             .zip(render_cycles)
             .and_then(|(input, render)| input.checked_add(render));
-        frame_cycles_used = work_cycles.and_then(|cycles| u32::try_from(cycles).ok());
 
         lifecycle.ready(token).expect("render buffer is not owned");
         let wait_start = Instant::now();
@@ -1043,12 +1041,12 @@ async fn dashboard_task(
         }
 
         let observed_at = Instant::now();
-        core0_work = WorkObservation {
-            at_us: Some(observed_at.as_micros()),
-            work_tenths: work_cycles
-                .and_then(|cycles| cpu_profiling::calc_util_percent(cycles, (observed_at - frame_start).as_micros())),
-            stack_bytes: None,
-        };
+        core0_work = FrameWorkObservation::new(
+            observed_at.as_micros(),
+            cpu_freq_hz,
+            work_cycles,
+            (observed_at - frame_start).as_micros(),
+        );
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
             #[cfg(feature = "frame-trace")]
@@ -1074,7 +1072,7 @@ async fn dashboard_task(
                 log_info!("r=--us f=--us t=--us {}fps", rate_text(current_fps).as_str());
             }
             log_info!(
-                "C0:{} C1:{} sw={} w={}",
+                "UI:{} Acq:{} sw={} w={}",
                 work_text(core0_work.work(Instant::now().as_micros())).as_str(),
                 work_text(
                     crate::tasks::CORE1_OBSERVATION

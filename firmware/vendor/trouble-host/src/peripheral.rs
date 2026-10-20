@@ -26,8 +26,27 @@ use crate::host::BleHost;
 use crate::{bt_hci_duration, Address, BleHostError, Error, PacketPool};
 
 /// Type which implements the BLE peripheral role.
+///
+/// High-level advertisers own all controller advertising sets. Do not mix raw
+/// advertising HCI commands with these operations; cleanup disables all sets.
 pub struct Peripheral<'d, C, P: PacketPool> {
     host: BleHost<'d, C, P>,
+}
+
+fn validate_data(data: Advertisement<'_>, extended: bool) -> Result<RawAdvertisement<'_>, Error> {
+    if !data.is_valid() {
+        return Err(Error::InvalidValue);
+    }
+    let data: RawAdvertisement = data.into();
+    if !extended && !data.props.legacy_adv() {
+        return Err(Error::ExtendedAdvertisingNotSupported);
+    }
+    // This API supplies one complete HCI data command, not a fragmented upload.
+    let limit = if data.props.legacy_adv() { 31 } else { 251 };
+    if data.adv_data.len() > limit || data.scan_data.len() > limit {
+        return Err(Error::InvalidValue);
+    }
+    Ok(data)
 }
 
 impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
@@ -66,23 +85,17 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     {
         let host = &self.host;
 
-        if !data.is_valid() {
-            return Err(BleHostError::BleHost(Error::InvalidValue));
-        }
+        let data = validate_data(data, false)?;
 
         // Ensure no other advertise ongoing.
+        host.request_operation(host.advertise_command_state(), false).await;
+        // Only an admitted operation owns cancellation of the controller.
         let drop = crate::host::OnDrop::new(|| {
             host.advertise_command_state().cancel(false);
         });
-        host.request_operation(host.advertise_command_state(), false).await;
 
         // Clear current advertising terminations
         host.advertise_state().reset();
-
-        let data: RawAdvertisement = data.into();
-        if !data.props.legacy_adv() {
-            return Err(Error::ExtendedAdvertisingNotSupported.into());
-        }
 
         let kind = match (
             data.props.connectable_adv(),
@@ -109,19 +122,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         ))
         .await?;
 
-        if !data.adv_data.is_empty() {
-            let mut buf = [0; 31];
-            let to_copy = data.adv_data.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
-            host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
-        }
-
-        if !data.scan_data.is_empty() {
-            let mut buf = [0; 31];
-            let to_copy = data.scan_data.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
-            host.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
-        }
+        self.write_legacy_data(data).await?;
 
         let advset: [AdvSet; 1] = [AdvSet {
             adv_handle: AdvHandle::new(0),
@@ -140,8 +141,9 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Update the advertisment adv_data and/or scan_data. Does not change any
-    /// other advertising parameters. If no advertising is active, this will not
+    /// Replace both advertising and scan-response data; empty slices clear old data.
+    /// Payloads above 31 bytes are rejected before either controller update.
+    /// Does not change other advertising parameters. If no advertising is active, this will not
     /// produce any observable effect. This is typically useful when
     /// implementing a BLE beacon that only broadcasts advertisement data and
     /// does not accept any connections.
@@ -149,28 +151,23 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     where
         C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
-        let host = &self.host;
+        self.write_legacy_data(validate_data(data, false)?).await
+    }
 
-        if !data.is_valid() {
-            return Err(BleHostError::BleHost(Error::InvalidValue));
-        }
-
-        let data: RawAdvertisement = data.into();
-        if !data.props.legacy_adv() {
-            return Err(Error::ExtendedAdvertisingNotSupported.into());
-        }
-        if !data.adv_data.is_empty() {
-            let mut buf = [0; 31];
-            let to_copy = data.adv_data.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
-            host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
-        }
-        if !data.scan_data.is_empty() {
-            let mut buf = [0; 31];
-            let to_copy = data.scan_data.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
-            host.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
-        }
+    async fn write_legacy_data(&self, data: RawAdvertisement<'_>) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetScanResponseData>,
+    {
+        let mut adv = [0; 31];
+        let mut scan = [0; 31];
+        adv[..data.adv_data.len()].copy_from_slice(data.adv_data);
+        scan[..data.scan_data.len()].copy_from_slice(data.scan_data);
+        self.host
+            .command(LeSetAdvData::new(data.adv_data.len() as u8, adv))
+            .await?;
+        self.host
+            .command(LeSetScanResponseData::new(data.scan_data.len() as u8, scan))
+            .await?;
         Ok(())
     }
 
@@ -179,10 +176,14 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     /// The handles are required to provide the storage while advertising, and
     /// can be created by calling AdvertisementSet::handles(sets).
     ///
-    /// Advertisements are stopped when a connection is made against this host,
-    /// in which case a handle for the connection is returned.
+    /// When a connection is accepted, its handle is returned and the control
+    /// runner stops any remaining sets before admitting another advertiser.
     ///
     /// Returns a handle to accept connections.
+    ///
+    /// This operation replaces all controller advertising sets after the prior
+    /// advertiser has completed cleanup. Raw advertising HCI commands must not
+    /// be mixed with this API.
     #[cfg(feature = "extended-advertising")]
     pub async fn advertise_ext<'k>(
         &mut self,
@@ -198,32 +199,37 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
-        assert_eq!(sets.len(), handles.len());
+        // HCI command length is 2 + 4 * count, so at most 63 sets fit.
+        if sets.is_empty() || sets.len() != handles.len() || sets.len() > 63 {
+            return Err(Error::InvalidValue.into());
+        }
         let host = &self.host;
 
         // Check all sets are valid
         for set in sets.iter() {
-            if !set.data.is_valid() {
-                return Err(BleHostError::BleHost(Error::InvalidValue));
-            }
+            validate_data(set.data, true)?;
         }
 
         // Check host supports the required advertisement sets
         {
             let result = host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
-            if result < sets.len() as u8 || host.advertise_state().len() < sets.len() {
+            if usize::from(result) < sets.len() || host.advertise_state().len() < sets.len() {
                 return Err(Error::InsufficientSpace.into());
             }
         }
 
         // Ensure no other advertise ongoing.
+        host.request_operation(host.advertise_command_state(), true).await;
         let drop = crate::host::OnDrop::new(|| {
             host.advertise_command_state().cancel(true);
         });
-        host.request_operation(host.advertise_command_state(), true).await;
 
         // Clear current advertising terminations
         host.advertise_state().reset();
+
+        // The operation owns all sets and prior disable has completed. Removing
+        // retained data permits changing to a PDU type that cannot carry it.
+        host.command(LeClearAdvSets::new()).await?;
 
         for (i, set) in sets.iter().enumerate() {
             let handle = AdvHandle::new(i as u8);
@@ -260,25 +266,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
                 host.command(LeSetAdvSetRandomAddr::new(handle, addr)).await?;
             }
 
-            if !data.adv_data.is_empty() {
-                host.command(LeSetExtAdvData::new(
-                    handle,
-                    Operation::Complete,
-                    params.fragment,
-                    data.adv_data,
-                ))
-                .await?;
-            }
-
-            if !data.scan_data.is_empty() {
-                host.command(LeSetExtScanResponseData::new(
-                    handle,
-                    Operation::Complete,
-                    params.fragment,
-                    data.scan_data,
-                ))
-                .await?;
-            }
+            self.write_extended_data(handle, data, params.fragment).await?;
             handles[i].adv_handle = handle;
             handles[i].duration = bt_hci_duration(set.params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)));
             handles[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
@@ -295,8 +283,12 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Update the extended advertisment adv_data and/or scan_data for multiple
-    /// advertising sets. Does not change any other advertising parameters. If
+    /// Replace supported advertising data and scan-response data for multiple sets.
+    /// Empty slices request deletion; a controller may reject deletion of scan
+    /// data while a scannable extended set is enabled. Each field is limited to
+    /// 251 bytes (31 for legacy sets); fragmented HCI uploads are not implemented.
+    /// Updates across commands are not atomic if the controller rejects a command.
+    /// Does not change any other advertising parameters. If
     /// no advertising is active, this will not produce any observable effect.
     /// This is typically useful when implementing a BLE beacon that only
     /// broadcasts advertisement data and does not accept any connections.
@@ -309,34 +301,63 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     where
         C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>> + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
-        assert_eq!(sets.len(), handles.len());
-        let host = &self.host;
+        if sets.len() != handles.len() || sets.len() > 63 {
+            return Err(Error::InvalidValue.into());
+        }
+        // Validate the whole batch before making any partial controller update.
         for (i, set) in sets.iter().enumerate() {
-            if !set.data.is_valid() {
-                return Err(BleHostError::BleHost(Error::InvalidValue));
+            validate_data(set.data, true)?;
+            if handles[i].adv_handle.as_raw() > 0xef
+                || handles[..i]
+                    .iter()
+                    .any(|other| other.adv_handle == handles[i].adv_handle)
+            {
+                return Err(Error::InvalidValue.into());
             }
-
+        }
+        for (i, set) in sets.iter().enumerate() {
             let handle = handles[i].adv_handle;
             let data: RawAdvertisement<'k> = set.data.into();
-            if !data.adv_data.is_empty() {
-                host.command(LeSetExtAdvData::new(
+            self.write_extended_data(handle, data, set.params.fragment).await?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "extended-advertising")]
+    async fn write_extended_data(
+        &self,
+        handle: AdvHandle,
+        data: RawAdvertisement<'_>,
+        fragment: bool,
+    ) -> Result<(), BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>> + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
+    {
+        // HCI 7.8.54 rejects this command even with no bytes if the PDU type
+        // cannot carry advertising data. Scan-response deletion is permitted.
+        let supports_adv_data = if data.props.legacy_adv() {
+            !data.props.directed_adv()
+        } else {
+            !data.props.scannable_adv()
+        };
+        if supports_adv_data {
+            self.host
+                .command(LeSetExtAdvData::new(
                     handle,
                     Operation::Complete,
-                    set.params.fragment,
+                    fragment,
                     data.adv_data,
                 ))
                 .await?;
-            }
-            if !data.scan_data.is_empty() {
-                host.command(LeSetExtScanResponseData::new(
-                    handle,
-                    Operation::Complete,
-                    set.params.fragment,
-                    data.scan_data,
-                ))
-                .await?;
-            }
         }
+        self.host
+            .command(LeSetExtScanResponseData::new(
+                handle,
+                Operation::Complete,
+                fragment,
+                data.scan_data,
+            ))
+            .await?;
         Ok(())
     }
 
@@ -380,7 +401,9 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
 
 impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
     fn drop(&mut self) {
-        if !self.done {
+        // One connection terminates only its own extended set. The control
+        // runner must disable the remaining sets before releasing admission.
+        if !self.done || self.extended {
             self.host.advertise_command_state().cancel(self.extended);
         } else {
             self.host.advertise_command_state().canceled();

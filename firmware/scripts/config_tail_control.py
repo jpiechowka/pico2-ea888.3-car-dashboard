@@ -5,7 +5,44 @@ save slots and the actual selected source path. They confer no owner,
 exceptional resume or permission to execute the loader successor.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Never, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_regions import Storage
+from config_abstract import SequenceInterface
+from config_finite_returns import ReturnNode, ReturnParent
+from config_views_contracts import FallthroughWitness, PendingWitness
+from config_decoded_views import (
+    Children,
+    Successors,
+    PendingContexts,
+    ControlExclusions,
+    _ControlSelection,
+)
+from llvm_stack import Instruction
+from config_tail_source import (
+    ControlsSource,
+    ControlsEffects,
+    SuffixSource,
+    SuffixEffects,
+    SourceInvocation,
+    SourceError,
+    SourceCause,
+    _is_scalar_call,
+    _is_screen_call,
+    _is_led_call,
+    _cause_after,
+)
+
+if TYPE_CHECKING:
+    from config_decoded_prefix import _PrefixState
+    from config_decoded_tail import _TailPhasesState, _TailEntry
+    from config_decoded_sources import _SourcesState, PhaseGraph, RemainingNormal
+
 import re
 from config_headers import VISITOR, VISITOR_ROWS
 from config_finite import _literal_body
@@ -19,7 +56,159 @@ from config_source_control import _SourceSelection
 from config_decoded_views import _control_selection, _selected_successors, _foreign_ingress
 
 
-def _restore_equations(objects, rows, context, parents, children):
+class RestoreEquations(TypedDict):
+    prologue: BodyRecord
+    epilogue: BodyRecord
+    restore: BodyRecord
+    original_call_site: int
+    original_return_PC: int
+    return_SP: int
+    release_bytes: tuple[int, ...]
+    saved_interval: tuple[int, int]
+    FP_cells: tuple[tuple[str, int, int], ...]
+    high_cells: tuple[tuple[str, int, int], ...]
+    low_cells: tuple[tuple[str, int, int], ...]
+    original_saved_PC: tuple[int, int, int]
+    duplicate_frame_r7_retired: tuple[int, int]
+    restored_GPRs: tuple[str, ...]
+    restored_FP: tuple[str, ...]
+    original_input_r8_restored_from_incoming_save: bool
+    architectural_LR_preserved: bool
+    return_tokens_are_normalized_even_code_identities: bool
+    proves_guarded_parent_execution_or_saved_cell_noninterference: bool
+    successor_executed: bool
+    visitor_local_borrows_retire_at_original_return: bool
+
+
+class FunctionIdentity(TypedDict):
+    function: int
+
+
+class RestoreIngress(TypedDict):
+    restore: FunctionIdentity
+    epilogue: FunctionIdentity
+
+
+class CarrierReturns(TypedDict):
+    parent_calls: tuple[tuple[int, int, str, tuple[str, ...]], ...]
+    parent_call_count: int
+    high_FP: tuple[tuple[int, int], ...]
+    architectural_LR_preserved: bool
+    requires_protected_saved_cells_and_actual_parent_lifetimes: bool
+
+
+class TerminalPartition(TypedDict):
+    padding: tuple[int, int]
+    pool: tuple[int, int]
+    predecessor: tuple[int, int]
+    dormant_constructor: tuple[int, int]
+    confers_active_state: bool
+
+
+class RestoreContext(TypedDict):
+    caller_role: str
+    caller: int
+    entry_site: int
+    current_context: tuple[tuple[int, bytes, str, str], ...]
+    inherited_source_stack_and_return_unresolved: bool
+    selected_Visitor_permission: bool
+
+
+class NormalLineage(TypedDict):
+    frontier: int
+    path: tuple[int, ...]
+    calls: tuple[tuple[int, ReturnNode], ...]
+    carriers: tuple[tuple[str, int | None, int], ...]
+    captured_epochs: tuple[tuple[int, int, int], ...]
+    return_carrier: int
+    physical_top_count: int
+    logical_remaining_fields: int
+    requires_first_only_access_and_full_original_restore: bool
+
+
+class ErrorLineage(TypedDict):
+    source_error: SourceError
+    call: SourceInvocation
+    origin: SourceCause
+    path: tuple[int, ...]
+    return_carrier: int | None
+    completed_groups: tuple[str, ...]
+    LED_Config_writes: tuple[()]
+    requires_full_original_restore: bool
+
+
+class ParentLineage(TypedDict):
+    normal: NormalLineage | None
+    errors: tuple[ErrorLineage, ...]
+    confers_active_state: bool
+    original_PC_SP_and_saved_noninterference_pending: bool
+
+
+class GuardFields(TypedDict):
+    entry_index: int
+    Source_phase: int
+    lineage: ParentLineage
+    saved_interval: tuple[int, int]
+    protected_calls: tuple[tuple[int, int, tuple[int, int]], ...]
+    original_return: tuple[int, ...]
+
+
+class TailGuard(GuardFields):
+    entry: _TailEntry
+    Source_normal: RemainingNormal
+
+
+TailControlRecord = TypedDict(
+    "TailControlRecord",
+    {
+        "selected_instructions": int,
+        "successors": Successors,
+        "child_returns": tuple[int, ...],
+        "return_equations": tuple[tuple[int, tuple[int, ...]], ...],
+        "return": RestoreEquations,
+        "outside_shared_contexts": PendingContexts,
+        "separate_restore_contexts": tuple[RestoreContext, ...],
+        "pending_contexts_confer_state": bool,
+        "original_saved_bytes_protected_on_each_actual_Tail_phase": tuple[tuple[int, int], ...],
+        "stopped_frontiers": tuple[int, ...],
+        "successor_executed": bool,
+        "exceptional_resume_established": bool,
+        "exception_safe_completion": bool,
+        "actual_reached_accesses_pending": bool,
+        "complete_policy_and_resource_producer_pending": bool,
+    },
+)
+
+
+class StructuralData(TypedDict):
+    selection: tuple[
+        tuple[BodyRecord, ...],
+        dict[int, Instruction],
+        dict[int, tuple[str, int, str]],
+        tuple[int, ...],
+        bool,
+        Children,
+        tuple[tuple[tuple[int, str], BodyRecord, BodyRecord], ...],
+    ]
+    raw_successors: Successors
+    raw_returns: tuple[int, ...]
+    nested_returns: tuple[ReturnNode, ...]
+    carriers: CarrierReturns
+    restore: RestoreEquations
+    terminal_partition: TerminalPartition
+    outside: PendingContexts
+    foreign_restore: tuple[RestoreContext, ...]
+    dormant: tuple[tuple[int, int], ...]
+    confers_active_state: bool
+
+
+def _restore_equations(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> RestoreEquations:
     """Exact authored 1512+56+4+36 equation, never a fresh restore call.
 
     Tokens name normalized even code identities, not scalar Thumb LR bits.
@@ -55,8 +244,8 @@ def _restore_equations(objects, rows, context, parents, children):
         "Tail original return is not paired to the actual loader BL",
     )
 
-    def no_object(*args):
-        require(False, "unexpected Tail original-save object")
+    def no_object(*args: object) -> Never:
+        raise AssertionError("unexpected Tail original-save object")
 
     name = _name(objects, VISITOR, V)
     prologue = _literal_body(
@@ -154,28 +343,30 @@ def _restore_equations(objects, rows, context, parents, children):
 
 @dataclass(frozen=True)
 class _TailSelection(_SourceSelection):
-    source_selection: object
-    source_state: object
-    Tail_parents: tuple
-    Tail_children: dict
+    source_selection: _SourceSelection
+    source_state: _SourcesState
+    Tail_parents: tuple[BodyRecord, ...]
+    Tail_children: Children
 
 
 @dataclass(frozen=True)
 class _TailStructuralControl:
     selection: _TailSelection
-    raw_successors: tuple
-    raw_returns: tuple
-    nested_returns: tuple
-    carrier_returns: dict
-    restore: dict
-    terminal_partition: dict
-    outside_shared_contexts: tuple
-    foreign_restore_contexts: tuple
-    unentered_outgoing: tuple
+    raw_successors: Successors
+    raw_returns: tuple[int, ...]
+    nested_returns: tuple[ReturnNode, ...]
+    carrier_returns: CarrierReturns
+    restore: RestoreEquations
+    terminal_partition: TerminalPartition
+    outside_shared_contexts: PendingContexts
+    foreign_restore_contexts: tuple[RestoreContext, ...]
+    unentered_outgoing: tuple[tuple[int, int], ...]
     confers_active_state: bool = False
 
 
-def _tail_pending_profile(selection):
+def _tail_pending_profile(
+    selection: _ControlSelection,
+) -> tuple[dict[int, PendingWitness], dict[int, FallthroughWitness]]:
     from config_source_control import SOURCE_FALLTHROUGH, SOURCE_PENDING
 
     require(
@@ -187,6 +378,8 @@ def _tail_pending_profile(selection):
         and selection.Source_children is selection.source_selection.Source_children,
         "Tail selection lost its exact private Source structure",
     )
+    if type(selection) is not _TailSelection:
+        raise AssertionError("Tail selection lost its exact private Source structure")
     V = selection.context.headers["visitor"]["proof"]["function"]
     require(
         all(V + site in selection.selected for site in SOURCE_PENDING)
@@ -197,12 +390,13 @@ def _tail_pending_profile(selection):
     return {}, {4408: SOURCE_FALLTHROUGH[4408]}
 
 
-def _tail_table_targets(selection, at, row):
+def _tail_table_targets(selection: _ControlSelection, at: int, row: Instruction) -> tuple[int, ...]:
     from config_source_control import _source_table_targets
     from config_source_children import CHANNEL_SOURCE
     from config_tail_children import ACTION_TARGET_OFFSETS
 
-    require(type(selection) is _TailSelection, "unreviewed Tail computed selection")
+    if type(selection) is not _TailSelection:
+        raise AssertionError("unreviewed Tail computed selection")
     source = tuple(p for p in selection.Source_children.values() if p["role"] == CHANNEL_SOURCE)
     if len(source) == 1 and at == source[0]["function"] + 74:
         targets = _source_table_targets(selection.source_selection, at, row)
@@ -223,15 +417,17 @@ def _tail_table_targets(selection, at, row):
         and row.mnemonic == "tbb"
         and row.operands == "[pc, r0]"
         and proof["shape"] == "ControlAction"
-        and proof["action_targets"] == targets
-        and proof["guarded_action_index_domain"] == (0, 18)
+        and proof.get("action_targets") == targets
+        and proof.get("guarded_action_index_domain") == (0, 18)
         and all(t in selection.selected for t in targets),
         "Tail Action computed transfer loses its actual finite19-target structure",
     )
     return targets
 
 
-def _terminal_partition(objects, rows, selection):
+def _terminal_partition(
+    objects: DiagnosticObjects, rows: InstructionMap, selection: _TailSelection
+) -> TerminalPartition:
     from llvm_stack import mapping_ranges
     from config_regions import _control
 
@@ -286,7 +482,9 @@ def _terminal_partition(objects, rows, selection):
     )
 
 
-def _restore_ingress(objects, rows, restore):
+def _restore_ingress(
+    objects: DiagnosticObjects, rows: InstructionMap, restore: RestoreEquations | RestoreIngress
+) -> tuple[RestoreContext, ...]:
     """Retain exact separate outside contexts; grant none inherited saves."""
     from config_tail_restore_contracts import RESTORE_CONTEXTS
     from config_stack import canonical_symbol, typed_function
@@ -295,7 +493,7 @@ def _restore_ingress(objects, rows, restore):
 
     target = restore["restore"]["function"]
     actual = restore["epilogue"]["function"] + 12
-    obligations = []
+    obligations: list[RestoreContext] = []
     expected = {actual}
     for role, contract in RESTORE_CONTEXTS.items():
         names = tuple(n for n in objects.elf.functions if canonical_symbol(n) == role)
@@ -322,11 +520,16 @@ def _restore_ingress(objects, rows, restore):
                 and any(k == "t" and lo <= at < at + width <= hi for lo, hi, k in mapping),
                 "Tail separate restore context has missing/stale current instructions",
             )
+            if row is None:
+                raise AssertionError(
+                    "Tail separate restore context has missing current instructions"
+                )
             text = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
             marker = re.search(r"@(restore|parent\+[0-9a-f]+|typed:.*)$", operands)
             if marker:
                 match = re.search(r"0x([0-9a-f]+)(?:\s|$)", text)
-                require(match is not None, "Tail separate restore target differs")
+                if match is None:
+                    raise AssertionError("Tail separate restore target differs")
                 destination = int(match[1], 16)
                 label = marker[0]
                 if label == "@restore":
@@ -374,7 +577,7 @@ def _restore_ingress(objects, rows, restore):
     return tuple(obligations)
 
 
-def _tail_structural(state):
+def _tail_structural(state: _TailPhasesState) -> _TailStructuralControl:
     """Full current selected structure, still no active source/owner state."""
     from config_decoded_tail import _TailPhasesState, _parents
     from config_tail_children import tail_children, tail_return_profiles
@@ -423,8 +626,8 @@ def _tail_structural(state):
     parents = widgets.views.parents + widgets.parents + predecessor.phases.parents + state.parents
     base = _control_selection(objects, rows, c, parents, combined)
 
-    def no_object(*args):
-        require(False, "unexpected prefix error-carrier object")
+    def no_object(*args: object) -> Never:
+        raise AssertionError("unexpected prefix error-carrier object")
 
     prefix = _literal_body(
         objects,
@@ -460,7 +663,7 @@ def _tail_structural(state):
     )
     terminal = _terminal_partition(objects, rows, selection)
     successors, returns, dormant = _selected_successors(selection)
-    callable_parents = tuple(
+    callable_parents: tuple[ReturnParent, ...] = tuple(
         dict(
             function=p["function"],
             ordinary_edges=tuple(e for e in p["ordinary_edges"] if e[1] == "bl"),
@@ -480,9 +683,9 @@ def _tail_structural(state):
     sp = c.headers["visitor_frame"].start
     checked = []
     high = tuple("r" + str(i) for i in range(4, 12))
-    for p in callable_parents:
-        for off, op, target, role, frame in p["ordinary_edges"]:
-            pc = p["function"] + off + 4
+    for callable_parent in callable_parents:
+        for off, op, target, role, frame in callable_parent["ordinary_edges"]:
+            pc = callable_parent["function"] + off + 4
             matches = tuple(
                 v
                 for v in nested
@@ -501,7 +704,7 @@ def _tail_structural(state):
         and min(v["lowest_SP"] for v in nested) == sp - 152,
         "Tail current parent call/deepest child graph differs",
     )
-    carriers = dict(
+    carriers: CarrierReturns = dict(
         parent_calls=tuple(checked),
         parent_call_count=25,
         high_FP=_source_fp_preservation(rows, state.children),
@@ -560,8 +763,17 @@ _BOOL_SITES = (6876, 6900, 6926, 6952, 6978)
 
 
 def _parent_lineage(
-    objects, rows, parents, children, returns, controls, effects, suffix, suffix_effects, frame
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    children: Children,
+    returns: Sequence[ReturnNode],
+    controls: ControlsSource,
+    effects: ControlsEffects,
+    suffix: SuffixSource | None,
+    suffix_effects: SuffixEffects | None,
+    frame: Storage,
+) -> ParentLineage:
     """Finite conditional source -> actual parent paths and carrier lifetimes.
 
     This does not acquire an entry/owner or independently grant active state.
@@ -608,7 +820,7 @@ def _parent_lineage(
         for off, width, text in GRAMMARS["visitor_" + str(p["function"] - V)]["instructions"]
     }
 
-    def segment(parts):
+    def segment(parts: Sequence[tuple[int, int]]) -> tuple[int, ...]:
         return tuple(off for lo, hi in parts for off in sorted(selected) if lo <= off < hi)
 
     controls_path = segment(_CONTROLS_PATH)
@@ -620,7 +832,7 @@ def _parent_lineage(
         "Tail parent chronological normal membership differs",
     )
 
-    def path_check(path, exit_pc):
+    def path_check(path: Sequence[int], exit_pc: int) -> tuple[tuple[int, ReturnNode], ...]:
         checked = []
         for i, off in enumerate(path):
             row = rows[V + off]
@@ -652,7 +864,7 @@ def _parent_lineage(
 
     # Successful primitive outcomes have the actual same Q/D/allocation and
     # decremented count, not just a copied semantic label or final cursor.
-    all_calls = list(controls["invocations"])
+    all_calls: list[SourceInvocation] = list(controls["invocations"])
     if suffix is not None:
         all_calls.extend(suffix["invocations"])
     for call in all_calls:
@@ -671,23 +883,24 @@ def _parent_lineage(
                 "Tail Controls source call changes its actual Q/count",
             )
         _call_binding(parents, children, call, frame)
-        result = call["result"]
         before = call["before"]
-        if "outcomes" in result:
-            for option in result["outcomes"]:
-                after = option["state"]
+        if _is_scalar_call(call):
+            for option in call["result"]["outcomes"]:
+                scalar_after = option["state"]
                 require(
-                    after.header == before.header
-                    and after.decoder.header == before.decoder.header
-                    and after.decoder.payload == before.decoder.payload
-                    and after.count
+                    scalar_after.header == before.header
+                    and scalar_after.decoder.header == before.decoder.header
+                    and scalar_after.decoder.payload == before.decoder.payload
+                    and scalar_after.count
                     == Span(max(0, before.count.lower - 1), max(0, before.count.upper - 1))
-                    and option["cursor"] == after.decoder.cursor,
+                    and option["cursor"] == scalar_after.decoder.cursor,
                     "Tail parent scalar has another same-source/count outcome",
                 )
         else:
+            if not (_is_screen_call(call) or _is_led_call(call)):
+                raise AssertionError("Tail parent aggregate lacks its exact source/caller pairing")
             require(
-                result["before"] is before and result["call_site"] == call["site"],
+                call["result"]["before"] is before and call["result"]["call_site"] == call["site"],
                 "Tail parent aggregate changes its exact source/caller pairing",
             )
     normal_calls = controls["invocations"]
@@ -714,11 +927,14 @@ def _parent_lineage(
             and effects["Config_stages"][-1]["complete_Controls"],
             "Tail Controls complete flag precedes its actual last assignment",
         )
+        hold_call = normal_calls[0]
+        if not _is_scalar_call(hold_call):
+            raise AssertionError("Tail hold normal guard lacks the same source outcome")
         require(
-            normal_calls[0]["before"].count == Span(2, 2)
+            hold_call["before"].count == Span(2, 2)
             and normal["hold_outcomes"]
             and all(
-                any(v is o for o in normal_calls[0]["result"]["outcomes"])
+                any(v is o for o in hold_call["result"]["outcomes"])
                 and v["kind"] == "some"
                 and v["value_domain"] == (0, 65535)
                 for v in normal["hold_outcomes"]
@@ -726,18 +942,22 @@ def _parent_lineage(
             "Tail hold normal guard lacks the same source outcome",
         )
         for i, screen in enumerate(normal["screens"]):
-            call = normal_calls[i + 1]
+            screen_call = normal_calls[i + 1]
+            if not _is_screen_call(screen_call):
+                raise AssertionError("Tail Screen normal guard loses its source package")
             require(
-                screen["invocation"] is call
-                and screen["source"] is call["result"]["normal"]
-                and call["before"].count == Span(3 - i, 3 - i)
+                screen["invocation"] is screen_call
+                and screen["source"] is screen_call["result"]["normal"]
+                and screen_call["before"].count == Span(3 - i, 3 - i)
                 and screen["source"]["after"].count == Span(2 - i, 2 - i)
-                and call["predecessor"] is normal_calls[i]
-                and screen["output"] is call["output"],
+                and screen_call["predecessor"] is normal_calls[i]
+                and screen["output"] is screen_call["output"],
                 "Tail Screen normal guard loses its source/rotation/package epoch",
             )
         path_check(controls_path, 6118)
     if suffix is not None:
+        if normal is None or suffix_effects is None:
+            raise AssertionError("Tail suffix lineage loses its exact Controls predecessor")
         require(
             normal is not None
             and suffix["controls"] is effects
@@ -771,16 +991,18 @@ def _parent_lineage(
                 and call["predecessor"] is (effects if i == 0 else suffix["invocations"][i - 1]),
                 "Tail suffix ordered source/Q/count/predecessor guard differs",
             )
-            result = call["result"]
-            if "outcomes" in result:
-                good = tuple(v for v in result["outcomes"] if v["kind"] == "some")
-                after = call["normal_after"]
+            if _is_scalar_call(call):
+                good = tuple(v for v in call["result"]["outcomes"] if v["kind"] == "some")
+                after: SequenceInterface | None = call["normal_after"]
                 require(
                     after == (None if not good else _joined_sequence(good)),
                     "Tail scalar retained successor differs from its exact same-source outcome join",
                 )
             else:
-                after = None if result["normal"] is None else result["normal"]["after"]
+                if not (_is_screen_call(call) or _is_led_call(call)):
+                    raise AssertionError("Tail aggregate call lacks its current result")
+                aggregate_normal = call["result"]["normal"]
+                after = None if aggregate_normal is None else aggregate_normal["after"]
             if after is None:
                 require(
                     i == len(suffix["invocations"]) - 1,
@@ -788,6 +1010,8 @@ def _parent_lineage(
                 )
             else:
                 current_decoder = after.decoder
+        if suffix["history"] is None:
+            raise AssertionError("Tail suffix lineage lacks its history source")
         if suffix["history"]["normal"] is not None:
             require(
                 len(suffix_effects["history"]) == 9
@@ -796,6 +1020,8 @@ def _parent_lineage(
             )
             path_check(history_path, 6734)
         if suffix["normal"] is not None:
+            if suffix["LED"] is None:
+                raise AssertionError("Tail successful carrier lacks its LED source")
             require(
                 suffix["normal"]["after"].count == Span(1, 1)
                 and suffix["normal"]["LEDQ"].count == Span(0, 0)
@@ -811,7 +1037,7 @@ def _parent_lineage(
             )
             path_check(led_path, 56)
     complete = suffix is not None and suffix["normal"] is not None
-    normal_record = None
+    normal_record: NormalLineage | None = None
     if complete:
         calls = path_check(whole, 56)
         positions = {at: i for i, at in enumerate(whole)}
@@ -910,7 +1136,7 @@ def _parent_lineage(
         6952: ((6956, 6968), (6988, 6994)),
         6978: ((6982, 6994),),
     }
-    errors = []
+    errors: list[ErrorLineage] = []
     for group, records in (
         ((), controls["errors"]),
         (() if suffix is None else ("Controls",), () if suffix is None else suffix["errors"]),
@@ -919,13 +1145,19 @@ def _parent_lineage(
             call = error["origin"]
             cause = error["cause"]
             site = call["site"] - V
-            result = call["result"]
+            if _is_scalar_call(call):
+                outcomes: Sequence[object] = call["result"]["outcomes"]
+            elif _is_screen_call(call) or _is_led_call(call):
+                outcomes = call["result"]["errors"]
+            else:
+                raise AssertionError("Tail error loses its exact source call")
             require(
                 any(call is v for v in all_calls)
                 and error["field"] == call["field"]
-                and any(cause is v for v in result.get("outcomes", result.get("errors", ())))
+                and any(cause is v for v in outcomes)
                 and error["cursor"] == cause["cursor"]
-                and error["error"] == cause["error"],
+                and "error" in cause
+                and error["error"] == cause.get("error"),
                 "Tail error loses the exact same-call error origin/cursor/carrier",
             )
             require(
@@ -952,7 +1184,7 @@ def _parent_lineage(
                     )
                 )
             )
-            after = cause.get("state", cause.get("after"))
+            after = _cause_after(cause)
             count = 3 if not expected_groups else (2 if len(expected_groups) == 1 else 1)
             require(
                 milestones == expected_groups
@@ -983,14 +1215,14 @@ def _parent_lineage(
 
 @dataclass(frozen=True)
 class _TailActiveControl:
-    state: object
+    state: _TailPhasesState
     structural: _TailStructuralControl
-    guards: tuple
-    record: dict
-    checkpoint: object
+    guards: tuple[TailGuard, ...]
+    record: TailControlRecord
+    checkpoint: PhaseGraph
     actual_reached_accesses_pending: bool = True
 
-    def current(self):
+    def current(self) -> _TailActiveControl:
 
         require(
             self.actual_reached_accesses_pending is True,
@@ -1011,7 +1243,7 @@ class _TailActiveControl:
         return self
 
 
-def _structural_data(raw, state):
+def _structural_data(raw: _TailStructuralControl, state: _TailPhasesState) -> StructuralData:
     require(
         type(raw) is _TailStructuralControl
         and type(raw.selection) is _TailSelection
@@ -1054,7 +1286,9 @@ def _structural_data(raw, state):
     )
 
 
-def _tail_control_data(state, raw):
+def _tail_control_data(
+    state: _TailPhasesState, raw: _TailStructuralControl
+) -> tuple[tuple[TailGuard, ...], TailControlRecord]:
     from config_source_control import _SourceActiveControl
     from config_decoded_widgets import _WidgetActiveControl
     from config_decoded_tail import _TailPhasesState, _entry_data
@@ -1077,6 +1311,10 @@ def _tail_control_data(state, raw):
             "Tail active control lacks its actual checked Source ordinary predecessor",
         )
     widget = predecessor.phases.widgets.control
+    if type(widget) is not _WidgetActiveControl:
+        raise AssertionError(
+            "Tail active control lacks its actual checked Widget ordinary predecessor"
+        )
     require(
         type(widget) is _WidgetActiveControl and widget.state is predecessor.phases.widgets.views,
         "Tail active control lacks its actual checked Widget ordinary predecessor",
@@ -1085,7 +1323,7 @@ def _tail_control_data(state, raw):
     frame = c.headers["visitor_frame"]
     V = c.headers["visitor"]["proof"]["function"]
     R = c.headers["root"]["proof"]["function"]
-    guards = []
+    guards: list[TailGuard] = []
     for index, (phase, entry) in enumerate(zip(state.phases, state.entries)):
         _entry_data(entry, predecessor)
         require(
@@ -1193,6 +1431,8 @@ def _tail_control_data(state, raw):
             frame,
         )
         if lineage["normal"] is not None:
+            if phase.suffix_effects is None:
+                raise AssertionError("Tail original return lacks the actual final LED assignment")
             require(
                 phase.suffix_effects["complete_after"] == V + 7112
                 and lineage["normal"]["frontier"] == V + 7112
@@ -1220,7 +1460,7 @@ def _tail_control_data(state, raw):
                 ),
             )
         )
-    extension = dict(
+    extension: ControlExclusions = dict(
         excluded_taken=dict(widget.profile["excluded_taken"]),
         excluded_fallthrough=dict(widget.profile["excluded_fallthrough"]),
     )
@@ -1237,29 +1477,29 @@ def _tail_control_data(state, raw):
         and raw.restore["release_bytes"] == (1512, 56, 4, 36),
         "Tail active original return changes the saved-PC/SP equation",
     )
-    record = dict(
-        selected_instructions=len(raw.selection.selected),
-        successors=successors,
-        child_returns=returns,
-        return_equations=tuple((g["entry_index"], g["original_return"]) for g in guards),
-        **{"return": raw.restore},
-        outside_shared_contexts=raw.outside_shared_contexts,
-        separate_restore_contexts=raw.foreign_restore_contexts,
-        pending_contexts_confer_state=False,
-        original_saved_bytes_protected_on_each_actual_Tail_phase=tuple(
+    record: TailControlRecord = {
+        "selected_instructions": len(raw.selection.selected),
+        "successors": successors,
+        "child_returns": returns,
+        "return_equations": tuple((g["entry_index"], g["original_return"]) for g in guards),
+        "return": raw.restore,
+        "outside_shared_contexts": raw.outside_shared_contexts,
+        "separate_restore_contexts": raw.foreign_restore_contexts,
+        "pending_contexts_confer_state": False,
+        "original_saved_bytes_protected_on_each_actual_Tail_phase": tuple(
             g["saved_interval"] for g in guards
         ),
-        stopped_frontiers=tuple(sorted(raw.selection.cuts)),
-        successor_executed=False,
-        exceptional_resume_established=False,
-        exception_safe_completion=False,
-        actual_reached_accesses_pending=True,
-        complete_policy_and_resource_producer_pending=True,
-    )
+        "stopped_frontiers": tuple(sorted(raw.selection.cuts)),
+        "successor_executed": False,
+        "exceptional_resume_established": False,
+        "exception_safe_completion": False,
+        "actual_reached_accesses_pending": True,
+        "complete_policy_and_resource_producer_pending": True,
+    }
     return tuple(guards), record
 
 
-def _call_root(nodes, site, proof, sp):
+def _call_root(nodes: Sequence[ReturnNode], site: int, proof: BodyRecord, sp: int) -> ReturnNode:
     roots = tuple(
         v
         for v in nodes
@@ -1275,7 +1515,7 @@ def _call_root(nodes, site, proof, sp):
     return roots[0]
 
 
-def _tail_control(state):
+def _tail_control(state: _TailPhasesState) -> _TailActiveControl:
     """Actual named ordinary Tail segment; reached access and finalizer pending.
 
     A structural selection, source-only relation or public description cannot
@@ -1292,7 +1532,12 @@ def _tail_control(state):
     )
 
 
-def _control_checkpoint(state, guards, record, raw):
+def _control_checkpoint(
+    state: _TailPhasesState,
+    guards: Sequence[TailGuard],
+    record: TailControlRecord,
+    raw: _TailStructuralControl,
+) -> PhaseGraph:
     """Snapshot this join without recursively serializing prior checkpoints.
 
     The actual predecessor/exit/normal identities are checked explicitly and
@@ -1304,12 +1549,15 @@ def _control_checkpoint(state, guards, record, raw):
     return _phase_graph((_guard_data(state, guards), record, _structural_data(raw, state)))
 
 
-def _guard_data(state, guards):
+def _guard_data(
+    state: _TailPhasesState, guards: Sequence[TailGuard]
+) -> tuple[dict[str, object], ...]:
     """Local guard values with their actual upstream identities checked."""
     from config_decoded_tail import _entry_data
 
     require(len(guards) == len(state.entries), "Tail active guard collection changed")
-    data = []
+    # Snapshot all extra retained fields too, so mutation cannot hide behind the static schema.
+    data: list[dict[str, object]] = []
     for i, (guard, entry) in enumerate(zip(guards, state.entries)):
         require(
             guard["entry_index"] == i

@@ -9,6 +9,7 @@ const L2CAP_CHANNELS_MAX: usize = 3;
 
 /// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
 #[tokio::test]
+#[ignore = "requires two physical Zephyr HCI UART adapters"]
 async fn l2cap_connection_oriented_channels() {
     let _ = env_logger::try_init();
     let adapters = common::find_controllers();
@@ -138,37 +139,12 @@ async fn l2cap_connection_oriented_channels() {
     });
 
     match tokio::time::timeout(Duration::from_secs(30), local).await {
-        Ok(_) => match tokio::join!(central, peripheral) {
-            (Err(e1), Err(e2)) => {
-                println!("Central error: {:?}", e1);
-                println!("Peripheral error: {:?}", e2);
-                assert!(false);
-            }
-            (Err(e), _) => {
-                println!("Central error: {:?}", e);
-                assert!(false)
-            }
-            (_, Err(e)) => {
-                println!("Peripheral error: {:?}", e);
-                assert!(false)
-            }
-            (Ok(Err(e1)), Ok(Err(e2))) => {
-                println!("Central error: {:?}", e1);
-                println!("Peripheral error: {:?}", e2);
-                assert!(false);
-            }
-            (Ok(Err(e)), _) => {
-                println!("Central error: {:?}", e);
-                assert!(false)
-            }
-            (_, Ok(Err(e))) => {
-                println!("Peripheral error: {:?}", e);
-                assert!(false)
-            }
-            _ => {
-                println!("Test completed successfully");
-            }
-        },
+        Ok(_) => {
+            let (central, peripheral) = tokio::join!(central, peripheral);
+            common::assert_task_result("central", central);
+            common::assert_task_result("peripheral", peripheral);
+            println!("Test completed successfully");
+        }
         Err(e) => {
             println!("Test timed out: {:?}", e);
             assert!(false);

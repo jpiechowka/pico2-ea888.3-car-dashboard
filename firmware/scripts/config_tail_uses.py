@@ -6,7 +6,34 @@ and consumes every member in the same non-yielding scope. Later consumption
 revalidates the complete upstream collection once, not once per member.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, replace, fields
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypedDict, TypeGuard
+from config_abstract import DecoderInterface
+from config_widget_uses import AllocationLineage
+from config_tail_source import (
+    ScreenInvocation,
+    LedInvocation,
+    ScreenPackage,
+    ControlsNormal,
+    WordAccess,
+    CopyTransport,
+    ControlStage,
+    InlineTransport,
+    LEDNormal,
+    LEDStage,
+    _is_screen_call,
+    _is_led_call,
+)
+from config_tail_effects import ScreenNormal, LedNormal
+
+if TYPE_CHECKING:
+    from config_tail_control import _TailActiveControl
+    from config_decoded_tail import _TailPhasesState, _TailEntry
+    from config_decoded_sources import PhaseGraph
+
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_tail_access import (
@@ -29,7 +56,87 @@ from config_tail_contracts import ROLES
 from validation import require
 
 
-def _family_data(control):
+class ScreenOutputSource(TypedDict):
+    invocation: ScreenInvocation
+    normal: ScreenNormal
+    partial_before_words: tuple[int, ...]
+    after_first_word: tuple[int, ...]
+    complete_only_after_second_word_and_original_return: bool
+
+
+class ScreenScratchSource(TypedDict):
+    Screen: ScreenPackage
+    Controls: ControlsNormal
+    words: tuple[WordAccess, ...]
+    copies: tuple[CopyTransport, ...]
+
+
+class ScreenConfigSource(TypedDict):
+    Screen: ScreenPackage
+    Controls: ControlsNormal
+    stages: tuple[ControlStage, ...]
+    words: tuple[WordAccess, ...]
+    inline_transports: tuple[InlineTransport, ...]
+
+
+class LedOutputSource(TypedDict):
+    invocation: LedInvocation
+    normal: LedNormal
+    opaque_bytes: tuple[int, ...]
+    partial_after_kind: tuple[int, ...]
+
+
+class LedReadSource(TypedDict):
+    invocation: LedInvocation
+    normal: LedNormal
+    read_epoch: str
+    opaque_fields_remain_opaque: tuple[int, ...]
+
+
+class LedConfigSource(TypedDict):
+    invocation: LedInvocation
+    normal: LedNormal
+    LED: LEDNormal | None
+    stages: tuple[LEDStage, ...]
+
+
+UseSource = (
+    ScreenOutputSource
+    | ScreenScratchSource
+    | ScreenConfigSource
+    | LedOutputSource
+    | LedReadSource
+    | LedConfigSource
+)
+
+
+def is_screen_output_source(value: UseSource) -> TypeGuard[ScreenOutputSource]:
+    return "partial_before_words" in value
+
+
+def is_screen_scratch_source(value: UseSource) -> TypeGuard[ScreenScratchSource]:
+    return "copies" in value
+
+
+def is_screen_config_source(value: UseSource) -> TypeGuard[ScreenConfigSource]:
+    return "inline_transports" in value
+
+
+def is_led_output_source(value: UseSource) -> TypeGuard[LedOutputSource]:
+    return "partial_after_kind" in value
+
+
+def is_led_read_source(value: UseSource) -> TypeGuard[LedReadSource]:
+    return "read_epoch" in value
+
+
+def is_led_config_source(value: UseSource) -> TypeGuard[LedConfigSource]:
+    return "LED" in value
+
+
+def _family_data(
+    control: _TailActiveControl,
+) -> tuple[tuple[TailFamily, ...], tuple[LedFamily, ...], AllocationLineage]:
     from config_tail_control import _TailActiveControl, _structural_data
     from config_source_uses import _SourceAccessBridge
 
@@ -44,6 +151,8 @@ def _family_data(control):
         and previous.control.state is state.predecessor.phases,
         "Tail access loses its actual checked Source allocation lineage",
     )
+    if previous is None:
+        raise AssertionError("Tail access loses its actual checked Source allocation lineage")
     prior = previous.families[2].context
     require(
         previous.allocation_lineage[:3]
@@ -82,7 +191,10 @@ def _family_data(control):
             borrow(config, 0, 14576, _PHASE),
             protected + ((child_saved,) if local else ()),
         )
-        sites = tuple((parent + off, *rest) for off, *rest in SITE_SHAPES[role])
+        sites = tuple(
+            (parent + off, raw, cell, width, direction, phase)
+            for off, raw, cell, width, direction, phase in SITE_SHAPES[role]
+        )
         epochs = tuple((V + off, out, n) for off, out, n in SCREEN_EPOCHS) if local else ()
         families.append(
             current_tail_family(
@@ -118,13 +230,27 @@ def _family_data(control):
                 )
             )
         parent = led[0]["function"] if role == "result_words" else V
-        sites = tuple((parent + off, *rest) for off, *rest in LED_SITES[role, "sizez"])
+        led_sites = tuple(
+            (parent + off, raw, cell, epoch) for off, raw, cell, epoch in LED_SITES[role, "sizez"]
+        )
         LEDs.append(
             current_led_family(
-                state.objects, LedFamily(role, "sizez", parent, sites, tuple(contexts))
+                state.objects, LedFamily(role, "sizez", parent, led_sites, tuple(contexts))
             )
         )
-    lineage = tuple((a, replace(b, phase=_PHASE)) for a, b in previous.allocation_lineage[:3]) + (
+    lineage: AllocationLineage = (
+        (
+            previous.allocation_lineage[0][0],
+            replace(previous.allocation_lineage[0][1], phase=_PHASE),
+        ),
+        (
+            previous.allocation_lineage[1][0],
+            replace(previous.allocation_lineage[1][1], phase=_PHASE),
+        ),
+        (
+            previous.allocation_lineage[2][0],
+            replace(previous.allocation_lineage[2][1], phase=_PHASE),
+        ),
         previous.allocation_lineage[3],
     )
     return tuple(families), tuple(LEDs), lineage
@@ -134,21 +260,30 @@ def _family_data(control):
 class _TailUse:
     role: str
     phase_index: int
-    epoch: object
-    entry: object
-    before: object
-    after: object
+    epoch: int | str
+    entry: _TailEntry
+    before: DecoderInterface
+    after: DecoderInterface
     output: View
-    footprint: tuple
-    protected: tuple
-    source: dict
-    continuation: tuple
+    footprint: tuple[tuple[int, int], ...]
+    protected: tuple[Storage, ...]
+    source: UseSource
+    continuation: tuple[int, ...]
     completed_prefix_issued: bool = False
 
 
 def _make_use(
-    state, family, phase_index, epoch, before, after, output, protected, source, continuation
-):
+    state: _TailPhasesState,
+    family: TailFamily | LedFamily,
+    phase_index: int,
+    epoch: int | str,
+    before: object,
+    after: object,
+    output: View,
+    protected: Sequence[Storage],
+    source: UseSource,
+    continuation: tuple[int, ...],
+) -> _TailUse:
     from config_abstract import DecoderInterface
     from config_tail_effects import _guards
 
@@ -163,14 +298,20 @@ def _make_use(
         <= before.payload.extent,
         "Tail reached use changes its exact source/header/cursor epoch",
     )
+    if not isinstance(before, DecoderInterface) or not isinstance(after, DecoderInterface):
+        raise AssertionError("Tail reached use changes its exact source/header/cursor epoch")
     if type(family) is TailFamily:
+        if type(epoch) is not int:
+            raise AssertionError("Tail Screen use has another source epoch")
         owner = family.owner(epoch)
         footprints = family.footprints(epoch)
         direction = family.sites[0][4]
     else:
-        require(type(family) is LedFamily, "unreviewed Tail reached family")
+        if type(family) is not LedFamily or not isinstance(epoch, str):
+            raise AssertionError("unreviewed Tail reached family")
         context = next((v for v in family.contexts if v.epoch == epoch), None)
-        require(context is not None, "Tail LED use loses its same source epoch")
+        if context is None:
+            raise AssertionError("Tail LED use loses its same source epoch")
         owner = context.owner
         footprints = family.footprints(epoch)
         direction = "read" if family.role == "pattern_words" else "write"
@@ -217,7 +358,9 @@ def _make_use(
     )
 
 
-def _reached_data(control, families, LEDs):
+def _reached_data(
+    control: _TailActiveControl, families: Sequence[TailFamily], LEDs: Sequence[LedFamily]
+) -> tuple[_TailUse, ...]:
     from config_abstract import Span
     from config_tail_source import _call_binding
 
@@ -247,6 +390,8 @@ def _reached_data(control, families, LEDs):
             _object(entry.sequence.header, "live top Q"),
         )
         for call in phase.controls["invocations"][1:]:
+            if not _is_screen_call(call):
+                raise AssertionError("Tail Screen use substitutes another aggregate role")
             proof = call["result"]["proof"]
             normal = call["result"]["normal"]
             require(
@@ -270,6 +415,8 @@ def _reached_data(control, families, LEDs):
                 == ((266, 1, 1), (268, 0, 1), (296, 6, 4), (306, 2, 4)),
                 "Tail output word precedes its same Screen package/late-store relation",
             )
+            if epoch is None:
+                raise AssertionError("Tail output word loses its Screen epoch")
             _call_binding(state.parents, state.children, call, frame)
             protected = call["result"]["protected"] + (
                 _object(call["before"].header, "current Screen Q"),
@@ -284,7 +431,7 @@ def _reached_data(control, families, LEDs):
                     False,
                 ),
             )
-            source = dict(
+            screen_output_source: ScreenOutputSource = dict(
                 invocation=call,
                 normal=normal,
                 partial_before_words=(0, 1),
@@ -301,7 +448,7 @@ def _reached_data(control, families, LEDs):
                     normal["after"].decoder,
                     call["output"],
                     protected,
-                    source,
+                    screen_output_source,
                     (
                         proof["function"] + 266,
                         proof["function"] + 268,
@@ -339,7 +486,7 @@ def _reached_data(control, families, LEDs):
                     _object(v["output"], "other returned Screen") for v in parsed["screens"][1:]
                 )
             )
-            source = dict(
+            screen_scratch_source: ScreenScratchSource = dict(
                 Screen=first,
                 Controls=parsed,
                 words=effects["first_only_words"][:2],
@@ -355,7 +502,7 @@ def _reached_data(control, families, LEDs):
                     before,
                     replace(first["output"], writable=False),
                     read_guards,
-                    source,
+                    screen_scratch_source,
                     tuple(V + o for o in (6496, 6508, 6510, 6514, 5936, 6026, 6058)),
                 )
             )
@@ -378,7 +525,7 @@ def _reached_data(control, families, LEDs):
                 )
                 for off, n in ((212, 2), (222, 1))
             )
-            source = dict(
+            screen_config_source: ScreenConfigSource = dict(
                 Screen=first,
                 Controls=parsed,
                 stages=stages[:5],
@@ -395,7 +542,7 @@ def _reached_data(control, families, LEDs):
                     before,
                     borrow(c.owner, 212, 10, frame.phase, True),
                     base + partial,
-                    source,
+                    screen_config_source,
                     tuple(V + o for o in (6058, 6062, 6066, 6070, 6074, 6078, 6114)),
                 )
             )
@@ -403,27 +550,29 @@ def _reached_data(control, families, LEDs):
         if suffix is None or suffix["LED"] is None:
             continue
         patterns = suffix["LED"]["invocations"][:2]
-        for epoch, call in zip(("normal", "warning"), patterns):
-            proof = call["result"]["proof"]
-            normal = call["result"]["normal"]
+        for led_epoch, led_call in zip(("normal", "warning"), patterns):
+            if not _is_led_call(led_call):
+                raise AssertionError("Tail LED reached word changes its current child")
+            proof = led_call["result"]["proof"]
+            led_normal = led_call["result"]["normal"]
             require(
                 proof["role"] == ROLES["LedPattern"]
-                and call["site"] == V + (6792 if epoch == "normal" else 6828),
+                and led_call["site"] == V + (6792 if led_epoch == "normal" else 6828),
                 "Tail LED reached word changes its current child or source epoch",
             )
-            if normal is None:
+            if led_normal is None:
                 continue
-            _call_binding(state.parents, state.children, call, frame)
+            _call_binding(state.parents, state.children, led_call, frame)
             require(
-                normal["initialized_bytes"] == (0, 2, 3, 4, 6, 7, 8)
-                and normal["opaque_bytes"] == (1, 5, 9)
-                and normal["physical_output_order"] == ((184, 0, 1), (186, 6, 4), (194, 2, 4))
-                and call["output"].offset == 1064,
+                led_normal["initialized_bytes"] == (0, 2, 3, 4, 6, 7, 8)
+                and led_normal["opaque_bytes"] == (1, 5, 9)
+                and led_normal["physical_output_order"] == ((184, 0, 1), (186, 6, 4), (194, 2, 4))
+                and led_call["output"].offset == 1064,
                 "Tail LED word loses its exact initialized versus opaque source fields",
             )
-            protected = call["result"]["protected"] + (
-                _object(call["before"].header, "current LED Q"),
-                _object(call["before"].decoder.header, "current LED D"),
+            protected = led_call["result"]["protected"] + (
+                _object(led_call["before"].header, "current LED Q"),
+                _object(led_call["before"].decoder.header, "current LED D"),
                 Storage(
                     frame.space,
                     "LED own original saves",
@@ -434,69 +583,79 @@ def _reached_data(control, families, LEDs):
                     False,
                 ),
             )
-            source = dict(
-                invocation=call, normal=normal, opaque_bytes=(1, 5, 9), partial_after_kind=(0,)
+            led_output_source: LedOutputSource = dict(
+                invocation=led_call,
+                normal=led_normal,
+                opaque_bytes=(1, 5, 9),
+                partial_after_kind=(0,),
             )
             uses.append(
                 _make_use(
                     state,
                     led["result_words"],
                     index,
-                    epoch,
-                    call["before"].decoder,
-                    normal["after"].decoder,
-                    call["output"],
+                    led_epoch,
+                    led_call["before"].decoder,
+                    led_normal["after"].decoder,
+                    led_call["output"],
                     protected,
-                    source,
+                    led_output_source,
                     (
                         proof["function"] + 184,
                         proof["function"] + 186,
                         proof["function"] + 194,
-                        call["site"] + 4,
+                        led_call["site"] + 4,
                     ),
                 )
             )
             # These reads precede reuse of O by the next pattern or later
             # bool failures. No full LED Config success is inferred here.
-            sites = (6814, 6818) if epoch == "normal" else (6862, 6868)
-            guards = base + (_object(call["before"].header, "LED Q"),)
-            source = dict(
-                invocation=call, normal=normal, read_epoch=epoch, opaque_fields_remain_opaque=(5, 9)
+            sites = (6814, 6818) if led_epoch == "normal" else (6862, 6868)
+            guards = base + (_object(led_call["before"].header, "LED Q"),)
+            led_read_source: LedReadSource = dict(
+                invocation=led_call,
+                normal=led_normal,
+                read_epoch=led_epoch,
+                opaque_fields_remain_opaque=(5, 9),
             )
             uses.append(
                 _make_use(
                     state,
                     led["pattern_words"],
                     index,
-                    epoch,
-                    normal["after"].decoder,
-                    normal["after"].decoder,
-                    replace(call["output"], writable=False),
+                    led_epoch,
+                    led_normal["after"].decoder,
+                    led_normal["after"].decoder,
+                    replace(led_call["output"], writable=False),
                     guards,
-                    source,
-                    tuple(V + o for o in (*sites, 6828 if epoch == "normal" else 6876)),
+                    led_read_source,
+                    tuple(V + o for o in (*sites, 6828 if led_epoch == "normal" else 6876)),
                 )
             )
         if suffix["normal"] is None:
             continue
+        if phase.suffix_effects is None:
+            raise AssertionError("Tail normal Config LED access lacks its actual late stores")
         require(
             phase.suffix_effects["complete_after"] == V + 7112
             and guard["lineage"]["normal"] is not None
             and suffix["LED"]["normal"] is suffix["normal"]["source"],
             "Tail normal Config LED access precedes the actual full source and late stores",
         )
-        first = suffix["LED"]["patterns"][0]
+        first_pattern = suffix["LED"]["patterns"][0]
         before = suffix["normal"]["after"].decoder
-        stages = tuple(v for v in phase.suffix_effects["LED"] if v["site"] in (V + 7034, V + 7108))
+        led_stages = tuple(
+            v for v in phase.suffix_effects["LED"] if v["site"] in (V + 7034, V + 7108)
+        )
         require(
-            len(stages) == 2 and all(v["source"] is first for v in stages),
+            len(led_stages) == 2 and all(v["source"] is first_pattern for v in led_stages),
             "Tail normal Config word borrows warning or another Pattern origin",
         )
-        source = dict(
-            invocation=first["invocation"],
-            normal=first["source"],
+        led_config_source: LedConfigSource = dict(
+            invocation=first_pattern["invocation"],
+            normal=first_pattern["source"],
             LED=suffix["LED"]["normal"],
-            stages=stages,
+            stages=led_stages,
         )
         uses.append(
             _make_use(
@@ -508,14 +667,20 @@ def _reached_data(control, families, LEDs):
                 before,
                 borrow(c.owner, 14544, 10, frame.phase, True),
                 base,
-                source,
+                led_config_source,
                 tuple(V + o for o in (7034, 7100, 7108, 7112)),
             )
         )
     return tuple(uses)
 
 
-def _snapshot(control, families, LEDs, lineage, uses):
+def _snapshot(
+    control: _TailActiveControl,
+    families: Sequence[TailFamily],
+    LEDs: Sequence[LedFamily],
+    lineage: AllocationLineage,
+    uses: Sequence[_TailUse],
+) -> PhaseGraph:
     from config_decoded_sources import _phase_graph
     from config_decoded_tail import _entry_data
     from config_tail_control import _guard_data, _structural_data
@@ -559,14 +724,14 @@ def _snapshot(control, families, LEDs, lineage, uses):
 
 @dataclass(frozen=True)
 class _TailAccessBridge:
-    control: object
-    tail_families: tuple
-    LED_families: tuple
-    allocation_lineage: tuple
-    uses: tuple
-    checkpoint: object
+    control: _TailActiveControl
+    tail_families: tuple[TailFamily, ...]
+    LED_families: tuple[LedFamily, ...]
+    allocation_lineage: AllocationLineage
+    uses: tuple[_TailUse, ...]
+    checkpoint: PhaseGraph
 
-    def current(self):
+    def current(self) -> _TailAccessBridge:
         _checked_graph(self)
         self.control.current()
         families, LEDs, lineage = _family_data(self.control)
@@ -578,7 +743,7 @@ class _TailAccessBridge:
         return self
 
 
-def _checked_graph(bridge):
+def _checked_graph(bridge: _TailAccessBridge) -> None:
     require(
         type(bridge) is _TailAccessBridge
         and _snapshot(
@@ -593,7 +758,7 @@ def _checked_graph(bridge):
     )
 
 
-def _check_member(bridge, use):
+def _check_member(bridge: _TailAccessBridge, use: _TailUse) -> _TailUse:
     family = next(
         (v for v in bridge.tail_families + bridge.LED_families if v.role == use.role), None
     )
@@ -601,13 +766,20 @@ def _check_member(bridge, use):
         family is not None and any(use is v for v in bridge.uses),
         "Tail access is not an exact checked collection member",
     )
-    output = (
-        family.owner(use.epoch)
-        if type(family) is TailFamily
-        else next(v.owner for v in family.contexts if v.epoch == use.epoch)
-    )
+    if family is None:
+        raise AssertionError("Tail access is not an exact checked collection member")
+    if type(family) is TailFamily:
+        if type(use.epoch) is not int:
+            raise AssertionError("Tail Screen use has another source epoch")
+        output = family.owner(use.epoch)
+        footprint = family.footprints(use.epoch)
+    else:
+        if not isinstance(family, LedFamily) or not isinstance(use.epoch, str):
+            raise AssertionError("Tail LED use has another source epoch")
+        output = next(v.owner for v in family.contexts if v.epoch == use.epoch)
+        footprint = family.footprints(use.epoch)
     require(
-        use.footprint == family.footprints(use.epoch)
+        use.footprint == footprint
         and (use.output.start, use.output.extent, use.output.writable)
         == (output.start, output.extent, output.writable),
         "Tail reached access has another footprint/source owner",
@@ -615,7 +787,7 @@ def _check_member(bridge, use):
     return use
 
 
-def _tail_access_group(state):
+def _tail_access_group(state: _TailPhasesState) -> tuple[_TailAccessBridge, tuple[_TailUse, ...]]:
     """One internally derived current collection; no supplied control ticket."""
     from config_decoded_tail import _TailPhasesState
     from config_tail_control import _tail_control
@@ -632,7 +804,7 @@ def _tail_access_group(state):
     return bridge, uses
 
 
-def _check_tail_uses(bridge):
+def _check_tail_uses(bridge: _TailAccessBridge) -> tuple[_TailUse, ...]:
     """Fresh authoritative batch; one full graph/upstream check, no ticket."""
     require(type(bridge) is _TailAccessBridge, "Tail batch lacks its actual private bridge")
     bridge.current()

@@ -2,9 +2,10 @@
 
 import struct
 import unittest
-from types import SimpleNamespace
-from elf_image import ElfImage
+from elf_image import ElfImage, Section, SectionEntry, Symbol
+from image_test_support import ImageFixture
 from check_program_image import (
+    ProgramMap,
     program_map,
     verify_uf2,
     boot_metadata,
@@ -14,7 +15,7 @@ from check_program_image import (
 )
 
 
-def elf_fixture():
+def elf_fixture() -> bytes:
     data = bytearray(256)
     data[:7] = b"\x7fELF\x01\x01\x01"
     struct.pack_into("<HHIIIIIHHHHHH", data, 16, 2, 40, 1, B, 52, 84, 0, 52, 32, 1, 40, 2, 1)
@@ -24,14 +25,14 @@ def elf_fixture():
     return bytes(data)
 
 
-def sparse():
-    return SimpleNamespace(
+def sparse() -> ImageFixture:
+    return ImageFixture(
         data=bytes([0xA1, 0xB2, 0xC3]),
         segments=[(1, i, 0, B + a, 1, 1, 5, 1) for i, a in enumerate([0x120, 0x320, 0x2050])],
     )
 
 
-def independent_uf2():
+def independent_uf2() -> bytes:
     result = bytearray()
     addresses = [B + i * 256 for i in range(16)] + [B + 0x2000]
     for index, address in enumerate(addresses):
@@ -48,12 +49,12 @@ def independent_uf2():
 
 
 class ProgramImage(unittest.TestCase):
-    def test_verification_ranges_follow_pinned_exclusive_end_coalescing(self):
+    def test_verification_ranges_follow_pinned_exclusive_end_coalescing(self) -> None:
         self.assertEqual(
             program_map(sparse())["verification_ranges"],
             [(B + 0x120, B + 0x321), (B + 0x2050, B + 0x2051)],
         )
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(8194),
             segments=[
                 (1, 0, B, B, 4096, 4096, 5, 1),
@@ -66,13 +67,13 @@ class ProgramImage(unittest.TestCase):
             program_map(elf)["verification_ranges"], [(B, B + 0x2101), (B + 0x4000, B + 0x4001)]
         )
 
-    def test_linked_startup_empty_and_nonempty_asset(self):
+    def test_linked_startup_empty_and_nonempty_asset(self) -> None:
         for asset in [b"", b"converted asset"]:
             profile = bytes(range(16))
             storage = asset + b"\0"
             data = profile + storage
-            sections = []
-            symbols = []
+            sections: list[SectionEntry] = []
+            symbols: list[Symbol] = []
             for index, name, obj, offset, size in [
                 (1, "startup_profile", "DASHBOARD_STARTUP_PROFILE", 0, 16),
                 (2, "startup_asset", "DASHBOARD_STARTUP_ASSET", 16, len(storage)),
@@ -87,7 +88,7 @@ class ProgramImage(unittest.TestCase):
                         ("__" + name + "_end", B + offset + size, 0, 0x10, index),
                     ]
                 )
-            elf = SimpleNamespace(
+            elf = ImageFixture(
                 data=data,
                 section_entries=sections,
                 symbol_entries=symbols,
@@ -99,16 +100,16 @@ class ProgramImage(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 linked_startup(elf, profile, asset)
 
-    def test_linked_configuration_object_identity(self):
+    def test_linked_configuration_object_identity(self) -> None:
         data = b"accepted eav"
-        section = (0, 1, 2, B, 0, len(data), 0, 0, 4, 0)
+        section: Section = (0, 1, 2, B, 0, len(data), 0, 0, 4, 0)
         obj = ("DASHBOARD_EMBEDDED_CONFIG", B, len(data), 0x11, 1)
         symbols = [
             obj,
             ("__dashboard_config_start", B, 0, 0x10, 1),
             ("__dashboard_config_end", B + len(data), 0, 0x10, 1),
         ]
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=data,
             section_entries=[(1, ".dashboard_config", section)],
             symbol_entries=symbols.copy(),
@@ -125,15 +126,17 @@ class ProgramImage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             linked_configuration(elf, data)
 
-    def test_boot_window_literals_and_roots(self):
+    def test_boot_window_literals_and_roots(self) -> None:
         root = struct.pack("<5I", 0xFFFFDED3, 0x10210142, 0x000001FF, 0, 0xAB123579)
 
-        def fixture(extra_offset=None, extra=b""):
+        def fixture(
+            extra_offset: int | None = None, extra: bytes = b""
+        ) -> tuple[ImageFixture, ProgramMap]:
             data = bytearray(0x4000)
             data[0x100:0x114] = root
             if extra_offset is not None:
                 data[extra_offset : extra_offset + len(extra)] = extra
-            elf = SimpleNamespace(
+            elf = ImageFixture(
                 data=bytes(data),
                 segments=[(1, 0, B, B, len(data), len(data), 5, 1)],
                 section_entries=[(1, ".start_block", (0, 1, 2, B + 0x100, 0x100, 20, 0, 0, 4, 0))],
@@ -156,7 +159,7 @@ class ProgramImage(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 boot_metadata(elf, mapping)
 
-    def test_bounded_elf_control_and_header_mutations(self):
+    def test_bounded_elf_control_and_header_mutations(self) -> None:
         good = elf_fixture()
         self.assertEqual(program_map(ElfImage(good))["pages"][B][0], 0x42)
         for length in [0, 6, 51, 60, 130, 200]:
@@ -175,13 +178,13 @@ class ProgramImage(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises((AssertionError, ValueError)):
                 ElfImage(bad)
 
-    def test_sparse_page_oracle(self):
+    def test_sparse_page_oracle(self) -> None:
         mapping = program_map(sparse())
         result = verify_uf2(independent_uf2(), mapping)
         self.assertEqual(result["page_count"], 17)
         self.assertEqual(mapping["erase_ranges"], [(B, B + 4096), (B + 8192, B + 12288)])
 
-    def test_uf2_mutations(self):
+    def test_uf2_mutations(self) -> None:
         good = independent_uf2()
         mapping = program_map(sparse())
         for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 288, 508, 512 + 20]:
@@ -189,16 +192,16 @@ class ProgramImage(unittest.TestCase):
             bad[offset] ^= 1
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 verify_uf2(bad, mapping)
-        for bad in [b"", good[:-1], good + bytes(512), good[512:]]:
+        for malformed in [b"", good[:-1], good + bytes(512), good[512:]]:
             with self.assertRaises(AssertionError):
-                verify_uf2(bad, mapping)
+                verify_uf2(malformed, mapping)
 
-    def test_physical_ranges_and_shared_page(self):
+    def test_physical_ranges_and_shared_page(self) -> None:
         for address in [B - 1, 0x20000000, 0x101FE000]:
-            elf = SimpleNamespace(data=b"x", segments=[(1, 0, 0, address, 1, 1, 5, 1)])
+            elf = ImageFixture(data=b"x", segments=[(1, 0, 0, address, 1, 1, 5, 1)])
             with self.assertRaises(AssertionError):
                 program_map(elf)
-        elf = SimpleNamespace(data=b"xy", segments=[(1, 0, 0, 0x101FDFFF, 1, 1, 5, 1)])
+        elf = ImageFixture(data=b"xy", segments=[(1, 0, 0, 0x101FDFFF, 1, 1, 5, 1)])
         self.assertEqual(program_map(elf)["erase_ranges"][-1][1], 0x101FE000)
         elf.segments = [(1, 0, 0, B + 1, 1, 1, 5, 1), (1, 1, 0, B + 3, 1, 1, 5, 1)]
         self.assertEqual(program_map(elf)["pages"][B][1:4], b"x\0y")

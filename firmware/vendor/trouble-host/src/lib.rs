@@ -1019,6 +1019,10 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
 
     /// Run a HCI command and return the response.
+    ///
+    /// The caller owns coordination with higher-level procedures. In particular,
+    /// do not mix raw advertising commands with the high-level `Peripheral` API:
+    /// its advertisers own all advertising sets and cleanup disables all sets.
     pub async fn command<T>(&self, cmd: T) -> Result<T::Return, BleHostError<C::Error>>
     where
         T: SyncCmd,

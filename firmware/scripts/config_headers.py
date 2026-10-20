@@ -7,6 +7,16 @@ their source/layout/phase families are implemented and reviewed. Parent entry,
 all table/indirect ingress and complete ordinary coverage remain required.
 """
 
+from collections.abc import Iterable
+from typing import Never, TypedDict
+from config_body_types import BodyContract, BodyRecord, Callback, InstructionMap
+from config_abstract import PrimitiveResult, SequenceInterface, SequenceOutcome
+from config_entry_contracts import EntryStaticObject
+from config_decode_effects import SequenceEffect
+from config_helpers import HelperCoverageRecord
+from config_regions import CoverageRecord, View
+from config_stack import DiagnosticObjects
+from llvm_stack import Instruction
 import re
 import struct
 import zlib
@@ -116,11 +126,129 @@ VISITOR_ROWS = (
 )
 
 
-def _no_object(*args):
-    require(False, "unexpected constructor object/outline")
+Writes = tuple[tuple[View, int, int], ...]
 
 
-def _parent(objects, name, role, frame, size):
+class HeaderBase(TypedDict):
+    proof: BodyRecord
+    protected: tuple[Storage, ...]
+    call_site: int
+    call_role: str
+    state_coordinate: str
+    source_phase: str
+    writes: Writes
+    requires_first_consumer_effect_before_exit: bool
+    requires_parent_entry_all_ingress_source_effects_and_coverage: bool
+
+
+class RootHeader(HeaderBase):
+    decoder_state: DecoderState
+    checksum_failure: BodyRecord
+    checksum_failure_writes: Writes
+    checksum_failure_requires_fault_mapping_and_default_successor: bool
+    crc_loop_invariants: tuple[str, ...]
+
+
+class VisitorHeader(HeaderBase):
+    sequence_state: SequenceState | SequenceInterface
+
+
+class VisitorHeaders(TypedDict):
+    root: RootHeader
+    visitor: VisitorHeader
+    visitor_frame: Storage
+    state_coordinate: str
+    retained_parent_frames: tuple[int, ...]
+    requires_first_consumer_effect_before_exit: bool
+    requires_parent_entry_all_ingress_source_effects_and_coverage: bool
+
+
+class NextU16Effect(TypedDict):
+    proof: BodyRecord
+    coverage: CoverageRecord
+    state: SequenceState
+    sequence: SequenceEffect
+    registers: dict[str, int]
+    value: int | None
+    error: int | None
+    writes: tuple[tuple[View, int, bytes], ...]
+    input_reads: tuple[tuple[int, int], ...]
+    conservative_activation_frames: tuple[int, ...]
+    normal_preserves: tuple[str, ...]
+    requires_machine_source_phase_arguments_lifetime_and_parent_coverage: bool
+
+
+class PackedU16(TypedDict):
+    tag: int
+    value_domain: tuple[int, int]
+    shift: int
+    constant: int
+
+
+class NextU16Outcome(TypedDict):
+    inner: SequenceOutcome
+    state: SequenceInterface
+    error: int | None
+    packed_r0: PackedU16 | int
+    value_domain: tuple[int, int] | None
+    possible_writes: Writes
+
+
+class NextU16Interface(TypedDict):
+    proof: BodyRecord
+    coverage: CoverageRecord
+    sequence: PrimitiveResult[SequenceOutcome]
+    outcomes: tuple[NextU16Outcome, ...]
+    normal_preserves: tuple[str, ...]
+    conservative_activation_frames: tuple[int, ...]
+
+
+class FirstU16(TypedDict):
+    headers: VisitorHeaders
+    first_return: NextU16Effect
+    state_coordinate: str
+    continuation: int
+    retained_activation_frames: tuple[int, ...]
+    requires_actual_Config_field_store_and_all_parent_success_error_continuations: bool
+    requires_parent_entry_all_ingress_source_effects_and_coverage: bool
+
+
+class U16Field(TypedDict):
+    field: str
+    offset: int
+    extent: int
+    value: int
+    phase: str
+    destination: View
+
+
+class U16Fields(TypedDict):
+    first_bridge: FirstU16
+    regions: tuple[BodyRecord, ...]
+    field_returns: tuple[NextU16Effect, ...]
+    fields: tuple[U16Field, ...]
+    writes: tuple[tuple[View, int, bytes], ...]
+    state: SequenceState
+    error: int | None
+    continuation: int
+    state_coordinate: str
+    source_field_order: tuple[str, ...]
+    requires_shared_error_restore_default_and_remaining_success_continuations: bool
+    requires_exclusive_initialized_Config_source_owner_and_all_remaining_phases: bool
+    requires_parent_entry_all_ingress_source_effects_and_coverage: bool
+
+
+class ConstructorObject(TypedDict):
+    kind: str
+
+
+def _no_object(*args: object) -> Never:
+    raise AssertionError("unexpected constructor object/outline")
+
+
+def _parent(
+    objects: DiagnosticObjects, name: str, role: str, frame: Storage, size: int
+) -> tuple[int, int]:
     require(
         name in objects.elf.functions and canonical_symbol(name) == role,
         "unreviewed typed constructor parent",
@@ -139,14 +267,12 @@ def _parent(objects, name, role, frame, size):
     return start, extent
 
 
-def _pc_word(objects, name, row, register):
+def _pc_word(objects: DiagnosticObjects, name: str, row: Instruction, register: str) -> int:
     match = re.fullmatch(
         register + r", \[pc, #(0x[0-9a-f]+|[0-9]+)\]", row.operands.split("@", 1)[0].strip()
     )
-    require(
-        row.mnemonic in ("ldr", "ldr.w") and match is not None,
-        "constructor readonly producer differs",
-    )
+    if not (row.mnemonic in ("ldr", "ldr.w") and match is not None):
+        raise AssertionError("constructor readonly producer differs")
     pool = ((row.address + 4) & ~3) + int(match[1], 0)
     require(
         pool % 4 == 0
@@ -156,10 +282,10 @@ def _pc_word(objects, name, row, register):
         ),
         "constructor pool is not mapped data owned by its parent",
     )
-    return struct.unpack("<I", objects.read_only(pool, 4))[0]
+    return int(struct.unpack("<I", objects.read_only(pool, 4))[0])
 
 
-def _direct_ingress(instructions, start, end):
+def _direct_ingress(instructions: InstructionMap, start: int, end: int) -> None:
     for at, row in instructions.items():
         if start <= at < end:
             continue
@@ -172,7 +298,13 @@ def _direct_ingress(instructions, start, end):
         )
 
 
-def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
+def root_decoder_header(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> RootHeader:
     start, extent = _parent(objects, name, ROOT, frame, 456)
     ancestor_protected = tuple(ancestor_protected)
     require_disjoint((frame,) + ancestor_protected)
@@ -183,7 +315,7 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
         header[:4] == b"EAV1" and struct.unpack_from("<H", header, 4)[0] == 4,
         "unreviewed embedded current-version envelope",
     )
-    n = struct.unpack_from("<H", header, 6)[0]
+    n = int(struct.unpack_from("<H", header, 6)[0])
     length = n + 12
     require(
         0 < n
@@ -192,7 +324,7 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
         "embedded input does not fit this finite ADDW constructor/XIP family",
     )
     raw = objects.read_only(address, length)
-    checksum = struct.unpack_from("<I", header, 8)[0]
+    checksum = int(struct.unpack_from("<I", header, 8)[0])
     require(zlib.crc32(raw[:8] + raw[12:]) == checksum, "embedded envelope checksum differs")
     # A separate typed checksum-failure anchor binds the external branch. Its
     # default-fill successor/source fault semantics still need their own family.
@@ -202,7 +334,9 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
         (6, 2, "movs r4, #0x5"),
         (8, 2, "str r0, [sp, #0x8]"),
     )
-    failure_contract = dict(extent=10, instructions=failure_rows, objects=[], data=[])
+    failure_contract: BodyContract[object] = dict(
+        extent=10, instructions=failure_rows, objects=[], data=[]
+    )
     failures = []
     for at, row in sorted(instructions.items()):
         if not start + 130 <= at < start + extent - 10 or row.mnemonic != "movw":
@@ -225,7 +359,9 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
     require(len(failures) == 1, "checksum-failure source anchor is missing or ambiguous")
     failure = failures[0]
 
-    def object_consumer(objects, value, descriptor):
+    def object_consumer(
+        objects: DiagnosticObjects, value: int, descriptor: ConstructorObject
+    ) -> tuple[Callback, ...]:
         expected = {
             "embedded_eav": address,
             "crc_polynomial": 0xEDB88320,
@@ -247,7 +383,7 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
         )
         for off, width, text in ROOT_ROWS
     ]
-    contract = dict(
+    contract: BodyContract[ConstructorObject] = dict(
         extent=130,
         instructions=rows,
         objects=[dict(kind=k) for k in ("embedded_eav", "crc_polynomial", "complement_checksum")],
@@ -300,7 +436,14 @@ def root_decoder_header(objects, name, instructions, frame, ancestor_protected):
     )
 
 
-def visitor_sequence_header(objects, name, instructions, frame, decoder, ancestor_protected):
+def visitor_sequence_header(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    decoder: DecoderState,
+    ancestor_protected: Iterable[Storage],
+) -> VisitorHeader:
     start, extent = _parent(objects, name, VISITOR, frame, 1608)
     ancestor_protected = tuple(ancestor_protected)
     require(
@@ -311,7 +454,7 @@ def visitor_sequence_header(objects, name, instructions, frame, decoder, ancesto
     )
     require_disjoint((frame,) + ancestor_protected)
     require_disjoint((frame, _object(decoder.header, "live-D")))
-    contract = dict(extent=28, instructions=VISITOR_ROWS, objects=[], data=[])
+    contract: BodyContract[object] = dict(extent=28, instructions=VISITOR_ROWS, objects=[], data=[])
     proof = _literal_body(
         objects,
         name,
@@ -349,7 +492,13 @@ def visitor_sequence_header(objects, name, instructions, frame, decoder, ancesto
     )
 
 
-def root_visitor_headers(objects, name, instructions, frame, ancestor_protected):
+def root_visitor_headers(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> VisitorHeaders:
     """One checked root→visitor construction edge, retaining both owners.
 
     This stops BEFORE the first next<u16> call. Neither the root's visitor
@@ -383,12 +532,18 @@ def root_visitor_headers(objects, name, instructions, frame, ancestor_protected)
     )
 
 
-def _next_u16_binding(objects, name, instructions, frame, ancestor_protected):
+def _next_u16_binding(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> tuple[BodyRecord, CoverageRecord, HelperCoverageRecord, Storage, tuple[Storage, ...]]:
     """One shared complete wrapper/inner binding for exact and abstract users."""
     start, extent = _parent(objects, name, NEXT_U16, frame, 8)
     ancestor_protected = tuple(ancestor_protected)
     require_disjoint((frame,) + ancestor_protected)
-    contract = dict(
+    contract: BodyContract[object] = dict(
         extent=56, frame=8, mapping=[(0, 56, "t")], instructions=NEXT_ROWS, objects=[], data=[]
     )
     proof = _complete_body(
@@ -438,7 +593,14 @@ def _next_u16_binding(objects, name, instructions, frame, ancestor_protected):
     return proof, coverage, child, child_frame, ancestor_protected + (saved,)
 
 
-def next_u16_effect(objects, name, instructions, state, frame, ancestor_protected):
+def next_u16_effect(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    state: SequenceState,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> NextU16Effect:
     """Exact outer next<Result<u16>> ABI, distinct from SeqAccess<Option<u16>>."""
     proof, coverage, child, child_frame, protected = _next_u16_binding(
         objects, name, instructions, frame, ancestor_protected
@@ -446,12 +608,15 @@ def next_u16_effect(objects, name, instructions, state, frame, ancestor_protecte
     sequence = sequence_effect(objects, instructions, child, state, child_frame, protected)
     if sequence["tag"] == 1:
         value = sequence["value"]
+        if value is None:
+            raise AssertionError("outer next success lacks its exact child value")
         error = None
         packed = (value << 16) | 0xE00
     else:
         value = None
         error = 14 if sequence["tag"] == 0 else sequence["error"]
-        require(error in (4, 5, 14), "outer next error exceeds its exact child/source domain")
+        if error is None or error not in (4, 5, 14):
+            raise AssertionError("outer next error exceeds its exact child/source domain")
         packed = (error << 8) | 1
     return dict(
         proof=proof,
@@ -469,7 +634,14 @@ def next_u16_effect(objects, name, instructions, state, frame, ancestor_protecte
     )
 
 
-def _next_u16_interface(objects, name, instructions, state, frame, ancestor_protected):
+def _next_u16_interface(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> NextU16Interface:
     from config_abstract import sequence_interface
 
     proof, coverage, child, child_frame, protected = _next_u16_binding(
@@ -483,7 +655,7 @@ def _next_u16_interface(objects, name, instructions, state, frame, ancestor_prot
             "D.end",
         ),
     )
-    outcomes = []
+    outcomes: list[NextU16Outcome] = []
     for inner in sequence["outcomes"]:
         require_writes((state.header, state.decoder.header), inner["possible_writes"], stable)
         require(
@@ -500,10 +672,11 @@ def _next_u16_interface(objects, name, instructions, state, frame, ancestor_prot
                 "outer abstract u16 domain differs",
             )
             error = None
-            packed = dict(tag=0, value_domain=(0, 65535), shift=16, constant=0xE00)
+            packed: PackedU16 | int = dict(tag=0, value_domain=(0, 65535), shift=16, constant=0xE00)
         else:
             error = 14 if inner["kind"] == "none" else inner["error"]
-            require(error in (4, 5, 14), "outer abstract error domain differs")
+            if error is None or error not in (4, 5, 14):
+                raise AssertionError("outer abstract error domain differs")
             packed = (error << 8) | 1
         outcomes.append(
             dict(
@@ -525,7 +698,13 @@ def _next_u16_interface(objects, name, instructions, state, frame, ancestor_prot
     )
 
 
-def root_first_u16(objects, name, instructions, frame, ancestor_protected):
+def root_first_u16(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> FirstU16:
     """Construct D/Q, then prove only the first next return to the visitor."""
     headers = root_visitor_headers(objects, name, instructions, frame, ancestor_protected)
     visitor = headers["visitor"]
@@ -544,8 +723,11 @@ def root_first_u16(objects, name, instructions, frame, ancestor_protected):
     active = Storage(
         frame.space, "next_u16", headers["visitor_frame"].start - 8, 8, 8, frame.phase, True
     )
+    sequence = visitor["sequence_state"]
+    if not isinstance(sequence, SequenceState):
+        raise AssertionError("first next requires the exact constructor sequence state")
     returned = next_u16_effect(
-        objects, names[0], instructions, visitor["sequence_state"], active, visitor["protected"]
+        objects, names[0], instructions, sequence, active, visitor["protected"]
     )
     return dict(
         headers=headers,
@@ -563,7 +745,9 @@ def root_first_u16(objects, name, instructions, frame, ancestor_protected):
 U16_FIELDS = (("version", 14570), ("catalogue_version", 14572))
 
 
-def _u16_field_regions(objects, name, instructions, frame):
+def _u16_field_regions(
+    objects: DiagnosticObjects, name: str, instructions: InstructionMap, frame: Storage
+) -> tuple[BodyRecord, ...]:
     start, _ = _parent(objects, name, VISITOR, frame, 1608)
     first = (
         (0, 2, "lsls r1, r0, #0x1f"),
@@ -584,13 +768,18 @@ def _u16_field_regions(objects, name, instructions, frame):
     )
     error = ((0, 2, "lsrs r5, r0, #0x8"), (2, 2, "mov r0, r5"))
     proofs = []
-    for offset, extent, rows, descriptors in (
+    regions: tuple[
+        tuple[int, int, tuple[tuple[int, int, str], ...], list[EntryStaticObject]], ...
+    ] = (
         (28, 22, first, [dict(kind="entry_static", role=CONFIG)]),
         (50, 4, guard, []),
         (72, 10, second, []),
         (54, 4, error, []),
-    ):
-        contract = dict(extent=extent, instructions=rows, objects=descriptors, data=[])
+    )
+    for offset, extent, rows, descriptors in regions:
+        contract: BodyContract[EntryStaticObject] = dict(
+            extent=extent, instructions=rows, objects=descriptors, data=[]
+        )
         proof = _literal_body(
             objects,
             name,
@@ -610,7 +799,13 @@ def _u16_field_regions(objects, name, instructions, frame):
     return tuple(proofs)
 
 
-def root_u16_fields(objects, name, instructions, frame, ancestor_protected):
+def root_u16_fields(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> U16Fields:
     """Two unpublished source assignments; stop before boot_view executes.
 
     Initial static bytes/identity are checked, but exclusive take/initialized
@@ -635,8 +830,8 @@ def root_u16_fields(objects, name, instructions, frame, ancestor_protected):
     owner = Storage("address", "partial_ConfigSlot", address, 14604, 4, frame.phase, True)
     state = first["first_return"]["state"]
     returned = first["first_return"]
-    fields = []
-    writes = []
+    fields: list[U16Field] = []
+    writes: list[tuple[View, int, bytes]] = []
     returns = [returned]
     # Full live destination must be separate from immutable source and the
     # caller's saved cells; each actual field write has its exact smaller view.
@@ -650,7 +845,8 @@ def root_u16_fields(objects, name, instructions, frame, ancestor_protected):
         if returned["error"] is not None:
             break
         value = returned["value"]
-        require(type(value) is int and 0 <= value <= 65535, "u16 source value differs")
+        if not (type(value) is int and 0 <= value <= 65535):
+            raise AssertionError("u16 source value differs")
         view = borrow(owner, offset, 2, frame.phase, writable=True)
         require_writes((view,), ((view, 0, 2),), protected)
         fields.append(

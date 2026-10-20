@@ -8,6 +8,12 @@ execution or candidate-selected builtin effect is supported.
 """
 
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from typing import TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord
+from config_logger import LoggerRecord
+from config_stack import DiagnosticObjects
 import struct
 from config_decode_effects import DecoderState, _current, _object
 from config_helpers import helper_frame
@@ -22,7 +28,7 @@ class CompareState:
     payload: View
     cursor: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Share the structural eight-byte header/input checks, not its ABI:
         # Compare word4 is remaining LENGTH; Decoder word4 is the END pointer.
         DecoderState(self.header, self.payload, self.cursor)
@@ -33,7 +39,7 @@ class SourceBytes:
     view: View
     data: bytes
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.view, View)
             and not self.view.writable
@@ -44,7 +50,7 @@ class SourceBytes:
         )
 
 
-def _source_bytes(objects, source, frame):
+def _source_bytes(objects: DiagnosticObjects, source: SourceBytes, frame: Storage) -> bytes:
     require(
         isinstance(source, SourceBytes), "serialized bytes have no typed initialized source borrow"
     )
@@ -65,7 +71,12 @@ def _source_bytes(objects, source, frame):
     return source.data
 
 
-def _memcmp_dependency(objects, instructions, proof, frame):
+def _memcmp_dependency(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    frame: Storage,
+) -> tuple[LoggerRecord, Storage]:
     """Shared complete builtin binding; source/caller protection stays explicit."""
     dependencies = [e for e in proof["ordinary_edges"] if e[3] == "memcmp"]
     require(len(dependencies) == 1, "Compare memcmp dependency differs")
@@ -87,7 +98,30 @@ def _memcmp_dependency(objects, instructions, proof, frame):
     return builtin, child_frame
 
 
-def compare_effect(objects, instructions, proof, state, source, frame, ancestor_protected):
+class CompareEffect(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    builtin: LoggerRecord
+    state: CompareState
+    original_state: CompareState
+    registers: dict[str, int]
+    error: int | None
+    writes: tuple[tuple[View, int, bytes], ...]
+    input_read_envelopes: tuple[tuple[int, int], ...]
+    normal_preserves: tuple[str, ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_machine_constructor_source_bytes_arguments_lifetime_ingress_and_enclosing_graph: bool
+
+
+def compare_effect(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: CompareState,
+    source: SourceBytes,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> CompareEffect:
     """One try_extend operation. A failed later operation never rolls back C."""
     proof = _current(objects, instructions, proof)
     require(
@@ -116,8 +150,8 @@ def compare_effect(objects, instructions, proof, state, source, frame, ancestor_
     require_disjoint((child_frame, _object(source.view, "serialized-input")))
     require_writes((state.header,), ((state.header, 0, 8),), (child_frame,))
     original = state
-    reads = ()
-    writes = ()
+    reads: tuple[tuple[int, int], ...] = ()
+    writes: tuple[tuple[View, int, bytes], ...] = ()
     status = 2
     if state.payload.extent - state.cursor >= n:
         if n:

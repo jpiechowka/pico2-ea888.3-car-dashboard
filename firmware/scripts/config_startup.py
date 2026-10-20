@@ -8,15 +8,69 @@ hardware permission or application source/task/alias/loader closure.
 from dataclasses import replace
 import re
 import struct
+from typing import Never, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from elf_image import InspectableImage, Section
+from config_initial import InitialConfiguration
+from config_owner_entry import ConfigurationEntryRecord
+from llvm_stack import Instruction
 from config_finite import _literal_body
 from config_owner_entry import configuration_entry_boundary, _direct_target
 from config_refill_children import _readonly
-from config_stack import typed_function, _typed_function_extent, transfer_family
+from config_stack import DiagnosticObjects, typed_function, _typed_function_extent, transfer_family
 from config_startup_contracts import STARTUP, ASSEMBLY_PRE_INIT
 from validation import require
 
 
-def _symbol(elf, name, info, size, index):
+class AssemblyRecord(BodyRecord):
+    external_literals: tuple[tuple[int, int, int], ...]
+    zero_growth_requires_complete_assembly_contract: bool
+    reviewed_upstream_commit: str
+
+
+class ResetRecord(BodyRecord):
+    external_literals: tuple[tuple[int, int, int], ...]
+    zero_growth_requires_complete_Reset_contract: bool
+
+
+class StartupRanges(TypedDict):
+    data: tuple[int, int]
+    bss: tuple[int, int]
+    source: tuple[int, int]
+    source_file: tuple[int, int]
+    Config_address: int
+    Config_source: int
+    step: int
+    words: int
+    zero_words: int
+    initial_sp: int
+    stack_bottom: int
+    pre_init_stack: tuple[int, int]
+    vector: tuple[int, int, int]
+    header_entry: int
+
+
+class StartupRecord(TypedDict):
+    mode: str
+    phase: str
+    entry: ConfigurationEntryRecord
+    reset: ResetRecord
+    pre_init: BodyRecord
+    copy: StartupRanges
+    reaching_phase_requires: tuple[str, ...]
+    pre_init_outcomes: tuple[str, ...]
+    source_qualification: str
+    requires_M2_pre_init_source_reconciliation: bool
+    hardware_qualified: bool
+    startup_stack_alternatives: tuple[tuple[int, ...], ...]
+    post_copy_direct_store: tuple[int, int, str]
+    requires_expected_vector_entry_and_successful_ordinary_memory_execution: bool
+    requires_first_batch_source_alias_and_specialized_loader_closure: bool
+    requires_all_remaining_implicit_computed_diagnostic_and_graph_closure: bool
+    must_not_reuse_initial_phase_after_decode_refill_or_publication: bool
+
+
+def _symbol(elf: InspectableImage, name: str, info: int, size: int, index: int) -> int:
     entries = [v for v in elf.symbol_entries if v[0] == name]
     require(len(entries) == 1, "missing or ambiguous startup symbol: " + name)
     raw, value, extent, kind, section = entries[0]
@@ -29,7 +83,7 @@ def _symbol(elf, name, info, size, index):
     return value
 
 
-def _function(objects, address, role):
+def _function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     if role == "__pre_init" and objects.elf.functions.get("__pre_init", (0, 0))[1] == 42:
         extent, name = _typed_function_extent(objects, address, role)
         index = objects.elf.functions[name][2]
@@ -64,11 +118,11 @@ def _function(objects, address, role):
     return 62, 0, name
 
 
-def _no_policy(*args):
+def _no_policy(*args: object) -> Never:
     raise AssertionError("unreviewed startup object or outline")
 
 
-def _external_pool(objects, name, slot):
+def _external_pool(objects: DiagnosticObjects, name: str, slot: int) -> int:
     """A separate Reset dependency, never an enlarged STT_FUNC extent."""
     elf = objects.elf
     start, extent, index = elf.functions[name]
@@ -81,7 +135,7 @@ def _external_pool(objects, name, slot):
         and not (start < slot + 4 and slot < start + extent),
         "Reset pool overlaps code or leaves its declared section",
     )
-    points = {}
+    points: dict[int, str] = {}
     for label, address, section in elf.mapping_symbols:
         if section != index:
             continue
@@ -112,10 +166,11 @@ def _external_pool(objects, name, slot):
         ),
         "Reset literal aliases another function extent",
     )
-    return struct.unpack("<I", _readonly(objects, slot, 4, 4))[0]
+    value: int = struct.unpack("<I", _readonly(objects, slot, 4, 4))[0]
+    return value
 
 
-def assembly_pre_init(objects, rows):
+def assembly_pre_init(objects: DiagnosticObjects, rows: InstructionMap) -> AssemblyRecord:
     """Match the complete stackless hook and its three external MMIO words."""
     elf = objects.elf
     require("__pre_init" in elf.functions, "missing assembly startup hook")
@@ -130,7 +185,7 @@ def assembly_pre_init(objects, rows):
         all(raw[i : i + 2] == fixed[i : i + 2] for i in range(0, 42, 2) if i not in (0, 6, 28)),
         "assembly startup fixed opcode differs",
     )
-    contract = dict(ASSEMBLY_PRE_INIT)
+    contract = ASSEMBLY_PRE_INIT.copy()
     operations = []
     pools = []
     expected = (0xD000017C, 0x40018004, 0xE000E008)
@@ -138,11 +193,11 @@ def assembly_pre_init(objects, rows):
         match = re.search(r"@hook_pool([0-9]+)", text)
         if match:
             row = rows.get(start + offset)
-            require(
-                row is not None and row.mnemonic == "ldr", "missing assembly MMIO literal consumer"
-            )
+            if row is None or row.mnemonic != "ldr":
+                raise AssertionError("missing assembly MMIO literal consumer")
             actual = re.fullmatch(r"r0, \[pc, #(0x[0-9a-f]+|[0-9]+)\]", row.operands)
-            require(actual is not None, "assembly MMIO literal receiver differs")
+            if actual is None:
+                raise AssertionError("assembly MMIO literal receiver differs")
             immediate = int(actual[1], 0)
             slot = ((start + offset + 4) & ~3) + immediate
             require(
@@ -176,15 +231,20 @@ def assembly_pre_init(objects, rows):
     require(
         not proof["ordinary_edges"] and not proof["indirect_sites"], "assembly startup gains a call"
     )
-    proof.update(
-        external_literals=tuple(pools),
-        zero_growth_requires_complete_assembly_contract=True,
-        reviewed_upstream_commit="c003af1767be1b7602ecf2a3b155eb6ce543e06a",
-    )
-    return proof
+    return {
+        **proof,
+        "external_literals": tuple(pools),
+        "zero_growth_requires_complete_assembly_contract": True,
+        "reviewed_upstream_commit": "c003af1767be1b7602ecf2a3b155eb6ce543e06a",
+    }
 
 
-def _bodies(objects, rows, mode, expected):
+def _bodies(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    mode: str,
+    expected: tuple[int, ...],
+) -> tuple[ResetRecord, BodyRecord, dict[int, Instruction]]:
     elf = objects.elf
     require("Reset" in elf.functions and "__pre_init" in elf.functions, "missing startup function")
     reset = elf.functions["Reset"][0] & ~1
@@ -200,7 +260,7 @@ def _bodies(objects, rows, mode, expected):
         a: replace(r, operands=r.operands.split("@", 1)[0].split("<", 1)[0].strip())
         for a, r in rows.items()
     }
-    contract = dict(STARTUP["Reset"])
+    contract = STARTUP["Reset"].copy()
     operations = []
     pools = []
     for offset, width, text in contract["instructions"]:
@@ -209,11 +269,13 @@ def _bodies(objects, rows, mode, expected):
             at = reset + offset
             row = clean.get(at)
             register = text.partition(" ")[2].partition(",")[0]
-            require(row is not None and row.mnemonic == "ldr", "missing Reset literal consumer")
+            if row is None or row.mnemonic != "ldr":
+                raise AssertionError("missing Reset literal consumer")
             actual = re.fullmatch(
                 re.escape(register) + r", \[pc, #(0x[0-9a-f]+|[0-9]+)\]", row.operands
             )
-            require(actual is not None, "Reset literal receiver/immediate differs")
+            if actual is None:
+                raise AssertionError("Reset literal receiver/immediate differs")
             immediate = int(actual[1], 0)
             rd = int(register[1:])
             slot = ((at + 4) & ~3) + immediate
@@ -265,21 +327,26 @@ def _bodies(objects, rows, mode, expected):
         == ((0, "bl", "__pre_init", hook_contract["frame"]), (56, "bl", "main", 8)),
         "Reset ordinary/main seam differs",
     )
-    proof.update(external_literals=tuple(pools), zero_growth_requires_complete_Reset_contract=True)
-    return proof, child, clean
+    reset_record: ResetRecord = {
+        **proof,
+        "external_literals": tuple(pools),
+        "zero_growth_requires_complete_Reset_contract": True,
+    }
+    return reset_record, child, clean
 
 
-def _ranges(objects, initial, hook_frame=8):
+def _ranges(
+    objects: DiagnosticObjects, initial: InitialConfiguration, hook_frame: int = 8
+) -> StartupRanges:
     elf = objects.elf
     data = elf.named.get(".data")
     bss = elf.named.get(".bss")
     uninit = elf.named.get(".uninit")
     vector = elf.named.get(".vector_table")
-    require(
-        all(v is not None for v in (data, bss, uninit, vector)), "missing exact startup allocation"
-    )
+    if data is None or bss is None or uninit is None or vector is None:
+        raise AssertionError("missing exact startup allocation")
 
-    def index(section):
+    def index(section: Section) -> int:
         indices = [i for i, v in enumerate(elf.sections) if v == section]
         require(len(indices) == 1, "ambiguous startup section")
         return indices[0]
@@ -401,7 +468,9 @@ def _ranges(objects, initial, hook_frame=8):
     )
 
 
-def startup_configuration_copy(objects, instructions):
+def startup_configuration_copy(
+    objects: DiagnosticObjects, instructions: InstructionMap
+) -> StartupRecord:
     """Conditional copy-at-main lineage, not an unqualified live owner."""
     entry = configuration_entry_boundary(objects, instructions)
     initial = entry["initial"]

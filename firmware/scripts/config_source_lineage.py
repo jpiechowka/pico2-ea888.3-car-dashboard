@@ -5,12 +5,185 @@ The actual private producer must additionally bind its entry, active source
 guards and reached accesses. No supplied record creates an ordinary owner.
 """
 
-from config_abstract import Span
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, TypedDict
+from config_abstract import Span, DecoderInterface, SequenceInterface
+from config_body_types import BodyRecord, InstructionMap
+from config_regions import View
+from config_stack import DiagnosticObjects
+from config_source_parent_effects import ParentEnvelopes
+
+if TYPE_CHECKING:
+    from config_source_control import CarrierReturns
+    from config_decoded_sources import (
+        SourceArray,
+        ArrayEffects,
+        SourcePackage,
+        ArraySlot,
+        RemainingAggregates,
+        RemainingStep,
+        RemainingError,
+        RemainingOutcome,
+        FuelAssignment,
+        ColorsInvocation,
+    )
 from config_regions import Storage, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_source_effects import SOURCE_EPOCHS
 from config_source_parent_effects import PARENT_WRITES, POINTER_EPOCHS
 from validation import require
+
+
+Calls = Mapping[int, tuple[int, str, tuple[str, ...]]]
+SourceChain = tuple[tuple["RemainingStep", DecoderInterface, DecoderInterface | None], ...]
+
+
+class PublicationCall(TypedDict):
+    index: int
+    package: SourcePackage
+    call: int
+    returned_tag_domain: tuple[int, ...]
+    nonerror_edge: tuple[int, int]
+    absent_None_edge: tuple[int, int]
+
+
+class PayloadLineage(TypedDict):
+    index: int
+    package: SourcePackage
+    stages: tuple[tuple[int, View, View], ...]
+    slot: ArraySlot
+
+
+class PublicationLineage(TypedDict):
+    normal_parent_path: tuple[int, ...]
+    source_calls: tuple[PublicationCall, ...]
+    payload_lineage: tuple[PayloadLineage, ...]
+    capture_order: tuple[int, ...]
+    pointer_epochs: tuple[tuple[int, int, int, int], ...]
+    split_byte: tuple[SourcePackage, int, int, int]
+    source_nonpadding_bytes: int
+    copied_padding_is_initialized: bool
+    complete_ordinary_Source_prefix_issued: bool
+    requires_actual_private_entry_source_control_and_reached_accesses: bool
+
+
+class NormalPath(TypedDict):
+    instructions: tuple[int, ...]
+    branches: tuple[tuple[int, int, bool], ...]
+    frontier: int
+
+
+class WarningPath(TypedDict):
+    scope: int
+    mode_domain: tuple[int, int]
+    path: NormalPath
+    inactive_predicated_instruction: int
+
+
+PathPieces = tuple[NormalPath] | tuple[tuple[NormalPath, ...], tuple[NormalPath, ...], NormalPath]
+
+
+class FuelPath(TypedDict):
+    assignment: FuelAssignment
+    source_guard: tuple[int, int | None]
+    pieces: PathPieces
+
+
+class SuffixPaths(TypedDict):
+    Warning: tuple[WarningPath, ...]
+    Fuel: tuple[FuelPath, ...]
+    Colors: tuple[NormalPath, ...]
+    requires_actual_case_argument_and_predication_relations: bool
+
+
+class WarningRelation(TypedDict):
+    scope_alternatives: tuple[int, ...]
+    mode_alternatives: tuple[int, ...]
+    children: tuple[RemainingStep, ...]
+    scratch_read: tuple[int, int]
+    complete_store: int
+
+
+class FuelRelation(TypedDict):
+    assignment: FuelAssignment
+    source_guard: tuple[int, int | None]
+    selected_children: tuple[RemainingStep, ...]
+    physical_store_order: tuple[int, ...]
+    pending_after_tag: tuple[tuple[int, int], ...]
+    direct_density_count_decrement: int
+    counted_tail: tuple[int, ...]
+    inactive_payload_remains_opaque: bool
+
+
+class ColorsError(TypedDict):
+    invocation: ColorsInvocation
+    outcome: RemainingOutcome
+    completed_Fuel_store: int
+
+
+class ColorsRelation(TypedDict):
+    normal: bool
+    errors: tuple[ColorsError, ...]
+    source_order: tuple[str, ...]
+    store_order: tuple[int, ...]
+
+
+class ErrorCarrier(TypedDict):
+    error: RemainingError
+    origin: RemainingStep | ColorsInvocation
+    outcome: RemainingOutcome
+    path: tuple[int, ...]
+    carrier_reads: tuple[tuple[int, int], ...]
+    opaque_reads_discarded: tuple[tuple[int, int], ...]
+    carrier: str
+    stopped_before: int
+    whole_register_narrowed: bool
+    prior_physical_stores: tuple[int, ...]
+
+
+class ArgumentTransfer(TypedDict):
+    site: int
+    source: RemainingStep | ColorsInvocation
+    arguments: tuple[tuple[str, View], ...]
+    result_domain: str
+
+
+class FuelValue(TypedDict):
+    assignment: FuelAssignment
+    source: RemainingStep
+    outcome: RemainingOutcome
+    register: str
+    load: int
+    store: int
+
+
+class ArgumentRelations(TypedDict):
+    children: tuple[ArgumentTransfer, ...]
+    high_GPR_intervals: tuple[tuple[str, int | str, int, tuple[int, ...]], ...]
+    high_FP_intervals: tuple[tuple[str, int, int, tuple[int, ...]], ...]
+    active_Fuel_values: tuple[FuelValue, ...]
+    page_flag_path: tuple[int, ...]
+    normal_inactive_predication: tuple[int, ...]
+    low_FP_source: tuple[()] | tuple[int, int, str]
+    low_FP_no_call_path: tuple[int, ...]
+    requires_actual_private_entry_and_case_guards: bool
+
+
+class SuffixLineage(TypedDict):
+    warning: WarningRelation | None
+    Fuel: tuple[FuelRelation, ...]
+    checked_child_returns: tuple[tuple[RemainingStep, int], ...]
+    parent_normal_paths: SuffixPaths
+    argument_transports: ArgumentRelations
+    source_chain: SourceChain
+    error_carriers: tuple[ErrorCarrier, ...]
+    Colors: ColorsRelation
+    frontier: int
+    outgoing_top4: bool
+    confers_active_state: bool
+    requires_actual_private_entry_guarded_parent_successors_and_reached_uses: bool
 
 
 # Fixed selected normal segments. The inherited entry and all child bodies
@@ -44,9 +217,31 @@ _CAPTURE_ORDER = (7, 0, 1, 2, 3, 4, 5, 6)
 _TAG_STORES = (4670, 4682, 4700, 4714, 4734, 4748, 4768, 4782)
 
 
+def _sequence(value: DecoderInterface | SequenceInterface | None) -> SequenceInterface:
+    if not isinstance(value, SequenceInterface):
+        raise AssertionError("Sources suffix changes a counted source state")
+    return value
+
+
+def _decoder(value: DecoderInterface | SequenceInterface | None) -> DecoderInterface | None:
+    if type(value) is SequenceInterface:
+        return value.decoder
+    if value is None or isinstance(value, DecoderInterface):
+        return value
+    raise AssertionError("Sources suffix has an untyped source state")
+
+
 def _publication_lineage(
-    objects, rows, parents, array, effects, frame, carriers, returns, envelopes
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    array: SourceArray,
+    effects: ArrayEffects,
+    frame: Storage,
+    carriers: Sequence[tuple[View, int]],
+    returns: CarrierReturns,
+    envelopes: ParentEnvelopes,
+) -> PublicationLineage:
     """Check one supplied conditional array; actual entry authority is separate.
 
     No data from a support file is loaded here. The closed current literals,
@@ -77,7 +272,7 @@ def _publication_lineage(
     )
     packages = array["packages"]
     before = packages[0]["sequence_before"]
-    call_records = []
+    call_records: list[PublicationCall] = []
     high = tuple("r" + str(i) for i in range(4, 12))
     call_map = {site: (target, role, mask) for site, target, role, mask in returns["parent_calls"]}
     require(
@@ -135,7 +330,7 @@ def _publication_lineage(
     ):
         result = array["invocations"][index]["result"]
         normal = result["normal"]
-        require(
+        if not (
             package["source"] is normal
             and normal is not None
             and normal["tag_domain"] == (0, 1)
@@ -147,9 +342,9 @@ def _publication_lineage(
             and (package["output"].storage, package["output"].offset, package["output"].extent)
             == (frame, out, 22)
             and package["captured_tag"].start == frame.start + tag
-            and call_map[V + call][:2] == (result["proof"]["function"], result["proof"]["role"]),
-            "Sources chronology mixes a returned package/tag/source epoch",
-        )
+            and call_map[V + call][:2] == (result["proof"]["function"], result["proof"]["role"])
+        ):
+            raise AssertionError("Sources chronology mixes a returned package/tag/source epoch")
         # The two parent predicates are justified by this actual child0/1
         # domain, not by assuming any value except ffff and2 must be valid.
         require(
@@ -224,7 +419,7 @@ def _publication_lineage(
     chains = effects["transports"]
     require(len(chains) == 4, "Sources chronology omits a staging phase")
     specs = (_CAPTURE, _TRANSPOSE, _CARRIER_COPY, _FINAL_LOCAL)
-    lineages = []
+    lineages: list[PayloadLineage] = []
     for index, package in enumerate(packages):
         previous = borrow(
             frame,
@@ -247,8 +442,8 @@ def _publication_lineage(
             if stage == 0:
                 require(
                     V + site in call_map
-                    and event["effect"]["physical_activation_paths"] == ((8,), (72,))
-                    and event["effect"]["initialized_semantic_bytes_not_inferred"] is True,
+                    and event["effect"].get("physical_activation_paths") == ((8,), (72,))
+                    and event["effect"].get("initialized_semantic_bytes_not_inferred") is True,
                     "Sources chronological copy loses its restored original-return closure",
                 )
             require_writes(
@@ -299,7 +494,9 @@ def _publication_lineage(
     )
 
 
-def _suffix_normal_paths(rows, parents, suffix, calls):
+def _suffix_normal_paths(
+    rows: InstructionMap, parents: Sequence[BodyRecord], suffix: RemainingAggregates, calls: Calls
+) -> SuffixPaths:
     """Closed grouped parent successors for the same typed normal cases.
 
     Basis/origin and Warning selector alternatives are local relations, not a
@@ -319,10 +516,12 @@ def _suffix_normal_paths(rows, parents, suffix, calls):
         )
     )
 
-    def segment(lo, hi):
+    def segment(lo: int, hi: int) -> tuple[int, ...]:
         return tuple(v for v in selected if lo <= v < hi)
 
-    def path(offsets, end, choices):
+    def path(
+        offsets: tuple[int, ...], end: int, choices: Mapping[int, tuple[bool, int]]
+    ) -> NormalPath:
         require(
             offsets and len(offsets) == len(set(offsets)),
             "Sources suffix parent path duplicates a current row",
@@ -363,7 +562,7 @@ def _suffix_normal_paths(rows, parents, suffix, calls):
             instructions=tuple(V + v for v in offsets), branches=tuple(branches), frontier=V + end
         )
 
-    warning = []
+    warning: list[WarningPath] = []
     if suffix["warning"] is not None:
         for scope in (0, 1):
             head = (segment(4796, 4836) + segment(4844, 4862)) if scope else segment(4796, 4862)
@@ -391,14 +590,14 @@ def _suffix_normal_paths(rows, parents, suffix, calls):
                 )
             )
     common = {5048: (False, 170), 5072: (False, 140), 5082: (False, 170)}
-    fuel = []
+    fuel: list[FuelPath] = []
     for assignment in suffix["Fuel_assignments"]:
         wire, density = assignment["source_guard"]
         choices = dict(common)
         if wire == 0:
             offsets = segment(5044, 5090) + segment(5524, 5574)
             choices[5088] = (True, 5524)
-            pieces = (path(offsets, 5574, choices),)
+            pieces: PathPieces = (path(offsets, 5574, choices),)
         elif wire == 1:
             offsets = segment(5044, 5140) + segment(5526, 5574)
             choices.update(
@@ -471,7 +670,7 @@ def _suffix_normal_paths(rows, parents, suffix, calls):
             }
             pieces = (basis, origins, path(tail, 5574, tail_choices))
         fuel.append(dict(assignment=assignment, source_guard=(wire, density), pieces=pieces))
-    colors = ()
+    colors: tuple[NormalPath, ...] = ()
     if suffix["normal"]:
         colors = (path(segment(5574, 5630), 5630, {5592: (False, 56), 5598: (False, 170)}),)
     return dict(
@@ -482,7 +681,16 @@ def _suffix_normal_paths(rows, parents, suffix, calls):
     )
 
 
-def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envelopes):
+def _suffix_lineage(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    suffix: RemainingAggregates,
+    frame: Storage,
+    owner: Storage,
+    returns: CarrierReturns,
+    envelopes: ParentEnvelopes,
+) -> SuffixLineage:
     """Conditional same-source child/result and late-store relation.
 
     This is a typed argument/effect interface. It does not independently
@@ -541,9 +749,14 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
         elif field in scalar:
             off, semantic, count = scalar[field]
             require(
-                before.header == borrow(frame, 1000, 8, frame.phase, True)
+                isinstance(before, SequenceInterface)
+                and before.header == borrow(frame, 1000, 8, frame.phase, True)
                 and before.count == Span(count, count)
-                and (after is None or after.count == Span(count - 1, count - 1)),
+                and (
+                    after is None
+                    or isinstance(after, SequenceInterface)
+                    and after.count == Span(count - 1, count - 1)
+                ),
                 "Sources suffix changes a counted Blend/Warning paired child",
             )
         else:
@@ -574,34 +787,35 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
             and (after is None and not options or len(options) == 1 and after is options[0]),
             "Sources suffix after-state is not its paired child return",
         )
-        decoder = before.decoder if field in scalar else before
+        decoder = _sequence(before).decoder if field in scalar else _decoder(before)
         require(
-            decoder.header.start == frame.start + 1608 + 236
+            decoder is not None
+            and decoder.header.start == frame.start + 1608 + 236
             and decoder.header.extent == 8
             and decoder.payload == suffix["before"].decoder.payload,
             "Sources suffix child changes its same D/payload",
         )
         checked.append((step, V + off + 4))
 
-    def find(field, decoder):
+    def find(field: str, decoder: DecoderInterface | SequenceInterface | None) -> RemainingStep:
         matches = tuple(
             v
             for v in steps
             if v["field"] == field
-            and (v["before"].decoder if field in scalar else v["before"]) is decoder
+            and (_sequence(v["before"]).decoder if field in scalar else v["before"]) is decoder
         )
         require(len(matches) == 1, "Sources suffix loses its paired child source epoch")
         return matches[0]
 
     warning = suffix["warning"]
-    warning_relation = None
+    warning_relation: WarningRelation | None = None
     if warning is not None:
         scope = find("Warning scope", suffix["before"].decoder)
         mode = find("Warning mode", scope["after"])
         page = find("Warning page", mode["after"])
         require(
             page["after"] is not None
-            and warning["after"] is page["after"].decoder
+            and warning["after"] is _sequence(page["after"]).decoder
             and warning["before"] is suffix["before"].decoder
             and warning["scratch_read"] == (frame.start + 1065, frame.start + 1067)
             and warning["complete_store"] == V + 5040
@@ -634,9 +848,10 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
         ),
         "Sources Fuel physical store partition differs",
     )
-    fuels = []
+    fuels: list[FuelRelation] = []
     for assigned in suffix["Fuel_assignments"]:
-        require(warning is not None, "Sources Fuel precedes its same Warning commit")
+        if warning is None:
+            raise AssertionError("Sources Fuel precedes its same Warning commit")
         selector = find("Fuel", warning["after"])
         wire, density = assigned["source_guard"]
         fuel = assigned["Fuel"]
@@ -655,11 +870,11 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
         if wire == 1:
             ratio = find("Stoich ratio", after)
             selected.append(ratio)
-            after = ratio["after"].decoder
+            after = _sequence(ratio["after"]).decoder
         elif wire == 2:
             percent = find("Blend percent", after)
             selected.append(percent)
-            after = percent["after"].decoder
+            after = _sequence(percent["after"]).decoder
             for name in ("Blend basis", "Blend origin", "Blend density"):
                 step = find(name, after)
                 selected.append(step)
@@ -676,7 +891,7 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
             ):
                 step = find(name, after)
                 selected.append(step)
-                after = step["after"].decoder
+                after = _sequence(step["after"]).decoder
         require(
             assigned["after"] is after
             and all(
@@ -701,7 +916,7 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
         )
     invocations = suffix["Colors_invocations"]
     require(len(invocations) == len(fuels), "Sources Colors drops a completed Fuel arm")
-    colors_errors = []
+    colors_errors: list[ColorsError] = []
     from config_widget_contracts import ROLES as WIDGET
 
     color_edge = _edge_at(parents, V + 5578)
@@ -795,7 +1010,16 @@ def _suffix_lineage(objects, rows, parents, suffix, frame, owner, returns, envel
     )
 
 
-def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, frame):
+def _suffix_error_relations(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    V: int,
+    parents: Sequence[BodyRecord],
+    suffix: RemainingAggregates,
+    calls: Calls,
+    chain: SourceChain,
+    frame: Storage,
+) -> tuple[ErrorCarrier, ...]:
     """Exact stopped error carriers from the same entered child outcomes.
 
     The final frontier is before56's whole-register move. No low-byte
@@ -828,10 +1052,12 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
             "Sources error carrier inherited island differs",
         )
 
-    def seg(lo, hi):
+    def seg(lo: int, hi: int) -> tuple[int, ...]:
         return tuple(v for v in selected if lo <= v < hi)
 
-    def checked_path(offsets, choices):
+    def checked_path(
+        offsets: tuple[int, ...], choices: Mapping[int, tuple[bool, int]]
+    ) -> tuple[int, ...]:
         for i, off in enumerate(offsets):
             row = rows[V + off]
             following = off + len(row.raw)
@@ -877,13 +1103,15 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
         "Blend gasoline_density": (6352, 6360),
         "Blend ethanol_density": (6384, 6392),
     }
-    result = []
+    result: list[ErrorCarrier] = []
     for error in suffix["errors"]:
         stage = error["stage"]
         field = stage.removesuffix(".domain")
         domain = stage.endswith(".domain")
         option = error["child_outcome"]
-        prior = ("Sources",) if field.startswith("Warning ") else ("Sources", "WarningPresentation")
+        prior: tuple[str, ...] = (
+            ("Sources",) if field.startswith("Warning ") else ("Sources", "WarningPresentation")
+        )
         if field == "global WarningColors":
             prior += ("Fuel",)
         expected_frontier = V + (170 if domain and not field.startswith("Warning ") else 56)
@@ -901,9 +1129,10 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
             4890: (True, 5024),
             5032: (True, 56),
         }
-        physical_read = ()
+        physical_read: tuple[tuple[int, int], ...] = ()
         packed = field.startswith("Warning ")
-        opaque = ()
+        opaque: tuple[tuple[int, int], ...] = ()
+        origin: RemainingStep | ColorsInvocation
         if field == "global WarningColors":
             origin = error["source_invocation"]
             require(
@@ -920,7 +1149,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
             else:
                 require(
                     option["kind"] == "error"
-                    and option["tag"] == 2
+                    and option.get("tag") == 2
                     and any(
                         v.offset == 1064 and off <= 2 < off + n
                         for v, off, n in option["possible_writes"]
@@ -936,6 +1165,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
             )
             require(len(origins) == 1, "Sources error carrier loses its same entered source call")
             origin = origins[0]
+            primitive_option = next(v for v in origin["child"]["outcomes"] if v is option)
             if field in direct:
                 site, branch, target = direct[field]
                 if domain:
@@ -944,7 +1174,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
                         "Sources error carrier domain rejection is not a successful parse",
                     )
                     require(
-                        (4, 4) in option["initialized_result_fields"],
+                        (4, 4) in primitive_option["initialized_result_fields"],
                         "Sources error carrier domain selector word is not initialized",
                     )
                     physical_read = ((1068, 4),)
@@ -975,7 +1205,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
                 else:
                     require(
                         option["kind"].startswith("error")
-                        and (1, 1) in option["initialized_result_fields"],
+                        and (1, 1) in primitive_option["initialized_result_fields"],
                         "Sources error carrier direct error byte is not initialized",
                     )
                     offsets = seg(site, branch + len(rows[V + branch].raw))
@@ -1018,7 +1248,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
                 else:
                     require(
                         option["kind"].startswith("error")
-                        and (4, 1) in option["initialized_result_fields"],
+                        and (4, 1) in primitive_option["initialized_result_fields"],
                         "Sources error carrier sequence error byte is not initialized",
                     )
                     offsets += (5754, 5758)
@@ -1053,7 +1283,7 @@ def _suffix_error_relations(objects, rows, V, parents, suffix, calls, chain, fra
     return tuple(result)
 
 
-def _suffix_source_chain(suffix):
+def _suffix_source_chain(suffix: RemainingAggregates) -> SourceChain:
     """Every entered child, including error-only ones, has its real input.
 
     Independent enum choices remain local guards. Only the two density
@@ -1063,10 +1293,10 @@ def _suffix_source_chain(suffix):
     from config_abstract import SequenceInterface
 
     steps = suffix["transitions"]
-    used = []
-    edges = []
+    used: list[RemainingStep] = []
+    edges: list[tuple[RemainingStep, DecoderInterface, DecoderInterface | None]] = []
 
-    def take(field, before):
+    def take(field: str, before: DecoderInterface | None) -> DecoderInterface | None:
         if before is None:
             return None
         matches = tuple(
@@ -1081,7 +1311,7 @@ def _suffix_source_chain(suffix):
         require(not any(step is v for v in used), "Sources suffix source chain replays a child")
         used.append(step)
         after = step["after"]
-        decoder = after.decoder if type(after) is SequenceInterface else after
+        decoder = _decoder(after)
         edges.append((step, before, decoder))
         return decoder
 
@@ -1103,7 +1333,7 @@ def _suffix_source_chain(suffix):
     for before in (
         () if blend is None else (blend,) + (() if temperature is None else (temperature,))
     ):
-        after = before
+        after: DecoderInterface | None = before
         for field in (
             "Blend gasoline_stoich",
             "Blend ethanol_stoich",
@@ -1118,7 +1348,14 @@ def _suffix_source_chain(suffix):
     return tuple(edges)
 
 
-def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
+def _suffix_argument_relations(
+    rows: InstructionMap,
+    V: int,
+    suffix: RemainingAggregates,
+    frame: Storage,
+    calls: Calls,
+    paths: SuffixPaths,
+) -> ArgumentRelations:
     """Authored argument/carrier equations for these grouped normal paths.
 
     The complete literal contracts and actual child transfer precede this
@@ -1131,14 +1368,20 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
     from config_abstract import DecoderInterface, SequenceInterface
     import re
 
-    def current(off, op, args):
+    def current(off: int, op: str, args: str) -> None:
         row = rows.get(V + off)
         require(
             row is not None and (row.mnemonic, row.operands) == (op, args),
             "Sources suffix argument/predication instruction differs at " + str(off),
         )
 
-    def preserves(reg, instructions, start=None, stop=None, inactive=()):
+    def preserves(
+        reg: str,
+        instructions: tuple[int, ...],
+        start: int | None = None,
+        stop: int | None = None,
+        inactive: tuple[int, ...] = (),
+    ) -> tuple[int, ...]:
         selected = instructions
         if start is not None:
             selected = selected[selected.index(V + start) + 1 :]
@@ -1154,7 +1397,13 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
             )
         return tuple(selected)
 
-    def fp_preserves(reg, instructions, start=None, stop=None, low=False):
+    def fp_preserves(
+        reg: str,
+        instructions: tuple[int, ...],
+        start: int | None = None,
+        stop: int | None = None,
+        low: bool = False,
+    ) -> tuple[int, ...]:
         selected = instructions
         if start is not None:
             selected = selected[selected.index(V + start) + 1 :]
@@ -1247,7 +1496,7 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
             and (row.mnemonic, row.operands) == ("mov", "r1, " + register),
             "Sources suffix outline receiver equation differs",
         )
-    transfers = []
+    transfers: list[ArgumentTransfer] = []
     for step in suffix["transitions"]:
         before = step["before"]
         sequence = type(before) is SequenceInterface
@@ -1255,12 +1504,14 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
             sequence or type(before) is DecoderInterface,
             "Sources suffix has an untyped caller argument",
         )
-        decoder = before.decoder if sequence else before
+        decoder = _sequence(before).decoder if sequence else _decoder(before)
         r0 = (
             before.header
             if sequence and step["field"] == "Warning page"
             else borrow(frame, 1064, 8, frame.phase, True)
         )
+        if decoder is None:
+            raise AssertionError("Sources suffix has no caller decoder")
         r1 = before.header if sequence else decoder.header
         arguments = (("r0", r0),) if step["field"] == "Warning page" else (("r0", r0), ("r1", r1))
         require(
@@ -1287,9 +1538,9 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
                 result_domain="Some1/None0/Err2",
             )
         )
-    carriers = []
-    float_carriers = []
-    source_values = []
+    carriers: list[tuple[str, int | str, int, tuple[int, ...]]] = []
+    float_carriers: list[tuple[str, int, int, tuple[int, ...]]] = []
+    source_values: list[FuelValue] = []
     for alternative in paths["Warning"]:
         p = alternative["path"]["instructions"]
         scope = alternative["scope"]
@@ -1299,12 +1550,15 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
         )
         carriers.append(("r6", 5178, 5234, preserves("r6", p, 5178, 5234)))
         carriers.append(("r5", 4872, 5040, preserves("r5", p, 4872, 5040, (5022,))))
-    low = ()
-    for alternative in paths["Fuel"]:
-        wire, density = alternative["source_guard"]
-        pieces = alternative["pieces"]
+    low: tuple[int, ...] = ()
+    for fuel_alternative in paths["Fuel"]:
+        wire, density = fuel_alternative["source_guard"]
+        pieces = fuel_alternative["pieces"]
         if wire in (0, 1):
-            p = pieces[0]["instructions"]
+            if len(pieces) != 1:
+                raise AssertionError("Sources suffix normal case has another path partition")
+            final_path = pieces[0]
+            p = final_path["instructions"]
             stop = 5064 if wire == 0 else 5102
             carriers.append(("r4", 4804, stop, preserves("r4", p, stop=stop)))
             if wire == 1:
@@ -1318,10 +1572,12 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
                 )
             )
         else:
-            basis, origin, tail = pieces
-            tail = tail["instructions"]
-            for ordinal, p in enumerate(basis):
-                p = p["instructions"]
+            if len(pieces) != 3:
+                raise AssertionError("Sources suffix blend case has another path partition")
+            basis, origin, final_path = pieces
+            tail = final_path["instructions"]
+            for ordinal, basis_path in enumerate(basis):
+                p = basis_path["instructions"]
                 carriers.append(("r4", 4804, 5736, preserves("r4", p, stop=5736)))
                 carriers.append(("r8", 5874, 5978, preserves("r8", p, 5874)))
                 carriers.append(
@@ -1333,8 +1589,8 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
                     )
                 )
                 float_carriers.append(("s16", 5882, 5978, fp_preserves("s16", p, 5882)))
-            for ordinal, p in enumerate(origin):
-                p = p["instructions"]
+            for ordinal, origin_path in enumerate(origin):
+                p = origin_path["instructions"]
                 carriers.append(("r8", 5874, 6220, preserves("r8", p)))
                 carriers.append(("r9", "same basis arm", 6220, preserves("r9", p)))
                 carriers.append(
@@ -1369,13 +1625,13 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
             # The low FP source is loaded after the final child return.
             # The branch to common Fuel stores has no later call or s0 def.
             low = fp_preserves("s0", tail, 6406, 5562, True)
-        p = pieces[0]["instructions"] if wire in (0, 1) else pieces[2]["instructions"]
+        p = final_path["instructions"]
         carriers.append(("r4", 5538, 5574, preserves("r4", p, 5538)))
-        assignment = alternative["assignment"]
+        assignment = fuel_alternative["assignment"]
         _selected = ()
         # Bind each active stored FP/bit carrier to its exact checked child
         # outcome. Unit/ratio inactive FP words keep their opaque status.
-        names = (
+        names: tuple[tuple[str, str, int, int], ...] = (
             (("Stoich ratio", "r6", 5122, 5566),)
             if wire == 1
             else (
@@ -1395,7 +1651,7 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
         ordered = next(v for v in suffix["Fuel_assignments"] if v is assignment)
         after = ordered["before"]
         paired = []
-        wanted = (
+        wanted: tuple[str, ...] = (
             ("Stoich ratio",)
             if wire == 1
             else ("Blend percent", "Blend basis", "Blend origin", "Blend density")
@@ -1422,9 +1678,7 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
             require(len(matches) == 1, "Sources Fuel carrier loses its same ordered source child")
             step = matches[0]
             paired.append(step)
-            after = (
-                step["after"].decoder if type(step["after"]) is SequenceInterface else step["after"]
-            )
+            after = _decoder(step["after"])
         require(
             after is assignment["after"], "Sources Fuel carrier ends at another assignment cursor"
         )
@@ -1450,8 +1704,8 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
                     store=V + store,
                 )
             )
-    for p in paths["Colors"]:
-        carriers.append(("r4", 5538, 5630, preserves("r4", p["instructions"])))
+    for color_path in paths["Colors"]:
+        carriers.append(("r4", 5538, 5630, preserves("r4", color_path["instructions"])))
     return dict(
         children=tuple(transfers),
         high_GPR_intervals=tuple(carriers),

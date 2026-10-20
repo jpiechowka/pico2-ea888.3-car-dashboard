@@ -75,7 +75,7 @@ fn exact_overlay_preserves_original_additions_and_rejects_changed_missing_extra_
     assert!(verify_tree(&f.0, &m, false).is_err());
 }
 #[test]
-fn only_real_radio_top_level_target_directory_is_ignored() {
+fn only_real_vendor_top_level_target_directory_is_ignored() {
     let f = Fixture::new();
     f.write("src/lib.rs", b"source");
     f.write("target/build", b"generated");

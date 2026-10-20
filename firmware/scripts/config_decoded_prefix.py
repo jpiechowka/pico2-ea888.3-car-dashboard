@@ -6,6 +6,18 @@ whole visitor return. The public description cannot authorize a later phase.
 Physical and source qualifications are inherited, not discharged by this API.
 """
 
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_build_source import SourceBinding
+from config_headers import NextU16Interface, NextU16Outcome, PackedU16, VisitorHeaders
+from config_helpers import HelperRecord
+from config_loader_boundary import LoaderBoundary, ProtectedInterval
+from config_stack import DiagnosticObjects
+from llvm_stack import Instruction
+
+if TYPE_CHECKING:
+    from config_decoded_sources import PhaseGraph
 from dataclasses import dataclass
 import re
 import struct
@@ -29,7 +41,131 @@ from config_stack import canonical_symbol
 from validation import require
 
 
-def _name(objects, role, address=None):
+Fields: TypeAlias = tuple[tuple[str, tuple[int, int]], ...]
+Intervals: TypeAlias = tuple[tuple[int, int], ...]
+PrefixSuccess: TypeAlias = tuple[SequenceInterface, Fields, Intervals]
+
+
+class InnerReturn(TypedDict):
+    call: int
+    destination: int
+    saved_PC: tuple[int, int]
+    SP: int
+    restores_LR_at: int
+    returns_at: int
+
+
+class DecrementReturn(TypedDict):
+    call: int
+    return_PC: int
+    entry_SP: int
+    target: int
+    tail_to: int
+
+
+class DeserializeReturn(TypedDict):
+    destination: int
+    saved_PC: tuple[int, int]
+    SP: int
+    restore: int
+    pending_frame: int
+
+
+class PopReturn(TypedDict):
+    call: int
+    destination: int
+    saved_PC_on_nonempty: tuple[int, int]
+    entry_SP: int
+    restore_before_zero_call: int
+    LR_shuttle: tuple[str, int, int]
+    leaf_call: int
+    leaf_target: int
+    leaf_return: int
+    return_at: int
+
+
+class PrefixReturn(TypedDict):
+    call: int
+    destination: int
+    entry_SP: int
+    return_SP: int
+    saved_PC: tuple[int, int]
+    wrapper: tuple[int, int]
+    inner: InnerReturn
+    decrement_tail: DecrementReturn
+    deserialize: DeserializeReturn
+    pop: PopReturn
+    physical_active_saves: Intervals
+    architectural_LR_preserved_across_BL: bool
+
+
+class PrefixControl(TypedDict):
+    selected_instruction_count: int
+    local_edges: tuple[tuple[int, str, int, str | int | None], ...]
+    nested_returns: tuple[int, ...]
+    stopped_frontiers: tuple[int, ...]
+    unvisited_parent_and_other_invocations_pending: bool
+    computed_transfers_executed: tuple[()]
+    direct_foreign_interior_excluded: bool
+
+
+class PrefixInvocation(TypedDict):
+    site: int
+    before: SequenceInterface
+    result: NextU16Interface
+    predecessor: NextU16Outcome | None
+
+
+class PrefixOutcome(TypedDict):
+    completed_fields: int
+    field_domains: Fields
+    error: int | None
+    calls: tuple[int, ...]
+    packed_r0: PackedU16 | int
+    count: tuple[int, int]
+    cursor: tuple[int, int]
+    frontier: int
+    initial_facts_retired: Intervals
+    initial_active_bytes_preserved: int
+    initialized_remainder_preserved: bool
+    initial_collection_lengths: tuple[int, int]
+    writes: Intervals
+
+
+class PrefixDescription(TypedDict):
+    phase: str
+    mode: str
+    config: tuple[int, int]
+    root_frame: tuple[int, int]
+    visitor_frame: tuple[int, int]
+    decoder: tuple[int, int]
+    sequence: tuple[int, int]
+    guarded_CRC_success: tuple[int, str]
+    CRC_success_observed_taken: bool
+    outcomes: tuple[PrefixOutcome, ...]
+    control: PrefixControl
+    nested_return_sites: tuple[PrefixReturn, ...]
+    deepest_child_SP: int
+    possible_field_writes: Intervals
+    initial_collection_lengths: tuple[int, int]
+    initial_facts_consumed_once: bool
+    initial_facts_not_revalidated_after_mutation: bool
+    D_end_and_Q_pointer_preserved: bool
+    protected_static_suffix: tuple[int, int]
+    executor_constituent: ProtectedInterval
+    nested_frame_metadata: tuple[int, ...]
+    source_context: SourceBinding
+    source_qualification: str
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    hardware_qualified: bool
+    pending: tuple[str, ...]
+
+
+def _name(objects: DiagnosticObjects, role: str, address: int | None = None) -> str:
     names = [
         n
         for n, e in objects.elf.functions.items()
@@ -39,7 +175,9 @@ def _name(objects, role, address=None):
     return names[0]
 
 
-def _geometry(objects, boundary):
+def _geometry(
+    objects: DiagnosticObjects, boundary: LoaderBoundary
+) -> tuple[Storage, tuple[Storage, ...], Storage, int]:
     require(
         boundary["mode"] == "sizez", "decoded u16 prefix has no consuming variant for this mode"
     )
@@ -74,9 +212,11 @@ def _geometry(objects, boundary):
     return frame, guards, owner, S
 
 
-def _helpers(objects, rows, outer):
+def _helpers(
+    objects: DiagnosticObjects, rows: InstructionMap, outer: NextU16Interface
+) -> dict[str, HelperRecord]:
     """Complete current helper family, including parent-bound zero-frame tails."""
-    result = {}
+    result: dict[str, HelperRecord] = {}
     pending = list(outer["proof"]["ordinary_edges"])
     while pending:
         off, op, target, role, frame = pending.pop()
@@ -111,7 +251,9 @@ def _helpers(objects, rows, outer):
     return {s: result[HELPER_SEMANTIC_ROLES[s]] for s in expected}
 
 
-def _returns(outer, helpers, V, site):
+def _returns(
+    outer: NextU16Interface, helpers: Mapping[str, HelperRecord], V: int, site: int
+) -> PrefixReturn:
     """Authored save/restore equations for the matched fixed six-helper family.
 
     BL overwrites architectural LR. Saved caller PCs and the Slice r2 shuttle
@@ -176,7 +318,15 @@ def _returns(outer, helpers, V, site):
     )
 
 
-def _selected_control(objects, rows, boundary, headers, regions, outer, helpers):
+def _selected_control(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    boundary: LoaderBoundary,
+    headers: VisitorHeaders,
+    regions: Sequence[BodyRecord],
+    outer: NextU16Interface,
+    helpers: Mapping[str, HelperRecord],
+) -> PrefixControl:
     """Closed selected successors, with unvisited contexts explicitly pending.
 
     No computed transfer executes in this prefix/helper family. Unvisited
@@ -189,8 +339,8 @@ def _selected_control(objects, rows, boundary, headers, regions, outer, helpers)
     w = outer["proof"]
     R = root["function"]
     V = visitor["function"]
-    proofs = [root, visitor, *regions, w, *helpers.values()]
-    selected = {}
+    proofs: list[BodyRecord] = [root, visitor, *regions, w, *helpers.values()]
+    selected: dict[int, Instruction] = {}
     for p in proofs:
         # Shared error suffix bytes are bound by the reused grammar but are
         # not executed at this component's error frontier.
@@ -219,7 +369,7 @@ def _selected_control(objects, rows, boundary, headers, regions, outer, helpers)
         and explicit[V + 46][0] == w["function"],
         "decoded prefix loses same-invocation nested call/return order",
     )
-    branch = []
+    branch: list[tuple[int, str, int, str | int | None]] = []
     returns = []
     for at, row in selected.items():
         family, conditional = _control(row)
@@ -342,8 +492,9 @@ def _selected_control(objects, rows, boundary, headers, regions, outer, helpers)
                     and family in (None, "b", "bl", "cbz", "cbnz", "return"),
                     "decoded parent has an unsupported implicit/exception PC effect",
                 )
-        if _direct_family(row):
-            family = _direct_family(row)
+        direct = _direct_family(row)
+        if direct is not None:
+            family = direct
             target = _direct_target(row, family)
             if target in entrances:
                 require(
@@ -366,7 +517,7 @@ def _selected_control(objects, rows, boundary, headers, regions, outer, helpers)
     )
 
 
-def _direct_family(row):
+def _direct_family(row: Instruction) -> str | None:
     # transfer_family includes security/conditional indirect forms; the finite
     # classifier above rejects them when they occur in either selected parent.
     from config_stack import transfer_family
@@ -380,17 +531,22 @@ class _PrefixErrorFrontier:
     site: int
     before: SequenceInterface
     after: SequenceInterface
-    outcome: dict
-    invocation: dict
+    outcome: NextU16Outcome
+    invocation: PrefixInvocation
     packed_r0: int
     frontier: int
-    assigned_fields: tuple
-    retired_initial: tuple
+    assigned_fields: Fields
+    retired_initial: Intervals
     saved: Storage
-    original_child_return: dict
+    original_child_return: PrefixReturn
 
 
-def _prefix_error_graph(headers, invocations, frontiers, success):
+def _prefix_error_graph(
+    headers: VisitorHeaders,
+    invocations: Sequence[PrefixInvocation],
+    frontiers: Sequence[_PrefixErrorFrontier],
+    success: Sequence[PrefixSuccess],
+) -> "PhaseGraph":
     from config_decoded_sources import _phase_graph
 
     return _phase_graph((headers, invocations, frontiers, success))
@@ -398,20 +554,20 @@ def _prefix_error_graph(headers, invocations, frontiers, success):
 
 @dataclass(frozen=True)
 class _PrefixState:
-    boundary: dict
+    boundary: LoaderBoundary
     frame: Storage
-    guards: tuple
+    guards: tuple[Storage, ...]
     owner: Storage
-    headers: dict
-    regions: tuple
-    outer: dict
-    helpers: dict
-    success: tuple
-    error_invocations: tuple = ()
-    error_frontiers: tuple = ()
+    headers: VisitorHeaders
+    regions: tuple[BodyRecord, ...]
+    outer: NextU16Interface
+    helpers: dict[str, HelperRecord]
+    success: tuple[PrefixSuccess, ...]
+    error_invocations: tuple[PrefixInvocation, ...] = ()
+    error_frontiers: tuple[_PrefixErrorFrontier, ...] = ()
     error_checkpoint: object = None
 
-    def _checked_errors(self):
+    def _checked_errors(self) -> tuple[_PrefixErrorFrontier, ...]:
         """Retained finite relation; enclosing input/body currentness is due.
 
         This is not a public receipt or an independently fresh return grant.
@@ -490,7 +646,9 @@ class _PrefixState:
         return self.error_frontiers
 
 
-def _first_boot_decoded_u16_state(objects, instructions, source_context):
+def _first_boot_decoded_u16_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[PrefixDescription, _PrefixState]:
     boundary = first_boot_loader_boundary(objects, instructions, source_context)
     frame, guards, owner, S = _geometry(objects, boundary)
     B = owner.start
@@ -558,15 +716,19 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
         "decoded prefix loses copied initialized active/opaque source state",
     )
     initial_live = set(active_bytes) - {14600}
-    outcomes = []
-    success = []
-    error_frontiers = []
-    invocations = []
-    pending = [(state, (), (), outer, None)]
+    outcomes: list[PrefixOutcome] = []
+    success: list[PrefixSuccess] = []
+    error_frontiers: list[_PrefixErrorFrontier] = []
+    invocations: list[PrefixInvocation] = []
+    pending: list[
+        tuple[SequenceInterface, Fields, Intervals, NextU16Interface, NextU16Outcome | None]
+    ] = [(state, (), (), outer, None)]
     for ordinal, (field, offset) in enumerate(U16_FIELDS):
-        next_pending = []
+        next_pending: list[
+            tuple[SequenceInterface, Fields, Intervals, NextU16Interface, NextU16Outcome | None]
+        ] = []
         for before, fields, retired, bound, previous in pending:
-            call = dict(
+            call: PrefixInvocation = dict(
                 site=V + (24 if ordinal == 0 else 46),
                 before=before,
                 result=bound,
@@ -594,6 +756,11 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
                     assigned = fields
                     expired = retired
                 if error is not None:
+                    packed = alternative["packed_r0"]
+                    if not isinstance(packed, int):
+                        raise AssertionError(
+                            "Prefix error origin/carrier/original-return association changed"
+                        )
                     saved = next(
                         v
                         for v in visitor["protected"]
@@ -606,7 +773,7 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
                             after,
                             alternative,
                             call,
-                            alternative["packed_r0"],
+                            packed,
                             V + 54,
                             assigned,
                             expired,
@@ -645,7 +812,7 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
                     )
                     next_pending.append((after, assigned, expired, second, alternative))
         pending = next_pending
-    description = dict(
+    description: PrefixDescription = dict(
         phase="first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes",
         mode="sizez",
         config=(B, 14604),
@@ -690,10 +857,10 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
             "full graph and resource gates",
         ),
     )
-    invocations = tuple(invocations)
-    error_frontiers = tuple(error_frontiers)
-    success = tuple(success)
-    checkpoint = _prefix_error_graph(headers, invocations, error_frontiers, success)
+    calls_tuple = tuple(invocations)
+    frontiers_tuple = tuple(error_frontiers)
+    success_tuple = tuple(success)
+    checkpoint = _prefix_error_graph(headers, calls_tuple, frontiers_tuple, success_tuple)
     context = _PrefixState(
         boundary,
         frame,
@@ -703,15 +870,17 @@ def _first_boot_decoded_u16_state(objects, instructions, source_context):
         regions,
         outer,
         helpers,
-        success,
-        invocations,
-        error_frontiers,
+        success_tuple,
+        calls_tuple,
+        frontiers_tuple,
         checkpoint,
     )
     context._checked_errors()
     return description, context
 
 
-def first_boot_decoded_u16_prefix(objects, instructions, source_context):
+def first_boot_decoded_u16_prefix(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> PrefixDescription:
     """Readonly restricted prefix; later consumers use the private producer."""
     return _first_boot_decoded_u16_state(objects, instructions, source_context)[0]

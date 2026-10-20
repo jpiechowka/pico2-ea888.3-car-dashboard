@@ -616,9 +616,9 @@ fn import_file(
         MAX_JSON_BYTES
     };
     if !file.size().is_finite() || file.size() < 0.0 || file.size() > limit as f64 {
-        ui.event(import_outcome(Err(ImportFailure::TooLarge)));
-        ui.notice
-            .set("Project import is limited to 9 MiB; dashboard JSON to 128 KiB. No file was read.".into());
+        let notice = import_outcome(Err(ImportFailure::TooLarge { limit_bytes: limit }));
+        ui.notice.set(format!("{}. No file was read.", notice.message));
+        ui.event(notice);
         return;
     }
     let mut request = Err(EditorError::InvalidDraft);
@@ -659,8 +659,9 @@ fn import_file(
                     ui.editor.update(|e| {
                         let _ = e.cancel_import(token);
                     });
-                    ui.event(import_outcome(Err(ImportFailure::TooLarge)));
-                    ui.notice.set("Import exceeds its format size limit.".into());
+                    let notice = import_outcome(Err(ImportFailure::TooLarge { limit_bytes: limit }));
+                    ui.notice.set(notice.message.clone());
+                    ui.event(notice);
                     return;
                 }
                 let bytes = array.to_vec();

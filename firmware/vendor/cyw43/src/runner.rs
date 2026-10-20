@@ -133,6 +133,10 @@ where
         nvram: &Aligned<A4, [u8]>,
         bt_fw: Option<&[u8]>,
     ) -> Result<(), ()> {
+        #[cfg(feature = "bluetooth")]
+        if let Some(firmware) = bt_fw {
+            crate::bluetooth_firmware::Firmware::new(firmware, CHIP.bluetooth_base_address)?;
+        }
         self.bus.init(bt_fw.is_some()).await;
 
         // Init ALP (Active Low Power) clock
@@ -387,7 +391,7 @@ where
 
         #[cfg(feature = "bluetooth")]
         if let Some(bt_fw) = bt_fw {
-            self.bt.as_mut().unwrap().init_bluetooth(&mut self.bus, bt_fw).await;
+            self.bt.as_mut().unwrap().init_bluetooth(&mut self.bus, bt_fw).await?;
         }
 
         debug!("cyw43 runner init done");
@@ -772,8 +776,17 @@ where
                     return;
                 }
 
-                let event_type = Event::from(event_packet.msg.event_type as u8);
-                let status = EStatus::from(event_packet.msg.status as u8);
+                // Wire fields are u32: truncation could turn an unknown event
+                // into JOIN or an unknown failure status into SUCCESS.
+                let event_type = u8::try_from(event_packet.msg.event_type)
+                    .map(Event::from)
+                    .unwrap_or(Event::Unknown);
+                if matches!(event_type, Event::Unknown | Event::LAST) {
+                    return;
+                }
+                let status = u8::try_from(event_packet.msg.status)
+                    .map(EStatus::from)
+                    .unwrap_or(EStatus::Unknown);
                 debug!(
                     "=== EVENT {:?}: {:?} {:02x}",
                     event_type,

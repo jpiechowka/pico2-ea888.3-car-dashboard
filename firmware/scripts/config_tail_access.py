@@ -6,8 +6,13 @@ completion, mutable ownership or runtime memory permission.
 """
 
 from dataclasses import dataclass, asdict
+from typing import TYPE_CHECKING
+from script_values import object_fields, array_items, string_value, integer_value
+
+if TYPE_CHECKING:
+    from config_stack import DiagnosticObjects
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
-from config_owned_access import _storage, _view
+from config_owned_access import _storage, _view, _integer_triple
 from config_tail_contracts import ROLES
 from validation import require
 
@@ -41,9 +46,9 @@ class TailAccessContext:
     visitor: Storage
     frame: Storage
     config: View
-    protected: tuple
+    protected: tuple[Storage, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             all(
                 isinstance(v, Storage)
@@ -129,11 +134,11 @@ class TailFamily:
     mode: str
     parent: int
     caller: int
-    sites: tuple
+    sites: tuple[tuple[int, str, int, int, str, str], ...]
     context: TailAccessContext
-    epochs: tuple
+    epochs: tuple[tuple[int, int, int], ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             type(self.role) is str
             and self.role in SITE_SHAPES
@@ -220,7 +225,7 @@ class TailFamily:
                     "Tail access intersects protected live storage",
                 )
 
-    def owner(self, index):
+    def owner(self, index: int) -> View:
         require(
             type(index) is int and 0 <= index < (3 if self.epochs else 1),
             "Tail access has a stale call epoch",
@@ -232,14 +237,14 @@ class TailFamily:
             return borrow(c.visitor, 940, 10, _PHASE)
         return borrow(c.config.storage, 212, 10, _PHASE, True)
 
-    def footprints(self, index):
+    def footprints(self, index: int) -> tuple[tuple[int, int], ...]:
         owner = self.owner(index)
         return tuple(
             (owner.start + field, owner.start + field + width)
             for at, raw, field, width, direction, label in self.sites
         )
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         c = self.context
         return dict(
             kind="decoded_tail_access_family",
@@ -264,7 +269,8 @@ class TailFamily:
         )
 
 
-def read_tail_family(record):
+def read_tail_family(value: object) -> TailFamily:
+    record = object_fields(value, "malformed TailFamily record")
     require(
         type(record) is dict
         and set(record)
@@ -272,17 +278,17 @@ def read_tail_family(record):
         | {"kind", "source_phase", "physical_tag_is_completed_Tail"}
         and record["kind"] == "decoded_tail_access_family"
         and type(record["sites"]) is list
-        and len(record["sites"]) == 2
+        and len(array_items(record["sites"], "malformed sites")) == 2
         and type(record["epochs"]) is list
-        and len(record["epochs"]) in (0, 3),
+        and len(array_items(record["epochs"], "malformed epochs")) in (0, 3),
         "malformed Tail access family record",
     )
-    c = record["context"]
+    c = object_fields(record["context"], "malformed context")
     require(
         type(c) is dict
         and set(c) == set(TailAccessContext.__dataclass_fields__)
         and type(c["protected"]) is list
-        and 1 <= len(c["protected"]) <= 16,
+        and 1 <= len(array_items(c["protected"], "malformed protected")) <= 16,
         "malformed Tail access context",
     )
     context = TailAccessContext(
@@ -290,33 +296,41 @@ def read_tail_family(record):
         _storage(c["visitor"]),
         _storage(c["frame"]),
         _view(c["config"]),
-        tuple(_storage(v) for v in c["protected"]),
+        tuple(_storage(v) for v in array_items(c["protected"], "malformed protected")),
     )
     sites = []
-    for value in record["sites"]:
+    for raw_site in array_items(record["sites"], "malformed sites"):
+        value = object_fields(raw_site, "malformed site")
         require(
             type(value) is dict
             and set(value) == {"site", "encoding", "offset", "width", "direction", "source_phase"},
             "malformed Tail access site",
         )
         sites.append(
-            tuple(
-                value[k]
-                for k in ("site", "encoding", "offset", "width", "direction", "source_phase")
+            (
+                integer_value(value["site"], "malformed site"),
+                string_value(value["encoding"], "malformed encoding"),
+                integer_value(value["offset"], "malformed offset"),
+                integer_value(value["width"], "malformed width"),
+                string_value(value["direction"], "malformed direction"),
+                string_value(value["source_phase"], "malformed source_phase"),
             )
         )
     require(
-        all(type(v) is list and len(v) == 3 for v in record["epochs"]),
+        all(
+            type(v) is list and len(array_items(v, "malformed epoch")) == 3
+            for v in array_items(record["epochs"], "malformed epochs")
+        ),
         "malformed Tail access epoch",
     )
     result = TailFamily(
-        record["role"],
-        record["mode"],
-        record["parent"],
-        record["caller"],
+        string_value(record["role"], "malformed role"),
+        string_value(record["mode"], "malformed mode"),
+        integer_value(record["parent"], "malformed parent"),
+        integer_value(record["caller"], "malformed caller"),
         tuple(sites),
         context,
-        tuple(tuple(v) for v in record["epochs"]),
+        tuple(_integer_triple(v) for v in array_items(record["epochs"], "malformed epochs")),
     )
     require(
         record["physical_tag_is_completed_Tail"] is False and record == result.to_record(),
@@ -325,7 +339,7 @@ def read_tail_family(record):
     return result
 
 
-def current_tail_family(objects, value):
+def current_tail_family(objects: "DiagnosticObjects", value: TailFamily) -> TailFamily:
     """Current role/extent/mapping/six-site bytes only, never a reached use."""
     from config_entry import CONFIG, entry_object
     from config_headers import VISITOR

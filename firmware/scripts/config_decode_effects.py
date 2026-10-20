@@ -9,10 +9,16 @@ instruction evaluator, general postcard implementation or Config validator.
 """
 
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from typing import TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord
+from config_stack import DiagnosticObjects
 import hashlib
 from config_structural import _image_hash, _readonly_hash
 import struct
-from config_helpers import helper_body, helper_coverage, helper_frame, HELPER_SEMANTIC_ROLES
+from config_helpers import helper_body, helper_coverage, helper_frame
+from config_helper_contracts import HELPER_SEMANTIC_ROLES
 from config_platform import PlatformPolicy
 from config_regions import Storage, View, require_writes
 from config_stack import canonical_symbol
@@ -25,7 +31,7 @@ class DecoderState:
     payload: View
     cursor: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.header, View)
             and self.header.writable
@@ -49,7 +55,13 @@ class DecoderState:
         )
 
 
-def _object(view, role):
+def _scalar(value: int | None) -> int:
+    if value is None:
+        raise AssertionError("successful decoder has no scalar value")
+    return value
+
+
+def _object(view: View, role: str) -> Storage:
     return Storage(
         view.storage.space,
         view.storage.identity + ":" + role + ":" + str(view.offset),
@@ -61,14 +73,16 @@ def _object(view, role):
     )
 
 
-def _with_input(protected, payload):
+def _with_input(protected: tuple[Storage, ...], payload: View) -> tuple[Storage, ...]:
     # The SAME immutable allocation is propagated through nested decoders, not
     # reintroduced as a second owned object. Only exact equality can coalesce.
     owner = _object(payload, "immutable-input")
     return protected if owner in protected else protected + (owner,)
 
 
-def _current(objects, instructions, proof):
+def _current(
+    objects: DiagnosticObjects, instructions: InstructionMap, proof: BodyRecord
+) -> HelperCoverageRecord:
     require(
         isinstance(proof, dict) and "coverage" in proof,
         "decoder effects lack complete body/edge coverage",
@@ -79,12 +93,23 @@ def _current(objects, instructions, proof):
         if e[0] & ~1 == proof["function"] and canonical_symbol(n) == proof["role"]
     ]
     require(len(names) == 1, "decoder effects have no unique current typed body")
-    current = helper_coverage(objects, names[0], instructions, proof["coverage"]["context"])
+    coverage = proof.get("coverage")
+    if not isinstance(coverage, dict):
+        raise AssertionError("decoder effects lack complete body/edge coverage")
+    context: object = coverage.get("context")
+    if not isinstance(context, tuple):
+        raise AssertionError("decoder effects lack complete body/edge coverage")
+    current = helper_coverage(objects, names[0], instructions, context)
     require(current == proof, "decoder effects use stale body/child facts")
     return current
 
 
-def _decoder_dependency(objects, instructions, proof, frame):
+def _decoder_dependency(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    frame: Storage,
+) -> tuple[HelperCoverageRecord, Storage]:
     # Only these reviewed parent/outline/decoder edges may compose effects.
     interfaces = {
         "deserialize_u16": ("slice_pop", None),
@@ -107,9 +132,9 @@ def _decoder_dependency(objects, instructions, proof, frame):
         require(bound["semantic_role"] == outline, "sequence outline ABI differs")
         edges = bound["ordinary_edges"]
     role = HELPER_SEMANTIC_ROLES[semantic]
-    edges = [e for e in edges if e[3] == role]
-    require(len(edges) == 1, "decoder pop dependency differs")
-    target = edges[0][2]
+    selected_edges = [e for e in edges if e[3] == role]
+    require(len(selected_edges) == 1, "decoder pop dependency differs")
+    target = selected_edges[0][2]
     names = [
         n
         for n, e in objects.elf.functions.items()
@@ -131,22 +156,65 @@ def _decoder_dependency(objects, instructions, proof, frame):
     return child, child_frame
 
 
-def _decoder_child(objects, instructions, proof, frame, state, protected, **kwargs):
+class DecoderArguments(TypedDict, total=False):
+    output: View | None
+    platform_policy: PlatformPolicy | None
+
+
+class DecodeEffect(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    state: "DecoderState"
+    original_state: "DecoderState"
+    output: View | None
+    registers: dict[str, int]
+    value: int | None
+    error: int | None
+    input_reads: tuple[tuple[int, int], ...]
+    writes: tuple[tuple[View, int, bytes], ...]
+    initialized_result_fields: tuple[tuple[int, int], ...]
+    children: tuple["DecodeEffect", ...]
+    platform_policy: PlatformPolicy | None
+    normal_preserves: tuple[str, ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_machine_constructor_arguments_lifetime_ingress_and_enclosing_graph: bool
+
+
+def _decoder_child(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    frame: Storage,
+    state: DecoderState,
+    protected: Sequence[Storage],
+    *,
+    output: View | None = None,
+    platform_policy: PlatformPolicy | None = None,
+) -> DecodeEffect:
     child, child_frame = _decoder_dependency(objects, instructions, proof, frame)
-    return decode_effect(objects, instructions, child, state, child_frame, protected, **kwargs)
+    return decode_effect(
+        objects,
+        instructions,
+        child,
+        state,
+        child_frame,
+        protected,
+        output=output,
+        platform_policy=platform_policy,
+    )
 
 
 def decode_effect(
-    objects,
-    instructions,
-    proof,
-    state,
-    frame,
-    ancestor_protected,
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: object,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
     *,
-    output=None,
-    platform_policy=None,
-):
+    output: View | None = None,
+    platform_policy: PlatformPolicy | None = None,
+) -> DecodeEffect:
     """Return exact fixed helper effects for the supplied valid source state.
 
     Bytes are read only from the bound readonly ELF input. Cursor/header values
@@ -156,11 +224,11 @@ def decode_effect(
     """
     proof = _current(objects, instructions, proof)
     semantic = proof["semantic_role"]
-    require(
+    if not (
         semantic in ("slice_pop", "deserialize_u16", "take_varint_u32", "deserialize_seed_f32")
-        and isinstance(state, DecoderState),
-        "unsupported decoder/source state",
-    )
+        and isinstance(state, DecoderState)
+    ):
+        raise AssertionError("unsupported decoder/source state")
     require(
         state.header.storage.space == frame.space and state.header.storage.phase == frame.phase,
         "decoder header belongs to another caller coordinate/lifetime",
@@ -173,42 +241,44 @@ def decode_effect(
     # This is ownership validation, not a claim that the body stores all 8 bytes.
     require_writes((state.header,), ((state.header, 0, 8),), protected)
     if semantic in ("take_varint_u32", "deserialize_seed_f32"):
-        require(
+        if not (
             isinstance(output, View)
             and output.writable
             and output.extent == 8
             and output.start % 4 == 0
             and output.storage.alignment >= 4
             and output.storage.space == frame.space
-            and output.storage.phase == frame.phase,
-            "decoder Result output ABI differs",
-        )
+            and output.storage.phase == frame.phase
+        ):
+            raise AssertionError("decoder Result output ABI differs")
         require_writes((output,), ((output, 0, 8),), protected + (_object(state.header, "D"),))
         require_writes((state.header,), ((state.header, 0, 4),), (_object(output, "Result"),))
         protected = protected + (_object(output, "Result"),)
     else:
         require(output is None, "register-result decoder has an unexpected outpointer")
     if semantic == "deserialize_seed_f32":
-        require(
+        if not (
             isinstance(platform_policy, PlatformPolicy)
             and (platform_policy.input_start, platform_policy.input_end)
             == (state.payload.start, state.payload.start + state.payload.extent)
             and platform_policy.input_sha256 == hashlib.sha256(payload).hexdigest()
-            and platform_policy.elf_sha256 == _image_hash(objects),
-            "f32 decoder lost its current conditional platform/input prerequisite",
-        )
+            and platform_policy.elf_sha256 == _image_hash(objects)
+        ):
+            raise AssertionError(
+                "f32 decoder lost its current conditional platform/input prerequisite"
+            )
     else:
         require(
             platform_policy is None, "non-f32 decoder acquired an unrelated platform prerequisite"
         )
     original = state
-    reads = []
-    writes = []
-    children = []
-    value = None
-    error = None
-    registers = {}
-    fields = ()
+    reads: list[tuple[int, int]] = []
+    writes: list[tuple[View, int, bytes]] = []
+    children: list[DecodeEffect] = []
+    value: int | None = None
+    error: int | None = None
+    registers: dict[str, int] = {}
+    fields: tuple[tuple[int, int], ...] = ()
     if semantic == "slice_pop":
         if state.cursor == len(payload):
             error = 4
@@ -223,6 +293,8 @@ def decode_effect(
         if len(payload) - state.cursor < 4:
             error = 4
         else:
+            if platform_policy is None:
+                raise AssertionError("missing f32 decoder policy")
             platform_policy.for_f32_load(state.payload.start + state.cursor)
             reads.append((state.payload.start + state.cursor, 4))
             value = int.from_bytes(payload[state.cursor : state.cursor + 4], "little")
@@ -242,7 +314,7 @@ def decode_effect(
             if pop["error"] is not None:
                 error = pop["error"]
                 break
-            byte = pop["value"]
+            byte = _scalar(pop["value"])
             value |= (byte & 127) << (7 * k)
             if byte < 128:
                 if k == maximum - 1 and byte > terminal_maximum:
@@ -253,13 +325,13 @@ def decode_effect(
         if error is not None:
             value = None
         if semantic == "deserialize_u16":
-            registers = {"r0": value << 16 if error is None else (error << 8) | 1}
+            registers = {"r0": _scalar(value) << 16 if error is None else (error << 8) | 1}
     if output is not None:
         if error is None:
             writes.extend(((output, 4, struct.pack("<I", value)), (output, 0, b"\0")))
             fields = ((0, 1), (4, 4))
         else:
-            writes.extend(((output, 1, bytes((error,))), (output, 0, b"\1")))
+            writes.extend(((output, 1, bytes((_scalar(error),))), (output, 0, b"\1")))
             fields = ((0, 1), (1, 1))
         # The Result's own object is protected from child writes, but its listed
         # parent-owned field stores are checked against all other live storage.
@@ -296,7 +368,7 @@ class SequenceState:
     decoder: DecoderState
     count: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.header, View)
             and self.header.writable
@@ -314,25 +386,45 @@ class SequenceState:
         )
 
 
+class SequenceEffect(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    state: SequenceState
+    original_state: SequenceState
+    output: View | None
+    tag: int
+    value: int | None
+    error: int | None
+    registers: dict[str, int]
+    writes: tuple[tuple[View, int, bytes], ...]
+    children: tuple[DecodeEffect, ...]
+    initialized_result_fields: tuple[tuple[int, int], ...]
+    platform_policy: PlatformPolicy | None
+    input_reads: tuple[tuple[int, int], ...]
+    normal_preserves: tuple[str, ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_machine_constructor_arguments_lifetime_ingress_and_enclosing_graph: bool
+
+
 def sequence_effect(
-    objects,
-    instructions,
-    proof,
-    state,
-    frame,
-    ancestor_protected,
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: object,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
     *,
-    output=None,
-    platform_policy=None,
-):
+    output: View | None = None,
+    platform_policy: PlatformPolicy | None = None,
+) -> SequenceEffect:
     """Four fixed SeqAccess ABIs; source Q.Dptr/count transport stays required."""
     proof = _current(objects, instructions, proof)
     semantic = proof["semantic_role"]
-    require(
+    if not (
         semantic in ("seq_u8", "seq_u16", "seq_bool", "seq_f32")
-        and isinstance(state, SequenceState),
-        "unsupported sequence/source state",
-    )
+        and isinstance(state, SequenceState)
+    ):
+        raise AssertionError("unsupported sequence/source state")
     require(
         state.header.storage.space == frame.space and state.header.storage.phase == frame.phase,
         "sequence header belongs to another activation/lifetime",
@@ -362,16 +454,16 @@ def sequence_effect(
         (decoder.header,), ((decoder.header, 0, 8),), protected + (_object(state.header, "Q"),)
     )
     if semantic == "seq_f32":
-        require(
+        if not (
             isinstance(output, View)
             and output.writable
             and output.extent == 8
             and output.start % 4 == 0
             and output.storage.alignment >= 4
             and output.storage.space == frame.space
-            and output.storage.phase == frame.phase,
-            "sequence f32 output is not exact RO8",
-        )
+            and output.storage.phase == frame.phase
+        ):
+            raise AssertionError("sequence f32 output is not exact RO8")
         require_writes(
             (output,),
             ((output, 0, 8),),
@@ -383,33 +475,33 @@ def sequence_effect(
             ((state.header, 0, 8), (decoder.header, 0, 8)),
             (_object(output, "RO8"),),
         )
-        require(
+        if not (
             isinstance(platform_policy, PlatformPolicy)
             and (platform_policy.input_start, platform_policy.input_end)
             == (decoder.payload.start, decoder.payload.start + decoder.payload.extent)
             and platform_policy.input_sha256
             == _readonly_hash(objects, decoder.payload.start, decoder.payload.extent)
-            and platform_policy.elf_sha256 == _image_hash(objects),
-            "sequence lost its current conditional f32 prerequisite",
-        )
+            and platform_policy.elf_sha256 == _image_hash(objects)
+        ):
+            raise AssertionError("sequence lost its current conditional f32 prerequisite")
         protected = protected + (_object(output, "RO8"),)
     else:
         require(
             output is None and platform_policy is None,
             "register sequence acquired another output/policy ABI",
         )
-    writes = []
-    children = []
-    registers = {}
-    fields = ()
+    writes: list[tuple[View, int, bytes]] = []
+    children: list[DecodeEffect] = []
+    registers: dict[str, int] = {}
+    fields: tuple[tuple[int, int], ...] = ()
     tag = 0
-    value = None
-    error = None
+    value: int | None = None
+    error: int | None = None
     original = state
     if state.count:
         state = replace(state, count=state.count - 1)
         writes.append((state.header, 4, struct.pack("<I", state.count)))
-        child_kwargs = {}
+        child_kwargs: DecoderArguments = {}
         if semantic == "seq_f32":
             scratch = active["child_result_scratch"]
             require(
@@ -432,23 +524,28 @@ def sequence_effect(
         value, error = child["value"], child["error"]
         tag = 2 if error is not None else 1
         if semantic == "seq_u8":
-            registers = {"r0": (value << 8) | 1 if error is None else (error << 8) | 2}
+            registers = {"r0": (_scalar(value) << 8) | 1 if error is None else (error << 8) | 2}
         elif semantic == "seq_u16":
             require(
                 error in (None, 4, 5), "sequence u16 error exceeds actual four-bit child domain"
             )
-            registers = {"r0": (value << 16) | 1 if error is None else (error << 16) | 2}
+            registers = {"r0": (_scalar(value) << 16) | 1 if error is None else (error << 16) | 2}
         elif semantic == "seq_bool":
             if error is None and value not in (0, 1):
                 error = 6
                 tag = 2
                 value = None
-            registers = {"r0": int(error is not None), "r1": error if error is not None else value}
+            registers = {
+                "r0": int(error is not None),
+                "r1": error if error is not None else _scalar(value),
+            }
     elif semantic in ("seq_u8", "seq_u16"):
         registers = {"r0": 0}
     elif semantic == "seq_bool":
         registers = {"r0": 0, "r1": 2}
     if semantic == "seq_f32":
+        if output is None:
+            raise AssertionError("missing sequence f32 output")
         if tag == 0:
             writes.append((output, 0, bytes(4)))
             fields = ((0, 4),)
@@ -456,7 +553,9 @@ def sequence_effect(
             writes.append((output, 0, struct.pack("<II", 1, value)))
             fields = ((0, 4), (4, 4))
         else:
-            writes.extend(((output, 0, struct.pack("<I", 2)), (output, 4, bytes((error,)))))
+            writes.extend(
+                ((output, 0, struct.pack("<I", 2)), (output, 4, bytes((_scalar(error),))))
+            )
             fields = ((0, 4), (4, 1))
         require_writes(
             (output,),

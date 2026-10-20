@@ -176,6 +176,8 @@ fn inventory(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     for relative in [
         "crates",
         "firmware/pico2",
+        // Cargo resolves every member manifest, including unselected images.
+        "firmware/ble-probe",
         "firmware/vendor",
         "firmware/scripts",
         "host/scripts",
@@ -342,10 +344,7 @@ pub(crate) fn capture(
     sink: &mut dyn FnMut(bool, &str),
 ) -> Result<crate::process::Output, String> {
     frozen.verify()?;
-    let python = std::env::split_paths(&std::env::var_os("PATH").ok_or("PATH unavailable")?)
-        .map(|p| p.join("python.exe"))
-        .find(|p| p.is_absolute() && p.is_file())
-        .ok_or("Python executable unavailable")?;
+    let python = crate::prerequisites::python_executable().ok_or("Python executable unavailable")?;
     // A fixed sibling keeps MSVC outputs below MAX_PATH without a shared cache.
     let scratch = frozen.attempt.join("b");
     fs::create_dir(&scratch).map_err(|e| format!("Reserve native build scratch: {e}"))?;
@@ -424,6 +423,7 @@ mod tests {
             "firmware/.cargo/config.toml",
             "crates/example/lib.rs",
             "firmware/pico2/src/main.rs",
+            "firmware/ble-probe/src/main.rs",
             "firmware/vendor/embassy-rp/src/lib.rs",
             "firmware/vendor/cyw43/src/lib.rs",
             "firmware/vendor/trouble-host/Cargo.toml",
@@ -437,6 +437,25 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, b"source").unwrap();
         }
+        // Cargo loads every workspace member, even when only pico2 is selected.
+        fs::write(repo.join("Cargo.toml"), "[workspace]\nmembers=[]\nresolver=\"3\"\n").unwrap();
+        fs::write(
+            repo.join("firmware/Cargo.toml"),
+            "[workspace]\nmembers=[\"pico2\",\"ble-probe\"]\ndefault-members=[\"pico2\"]\nresolver=\"3\"\n",
+        )
+        .unwrap();
+        for (directory, package) in [("pico2", "dashboard-pico2"), ("ble-probe", "dashboard-ble-probe")] {
+            fs::write(
+                repo.join("firmware").join(directory).join("Cargo.toml"),
+                format!("[package]\nname=\"{package}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n"),
+            )
+            .unwrap();
+        }
+        for name in ["rust-toolchain.toml", "firmware/rust-toolchain.toml"] {
+            fs::write(repo.join(name), include_str!("../../rust-toolchain.toml")).unwrap();
+        }
+        fs::write(repo.join("firmware/.cargo/config.toml"), "").unwrap();
+        fs::write(repo.join("firmware/Cargo.lock"), "version = 4\n").unwrap();
         let mut reservation = crate::build_storage::reserve(&repo).unwrap();
         let frozen = freeze_at(
             &repo,
@@ -444,6 +463,25 @@ mod tests {
             &reservation.path,
         )
         .unwrap();
+        let metadata = std::process::Command::new("cargo")
+            .args(["metadata", "--offline", "--no-deps", "--format-version", "1"])
+            .current_dir(frozen.source_root().join("firmware"))
+            .output()
+            .unwrap();
+        assert!(
+            metadata.status.success(),
+            "Frozen workspace must remain loadable: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let packages = metadata["packages"].as_array().unwrap();
+        assert_eq!(packages.len(), 2);
+        let dashboard_id = packages.iter().find(|p| p["name"] == "dashboard-pico2").unwrap()["id"].clone();
+        assert_eq!(metadata["workspace_default_members"], serde_json::json!([dashboard_id]));
+        for name in ["firmware/ble-probe/Cargo.toml", "firmware/ble-probe/src/main.rs"] {
+            assert!(frozen.files.contains_key(name), "{name}");
+            assert!(fs::write(frozen.source_root().join(name), b"mutated member").is_err());
+        }
         for name in [
             "firmware/vendor/cyw43/src/lib.rs",
             "firmware/vendor/trouble-host/Cargo.toml",

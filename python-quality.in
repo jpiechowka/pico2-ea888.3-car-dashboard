@@ -1,3 +1,4 @@
-# Quality tools only; runtime scripts continue to use the standard library.
+# Quality tools and the gallery's typed image dependency. Other scripts use stdlib.
 ruff==0.17.1
 mypy==2.4.0
+pillow==13.0.0

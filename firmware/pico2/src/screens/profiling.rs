@@ -33,7 +33,7 @@ pub struct ProfilingData {
     pub configured_cpu_hz: u32,
 
     pub requested_spi_hz: u32,
-    pub configured_spi_hz: u32,
+    pub configured_spi_hz: Option<u32>,
 
     pub requested_voltage_mv: u32,
     pub vreg_setting_mv: Option<u32>,
@@ -68,7 +68,7 @@ impl<'a> From<&'a ProfilingData> for DebugData<'a> {
             requested_cpu_hz: Some(data.requested_cpu_hz),
             configured_cpu_hz: Some(data.configured_cpu_hz),
             requested_spi_hz: Some(data.requested_spi_hz),
-            configured_spi_hz: Some(data.configured_spi_hz),
+            configured_spi_hz: data.configured_spi_hz,
             requested_voltage_mv: Some(data.requested_voltage_mv),
             vreg_setting_mv: data.vreg_setting_mv,
             framebuffer_count: Some(2),

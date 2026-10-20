@@ -5,6 +5,16 @@ remain in config_loader_continuation; this module joins their typed phases,
 owned effects and finite issuer lanes. No public description creates ownership.
 """
 
+from typing import TypedDict
+from config_body_types import InstructionMap
+from config_stack import DiagnosticObjects
+from config_default_sources import SourceTerminal
+from config_validator_access import ValidatorContext
+from config_loader_boundary import LoaderBoundary
+from config_loader_continuation import LoaderContinuation
+from config_validator_return import ValidatorDescription, ValidatorState
+from config_validator_activation import ComputedDisposition, Invocation
+from config_build_source import SourceBinding
 from dataclasses import replace
 from config_validator_return import _checksum_refill_validator_state
 from config_loader_continuation import _checked_continuation, _destination
@@ -15,7 +25,120 @@ from config_stack import canonical_symbol
 from validation import require
 
 
-def _phase_guards(source, context):
+class LoaderReturn(TypedDict):
+    SP: int
+    PC: int
+    saved_PC_slot: int
+    saved_value: int
+    restore_entry_SP: int
+    outline: int
+    saved_intervals: tuple[tuple[int, int], ...]
+    r0: str
+    architectural_LR_preservation_claimed: bool
+    Boot_continuation_executed: bool
+
+
+class LoaderCut(TypedDict):
+    kind: str
+    site: int
+    target: int
+    source_phase: str
+    SP: int
+    return_token: None
+    machine_nonreturn_established: bool
+    retained_loader_saved_PC: int
+    Result_and_error: tuple[tuple[int, int], ...]
+    concrete_reference_levels: int | None
+    source_guard: str
+
+
+class LoaderRoute(TypedDict):
+    site: int
+    PC: int
+    SP: int
+    source_lane: str
+    saved_PC_slot: int
+    token: str
+
+
+class LoaderClosure(TypedDict):
+    scope: str
+    return_to: int
+    return_sites: tuple[LoaderRoute, ...]
+    pending_diagnostic_cuts: tuple[LoaderCut, ...]
+    invocations: tuple[Invocation, ...]
+    selected_continuation_sites: tuple[int, ...]
+    instruction_states: int
+    diagnostics_entered_or_nonreturn_proved: bool
+
+
+class ResultConsumption(TypedDict):
+    tags: tuple[int, ...]
+    Result: tuple[int, int]
+    Err_copy: tuple[int, int, int]
+    reference_levels: int
+    opaque_padding: tuple[int, int]
+
+
+class FaultInstallation(TypedDict):
+    constructor: str
+    retained: tuple[int, int]
+    first_word: str
+    writes: tuple[tuple[int, int], ...]
+    initial_data_reused: bool
+
+
+class PublicationPair(TypedDict):
+    status: int
+    identity: str | int
+    guard: str
+
+
+class IssuerRetry(TypedDict):
+    owner: tuple[int, int]
+    mismatch_and_store_failure: bool
+    current_checked_region: tuple[int, int]
+    termination_established: bool
+    initial_value_not_live_invariant: bool
+
+
+LoaderDescription = TypedDict(
+    "LoaderDescription",
+    {
+        "phase": str,
+        "mode": str,
+        "claim_scope": str,
+        "source_context": SourceBinding,
+        "validator": ValidatorDescription,
+        "result_consumption": ResultConsumption,
+        "fault_installation": FaultInstallation,
+        "publication_pairs": tuple[PublicationPair, ...],
+        "issuer_retry": IssuerRetry,
+        "protected_static_ranges": tuple[tuple[int, int], ...],
+        "metadata_writes": tuple[tuple[int, int], ...],
+        "continuation_closure": LoaderClosure,
+        "computed_exclusions": tuple[ComputedDisposition, ...],
+        "return": LoaderReturn,
+        "pending_diagnostics": tuple[tuple[str, int] | tuple[int, str], ...],
+        "decoded_caller_and_other_routes_pending": bool,
+        "other_optimization_variants_pending": bool,
+        "source_qualification": str,
+        "external_qualifications": tuple[str, ...],
+        "requires_M2_pre_init_source_reconciliation": bool,
+        "requires_H8_consumed_input_closure": bool,
+        "exception_graph_limit": tuple[str, ...],
+        "exception_absence_established": bool,
+        "target_access_requirements_unresolved": bool,
+        "requires_complete_same_B_loader_before_owner": bool,
+        "requires_full_diagnostic_and_activation_graph_and_resource_gates": bool,
+        "hardware_qualified": bool,
+    },
+)
+
+
+def _phase_guards(
+    source: SourceTerminal, context: ValidatorContext
+) -> tuple[tuple[Storage, ...], tuple[Storage, ...]]:
     """Retire only the metadata fields at this actual continuation boundary."""
     prepared = source["widget"]["prepared"]
     owner = context.config.storage
@@ -49,7 +172,14 @@ def _phase_guards(source, context):
     return external, guards
 
 
-def _join_inputs(description, source, context, boundary, state, continuation):
+def _join_inputs(
+    description: ValidatorDescription,
+    source: SourceTerminal,
+    context: ValidatorContext,
+    boundary: LoaderBoundary,
+    state: ValidatorState,
+    continuation: LoaderContinuation,
+) -> int:
     P = context.caller.start
     B = context.config.start
     R = context.result.start
@@ -136,7 +266,12 @@ def _join_inputs(description, source, context, boundary, state, continuation):
     return start
 
 
-def _issuer_physical(continuation, description, context, boundary):
+def _issuer_physical(
+    continuation: LoaderContinuation,
+    description: ValidatorDescription,
+    context: ValidatorContext,
+    boundary: LoaderBoundary,
+) -> int:
     address = continuation["issuer"]["objects"][0]
     S = boundary["history"]["preclaim"]["startup"]["copy"]["initial_sp"]
     require(
@@ -159,7 +294,16 @@ def _issuer_physical(continuation, description, context, boundary):
     return address
 
 
-def _return_relation(objects, rows, source, context, boundary, state, continuation, guards):
+def _return_relation(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    source: SourceTerminal,
+    context: ValidatorContext,
+    boundary: LoaderBoundary,
+    state: ValidatorState,
+    continuation: LoaderContinuation,
+    guards: tuple[Storage, ...],
+) -> LoaderReturn:
     """Finite current loader save map, distinct from architectural LR."""
     P = context.caller.start
     entry = P + 456
@@ -178,7 +322,7 @@ def _return_relation(objects, rows, source, context, boundary, state, continuati
         None,
     )
     require(saves is not None, "loader continuation has no protected original save map")
-    writes = tuple(continuation[key] for key in ("fallback_writes", "publication_writes"))
+    writes = (continuation["fallback_writes"], continuation["publication_writes"])
     for pairs in writes:
         require_writes(
             tuple(v for v, o, n in pairs), pairs, guards + (source["widget"]["prepared"]["fault"],)
@@ -229,7 +373,13 @@ def _return_relation(objects, rows, source, context, boundary, state, continuati
     )
 
 
-def _closure(rows, context, state, continuation, returned):
+def _closure(
+    rows: InstructionMap,
+    context: ValidatorContext,
+    state: ValidatorState,
+    continuation: LoaderContinuation,
+    returned: LoaderReturn,
+) -> tuple[LoaderClosure, set[int]]:
     """Closed finite continuation successors and source-labelled issuer lanes.
 
     No scalar ISA evaluator: only the already matched fallback/issuer/restore
@@ -270,11 +420,11 @@ def _closure(rows, context, state, continuation, returned):
     # Diagnose only the matched two frontiers. Neither call is entered.
     cut_sites = {U["site"]: ("reviewed_defaults", U), Z["site"]: ("identity_first", Z)}
     pending = [(F, context.caller.start, "validator_return")]
-    seen = set()
-    projection = set()
-    cuts = []
-    returns = []
-    lanes = set()
+    seen: set[tuple[int, int, str]] = set()
+    projection: set[int] = set()
+    cuts: list[LoaderCut] = []
+    returns: list[LoaderRoute] = []
+    lanes: set[str] = set()
     while pending:
         at, sp, lane = pending.pop()
         key = (at, sp, lane)
@@ -422,7 +572,9 @@ def _closure(rows, context, state, continuation, returned):
     ), projection
 
 
-def checksum_refill_loader_return(objects, instructions, source_context):
+def checksum_refill_loader_return(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> LoaderDescription:
     description, source, context, boundary, state = _checksum_refill_validator_state(
         objects, instructions, source_context
     )
@@ -464,7 +616,7 @@ def checksum_refill_loader_return(objects, instructions, source_context):
         closure,
     )
     B = context.config.start
-    pairs = (
+    pairs: tuple[PublicationPair, ...] = (
         dict(
             status=0,
             identity="nonzero successfully issued previous",
@@ -479,31 +631,31 @@ def checksum_refill_loader_return(objects, instructions, source_context):
     )
     metadata = tuple(
         (v.start + offset, n)
-        for key in ("fallback_writes", "publication_writes")
-        for v, offset, n in continuation[key]
+        for writes in (continuation["fallback_writes"], continuation["publication_writes"])
+        for v, offset, n in writes
     )
-    return dict(
-        phase="checksum_refill_loader_return_pending_diagnostics_and_other_loader_routes",
-        mode="sizez",
-        claim_scope=closure["scope"],
-        source_context=description["source_context"],
-        validator=description,
-        result_consumption=dict(
+    return {
+        "phase": "checksum_refill_loader_return_pending_diagnostics_and_other_loader_routes",
+        "mode": "sizez",
+        "claim_scope": closure["scope"],
+        "source_context": description["source_context"],
+        "validator": description,
+        "result_consumption": dict(
             tags=(0, 1, 2),
             Result=(context.result.start, 12),
             Err_copy=(context.result.start, context.caller.start + 112, 12),
             reference_levels=0,
             opaque_padding=(11, 12),
         ),
-        fault_installation=dict(
+        "fault_installation": dict(
             constructor="ConfigError::Checksum",
             retained=(context.caller.start + 8, 16),
             first_word="(P16 & 0xffff0000)+P20",
             writes=tuple((a, n) for a, n in metadata if B + 14588 <= a),
             initial_data_reused=False,
         ),
-        publication_pairs=pairs,
-        issuer_retry=dict(
+        "publication_pairs": pairs,
+        "issuer_retry": dict(
             owner=(issuer, 4),
             mismatch_and_store_failure=True,
             current_checked_region=(
@@ -513,25 +665,25 @@ def checksum_refill_loader_return(objects, instructions, source_context):
             termination_established=False,
             initial_value_not_live_invariant=True,
         ),
-        protected_static_ranges=static,
-        metadata_writes=metadata,
-        continuation_closure=closure,
-        computed_exclusions=computed,
-        **{"return": returned},
-        pending_diagnostics=description["pending_diagnostics"]
+        "protected_static_ranges": static,
+        "metadata_writes": metadata,
+        "continuation_closure": closure,
+        "computed_exclusions": computed,
+        "return": returned,
+        "pending_diagnostics": description["pending_diagnostics"]
         + tuple((v["site"], v["source_phase"]) for v in closure["pending_diagnostic_cuts"]),
-        decoded_caller_and_other_routes_pending=True,
-        other_optimization_variants_pending=True,
-        source_qualification=description["source_qualification"],
-        external_qualifications=description["external_qualifications"],
-        requires_M2_pre_init_source_reconciliation=description[
+        "decoded_caller_and_other_routes_pending": True,
+        "other_optimization_variants_pending": True,
+        "source_qualification": description["source_qualification"],
+        "external_qualifications": description["external_qualifications"],
+        "requires_M2_pre_init_source_reconciliation": description[
             "requires_M2_pre_init_source_reconciliation"
         ],
-        requires_H8_consumed_input_closure=True,
-        exception_graph_limit=description["exception_graph_limit"],
-        exception_absence_established=False,
-        target_access_requirements_unresolved=True,
-        requires_complete_same_B_loader_before_owner=True,
-        requires_full_diagnostic_and_activation_graph_and_resource_gates=True,
-        hardware_qualified=False,
-    )
+        "requires_H8_consumed_input_closure": True,
+        "exception_graph_limit": description["exception_graph_limit"],
+        "exception_absence_established": False,
+        "target_access_requirements_unresolved": True,
+        "requires_complete_same_B_loader_before_owner": True,
+        "requires_full_diagnostic_and_activation_graph_and_resource_gates": True,
+        "hardware_qualified": False,
+    }

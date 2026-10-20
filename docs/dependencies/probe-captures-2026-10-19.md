@@ -1,5 +1,10 @@
 # Probe capture dependency and admission review
 
+This is the original capture checkpoint. Later dependency corrections are in the
+[20 October full audit](full-code-audit-2026-10-20.md), and the
+[diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+records current timing and capture-admission semantics.
+
 Review date: 2026-10-19. Scope: bounded selected-peer capture, flash journal,
 read-only USB recovery and host decoding. This adds no adapter profile, pairing,
 proprietary authentication or ECU traffic. Prior radio sources remain documented

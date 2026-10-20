@@ -3,7 +3,10 @@ This format gate alone does not admit a firmware artifact or authorize USB write
 """
 
 import hashlib
+from pathlib import Path
 import struct
+from typing import NotRequired, TypedDict
+from elf_image import ElfImage, LinkedData, ProgramData, Symbol
 from validation import require
 
 FLASH_START = 0x10000000
@@ -12,7 +15,61 @@ FAMILY = 0xE48BFF59
 MAX_UF2_BYTES = 8160 * 512
 
 
-def program_map(elf):
+class ProgramMap(TypedDict):
+    fragments: list[tuple[int, bytes]]
+    verification_ranges: list[tuple[int, int]]
+    erase_ranges: list[tuple[int, int]]
+    pages: dict[int, bytes]
+    payload_sha256: str
+
+
+class Uf2Record(TypedDict):
+    schema_version: int
+    scope: str
+    family: int
+    page_count: int
+    payload_sha256: str
+    uf2_sha256: str
+    erase_ranges: list[tuple[int, int]]
+
+
+class BootRecord(TypedDict):
+    policy: str
+    root_address: int
+    root_sha256: str
+
+
+class LinkedRecord(TypedDict):
+    sha256: str
+    bytes: int
+    physical_address: int
+
+
+class AssetRecord(TypedDict):
+    sha256: str
+    bytes: int
+    storage: LinkedRecord
+
+
+class StartupRecord(TypedDict):
+    profile: LinkedRecord
+    asset: AssetRecord
+
+
+class ProgramRecord(TypedDict):
+    schema_version: int
+    scope: str
+    elf_sha256: str
+    payload_sha256: str
+    payload_ranges: list[tuple[int, int]]
+    verification_ranges: list[tuple[int, int]]
+    erase_ranges: list[tuple[int, int]]
+    expected_uf2_pages: int
+    boot_metadata: BootRecord
+    uf2: NotRequired[Uf2Record]
+
+
+def program_map(elf: ProgramData) -> ProgramMap:
     fragments = []
     for kind, offset, virtual, physical, filesz, memsz, flags, alignment in elf.segments:
         if kind != 1 or not filesz:
@@ -27,10 +84,10 @@ def program_map(elf):
     fragments.sort(key=lambda part: part[0])
     require(fragments, "empty program map")
     end = FLASH_START
-    pages = {}
-    sectors = set()
-    erase = []
-    verification = []
+    mutable_pages: dict[int, bytearray] = {}
+    sectors: set[int] = set()
+    erase: list[tuple[int, int]] = []
+    verification: list[tuple[int, int]] = []
     payload_hash = hashlib.sha256(b"StudioPhysicalPayloadV1\0")
     for address, data in fragments:
         require(address >= end, "overlapping physical program payload")
@@ -50,17 +107,17 @@ def program_map(elf):
         else:
             erase.append((lo, hi))
         for page in range(address & ~255, (end + 255) & ~255, 256):
-            target = pages.setdefault(page, bytearray(256))
+            target = mutable_pages.setdefault(page, bytearray(256))
             a = max(address, page)
             b = min(end, page + 256)
             target[a - page : b - page] = data[a - address : b - address]
             sectors.add(page & ~4095)
-    last = max(pages)
+    last = max(mutable_pages)
     for sector in sectors:
         for page in range(sector, sector + 4096, 256):
             if page < last:
-                pages.setdefault(page, bytearray(256))
-    pages = {address: bytes(data) for address, data in sorted(pages.items())}
+                mutable_pages.setdefault(page, bytearray(256))
+    pages = {address: bytes(data) for address, data in sorted(mutable_pages.items())}
     require(0 < len(pages) <= 8160, "program page bound")
     return {
         "fragments": fragments,
@@ -71,7 +128,7 @@ def program_map(elf):
     }
 
 
-def verify_uf2(data, mapping):
+def verify_uf2(data: bytes | bytearray, mapping: ProgramMap) -> Uf2Record:
     require(0 < len(data) <= MAX_UF2_BYTES and len(data) % 512 == 0, "UF2 byte bound or framing")
     pages = mapping["pages"]
     count = len(data) // 512
@@ -104,14 +161,14 @@ def verify_uf2(data, mapping):
     }
 
 
-def read_uf2(path):
+def read_uf2(path: str | Path) -> bytes:
     with open(path, "rb") as stream:
         data = stream.read(MAX_UF2_BYTES + 1)
     require(len(data) <= MAX_UF2_BYTES, "UF2 byte bound")
     return data
 
 
-def boot_metadata(elf, mapping):
+def boot_metadata(elf: LinkedData, mapping: ProgramMap) -> BootRecord:
     """Initial supported slot0 root; additional device boot-state admission is separate."""
     sections = [section for _, name, section in elf.section_entries if name == ".start_block"]
     require(len(sections) == 1, "unique start block section required")
@@ -134,7 +191,7 @@ def boot_metadata(elf, mapping):
     )
     pages = mapping["pages"]
 
-    def read(address, length):
+    def read(address: int, length: int) -> bytes | None:
         output = bytearray()
         for cursor in range(address, address + length):
             page = pages.get(cursor & ~255)
@@ -150,7 +207,7 @@ def boot_metadata(elf, mapping):
         require(word is not None, "boot search prefix coverage")
         require(word != expected[:4], "unsupported boot search prefix")
 
-    def complete_envelope(address):
+    def complete_envelope(address: int) -> bool:
         cursor = address + 4
         for _ in range(160):
             raw = read(cursor, 4)
@@ -184,7 +241,14 @@ def boot_metadata(elf, mapping):
     }
 
 
-def linked_bytes(elf, expected, section_name, object_name, start_name, end_name):
+def linked_bytes(
+    elf: LinkedData,
+    expected: bytes,
+    section_name: str,
+    object_name: str,
+    start_name: str,
+    end_name: str,
+) -> LinkedRecord:
     sections = [
         (index, section) for index, name, section in elf.section_entries if name == section_name
     ]
@@ -196,7 +260,7 @@ def linked_bytes(elf, expected, section_name, object_name, start_name, end_name)
     )
     require(section[5] == len(expected) > 0, "dashboard configuration length mismatch")
 
-    def symbol(name):
+    def symbol(name: str) -> Symbol:
         found = [row for row in elf.symbol_entries if row[0] == name]
         require(len(found) == 1, "unique dashboard configuration symbol required")
         return found[0]
@@ -235,7 +299,7 @@ def linked_bytes(elf, expected, section_name, object_name, start_name, end_name)
     }
 
 
-def linked_configuration(elf, expected):
+def linked_configuration(elf: LinkedData, expected: bytes) -> LinkedRecord:
     return linked_bytes(
         elf,
         expected,
@@ -246,18 +310,16 @@ def linked_configuration(elf, expected):
     )
 
 
-def linked_startup(elf, profile, asset):
+def linked_startup(elf: LinkedData, profile: bytes, asset: bytes) -> StartupRecord:
     require(len(profile) == 16 and len(asset) <= 524288, "startup linked input bound")
-    result = {
-        "profile": linked_bytes(
-            elf,
-            profile,
-            ".startup_profile",
-            "DASHBOARD_STARTUP_PROFILE",
-            "__startup_profile_start",
-            "__startup_profile_end",
-        )
-    }
+    profile_record = linked_bytes(
+        elf,
+        profile,
+        ".startup_profile",
+        "DASHBOARD_STARTUP_PROFILE",
+        "__startup_profile_start",
+        "__startup_profile_end",
+    )
     storage = linked_bytes(
         elf,
         asset + b"\0",
@@ -266,15 +328,17 @@ def linked_startup(elf, profile, asset):
         "__startup_asset_start",
         "__startup_asset_end",
     )
-    result["asset"] = {
-        "sha256": hashlib.sha256(asset).hexdigest(),
-        "bytes": len(asset),
-        "storage": storage,
+    return {
+        "profile": profile_record,
+        "asset": {
+            "sha256": hashlib.sha256(asset).hexdigest(),
+            "bytes": len(asset),
+            "storage": storage,
+        },
     }
-    return result
 
 
-def inspect_program(elf):
+def inspect_program(elf: LinkedData) -> tuple[ProgramMap, ProgramRecord]:
     mapping = program_map(elf)
     metadata = boot_metadata(elf, mapping)
     return mapping, {
@@ -292,10 +356,9 @@ def inspect_program(elf):
     }
 
 
-def main():
+def main() -> None:
     import argparse
     import json
-    from elf_image import ElfImage
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf")

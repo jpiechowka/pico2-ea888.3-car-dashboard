@@ -8,6 +8,11 @@ Existing exact helper APIs deliberately remain separate.
 """
 
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Generic, NotRequired, Protocol, TypeVar, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord
+from config_stack import DiagnosticObjects
 from config_structural import _image_hash, _readonly_hash
 from config_decode_effects import (
     DecoderState,
@@ -16,11 +21,15 @@ from config_decode_effects import (
     _object,
     _with_input,
     _decoder_dependency,
+    DecoderArguments,
 )
 from config_helpers import helper_frame
 from config_platform import PlatformPolicy
 from config_regions import Storage, View, require_writes
 from validation import require
+
+if TYPE_CHECKING:
+    from config_finite_returns import ReturnNode
 
 
 @dataclass(frozen=True)
@@ -28,7 +37,7 @@ class Span:
     lower: int
     upper: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             type(self.lower) is int
             and type(self.upper) is int
@@ -43,7 +52,7 @@ class DecoderInterface:
     payload: View
     cursor: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(isinstance(self.cursor, Span), "decoder has no bounded cursor interval")
         DecoderState(self.header, self.payload, self.cursor.lower)
         require(
@@ -58,7 +67,7 @@ class SequenceInterface:
     decoder: DecoderInterface
     count: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.decoder, DecoderInterface) and isinstance(self.count, Span),
             "untyped abstract Q/D/count",
@@ -70,7 +79,12 @@ class SequenceInterface:
         )
 
 
-def _policy(objects, state, policy):
+class InputState(Protocol):
+    @property
+    def payload(self) -> View: ...
+
+
+def _policy(objects: DiagnosticObjects, state: InputState, policy: PlatformPolicy | None) -> None:
     require(
         isinstance(policy, PlatformPolicy)
         and (policy.input_start, policy.input_end)
@@ -82,22 +96,73 @@ def _policy(objects, state, policy):
     )
 
 
-def _output(output, state, frame, protected):
-    require(
+def _output(
+    output: View | None, state: DecoderInterface, frame: Storage, protected: tuple[Storage, ...]
+) -> View:
+    if not (
         isinstance(output, View)
         and output.writable
         and output.extent == 8
         and output.start % 4 == 0
         and output.storage.alignment >= 4
         and output.storage.space == frame.space
-        and output.storage.phase == frame.phase,
-        "abstract Result output has another owner/reference/extent ABI",
-    )
+        and output.storage.phase == frame.phase
+    ):
+        raise AssertionError("abstract Result output has another owner/reference/extent ABI")
     require_writes((output,), ((output, 0, 8),), protected + (_object(state.header, "D"),))
     require_writes((state.header,), ((state.header, 0, 8),), (_object(output, "Result"),))
+    return output
 
 
-def _result(semantic, proof, outcomes, children, policy, frames):
+class DecoderOutcome(TypedDict):
+    kind: str
+    state: DecoderInterface
+    cursor: Span
+    value_kind: str | None
+    value_domain: tuple[int, int] | None
+    error: int | None
+    possible_writes: tuple[tuple[View, int, int], ...]
+    initialized_result_fields: tuple[tuple[int, int], ...]
+    possible_read_envelope: View | None
+
+
+class SequenceOutcome(TypedDict):
+    kind: str
+    count: Span
+    cursor: Span
+    value_kind: str | None
+    value_domain: tuple[int, int] | None
+    error: int | None
+    state: SequenceInterface
+    possible_writes: tuple[tuple[View, int, int], ...]
+    initialized_result_fields: tuple[tuple[int, int], ...]
+
+
+Outcome = TypeVar("Outcome", DecoderOutcome, SequenceOutcome)
+
+
+class PrimitiveResult(TypedDict, Generic[Outcome]):
+    # Enclosing call adapters may retain these checked return/protection facts.
+    nested_returns: NotRequired[tuple["ReturnNode", ...]]
+    protected: NotRequired[tuple[Storage, ...]]
+    semantic_role: str
+    proof: HelperCoverageRecord
+    outcomes: tuple[Outcome, ...]
+    children: tuple["PrimitiveResult[DecoderOutcome]", ...]
+    platform_policy: PlatformPolicy | None
+    conservative_activation_frames: tuple[int, ...]
+    normal_preserves: tuple[str, ...]
+    requires_actual_stage_receiver_transport_and_complete_parent_graph: bool
+
+
+def _result(
+    semantic: str,
+    proof: HelperCoverageRecord,
+    outcomes: Sequence[Outcome],
+    children: Sequence[PrimitiveResult[DecoderOutcome]],
+    policy: PlatformPolicy | None,
+    frames: Sequence[int],
+) -> PrimitiveResult[Outcome]:
     require(bool(outcomes), "abstract primitive has no possible exit")
     return dict(
         semantic_role=semantic,
@@ -112,16 +177,16 @@ def _result(semantic, proof, outcomes, children, policy, frames):
 
 
 def decoder_interface(
-    objects,
-    instructions,
-    proof,
-    state,
-    frame,
-    ancestor_protected,
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: DecoderInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
     *,
-    output=None,
-    platform_policy=None,
-):
+    output: View | None = None,
+    platform_policy: PlatformPolicy | None = None,
+) -> PrimitiveResult[DecoderOutcome]:
     """Closed four-decoder union; scalar successes remain unknown source types.
 
     Cursor intervals only constrain in-allocation guards. Complete varint loop
@@ -145,7 +210,7 @@ def decoder_interface(
     require_writes((state.header,), ((state.header, 0, 8),), protected)
     result_memory = semantic in ("take_varint_u32", "deserialize_seed_f32")
     if result_memory:
-        _output(output, state, frame, protected)
+        output = _output(output, state, frame, protected)
     else:
         require(output is None, "abstract register result received an outpointer")
     if semantic == "deserialize_seed_f32":
@@ -154,7 +219,7 @@ def decoder_interface(
         require(
             platform_policy is None, "abstract integer decoder acquired a platform prerequisite"
         )
-    children = []
+    children: list[PrimitiveResult[DecoderOutcome]] = []
     if semantic in ("deserialize_u16", "take_varint_u32"):
         child, child_frame = _decoder_dependency(objects, instructions, proof, frame)
         # Later iterations may consume a prefix. End remains the same checked
@@ -164,12 +229,19 @@ def decoder_interface(
         children.append(
             decoder_interface(objects, instructions, child, widened, child_frame, protected + extra)
         )
-    outcomes = []
+    outcomes: list[DecoderOutcome] = []
     lo, hi = state.cursor.lower, state.cursor.upper
     n = state.payload.extent
 
-    def emit(kind, cursor, value_kind=None, domain=None, fields=(), write_cursor=False):
-        writes = ((state.header, 0, 4),) if write_cursor else ()
+    def emit(
+        kind: str,
+        cursor: Span,
+        value_kind: str | None = None,
+        domain: tuple[int, int] | None = None,
+        fields: tuple[tuple[int, int], ...] = (),
+        write_cursor: bool = False,
+    ) -> None:
+        writes: tuple[tuple[View, int, int], ...] = ((state.header, 0, 4),) if write_cursor else ()
         if output is not None:
             writes += tuple((output, a, b) for a, b in fields)
         require_writes(
@@ -194,6 +266,8 @@ def decoder_interface(
     if semantic == "deserialize_seed_f32":
         if lo <= n - 4:
             last = min(hi, n - 4)
+            if platform_policy is None:
+                raise AssertionError("missing abstract f32 policy")
             platform_policy.for_f32_load(state.payload.start + lo)
             platform_policy.for_f32_load(state.payload.start + last)
             emit(
@@ -240,16 +314,16 @@ def decoder_interface(
 
 
 def sequence_interface(
-    objects,
-    instructions,
-    proof,
-    state,
-    frame,
-    ancestor_protected,
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
     *,
-    output=None,
-    platform_policy=None,
-):
+    output: View | None = None,
+    platform_policy: PlatformPolicy | None = None,
+) -> PrimitiveResult[SequenceOutcome]:
     """Closed Q/count union; None and decrement-before-child stay distinct."""
     proof = _current(objects, instructions, proof)
     semantic = proof["semantic_role"]
@@ -285,7 +359,7 @@ def sequence_interface(
     )
     objects.read_only(decoder.payload.start, decoder.payload.extent)
     if semantic == "seq_f32":
-        _output(output, decoder, frame, protected + (_object(state.header, "Q"),))
+        output = _output(output, decoder, frame, protected + (_object(state.header, "Q"),))
         _policy(objects, decoder, platform_policy)
         require_writes((output,), ((output, 0, 8),), (prologue,))
         require_writes((state.header,), ((state.header, 0, 8),), (_object(output, "RO8"),))
@@ -296,7 +370,7 @@ def sequence_interface(
             "abstract sequence received another result/policy ABI",
         )
     child, child_frame = _decoder_dependency(objects, instructions, proof, frame)
-    kwargs = {}
+    kwargs: DecoderArguments = {}
     if semantic == "seq_f32":
         scratch = active["child_result_scratch"]
         require(len(scratch) == 1, "abstract f32 scratch owner differs")
@@ -310,9 +384,9 @@ def sequence_interface(
         protected + (_object(state.header, "Q"),),
         **kwargs,
     )
-    outcomes = []
+    outcomes: list[SequenceOutcome] = []
     if state.count.lower == 0:
-        fields = ((0, 4),) if output is not None else ()
+        fields: tuple[tuple[int, int], ...] = ((0, 4),) if output is not None else ()
         outcomes.append(
             dict(
                 kind="none",
@@ -322,7 +396,7 @@ def sequence_interface(
                 value_domain=None,
                 error=None,
                 state=replace(state, count=Span(0, 0)),
-                possible_writes=tuple((output, a, b) for a, b in fields),
+                possible_writes=tuple((output, a, b) for a, b in fields if output is not None),
                 initialized_result_fields=fields,
             )
         )
@@ -344,7 +418,7 @@ def sequence_interface(
                 writes = (
                     ((state.header, 4, 4),)
                     + alternative["possible_writes"]
-                    + tuple((output, a, b) for a, b in fields)
+                    + tuple((output, a, b) for a, b in fields if output is not None)
                 )
                 if output is not None:
                     require_writes(

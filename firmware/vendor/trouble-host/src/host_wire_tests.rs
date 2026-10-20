@@ -147,6 +147,108 @@ fn hardware_error_terminates_host_with_every_vendor_code_unchanged() {
     }
 }
 
+#[cfg(feature = "connection-params-update")]
+#[test]
+fn undeliverable_remote_parameter_request_disconnects_instead_of_silently_waiting() {
+    let packet = [4, 0x3e, 11, 6, 5, 0, 24, 0, 40, 0, 0, 0, 200, 0];
+    let packets = [&packet[..]];
+    let controller = WireController {
+        packets: &packets,
+        next: Cell::new(0),
+    };
+    let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+    let stack = crate::new(controller, &mut resources).build();
+    let host = stack.host();
+    let mgr = host.connections();
+    let peer = Address::random([1, 2, 3, 4, 5, 6]);
+    mgr.connect(ConnHandle::new(5), peer, LeConnRole::Central, ConnParams::new())
+        .unwrap();
+    let conn = embassy_futures::block_on(mgr.accept(LeConnRole::Central, &[peer]));
+    for _ in 0..crate::config::CONNECTION_EVENT_QUEUE_SIZE {
+        mgr.post_handle_event(
+            conn.handle(),
+            ConnectionEvent::ConnectionParamsUpdated {
+                conn_interval: Duration::from_millis(30),
+                peripheral_latency: 0,
+                supervision_timeout: Duration::from_secs(2),
+            },
+        )
+        .unwrap();
+    }
+    let mut runner = RxRunner { host };
+    let mut run = pin!(runner.run_with_handler(&DummyHandler));
+    assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    assert!(!conn.is_connected());
+    mgr.disconnected(conn.handle(), Status::SUCCESS).unwrap();
+}
+
+#[cfg(feature = "security")]
+#[test]
+fn encryption_events_reject_missing_and_extra_fields() {
+    for (opcode, size) in [(0x08, 4), (0x59, 5), (0x30, 3)] {
+        for length in (0..size).chain([size + 1]) {
+            let mut packet = std::vec![4, opcode, length as u8];
+            packet.resize(3 + length, 0);
+            assert!(matches!(
+                poll_rx(&[&packet], &DummyHandler),
+                Poll::Ready(Err(BleHostError::BleHost(Error::HciDecode(_))))
+            ));
+        }
+    }
+}
+
+#[cfg(feature = "security")]
+#[test]
+fn encryption_v2_crosses_rx_dispatch_and_never_uses_br_edr_key_size_for_le() {
+    use crate::connection::SecurityLevel;
+    use crate::security_manager::{BondInformation, LongTermKey};
+    for key_size in [0, 7, 16, 255] {
+        for (status, enabled) in [(0, 1), (0, 0), (5, 0)] {
+            let packet = [4, 0x59, 5, status, 5, 0, enabled, key_size];
+            let packets = [&packet[..]];
+            let controller = WireController {
+                packets: &packets,
+                next: Cell::new(0),
+            };
+            let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+            let stack = crate::new(controller, &mut resources).build();
+            let host = BleHost::new(&stack.controller, stack.host_state);
+            let mgr = host.connections();
+            let peer = Address::random([1, 2, 3, 4, 5, 0xc6]);
+            mgr.connect(ConnHandle::new(5), peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            let conn = embassy_futures::block_on(mgr.accept(LeConnRole::Central, &[peer]));
+            mgr.security_manager
+                .add_bond_information(BondInformation::new(
+                    peer.into(),
+                    LongTermKey::new(1),
+                    SecurityLevel::EncryptedAuthenticated,
+                    true,
+                ))
+                .unwrap();
+            mgr.with_connected_handle(conn.handle(), |storage| {
+                storage.security_level = SecurityLevel::Encrypted;
+                Ok(())
+            })
+            .unwrap();
+            let mut runner = RxRunner { host };
+            let mut run = pin!(runner.run_with_handler(&DummyHandler));
+            assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+            let clean = status == 0 && enabled == 1;
+            assert_eq!(conn.is_connected(), clean);
+            assert_eq!(
+                mgr.connection(0).security_level,
+                if clean {
+                    SecurityLevel::EncryptedAuthenticated
+                } else {
+                    SecurityLevel::NoEncryption
+                }
+            );
+            mgr.disconnected(conn.handle(), Status::SUCCESS).unwrap();
+        }
+    }
+}
+
 #[cfg(feature = "scan")]
 #[test]
 fn inner_short_report_reaches_iterator_callback_and_next_batch_still_arrives() {

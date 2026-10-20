@@ -26,8 +26,8 @@ pub(crate) const ATT_PREPARE_WRITE_REQ: u8 = 0x16;
 pub(crate) const ATT_PREPARE_WRITE_RSP: u8 = 0x17;
 pub(crate) const ATT_EXECUTE_WRITE_REQ: u8 = 0x18;
 pub(crate) const ATT_EXECUTE_WRITE_RSP: u8 = 0x19;
-pub(crate) const ATT_READ_MULTIPLE_REQ: u8 = 0x20;
-pub(crate) const ATT_READ_MULTIPLE_RSP: u8 = 0x21;
+pub(crate) const ATT_READ_MULTIPLE_VARIABLE_REQ: u8 = 0x20;
+pub(crate) const ATT_READ_MULTIPLE_VARIABLE_RSP: u8 = 0x21;
 pub(crate) const ATT_READ_BLOB_REQ: u8 = 0x0c;
 pub(crate) const ATT_READ_BLOB_RSP: u8 = 0x0d;
 pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
@@ -144,7 +144,29 @@ impl Display for AttErrorCode {
             &Self::PROCEDURE_ALREADY_IN_PROGRESS => f.write_str("procedure already in progress: the profile or service request could not be serviced because an operation that has been previousl triggered is still in progress"),
             &Self::OUT_OF_RANGE => f.write_str("out of range: the attribute value is out of range as defined by a profile or service specification"),
 
-            other => write!(f, "unknown error code {other}: check the most recent bluetooth spec"),
+            other => write!(f, "unknown error code 0x{:02x}: check the most recent bluetooth spec", other.value),
+        }
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::AttErrorCode;
+    use core::fmt::Write;
+
+    #[test]
+    fn all_error_codes_format_with_bounded_output_and_preserve_unknown_number() {
+        for value in 0..=u8::MAX {
+            // A bounded writer detects recursion without overflowing the stack.
+            let mut text = heapless::String::<512>::new();
+            assert!(
+                write!(text, "{}", AttErrorCode::new(value)).is_ok(),
+                "code {value:#04x}"
+            );
+            assert!(!text.is_empty());
+            if value == 0x14 {
+                assert!(text.contains("0x14"));
+            }
         }
     }
 }
@@ -513,13 +535,13 @@ impl<'d> AttRsp<'d> {
     fn size(&self) -> usize {
         1 + match self {
             Self::ExchangeMtu { mtu: u16 } => 2,
-            Self::FindByTypeValue { it } => it.cursor.len(),
-            Self::FindInformation { it } => 1 + it.cursor.len(), // 1 for format byte
+            Self::FindByTypeValue { it } => it.cursor.available(),
+            Self::FindInformation { it } => 1 + it.cursor.available(), // 1 for format byte
             Self::Error { .. } => 4,
             Self::Read { data } => data.len(),
             Self::ReadBlob { data } => data.len(),
-            Self::ReadByType { it } => it.cursor.len(),
-            Self::ReadByGroupType { it } => it.cursor.len(),
+            Self::ReadByType { it } => 1 + it.cursor.available(),
+            Self::ReadByGroupType { it } => 1 + it.cursor.available(),
             Self::Write => 0,
         }
     }
@@ -603,6 +625,9 @@ impl<'d> AttRsp<'d> {
                 })
             }
             ATT_EXCHANGE_MTU_RSP => {
+                if r.available() != 2 {
+                    return Err(codec::Error::InvalidValue);
+                }
                 let mtu: u16 = r.read()?;
                 Ok(Self::ExchangeMtu { mtu })
             }
@@ -638,7 +663,7 @@ impl<'d> AttRsp<'d> {
                     },
                 })
             }
-            ATT_WRITE_RSP => Ok(Self::Write),
+            ATT_WRITE_RSP if r.available() == 0 => Ok(Self::Write),
             _ => Err(codec::Error::InvalidValue),
         }
     }
@@ -833,6 +858,15 @@ impl<'d> AttReq<'d> {
         if payload.len() < minimum {
             return Err(codec::Error::InvalidValue);
         }
+        let exact = match opcode {
+            ATT_READ_REQ | ATT_EXCHANGE_MTU_REQ => Some(2),
+            ATT_FIND_INFORMATION_REQ | ATT_READ_BLOB_REQ => Some(4),
+            ATT_EXECUTE_WRITE_REQ => Some(1),
+            _ => None,
+        };
+        if exact.is_some_and(|len| payload.len() != len) {
+            return Err(codec::Error::InvalidValue);
+        }
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQ => {
                 let start_handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
@@ -922,7 +956,9 @@ impl<'d> AttReq<'d> {
                 let flags = payload[0];
                 Ok(Self::ExecuteWrite { flags })
             }
-            ATT_READ_MULTIPLE_REQ => Ok(Self::ReadMultiple { handles: payload }),
+            ATT_READ_MULTIPLE_VARIABLE_REQ if payload.len() >= 4 && payload.len().is_multiple_of(2) => {
+                Ok(Self::ReadMultiple { handles: payload })
+            }
             ATT_READ_BLOB_REQ => {
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
@@ -993,7 +1029,7 @@ impl AttCfm {
     fn decode_with_opcode(opcode: u8, r: ReadCursor<'_>) -> Result<Self, codec::Error> {
         let payload = r.remaining();
         match opcode {
-            ATT_HANDLE_VALUE_CFM => Ok(Self::ConfirmIndication),
+            ATT_HANDLE_VALUE_CFM if payload.is_empty() => Ok(Self::ConfirmIndication),
             code => {
                 warn!("[att] unknown opcode {:x}", code);
                 Err(codec::Error::InvalidValue)
@@ -1062,6 +1098,36 @@ mod tuple_tests {
     extern crate std;
     use super::*;
     use std::vec;
+
+    #[test]
+    fn fixed_pdus_reject_trailing_bytes_and_response_sizes_round_trip() {
+        for pdu in [
+            &[0x02, 23, 0][..],
+            &[0x03, 23, 0],
+            &[0x04, 1, 0, 0xff, 0xff],
+            &[0x0a, 1, 0],
+            &[0x0c, 1, 0, 0, 0],
+            &[0x13],
+            &[0x18, 1],
+            &[0x1e],
+        ] {
+            assert!(Att::decode(pdu).is_ok(), "{pdu:?}");
+            let mut extra = pdu.to_vec();
+            extra.push(0);
+            assert!(Att::decode(&extra).is_err(), "accepted trailing byte: {extra:?}");
+        }
+        for pdu in [
+            &[0x07, 1, 0, 3, 0][..],
+            &[0x05, 1, 1, 0, 0, 0x18],
+            &[0x09, 4, 1, 0, 2, 0][..],
+            &[0x11, 6, 1, 0, 3, 0, 0, 0x18],
+        ] {
+            let decoded = Att::decode(pdu).unwrap();
+            let mut encoded = vec![0; decoded.size()];
+            decoded.encode(&mut encoded).unwrap();
+            assert_eq!(encoded.as_slice(), pdu);
+        }
+    }
 
     #[test]
     fn all_opcodes_and_bounded_payloads_decode_without_panicking() {

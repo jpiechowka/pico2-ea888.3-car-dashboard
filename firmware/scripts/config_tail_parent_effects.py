@@ -1,9 +1,27 @@
 """Fixed Tail parent store envelopes, before active guarded-path admission."""
 
-from config_regions import Storage, borrow, require_disjoint, require_writes
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_tail_parent_contracts import GRAMMARS
 from validation import require
+
+
+if TYPE_CHECKING:
+    from config_decoded_tail import _TailEntry
+
+
+class ParentEnvelopes(TypedDict):
+    stores: int
+    local_stores: int
+    Config_stores: int
+    writes: tuple[tuple[int, View, str], ...]
+    requires_actual_source_control_pointer_epochs_and_child_effects: bool
+    confers_active_state: bool
 
 
 # Site, coordinate, offset, physical width. Pointer/epoch/source lineage is
@@ -69,7 +87,13 @@ PARENT_WRITES = (
 )
 
 
-def _parent_envelopes(objects, rows, parents, entry, owner):
+def _parent_envelopes(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    entry: _TailEntry,
+    owner: Storage,
+) -> ParentEnvelopes:
     from config_decoded_tail import _parents, _TailEntry
 
     require(type(entry) is _TailEntry, "Tail parent effects lack the actual private entry")

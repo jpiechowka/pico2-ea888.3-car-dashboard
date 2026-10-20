@@ -24,7 +24,10 @@ and core0 interrupt work. There is no cache reset or controlled cache warmup.
 
 Admission requires privileged core0 thread mode, enabled interrupts, a running
 watchdog with at least five seconds left and no debugger-pause flags, a checked
-1 MHz TIMER0 tick, and a configured CPU rate between 1 and 300 MHz. DWT must
+1 MHz TIMER0 tick, and a configured CPU rate between 1 and 300 MHz. The configured
+SPI divider and accepted regulator setting must both be available before any
+kernel runs or timer state is changed. Missing SPI returns status 2; missing
+regulator metadata returns status 8. DWT must
 advertise and enable CYCCNT with tracing enabled; an initial finite probe must
 advance it. Timer regressions, zero progress, implausible cycle deltas, changed
 timer state, wrong checksums and expired budgets reject the result.
@@ -69,7 +72,7 @@ RTT is nonblocking, so incomplete records can be lost.
 | Record | Fields after the tag |
 |---|---|
 | `BENCHBUILD1` | compiler, profile, optimization, debug, target, `+`-joined features |
-| `BENCHCLOCK1` | configured CPU Hz, peripheral Hz, reference Hz, VSEL mV or zero if unknown, requested SPI Hz, divider-derived SPI Hz |
+| `BENCHCLOCK1` | configured CPU Hz, peripheral Hz, reference Hz, checked VSEL mV, requested SPI Hz, checked divider-derived SPI Hz |
 | `BENCHENV1` | framebuffer address, core1 progress before/after, timer DBGPAUSE before/after, initial watchdog us, DWT CTRL, DEMCR |
 | `BENCHXIP1` | XIP CTRL, QMI memory-0 timing, read format, read command register words |
 | `BENCH1` | kernel 0..3, iterations, start us, end us, raw cycle delta, checksum, status |
@@ -79,11 +82,18 @@ Accept a run only with complete metadata, four unique kernel rows in order,
 eight iterations each, the expected checksums, zero individual status and
 `BENCHEND1,0,4`. An earlier successful row does not prove later timer restoration
 or suite validity. Status codes: 1 clock, 2 frequency, 3 counter unavailable,
-4 counter range, 5 timer state, 6 restoration, 7 budget, 8 context/buffer,
+4 counter range, 5 timer state, 6 restoration, 7 budget, 8 context/buffer/regulator metadata,
 9 watchdog, 10 checksum. Record failures as failures, never zero-cost samples.
 
 Clock and voltage fields are configured register values, not electrical
-measurements. XIP words describe configuration after the suite; cache warmth
+measurements. SPI and VSEL are sampled once before the experiment and reused in
+the clock row. A run missing either value omits `BENCHCLOCK1` and emits a failed
+`BENCHEND1` with no attempted samples. Historical version-1 records allowed
+zero for unknown VSEL; retain that interpretation for those archived records,
+never treat it as measured zero volts. See the
+[diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md).
+
+XIP words describe configuration after the suite; cache warmth
 and concurrent core1 activity remain uncontrolled. The probe is a finite boot
 experiment, separate from the warmed-up, at-least-30-second
 [frame and diagnostic capture](telemetry-windows.md). Neither demonstrates

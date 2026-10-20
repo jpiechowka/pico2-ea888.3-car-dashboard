@@ -28,13 +28,17 @@
     "Cargo.lock": "1b55b62d3c015a674bf22f731bc235c6d0426ce67fe72b40890c59b11a12e9c4",
     "Cargo.toml": "366d176d39b32689f57260a452b23c20968439b8096ca9b6ab09059ae2c40b37",
     "Cargo.toml.orig": "895d9ab82dcfa5ad9b243faa58a3c3634bcffc6c10a14c50af47ee6bb33e78be",
-    "LOCAL_PATCHES.md": "6158a95b0e5c3cba1c615b484f225169c1fbee7f7c3cd71de62d0d13de4a005f",
+    "LOCAL_PATCHES.md": "92120735c7ce6b5976ccab4ca6c55ccd360554d749f2ebe29d220fa2d033ff9d",
     "rustfmt.toml": "b204ff86e8e4d95ce01281f2bba275d2013cbc7fe172bbc35138e1fa10f80ed4",
-    "src/bluetooth.rs": "b928bdbf40de7bddb42ac98e98cb303c666a8e26433443101b3c88a409eea402",
-    "src/lib.rs": "b6bdd8337d73fafbd51ea8adec324550c907baebe8764f6d22325f3ec538ee0f",
-    "src/regression_tests.rs": "3b626abf39b39f5bf640b2452c1c8499031e287f78eebdd9ef21d5d51950a24e",
-    "src/runner.rs": "cc352423e33e3db476b497529c73dd4d6fb7f7b2a54e507ab4856e9a0ed1dbc8",
-    "src/structs.rs": "5d6ea3530d136b3f915e8f8dcfc980a374d98a34eaf55227ddd5e432d6a69567",
-    "src/bluetooth_ring_tests.rs": "4fdba9c779eb22b544b50a41f51cdb6d108a6e441fd2efb169651e3de2136bab"
+    "src/bluetooth.rs": "edff2808fce428470e28c333c7241d9bd77cd0196f6eb5036caf2169ad3a78b2",
+    "src/bluetooth_firmware.rs": "fb67afa575d075fae9d852d7830c3d14d61a51d05ca588b18ad83c22e928f14b",
+    "src/bluetooth_ring_tests.rs": "4fdba9c779eb22b544b50a41f51cdb6d108a6e441fd2efb169651e3de2136bab",
+    "src/consts.rs": "b0481ae5681009d4718cb065c638b6e2078125104a8e063aee3d1285afc52f55",
+    "src/events.rs": "cd2e6f7954e4b355a9d3c9dd5123d2fa10fed48d6c15e9e6eb566a88141c8014",
+    "src/lib.rs": "4de5e68b9e4164d15e7cd81c82ea51d8b5d8237274b7691f0c575e02d32411b5",
+    "src/regression_tests.rs": "b4728e94ddd230df808fb11d5af1ddeab69a53159b3fe32e59f5254e1b2fffff",
+    "src/runner.rs": "9983501871d2acc41895778c0b6929024766dae87bf6c38040e7e124e87bba22",
+    "src/sdio.rs": "9e6a9c3eaeeb9f8f912338eb038306f5012346cdc3279e70f6e86daee6d7ca54",
+    "src/structs.rs": "5d6ea3530d136b3f915e8f8dcfc980a374d98a34eaf55227ddd5e432d6a69567"
   }
 }

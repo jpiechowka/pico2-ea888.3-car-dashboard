@@ -7,7 +7,19 @@ Parent-relative targets permit bounded windows to share exact source islands
 without admitting the common visitor restore or unselected field groups.
 """
 
-GRAMMARS = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+from config_source_contracts import SameConfig
+
+
+class Utf8Widths(TypedDict):
+    kind: Literal["utf8_widths"]
+    extent: int
+
+
+ViewsObject = SameConfig | Utf8Widths
+
+GRAMMARS: dict[str, BodyContract[ViewsObject]] = {
     "outline92_current_varint_tag": {
         "extent": 8,
         "frame": 0,
@@ -409,9 +421,21 @@ ROLES = {
     "vec14_extend_from_slice": "_RNvMs_NtCs_8heapless3vecINtB4_8VecInnerhjINtNtB4_7storage15VecStorageInnerAINtNtNtCs_4core3mem12maybe_uninit11MaybeUninithEje_EE17extend_from_sliceCs_16dashboard_config",
 }
 
+
 # Exact retained later-phase predecessors. These are pending contexts only;
 # none authorizes selected execution, semantic state, return or ownership.
-SHARED_PENDING = {
+class PendingWitness(TypedDict):
+    context: tuple[tuple[int, int, str], ...]
+    operation: str
+    target: int
+
+
+class FallthroughWitness(TypedDict):
+    context: tuple[tuple[int, int, str], ...]
+    target: int
+
+
+SHARED_PENDING: dict[int, PendingWitness] = {
     424: {
         "context": (
             (416, 4, "bl @child:varint_u32"),
@@ -846,7 +870,7 @@ SHARED_PENDING = {
 
 # Pending invocation identity only. Matching this6-byte transport grants no
 # source/argument/effect/return permission to any later caller.
-PENDING_VARINT_TRANSPORT = dict(
+PENDING_VARINT_TRANSPORT: BodyContract[object] = dict(
     extent=6,
     frame=0,
     mapping=((0, 6, "t"),),

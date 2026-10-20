@@ -10,12 +10,37 @@ use crate::{Peri, clocks};
 
 /// This converts the duration provided into the number of cycles the PIO needs to run to make it take the same time
 fn to_pio_cycles(duration: Duration) -> u32 {
-    (clocks::clk_sys_freq() / 1_000_000) / 3 * duration.as_micros() as u32 // parentheses are required to prevent overflow
+    duration_cycles(duration, clocks::clk_sys_freq())
+}
+
+fn duration_cycles(duration: Duration, clock_hz: u32) -> u32 {
+    assert!(clock_hz > 0);
+    // The loop costs three instructions. Fixed setup instructions are additional.
+    u32::try_from(duration.as_nanos() * u128::from(clock_hz) / 3_000_000_000)
+        .expect("PWM duration exceeds the PIO counter")
 }
 
 /// This struct represents a PWM program loaded into pio instruction memory.
 pub struct PioPwmProgram<'a, PIO: Instance> {
     prg: LoadedProgram<'a, PIO>,
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn pwm_duration_retains_sub_microsecond_and_fractional_clock_precision() {
+        assert_eq!(duration_cycles(Duration::from_nanos(500), 150_000_000), 25);
+        assert_eq!(duration_cycles(Duration::from_micros(3), 125_000_000), 125);
+        assert_eq!(duration_cycles(Duration::ZERO, 150_000_000), 0);
+    }
+
+    #[test]
+    fn excessive_pwm_duration_is_rejected_before_narrowing() {
+        assert!(std::panic::catch_unwind(|| duration_cycles(Duration::MAX, 150_000_000)).is_err());
+    }
 }
 
 impl<'a, PIO: Instance> PioPwmProgram<'a, PIO> {
@@ -79,10 +104,11 @@ impl<'d, T: Instance, const SM: usize> PioPwm<'d, T, SM> {
 
     /// Sets the pwm period, which is the length of time for each pio wave until reset.
     pub fn set_period(&mut self, duration: Duration) {
+        let cycles = to_pio_cycles(duration);
         let is_enabled = self.sm.is_enabled();
-        while !self.sm.tx().empty() {} // Make sure that the queue is empty
         self.sm.set_enable(false);
-        self.sm.tx().push(to_pio_cycles(duration));
+        self.drain_levels();
+        self.sm.tx().push(cycles);
         unsafe {
             self.sm.exec_instr(
                 InstructionOperands::PULL {
@@ -105,8 +131,32 @@ impl<'d, T: Instance, const SM: usize> PioPwm<'d, T, SM> {
     }
 
     /// Set the number of pio cycles to set the wave on high to.
+    /// A full queue is coalesced to its newest level without waiting for a stopped SM.
     pub fn set_level(&mut self, level: u32) {
+        if self.sm.tx().full() {
+            let enabled = self.sm.is_enabled();
+            self.sm.set_enable(false);
+            self.drain_levels();
+            self.sm.tx().push(level);
+            self.sm.set_enable(enabled);
+            return;
+        }
         self.sm.tx().push(level);
+    }
+
+    // Called only while stopped. At most four queued levels are consumed, retaining
+    // the last in X, which the program uses when PULL NOBLOCK has no new value.
+    fn drain_levels(&mut self) {
+        while !self.sm.tx().empty() {
+            unsafe {
+                self.sm.exec_instr(InstructionOperands::PULL { if_empty: false, block: false }.encode());
+                self.sm.exec_instr(InstructionOperands::MOV {
+                    destination: pio::MovDestination::X,
+                    op: pio::MovOperation::None,
+                    source: pio::MovSource::OSR,
+                }.encode());
+            }
+        }
     }
 
     /// Set the pulse width high time

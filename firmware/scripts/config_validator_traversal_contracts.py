@@ -7,7 +7,25 @@ source initialization, ownership, preservation or a return by itself. No gate
 generates policy from an input ELF, and no whole-body digest admits a body.
 """
 
-COLOR_CAPTURE = {
+from typing import Literal, NotRequired, TypedDict
+from config_body_types import BodyContract, SourceLocationObject
+
+
+class ConfigObject(TypedDict):
+    kind: Literal["config"]
+
+
+class ReadonlyObject(TypedDict):
+    kind: Literal["range", "first_message"]
+    hex: str
+    role: NotRequired[str]
+    alignment: NotRequired[int]
+
+
+TraversalObject = ConfigObject | SourceLocationObject | ReadonlyObject
+
+
+COLOR_CAPTURE: BodyContract[object] = {
     "extent": 56,
     "frame": 16,
     "mapping": [(0, 56, "t")],
@@ -43,7 +61,7 @@ COLOR_CAPTURE_ROLE = (
     "_RNCINvNtCs_16dashboard_config8validate16visit_validationNCNvB4_12validate_ref0Es8_0B6_"
 )
 
-TRAVERSAL = {
+TRAVERSAL: BodyContract[TraversalObject] = {
     "extent": 5048,
     "frame": 320,
     "mapping": [
@@ -1918,7 +1936,7 @@ TRAVERSAL = {
     ],
 }
 
-MATH = {
+MATH: dict[str, BodyContract[object]] = {
     "f32_exponent": {
         "extent": 8,
         "frame": 0,

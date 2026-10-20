@@ -5,7 +5,38 @@ operand and mapped pool descriptor exact; root/default/sink closure is separate.
 No body hash learning, budget change or physical high-water claim.
 """
 
-PANIC_GRAMMARS = {
+from typing import Literal, TypedDict
+
+
+class MovwideRelocation(TypedDict):
+    object: str
+    function: str
+    kind: Literal["movwide_pair"]
+    low_offset: str
+    high_offset: str
+    register: str
+
+
+class LiteralRelocation(TypedDict):
+    object: str
+    function: str
+    kind: Literal["pc_literal"]
+    instruction_offset: str
+    pool_offset: str
+    register: str
+
+
+class PanicGrammar(TypedDict):
+    extent: int
+    frame: int
+    raw_role: str
+    grammar: list[str]
+    instruction_widths: list[int]
+    mapping: list[tuple[int, int, str]]
+    relocations: list[MovwideRelocation | LiteralRelocation]
+
+
+PANIC_GRAMMARS: dict[str, PanicGrammar] = {
     "panic_fmt": {
         "extent": 28,
         "frame": 32,

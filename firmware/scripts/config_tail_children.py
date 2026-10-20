@@ -5,12 +5,16 @@ Every dynamic adapter must bind its current source, frames and returns.
 """
 
 import re
+from collections.abc import Sequence
+from typing import Literal, Never, NotRequired, TypeGuard, TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap
+from config_source_contracts import SameConfig
 from config_tail_contracts import GRAMMARS, ROLES
 from config_widget_children import _outline as _widget_outline, _function as _widget_function
 from config_finite import _complete_body, _literal_body
-from config_regions import Region, Transfer, audit_coverage, _control
+from config_regions import CoverageRecord, Region, Transfer, audit_coverage, _control
 from config_owner_entry import _direct_target
-from config_stack import canonical_symbol
+from config_stack import DiagnosticObjects, canonical_symbol
 from validation import require
 from config_structural import _structural
 
@@ -40,7 +44,44 @@ ACTION_TARGET_OFFSETS = (
 )
 
 
-def _function(objects, address, role):
+class TailFields(TypedDict):
+    action_targets: NotRequired[tuple[int, ...]]
+    guarded_action_index_domain: NotRequired[tuple[int, int]]
+    table_padding: NotRequired[tuple[int, int]]
+    requires_same_source_successful_varint_argument: NotRequired[bool]
+
+
+class TailBodyRecord(BodyRecord, TailFields):
+    pass
+
+
+class TailCoverageRecord(TailBodyRecord):
+    coverage: CoverageRecord
+
+
+class TailParentRecord(TypedDict):
+    kind: Literal["tail_parent_literal_windows_only"]
+    role: str
+    function: int
+    extent: int
+    frame: int
+    windows: tuple[BodyRecord, ...]
+    pool_values: tuple[tuple[int, int, int], ...]
+
+
+def is_child_coverage(
+    proof: TailCoverageRecord | TailParentRecord,
+) -> TypeGuard[TailCoverageRecord]:
+    """The two producer variants have disjoint coverage/window fields."""
+    return "coverage" in proof
+
+
+def is_parent_literals(proof: TailCoverageRecord | TailParentRecord) -> TypeGuard[TailParentRecord]:
+    """The parent producer carries windows, never complete child coverage."""
+    return "windows" in proof
+
+
+def _function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     extent, frame, name = _widget_function(objects, address, role)
     if role in _ORDINARY:
         contract = GRAMMARS[_ORDINARY[role]]
@@ -51,13 +92,25 @@ def _function(objects, address, role):
     return extent, frame, name
 
 
-def _outline(objects, name, rows, role, ancestry=()):
+def _outline(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    role: str,
+    ancestry: tuple[int, ...] = (),
+) -> BodyRecord:
     if role in _OUTLINES:
         return tail_body(objects, name, rows, role, ancestry)
     return _widget_outline(objects, name, rows, role, ancestry)
 
 
-def tail_body(objects, name, rows, outline_role=None, ancestry=()):
+def tail_body(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    outline_role: str | None = None,
+    ancestry: tuple[int, ...] = (),
+) -> TailBodyRecord:
     role = outline_role or canonical_symbol(name)
     if outline_role is not None:
         require(
@@ -69,10 +122,10 @@ def tail_body(objects, name, rows, outline_role=None, ancestry=()):
         require(role in _ORDINARY, "unreviewed Tail ordinary body")
         shape = _ORDINARY[role]
 
-    def no_object(*args):
-        require(False, "unexpected Tail child readonly object")
+    def no_object(*args: object) -> Never:
+        raise AssertionError("unexpected Tail child readonly object")
 
-    proof = _complete_body(
+    base = _complete_body(
         objects,
         name,
         rows,
@@ -84,6 +137,8 @@ def tail_body(objects, name, rows, outline_role=None, ancestry=()):
         ancestry,
         function_consumer=_function,
     )
+    extra: TailFields = {}
+    proof: TailBodyRecord = {**base, **extra}
     require(not proof["indirect_sites"], "Tail child contains an unreviewed executable callback")
     if shape == "ControlAction":
         start = proof["function"]
@@ -95,17 +150,17 @@ def tail_body(objects, name, rows, outline_role=None, ancestry=()):
             and all(at in rows for at in targets),
             "Tail ControlAction table/typed targets differ",
         )
-        proof.update(
-            action_targets=targets,
-            guarded_action_index_domain=(0, 18),
-            table_padding=(start + 71, 1),
-            requires_same_source_successful_varint_argument=True,
-        )
+        proof["action_targets"] = targets
+        proof["guarded_action_index_domain"] = (0, 18)
+        proof["table_padding"] = (start + 71, 1)
+        proof["requires_same_source_successful_varint_argument"] = True
     return proof
 
 
 @_structural(2)
-def tail_coverage(objects, name, rows, outline_role=None):
+def tail_coverage(
+    objects: DiagnosticObjects, name: str, rows: InstructionMap, outline_role: str | None = None
+) -> TailCoverageRecord | TailParentRecord:
     """Complete child coverage or the explicitly limited parent literal bundle."""
     from config_headers import VISITOR
 
@@ -206,7 +261,7 @@ def tail_coverage(objects, name, rows, outline_role=None):
                 )
             )
 
-    def child(objects, address, role):
+    def child(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
         if not role.startswith("@outline:"):
             return _function(objects, address, role)
         names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == address]
@@ -214,13 +269,13 @@ def tail_coverage(objects, name, rows, outline_role=None):
         p = _outline(objects, names[0], rows, role)
         return p["extent"], p["frame"], names[0]
 
-    proof["coverage"] = audit_coverage(
-        objects, name, rows, context, regions, _function_consumer=child
-    )
-    return proof
+    coverage = audit_coverage(objects, name, rows, context, regions, _function_consumer=child)
+    return {**proof, "coverage": coverage}
 
 
-def _parent_literals(objects, name, rows):
+def _parent_literals(
+    objects: DiagnosticObjects, name: str, rows: InstructionMap
+) -> TailParentRecord:
     """Fixed literal bundle only, explicitly not whole-Visitor coverage.
 
     Actual Config pointer VALUES are immutable input facts. The private
@@ -239,7 +294,9 @@ def _parent_literals(objects, name, rows):
     extent, frame, _ = _function(objects, start, VISITOR)
     require((extent, frame) == (7128, 1608), "Tail parent literal extent/frame differs")
 
-    def pointer_value(objects, value, descriptor):
+    def pointer_value(
+        objects: DiagnosticObjects, value: int, descriptor: SameConfig
+    ) -> tuple[Callback, ...]:
         require(
             descriptor == dict(kind="same_Config")
             and type(value) is int
@@ -278,14 +335,17 @@ def _parent_literals(objects, name, rows):
     )
 
 
-def tail_children(objects, rows, parents):
+def tail_children(
+    objects: DiagnosticObjects, rows: InstructionMap, parents: Sequence[BodyRecord]
+) -> dict[tuple[int, str], BodyRecord]:
     """Current transitive closed children; no dynamic effects are memoized."""
-    from config_helpers import HELPER_SEMANTIC_ROLES, helper_coverage
+    from config_helper_contracts import HELPER_SEMANTIC_ROLES
+    from config_helpers import helper_coverage
     from config_widget_children import _name, widget_body
     from config_widget_contracts import ROLES as WIDGET
     from config_logger import logger_body
 
-    proofs = {}
+    proofs: dict[tuple[int, str], BodyRecord] = {}
     pending = [e for p in parents for e in p["ordinary_edges"]]
     while pending:
         off, operation, target, role, frame = pending.pop()
@@ -297,7 +357,10 @@ def tail_children(objects, rows, parents):
             require(len(names) == 1, "ambiguous Tail child outline")
             proof = _outline(objects, names[0], rows, role)
         elif role in _ORDINARY:
-            proof = tail_coverage(objects, _name(objects, role, target), rows)
+            covered = tail_coverage(objects, _name(objects, role, target), rows)
+            if not is_child_coverage(covered):
+                raise AssertionError("Tail ordinary child resolved to parent-only literals")
+            proof = covered
         elif role in HELPER_SEMANTIC_ROLES.values():
             proof = helper_coverage(
                 objects, _name(objects, role, target), rows, (target, "decoded Tail primitive")
@@ -307,14 +370,14 @@ def tail_children(objects, rows, parents):
         elif role in ("__aeabi_memcpy", "_RNvNtCs_17compiler_builtins3mem6memcpy"):
             proof = logger_body(objects, _name(objects, role, target), rows)
         else:
-            require(False, "unclassified Tail child")
+            raise AssertionError("unclassified Tail child")
         require(proof["frame"] == frame, "Tail child changes its current activation frame")
         proofs[key] = proof
         pending.extend(proof["ordinary_edges"])
     return proofs
 
 
-def tail_return_profiles():
+def tail_return_profiles() -> dict[str, set[int]]:
     """Fixed current SP sites; table/source/effects are separate obligations."""
     from config_source_children import source_return_profiles
 

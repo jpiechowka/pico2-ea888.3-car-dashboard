@@ -1,30 +1,51 @@
 import os
+from collections.abc import Sequence
+from typing import TypedDict
+
+
+class Feature(TypedDict):
+    name: str
+    default: int
+    vals: Sequence[int]
+    description: str
+    enable: str | Sequence[str] | None
+
 
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
 os.chdir(dname)
 
-features = []
+features: list[Feature] = []
 
 
-def feature(name, description, default, min=None, max=None, pow2=None, vals=None, enable=None, factors=[]):
+def feature(
+    name: str,
+    description: str,
+    default: int,
+    min: int | None = None,
+    max: int | None = None,
+    pow2: bool | int | None = None,
+    vals: Sequence[int] | None = None,
+    enable: str | Sequence[str] | None = None,
+    factors: Sequence[int] = (),
+) -> None:
     if vals is None:
         assert min is not None
         assert max is not None
 
-        vals = set()
+        generated: set[int] = set()
         val = min
         while val <= max:
-            vals.add(val)
+            generated.add(val)
             for f in factors:
-                if val*f <= max:
-                    vals.add(val*f)
-            if (pow2 == True or (isinstance(pow2, int) and val >= pow2)) and val > 0:
+                if val * f <= max:
+                    generated.add(val * f)
+            if (pow2 is True or (isinstance(pow2, int) and val >= pow2)) and val > 0:
                 val *= 2
             else:
                 val += 1
-        vals.add(default)
-        vals = sorted(list(vals))
+        generated.add(default)
+        vals = sorted(generated)
 
     features.append(
         {
@@ -40,50 +61,87 @@ def feature(name, description, default, min=None, max=None, pow2=None, vals=None
 feature(
     "connection_event_queue_size",
     "Controls the size of the per-connection event queue.",
-    default=2, min=1, max=64, pow2=True)
-feature("l2cap_rx_queue_size",
-        "Controls the size of the L2CAP inbound queue per channel.",
-        default=8, min=1, max=64, pow2=True)
-feature("l2cap_tx_queue_size",
-        "Controls the size of the L2CAP outbound queue per channel.",
-        default=8, min=1, max=64, pow2=True)
-feature("default_packet_pool_size",
-        "Controls the pool size of the default packet pool, if enabled.",
-        enable="default-packet-pool", default=16, min=1, max=128, pow2=True)
-feature("default_packet_pool_mtu",
-        "Controls the packet MTU of the default packet pool, if enabled.",
-        enable="default-packet-pool", default=251, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
-feature("gatt_client_notification_max_subscribers",
-        "When using the GATT client, this controls how many subscribers can be created.",
-        default=1, min=1, max=512, pow2=True)
-feature("gatt_client_notification_queue_size",
-        "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
-        default=1, min=1, max=512, pow2=True)
-feature("client_att_table_size",
-        "Maximum buffer size per connection for client-specific attribute values, such as CCCDs.",
-        default=64, vals=[2, 8, 16, 32, 64, 128, 256, 512, 1024])
-feature("prepare_write_buffer_size",
-        "Maximum buffer size per connection for ATT queued writes.",
-        default=512, vals=[64, 128, 256, 512, 1024])
+    default=2,
+    min=1,
+    max=64,
+    pow2=True,
+)
+feature(
+    "l2cap_rx_queue_size",
+    "Controls the size of the L2CAP inbound queue per channel.",
+    default=8,
+    min=1,
+    max=64,
+    pow2=True,
+)
+feature(
+    "l2cap_tx_queue_size",
+    "Controls the size of the L2CAP outbound queue per channel.",
+    default=8,
+    min=1,
+    max=64,
+    pow2=True,
+)
+feature(
+    "default_packet_pool_size",
+    "Controls the pool size of the default packet pool, if enabled.",
+    enable="default-packet-pool",
+    default=16,
+    min=1,
+    max=128,
+    pow2=True,
+)
+feature(
+    "default_packet_pool_mtu",
+    "Controls the packet MTU of the default packet pool, if enabled.",
+    enable="default-packet-pool",
+    default=251,
+    vals=[27, 48, 64, 128, 251, 255, 512, 1024],
+)
+feature(
+    "gatt_client_notification_max_subscribers",
+    "When using the GATT client, this controls how many subscribers can be created.",
+    default=1,
+    min=1,
+    max=512,
+    pow2=True,
+)
+feature(
+    "gatt_client_notification_queue_size",
+    "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
+    default=1,
+    min=1,
+    max=512,
+    pow2=True,
+)
+feature(
+    "client_att_table_size",
+    "Maximum buffer size per connection for client-specific attribute values, such as CCCDs.",
+    default=64,
+    vals=[2, 8, 16, 32, 64, 128, 256, 512, 1024],
+)
+feature(
+    "prepare_write_buffer_size",
+    "Maximum buffer size per connection for ATT queued writes.",
+    default=512,
+    vals=[64, 128, 256, 512, 1024],
+)
 
 # ========= Update Cargo.toml
 
 things = ""
-for f in features:
-    name = f["name"].replace("_", "-")
-    desc = f["description"]
+for item in features:
+    name = item["name"].replace("_", "-")
+    desc = item["description"]
 
-    enable = f["enable"]
-    if not enable:
-        enable = ""
-    else:
-        enable = enable if isinstance(enable, list) else [enable]
-        enable = ", ".join(f'"{x}"' for x in enable)
+    enabled = item["enable"]
+    enabled_features = [enabled] if isinstance(enabled, str) else enabled or ()
+    enable_text = ", ".join(f'"{x}"' for x in enabled_features)
 
     things += f"# {desc}\n"
-    for val in f["vals"]:
-        things += f"{name}-{val} = [{enable}]"
-        if val == f["default"]:
+    for val in item["vals"]:
+        things += f"{name}-{val} = [{enable_text}]"
+        if val == item["default"]:
             things += " # Default"
         things += "\n"
     things += "\n"
@@ -104,9 +162,9 @@ with open("Cargo.toml", "w") as f:
 # ========= Update build.rs
 
 things = ""
-for f in features:
-    name = f["name"].upper()
-    things += f'    ("{name}", {f["default"]}),\n'
+for item in features:
+    name = item["name"].upper()
+    things += f'    ("{name}", {item["default"]}),\n'
 
 SEPARATOR_START = "// BEGIN AUTOGENERATED CONFIG FEATURES\n"
 SEPARATOR_END = "// END AUTOGENERATED CONFIG FEATURES\n"
@@ -115,7 +173,6 @@ with open("build.rs", "r") as f:
     data = f.read()
 before, data = data.split(SEPARATOR_START, maxsplit=1)
 _, after = data.split(SEPARATOR_END, maxsplit=1)
-data = before + SEPARATOR_START + HELP + \
-    things + "    " + SEPARATOR_END + after
+data = before + SEPARATOR_START + HELP + things + "    " + SEPARATOR_END + after
 with open("build.rs", "w") as f:
     f.write(data)

@@ -8,15 +8,23 @@ Padding/inactive payload writes are distinguished from initialized fields.
 
 import re
 import struct
+from collections.abc import Mapping, Sequence
+from typing import NotRequired, TypedDict, Unpack, overload
+from config_body_types import BodyRecord, Callback, InstructionMap
 from config_finite import _complete_body
-from config_logger import _logger_function, logger_body
+from config_logger import LoggerRecord, _logger_function, logger_body
 from config_refill_contracts import (
+    CatalogueAlternative,
+    CatalogueString,
+    RefillObject,
     REFILL_GRAMMARS,
-    REFILL_ROLES,
+    REFILL_ROLES as REFILL_ROLES,
     CATALOG_DISPATCH,
     CATALOG_ALTERNATIVES,
 )
 from config_regions import (
+    Context,
+    CoverageRecord,
     Storage,
     View,
     Argument,
@@ -28,12 +36,109 @@ from config_regions import (
     audit_coverage,
     _control,
 )
-from config_stack import canonical_symbol
+from config_stack import DiagnosticObjects, canonical_symbol
 from validation import require
 from config_structural import _structural
 
 
-def _readonly(objects, address, extent, alignment):
+class RefillChildRecord(BodyRecord):
+    requires_parent_frame_and_abi: str | None
+    requires_typed_origin_owned_effects_and_child_closure: bool
+
+
+class RefillCoverageRecord(RefillChildRecord):
+    coverage: CoverageRecord
+
+
+class DefinitionString(CatalogueString):
+    pointers: tuple[int, ...]
+
+
+class DefinitionOutcome(CatalogueAlternative[DefinitionString]):
+    initialized_ranges: tuple[tuple[int, int], ...]
+
+
+class PeriodOutcome(TypedDict):
+    channel: int
+    period_ms: int
+
+
+class AdvancedOutcome(TypedDict):
+    channel: int
+    afr: int
+    readout: int
+
+
+class TargetStore(TypedDict):
+    operation: str
+    site: int
+    owner: View
+    coordinate_space: str
+    phase: str
+    address: int
+    width: int
+    unaligned: bool
+    owner_role: str
+    status: str
+
+
+Writes = tuple[tuple[View, int, int], ...]
+
+
+class RefillResult(TypedDict):
+    proof: RefillCoverageRecord
+    conservative_activation_frames: tuple[int, ...]
+    normal_preserves: tuple[str, ...]
+    requires_actual_typed_origin_receiver_transport_and_parent_graph: bool
+
+
+class DefinitionFields(TypedDict):
+    outcomes: tuple[DefinitionOutcome, ...]
+    possible_writes: Writes
+    local_writes: Writes
+
+
+class DefinitionResult(RefillResult, DefinitionFields):
+    pass
+
+
+class PeriodFields(TypedDict):
+    outcomes: tuple[PeriodOutcome, ...]
+    possible_writes: Writes
+
+
+class PeriodResult(RefillResult, PeriodFields):
+    pass
+
+
+class AdvancedFields(TypedDict):
+    outcomes: tuple[AdvancedOutcome, ...]
+    possible_writes: Writes
+    initialized_ranges: tuple[tuple[int, int], ...]
+    physical_activation_paths: tuple[tuple[int, ...], ...]
+    restored_tail_storage: bool
+    local_band_ranges: tuple[tuple[int, int], ...]
+    copy_children: tuple[LoggerRecord, ...]
+    target_access_requirements: tuple[TargetStore, ...]
+
+
+class AdvancedResult(RefillResult, AdvancedFields):
+    pass
+
+
+class OpaqueCopyResult(TypedDict):
+    retained_scratch_epochs: NotRequired[tuple[Storage, ...]]
+    children: tuple[LoggerRecord, ...]
+    possible_writes: Writes
+    conservative_activation_frames: tuple[int, ...]
+    physical_activation_paths: tuple[tuple[int, ...], ...]
+    restored_tail_storage: bool
+    normal_preserves: tuple[str, ...]
+    initialized_semantic_bytes_not_inferred: bool
+    requires_actual_parent_pointer_count_transport: bool
+
+
+def _readonly(objects: DiagnosticObjects, address: int, extent: int, alignment: int) -> bytes:
     require(
         type(address) is int
         and type(extent) is int
@@ -60,9 +165,10 @@ def _readonly(objects, address, extent, alignment):
     return objects.read_only(address, extent)
 
 
-def _object(objects, address, descriptor):
-    kind = descriptor["kind"]
-    if kind == "source_static_str":
+def _object(
+    objects: DiagnosticObjects, address: int, descriptor: RefillObject
+) -> tuple[Callback, ...]:
+    if descriptor["kind"] == "source_static_str":
         expected = bytes.fromhex(descriptor["utf8_hex"])
         require(
             descriptor["alignment"] == 1
@@ -73,7 +179,7 @@ def _object(objects, address, descriptor):
         expected.decode("utf-8")
     else:
         require(
-            kind == "channel_indexed_u16"
+            descriptor["kind"] == "channel_indexed_u16"
             and descriptor["alignment"] == 2
             and descriptor["extent"] == 16
             and descriptor["values"] == [500, 1500, 1000, 1000, 1000, 1000, 500, 500],
@@ -87,7 +193,7 @@ def _object(objects, address, descriptor):
     return ()
 
 
-def _function(objects, address, role):
+def _function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     extent, frame, name = _logger_function(objects, address, role)
     if role in REFILL_ROLES:
         require(
@@ -102,7 +208,13 @@ def _function(objects, address, role):
 
 
 @_structural(2)
-def child_body(objects, name, instructions, outline_role=None, _ancestry=()):
+def child_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: str | None = None,
+    _ancestry: tuple[int, ...] = (),
+) -> RefillChildRecord:
     require(name in objects.elf.functions, "missing refill child")
     start = objects.elf.functions[name][0] & ~1
     require(start not in _ancestry, "refill outline cycle")
@@ -117,7 +229,7 @@ def child_body(objects, name, instructions, outline_role=None, _ancestry=()):
         )
         role = outline_role
     require(role in REFILL_ROLES, "unreviewed refill child identity")
-    results = []
+    results: list[RefillChildRecord] = []
     for shape in REFILL_ROLES[role]:
         try:
             proof = _complete_body(
@@ -134,17 +246,25 @@ def child_body(objects, name, instructions, outline_role=None, _ancestry=()):
             )
         except AssertionError:
             continue
-        proof.update(
-            requires_parent_frame_and_abi=shape if outline_role is not None else None,
-            requires_typed_origin_owned_effects_and_child_closure=True,
+        results.append(
+            {
+                **proof,
+                "requires_parent_frame_and_abi": shape if outline_role is not None else None,
+                "requires_typed_origin_owned_effects_and_child_closure": True,
+            }
         )
-        results.append(proof)
     require(len(results) == 1, "missing, changed or ambiguous complete refill family")
     return results[0]
 
 
 @_structural(2)
-def child_coverage(objects, name, instructions, context, outline_role=None):
+def child_coverage(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    context: Context,
+    outline_role: str | None = None,
+) -> RefillCoverageRecord:
     proof = child_body(objects, name, instructions, outline_role)
     start = proof["function"]
     contract = REFILL_GRAMMARS[proof["shape"]]
@@ -211,11 +331,10 @@ def child_coverage(objects, name, instructions, context, outline_role=None):
                 )
             )
         else:
-            target = re.search(r"0x([0-9a-f]+)(?:\s|$)", operand)
-            require(
-                target is not None and family in ("b", "cbz", "cbnz"), "unreviewed refill transfer"
-            )
-            target = int(target[1], 16)
+            match = re.search(r"0x([0-9a-f]+)(?:\s|$)", operand)
+            if match is None or family not in ("b", "cbz", "cbnz"):
+                raise AssertionError("unreviewed refill transfer")
+            target = int(match[1], 16)
             edges.append(
                 Transfer(
                     at,
@@ -253,7 +372,7 @@ def child_coverage(objects, name, instructions, context, outline_role=None):
                     Region(context, "padding", upper, start + hi, tuple(padding), (), ())
                 )
 
-    def target_consumer(objects, target, role):
+    def target_consumer(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, int, str]:
         if not role.startswith("@outline:"):
             return _function(objects, target, role)
         names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
@@ -261,13 +380,15 @@ def child_coverage(objects, name, instructions, context, outline_role=None):
         child = child_body(objects, names[0], instructions, role)
         return child["extent"], child["frame"], names[0]
 
-    proof["coverage"] = audit_coverage(
+    coverage = audit_coverage(
         objects, name, instructions, context, regions, _function_consumer=target_consumer
     )
-    return proof
+    return {**proof, "coverage": coverage}
 
 
-def _current(objects, instructions, proof):
+def _current(
+    objects: DiagnosticObjects, instructions: InstructionMap, proof: BodyRecord
+) -> RefillCoverageRecord:
     require(
         isinstance(proof, dict) and "coverage" in proof,
         "refill effects lack complete body coverage",
@@ -278,22 +399,33 @@ def _current(objects, instructions, proof):
         if e[0] & ~1 == proof["function"] and canonical_symbol(n) == proof["role"]
     ]
     require(len(names) == 1, "refill effects have no unique typed body")
-    current = child_coverage(objects, names[0], instructions, proof["coverage"]["context"])
+    coverage = proof.get("coverage")
+    if not isinstance(coverage, dict):
+        raise AssertionError("refill effects lack complete body coverage")
+    context: object = coverage.get("context")
+    if not isinstance(context, tuple):
+        raise AssertionError("refill effects lack complete body coverage")
+    current = child_coverage(objects, names[0], instructions, context)
     require(current == proof, "refill effects use stale code/source/child facts")
     return current
 
 
-def _domain(argument, kind, maximum):
+def _domain(argument: Argument, kind: str, maximum: int) -> tuple[int, ...]:
     require(
         isinstance(argument, Argument)
         and (argument.kind, argument.view, argument.levels, argument.bits) == (kind, None, 0, 8)
+        and argument.domain is not None
         and argument.domain <= frozenset(range(maximum + 1)),
         "refill enum/bool lacks its source-typed bounded domain",
     )
+    if argument.domain is None:
+        raise AssertionError("refill enum/bool lacks its source-typed bounded domain")
     return tuple(sorted(argument.domain))
 
 
-def _layout(proof, frame, ancestors):
+def _layout(
+    proof: RefillChildRecord, frame: Storage, ancestors: Sequence[Storage]
+) -> tuple[Storage, ...]:
     size, saved_offset = {
         "catalog_definition_s": (52, 16),
         "catalog_definition_z": (52, 16),
@@ -323,7 +455,13 @@ def _layout(proof, frame, ancestors):
     return ancestors + (saved,)
 
 
-def _output(proof, frame, output, extent, protected):
+def _output(
+    proof: RefillChildRecord,
+    frame: Storage,
+    output: View,
+    extent: int,
+    protected: tuple[Storage, ...],
+) -> None:
     require(
         isinstance(output, View)
         and output.writable
@@ -361,7 +499,21 @@ def _output(proof, frame, output, extent, protected):
     require_writes((output,), ((output, 0, extent),), protected + tuple(guards))
 
 
-def _result(proof, frames, **fields):
+@overload
+def _result(
+    proof: RefillCoverageRecord, frames: tuple[int, ...], **fields: Unpack[DefinitionFields]
+) -> DefinitionResult: ...
+@overload
+def _result(
+    proof: RefillCoverageRecord, frames: tuple[int, ...], **fields: Unpack[AdvancedFields]
+) -> AdvancedResult: ...
+@overload
+def _result(
+    proof: RefillCoverageRecord, frames: tuple[int, ...], **fields: Unpack[PeriodFields]
+) -> PeriodResult: ...
+def _result(
+    proof: RefillCoverageRecord, frames: tuple[int, ...], **fields: object
+) -> Mapping[str, object]:
     return dict(
         proof=proof,
         conservative_activation_frames=frames,
@@ -372,8 +524,14 @@ def _result(proof, frames, **fields):
 
 
 def definition_interface(
-    objects, instructions, proof, identifier, output, frame, ancestor_protected
-):
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: RefillCoverageRecord,
+    identifier: Argument,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> DefinitionResult:
     proof = _current(objects, instructions, proof)
     require(proof["shape"] in CATALOG_DISPATCH, "not a source catalogue constructor")
     domain = _domain(identifier, "DefinitionId", 15)
@@ -390,31 +548,37 @@ def definition_interface(
             ),
         ),
     )
-    outcomes = []
+    outcomes: list[DefinitionOutcome] = []
     contract = REFILL_GRAMMARS[proof["shape"]]
     for alternative in CATALOG_ALTERNATIVES:
         if alternative["id"] not in domain:
             continue
-        strings = []
+        strings: list[DefinitionString] = []
         for source in alternative["strings"]:
             if source["length"] == 0:
-                pointers = (source["empty_pointer"],)
+                empty_pointer = source["empty_pointer"]
+                if empty_pointer is None:
+                    raise AssertionError("empty source Definition field has no pointer")
+                pointers: tuple[int, ...] = (empty_pointer,)
             else:
                 pointers = tuple(
                     sorted(
                         {
                             proof["objects"][i]
                             for i, d in enumerate(contract["objects"])
-                            if d["utf8_hex"] == source["utf8_hex"]
+                            if d["kind"] == "source_static_str"
+                            and d["utf8_hex"] == source["utf8_hex"]
                         }
                     )
                 )
                 require(pointers, "source Definition field lost its paired static string")
-            strings.append(dict(source, pointers=pointers))
+            strings.append({**source, "pointers": pointers})
         initialized = ((0, 25), (30, 5)) + tuple(
             (a, b - a) for a, b in alternative["access"]["active_payload_ranges"]
         )
-        outcomes.append(dict(alternative, strings=tuple(strings), initialized_ranges=initialized))
+        outcomes.append(
+            {**alternative, "strings": tuple(strings), "initialized_ranges": initialized}
+        )
     return _result(
         proof,
         (52,),
@@ -424,12 +588,22 @@ def definition_interface(
     )
 
 
-def period_interface(objects, instructions, proof, channel, frame, ancestor_protected):
+def period_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: RefillCoverageRecord,
+    channel: Argument,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> PeriodResult:
     proof = _current(objects, instructions, proof)
     require(proof["shape"] == "minimum_period_z", "not the typed period helper")
     domain = _domain(channel, "Channel", 7)
     _layout(proof, frame, ancestor_protected)
-    values = REFILL_GRAMMARS[proof["shape"]]["objects"][0]["values"]
+    descriptor = REFILL_GRAMMARS[proof["shape"]]["objects"][0]
+    if descriptor["kind"] != "channel_indexed_u16":
+        raise AssertionError("period helper lacks its Channel table")
+    values = descriptor["values"]
     return _result(
         proof,
         (8,),
@@ -439,8 +613,15 @@ def period_interface(objects, instructions, proof, channel, frame, ancestor_prot
 
 
 def opaque_copy_interface(
-    objects, instructions, target, source, destination, count, frame, protected
-):
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    target: int,
+    source: View,
+    destination: View,
+    count: int,
+    frame: Storage,
+    protected: Sequence[Storage],
+) -> OpaqueCopyResult:
     """Reviewed restored-tail copy; copied padding remains opaque bytes."""
     require(
         isinstance(source, View)
@@ -520,8 +701,15 @@ def opaque_copy_interface(
 
 
 def advanced_interface(
-    objects, instructions, proof, channel, afr, output, frame, ancestor_protected
-):
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    channel: Argument,
+    afr: Argument,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> AdvancedResult:
     proof = _current(objects, instructions, proof)
     require(proof["shape"] == "advanced_for_channel_z", "not the AdvancedDisplay constructor")
     channels = _domain(channel, "Channel", 7)
@@ -550,7 +738,7 @@ def advanced_interface(
         frame,
         protected,
     )
-    outcomes = tuple(
+    outcomes: tuple[AdvancedOutcome, ...] = tuple(
         dict(
             channel=c,
             afr=a,

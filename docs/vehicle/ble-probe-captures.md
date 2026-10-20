@@ -282,6 +282,13 @@ the same evidence in text. Power removal can erase the scratch record; the recor
 does not identify which firmware image produced it. See the
 [reset/name source review](../validation/probe-slot3-discovery-2026-10-20.md).
 
+Global scan-error observation time must not exceed the capture time. It may
+precede the selected peer's discovery because scanning covers all peers.
+This check applies to encoder and decoder without changing the payload version.
+The [diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+also verifies operation durations and the separation of current header metrics
+from frozen capture evidence.
+
 The journal and USB protocol versions are unchanged, as is the 8192-byte payload
 limit. Existing slots are not rewritten during load/export. Older
 firmware/exporters cannot decode newer payload versions; export with the current tool before

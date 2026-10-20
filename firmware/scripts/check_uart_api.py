@@ -3,9 +3,14 @@
 import json
 import os
 from pathlib import Path
-import subprocess
+import sys
+
+from cargo_diagnostics import compiler_errors
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT.parent / "host/scripts"))
+from owned_process import run_checked  # noqa: E402
+
 COMMON = """#![no_std]
 #![no_main]
 use panic_probe as _;
@@ -53,7 +58,7 @@ CASES = [
 ]
 
 
-def main():
+def main() -> None:
     examples = ROOT / "pico2/examples"
     examples.mkdir(exist_ok=True)
     name = f"__uart_guard_{os.getpid()}"
@@ -65,7 +70,7 @@ def main():
     try:
         for label, source, expected in CASES:
             path.write_text(COMMON + source, encoding="utf-8")
-            proc = subprocess.run(
+            proc = run_checked(
                 [
                     "cargo",
                     "check",
@@ -77,24 +82,13 @@ def main():
                     "--message-format=json",
                 ],
                 cwd=ROOT,
-                text=True,
+                timeout=600,
                 capture_output=True,
-                check=False,
             )
-            errors = []
-            for line in proc.stdout.splitlines():
-                try:
-                    message = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    message.get("reason") == "compiler-message"
-                    and message["message"]["level"] == "error"
-                ):
-                    errors.append(message["message"])
-            codes = {e["code"]["code"] if e["code"] else None for e in errors}
+            errors = compiler_errors(proc.stdout)
+            codes = {error.code for error in errors}
             passed = (
-                proc.returncode == 0
+                proc.returncode == 0 and not errors
                 if expected is None
                 else proc.returncode != 0 and codes == {expected}
             )
@@ -104,7 +98,7 @@ def main():
             if not passed:
                 print(proc.stderr)
                 for error in errors:
-                    print(error.get("rendered", error["message"]))
+                    print(error.rendered)
             results.append({"case": label, "expected_error": expected, "passed": passed})
     finally:
         path.unlink()

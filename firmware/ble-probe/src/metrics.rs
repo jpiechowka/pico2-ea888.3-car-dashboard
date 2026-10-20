@@ -1,4 +1,5 @@
-//! Bounded observations; the lock never covers polling, rendering or hardware I/O.
+//! Bounded observations; the lock covers timer reads and value updates, never
+//! future polling, rendering or awaited peripheral transactions.
 use core::cell::RefCell;
 use core::future::Future;
 

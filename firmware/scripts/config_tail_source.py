@@ -5,7 +5,29 @@ retain actual inputs, outcomes, child returns and protected outputs; the
 selected current private parent/control join remains a separate obligation.
 """
 
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import Generic, NotRequired, TypeAlias, TypeGuard, TypeVar, TypedDict
 from dataclasses import replace
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_finite_returns import ReturnNode
+from config_refill_children import OpaqueCopyResult
+from config_abstract import PrimitiveResult, SequenceOutcome
+from config_regions import View
+from config_tail_children import is_parent_literals
+from config_tail_effects import (
+    ScreenResult,
+    ScreenNormal,
+    ScreenError,
+    LedResult,
+    LedNormal,
+    LedError,
+    OutputNone,
+    Writes,
+    GuardBindings,
+)
 from config_abstract import Span, SequenceInterface, sequence_interface
 from config_regions import Storage, borrow, require_writes, require_disjoint
 from config_decode_effects import _object
@@ -24,7 +46,249 @@ from config_widget_children import _name
 from validation import require
 
 
-def _joined_sequence(options):
+CallResult = TypeVar("CallResult")
+
+
+class SourceCall(TypedDict, Generic[CallResult]):
+    field: str
+    site: int
+    before: SequenceInterface
+    result: CallResult
+    predecessor: SourceInvocation | ControlsEffects | None
+    protected_constituents: NotRequired[GuardBindings]
+    nested_returns: NotRequired[tuple[ReturnNode, ...]]
+    stable_Q_D: NotRequired[tuple[Storage, ...]]
+    normal_after: NotRequired[SequenceInterface | None]
+    output: NotRequired[View]
+
+
+ScalarInvocation: TypeAlias = SourceCall[PrimitiveResult[SequenceOutcome]]
+ScreenInvocation: TypeAlias = SourceCall[ScreenResult]
+LedInvocation: TypeAlias = SourceCall[LedResult]
+SourceInvocation: TypeAlias = ScalarInvocation | ScreenInvocation | LedInvocation
+
+
+class MissingCause(TypedDict):
+    after: SequenceInterface
+    cursor: Span
+    none: OutputNone
+
+
+SourceCause: TypeAlias = SequenceOutcome | ScreenError | LedError | MissingCause
+
+
+class SourceError(TypedDict):
+    field: str
+    origin: SourceInvocation
+    cause: SourceCause
+    error: int | None
+    cursor: Span
+    after: SequenceInterface
+    Config_writes: NotRequired[Writes]
+    completed_groups: NotRequired[tuple[str, ...]]
+
+
+class ScreenPackage(TypedDict):
+    invocation: ScreenInvocation
+    source: ScreenNormal
+    output: View
+    original_return: tuple[ReturnNode, ...]
+
+
+class ControlsNormal(TypedDict):
+    hold: ScalarInvocation
+    hold_domain: tuple[int, int]
+    hold_outcomes: tuple[SequenceOutcome, ...]
+    screens: tuple[ScreenPackage, ...]
+    ControlQ: SequenceInterface
+    ScreenQ: SequenceInterface
+    after: SequenceInterface
+    requires_all_parent_staging_and_Config_stores: bool
+
+
+class ControlsSource(TypedDict):
+    before: SequenceInterface
+    invocations: tuple[ScalarInvocation | ScreenInvocation, ...]
+    normal: ControlsNormal | None
+    errors: tuple[SourceError, ...]
+    Config_writes: Writes
+    top_decrement: tuple[int, Span, Span]
+    ControlQ_initialization: tuple[int, View, Span]
+    requires_selected_parent_source_control: bool
+
+
+class InlineTransport(TypedDict):
+    site: int
+    source: View
+    destination: View
+    possible_writes: Writes
+
+
+class CopyTransport(TypedDict):
+    site: int
+    source: View
+    destination: View
+    effect: OpaqueCopyResult
+    nested_returns: tuple[ReturnNode, ...]
+
+
+class ControlStage(TypedDict):
+    site: int
+    possible_writes: Writes
+    changed_bytes: tuple[int, ...]
+    completed_screens: int
+    complete_Controls: bool
+
+
+class WordAccess(TypedDict):
+    instruction: int
+    view: View
+
+
+class ControlsEffects(TypedDict):
+    source: ControlsSource
+    owner: Storage
+    frame: Storage
+    copies: tuple[CopyTransport, ...]
+    inline_transports: tuple[InlineTransport, ...]
+    Config_stages: tuple[ControlStage, ...]
+    complete_after: int | None
+    first_only_words: tuple[WordAccess, ...]
+    completed_ordinary_group_issued: bool
+    requires_selected_parent_source_control: bool
+    requires_bound_first_Screen_word_access_policy: bool
+
+
+class HistoryNormal(TypedDict):
+    after: SequenceInterface
+    domain: tuple[int, int]
+    values: tuple[ScalarInvocation, ...]
+    Q_retired_after: int
+
+
+class HistorySource(TypedDict):
+    invocations: tuple[ScalarInvocation, ...]
+    normal: HistoryNormal | None
+
+
+class ReducedNormal(TypedDict):
+    after: SequenceInterface
+    domain: tuple[int, int]
+    outcomes: tuple[SequenceOutcome, ...]
+
+
+class ReducedSource(TypedDict):
+    invocation: ScalarInvocation
+    normal: ReducedNormal | None
+
+
+class PatternPackage(TypedDict):
+    invocation: LedInvocation
+    source: LedNormal
+    output: View
+    opaque_bytes: tuple[int, ...]
+    original_return: tuple[ReturnNode, ...]
+
+
+class LEDNormal(TypedDict):
+    after: SequenceInterface
+    patterns: tuple[PatternPackage, ...]
+    bools: tuple[ScalarInvocation, ...]
+
+
+class LEDSource(TypedDict):
+    invocations: tuple[LedInvocation | ScalarInvocation, ...]
+    patterns: tuple[PatternPackage, ...]
+    normal: LEDNormal | None
+
+
+class SuffixNormal(TypedDict):
+    after: SequenceInterface
+    LEDQ: SequenceInterface
+    physical_top_count: int
+    logical_remaining_fields: int
+    old_history_Q_still_live: bool
+    source: LEDNormal
+    requires_all_late_LED_stores_and_original_Visitor_restore: bool
+
+
+class SuffixSource(TypedDict):
+    controls: ControlsEffects
+    before: SequenceInterface
+    invocations: tuple[SourceInvocation, ...]
+    errors: tuple[SourceError, ...]
+    history: HistorySource | None
+    reduced: ReducedSource | None
+    LED: LEDSource | None
+    normal: SuffixNormal | None
+    requires_selected_parent_source_control: bool
+    completed_ordinary_group_issued: bool
+
+
+class HistoryStage(TypedDict):
+    site: int
+    source: ScalarInvocation
+    source_index: int
+    possible_writes: Writes
+    changed_bytes: tuple[int, ...]
+    complete_history: bool
+
+
+class ReducedStage(TypedDict):
+    site: int
+    source: ScalarInvocation
+    possible_writes: Writes
+
+
+class LEDStage(TypedDict):
+    site: int
+    source: PatternPackage | LedInvocation | ScalarInvocation
+    possible_writes: Writes
+    changed_bytes: tuple[int, ...]
+    complete_LED: bool
+
+
+class SuffixEffects(TypedDict):
+    source: SuffixSource
+    owner: Storage
+    history: tuple[HistoryStage, ...]
+    reduced: ReducedStage | None
+    LED: tuple[LEDStage, ...]
+    complete_after: int | None
+    early_success_register: int | None
+    preserved_LED_padding: tuple[int, ...]
+    written_opaque_LED_bytes: tuple[int, ...]
+    completed_ordinary_group_issued: bool
+    requires_selected_parent_source_control: bool
+    requires_bound_LED_word_access_policy: bool
+
+
+def _is_scalar_call(call: SourceInvocation) -> TypeGuard[ScalarInvocation]:
+    return "outcomes" in call["result"]
+
+
+def _is_screen_call(call: SourceInvocation) -> TypeGuard[ScreenInvocation]:
+    return "requires_bound_Screen_word_access_policy" in call["result"]
+
+
+def _is_led_call(call: SourceInvocation) -> TypeGuard[LedInvocation]:
+    return "requires_bound_LED_word_access_policy" in call["result"]
+
+
+def _is_sequence_outcome(cause: SourceCause) -> TypeGuard[SequenceOutcome]:
+    return "state" in cause
+
+
+def _cause_after(cause: SourceCause) -> SequenceInterface:
+    if _is_sequence_outcome(cause):
+        return cause["state"]
+    after: object = cause.get("after")
+    if not isinstance(after, SequenceInterface):
+        raise AssertionError("Tail error cause lacks its sequence state")
+    return after
+
+
+def _joined_sequence(options: Sequence[SequenceOutcome]) -> SequenceInterface:
     require(options, "Tail sequence join has no successful source")
     first = options[0]["state"]
     require(
@@ -48,7 +312,13 @@ def _joined_sequence(options):
     )
 
 
-def _parent_inputs(objects, rows, parents, state, frame):
+def _parent_inputs(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    state: SequenceInterface,
+    frame: Storage,
+) -> int:
     require(
         type(state) is SequenceInterface
         and type(frame) is Storage
@@ -65,7 +335,9 @@ def _parent_inputs(objects, rows, parents, state, frame):
     V = objects.elf.functions[_name(objects, VISITOR)][0] & ~1
     current = tail_coverage(objects, _name(objects, VISITOR, V), rows)
     require(
-        current["kind"] == "tail_parent_literal_windows_only" and current["windows"] == parents,
+        is_parent_literals(current)
+        and current["kind"] == "tail_parent_literal_windows_only"
+        and current["windows"] == parents,
         "Tail source parent literal receipt is stale or from another current package",
     )
     require(
@@ -87,7 +359,12 @@ def _parent_inputs(objects, rows, parents, state, frame):
     return V
 
 
-def _call_binding(parents, children, call, frame):
+def _call_binding(
+    parents: tuple[BodyRecord, ...],
+    children: Mapping[tuple[int, str], BodyRecord],
+    call: SourceInvocation,
+    frame: Storage,
+) -> ReturnNode:
     """Retained result proof and original return belong to this typed BL."""
     edge = next(
         (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == call["site"]),
@@ -101,6 +378,8 @@ def _call_binding(parents, children, call, frame):
         and (proof["function"], proof["role"], proof["frame"]) == (edge[2], edge[3], edge[4]),
         "Tail retained source result has another current typed call target",
     )
+    if edge is None:
+        raise AssertionError("Tail retained source result has another current typed call target")
     nodes = call.get("nested_returns", call["result"].get("nested_returns", ()))
     roots = tuple(
         v
@@ -119,7 +398,14 @@ def _call_binding(parents, children, call, frame):
     return roots[0]
 
 
-def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
+def _controls_source(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> ControlsSource:
     """hold_ms then three complete Screens, with fresh same-source cursors.
 
     Top4 and literal initialization establish top3, ControlQ2 and ScreenQ3.
@@ -146,7 +432,8 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
     edge = next(
         (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == V + 5656), None
     )
-    require(edge is not None, "Tail hold_ms loses its actual parent call")
+    if edge is None:
+        raise AssertionError("Tail hold_ms loses its actual parent call")
     scalar = children[edge[2], edge[3]]
     require(
         scalar.get("semantic_role") == "seq_u16" and scalar["frame"] == 8,
@@ -165,7 +452,7 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
         guards + (top, _object(control, "Control Q"), _object(state.decoder.header, "Tail D")),
     )
     child = sequence_interface(objects, rows, scalar, inner, activation, protected)
-    origin = dict(
+    origin: ScalarInvocation = dict(
         field="hold_ms",
         site=V + 5656,
         before=inner,
@@ -174,11 +461,11 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
         protected_constituents=bindings,
         nested_returns=returns,
     )
-    calls = [origin]
-    errors = []
+    calls: list[ScalarInvocation | ScreenInvocation] = [origin]
+    errors: list[SourceError] = []
 
-    def record(call, cause, code):
-        after = cause["state"] if "state" in cause else cause["after"]
+    def record(call: SourceInvocation, cause: SourceCause, code: int | None) -> None:
+        after = _cause_after(cause)
         errors.append(
             dict(
                 field=call["field"],
@@ -201,7 +488,7 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
             options.append(option)
         else:
             record(origin, option, 14 if option["kind"] == "none" else option["error"])
-    result = dict(
+    result: ControlsSource = dict(
         before=state,
         invocations=(),
         normal=None,
@@ -212,7 +499,7 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
         requires_selected_parent_source_control=True,
     )
     if not options:
-        result.update(invocations=tuple(calls), errors=tuple(errors))
+        result.update({"invocations": tuple(calls), "errors": tuple(errors)})
         return result
     control_after = _joined_sequence(options)
     require(
@@ -226,16 +513,14 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
         + (top, _object(control, "retained Control Q"), _object(state.decoder.header, "Tail D")),
     )
     current = SequenceInterface(screen_q, control_after.decoder, Span(3, 3))
-    screens = []
+    screens: list[ScreenPackage] = []
     for index, (site, offset) in enumerate(((5712, 940), (6198, 1000), (6426, 1064))):
         edge = next(
             (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == V + site),
             None,
         )
-        require(
-            edge is not None and edge[3] == ROLES["ScreenBindings"],
-            "Tail ordered Screen loses its typed current call",
-        )
+        if not (edge is not None and edge[3] == ROLES["ScreenBindings"]):
+            raise AssertionError("Tail ordered Screen loses its typed current call")
         proof = tail_coverage(objects, _name(objects, edge[3], edge[2]), rows)
         output = borrow(frame, offset, 10, frame.phase, True)
         retained = (
@@ -248,28 +533,28 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
         activation = Storage(
             frame.space, "Tail Screen " + str(index), frame.start - 64, 64, 8, frame.phase, True
         )
-        child = screen_bindings_interface(
+        screen_child = screen_bindings_interface(
             objects, rows, proof, current, output, activation, retained, V + site
         )
-        call = dict(
+        call: ScreenInvocation = dict(
             field="Screen" + str(index),
             site=V + site,
             before=current,
-            result=child,
+            result=screen_child,
             output=output,
             predecessor=calls[-1],
         )
         calls.append(call)
-        for error in child["errors"]:
+        for error in screen_child["errors"]:
             record(call, error, error["error"])
-        if child["none"] is not None:
-            none = child["none"]
+        if screen_child["none"] is not None:
+            none = screen_child["none"]
             record(
                 call, dict(after=none["after"], cursor=none["after"].decoder.cursor, none=none), 14
             )
-        if child["normal"] is None:
+        if screen_child["normal"] is None:
             break
-        normal = child["normal"]
+        normal = screen_child["normal"]
         screens.append(
             dict(
                 invocation=call,
@@ -277,7 +562,7 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
                 output=output,
                 original_return=tuple(
                     n
-                    for n in child["nested_returns"]
+                    for n in screen_child["nested_returns"]
                     if n["role"] == ROLES["ScreenBindings"] and n["return_PC"] == V + site + 4
                 ),
             )
@@ -299,11 +584,19 @@ def _controls_source(objects, rows, parents, state, frame, ancestor_protected):
             after=replace(state, count=Span(3, 3), decoder=current.decoder),
             requires_all_parent_staging_and_Config_stores=True,
         )
-    result.update(invocations=tuple(calls), errors=tuple(errors))
+    result.update({"invocations": tuple(calls), "errors": tuple(errors)})
     return result
 
 
-def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_protected):
+def _controls_effects(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    source: ControlsSource,
+    owner: Storage,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> ControlsEffects:
     """Conditional complete parse -> actual staging -> partial Controls stores.
 
     The active private parent must still bind this relation to its selected
@@ -339,7 +632,7 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
             ),
         )
     )
-    result = dict(
+    result: ControlsEffects = dict(
         source=source,
         owner=owner,
         frame=frame,
@@ -372,6 +665,10 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
         _call_binding(parents, children, call, frame)
     for index, screen in enumerate(screens):
         call = calls[index + 1]
+        if not _is_screen_call(call):
+            raise AssertionError(
+                "Tail Controls publication mixes a Screen output/source/original-return epoch"
+            )
         child = call["result"]
         parsed = child["normal"]
         previous = calls[index]
@@ -392,6 +689,10 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
             and screen["original_return"][0]["return_SP"] == frame.start,
             "Tail Controls publication mixes a Screen output/source/original-return epoch",
         )
+        if parsed is None:
+            raise AssertionError(
+                "Tail Controls publication mixes a Screen output/source/original-return epoch"
+            )
         before_decoder = (
             normal["ControlQ"].decoder
             if index == 0
@@ -435,10 +736,10 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
     third_rotation = borrow(frame, 284, 4, frame.phase, True)
     require_writes((third_rotation,), ((third_rotation, 0, 4),), guards)
     guards += _guards(frame, (_object(third_rotation, "captured third Screen rotation"),))
-    copies = []
-    inline = []
+    copies: list[CopyTransport] = []
+    inline: list[InlineTransport] = []
 
-    def inline_copy(site, src, dest, size):
+    def inline_copy(site: int, src: int, dest: int, size: int) -> None:
         inp = borrow(frame, src, size, frame.phase)
         out = borrow(frame, dest, size, frame.phase, True)
         require_writes(
@@ -448,15 +749,15 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
             dict(site=V + site, source=inp, destination=out, possible_writes=((out, 0, size),))
         )
 
-    def copied(site, src, dest, target_owner, protected):
+    def copied(
+        site: int, src: int, dest: int, target_owner: Storage, protected: tuple[Storage, ...]
+    ) -> None:
         edge = next(
             (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == V + site),
             None,
         )
-        require(
-            edge is not None and edge[3] == "__aeabi_memcpy",
-            "Tail Controls copy loses its actual typed current target",
-        )
+        if not (edge is not None and edge[3] == "__aeabi_memcpy"):
+            raise AssertionError("Tail Controls copy loses its actual typed current target")
         inp = borrow(frame, src, 9, frame.phase)
         out = borrow(target_owner, dest, 9, frame.phase, True)
         effect = opaque_copy_interface(objects, rows, edge[2], inp, out, 9, frame, protected)
@@ -507,8 +808,8 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
         (6056, 752, 464, 1),
     ):
         inline_copy(*spec)
-    stages = []
-    changed = set()
+    stages: list[ControlStage] = []
+    changed: set[int] = set()
     # (current instruction, Config start, width, number of complete Screens).
     for site, offset, size, completed in (
         (6062, 213, 1, 0),
@@ -563,21 +864,30 @@ def _controls_effects(objects, rows, parents, source, owner, frame, ancestor_pro
         )
     require(changed == set(range(212, 244)), "Tail Controls assignment misses a physical byte")
     result.update(
-        copies=tuple(copies),
-        inline_transports=tuple(inline),
-        Config_stages=tuple(stages),
-        complete_after=V + 6118,
-        first_only_words=(
-            dict(instruction=V + 6496, view=borrow(frame, 946, 4, frame.phase)),
-            dict(instruction=V + 6510, view=borrow(frame, 942, 4, frame.phase)),
-            dict(instruction=V + 6074, view=borrow(owner, 218, 4, frame.phase, True)),
-            dict(instruction=V + 6078, view=borrow(owner, 214, 4, frame.phase, True)),
-        ),
+        {
+            "copies": tuple(copies),
+            "inline_transports": tuple(inline),
+            "Config_stages": tuple(stages),
+            "complete_after": V + 6118,
+            "first_only_words": (
+                dict(instruction=V + 6496, view=borrow(frame, 946, 4, frame.phase)),
+                dict(instruction=V + 6510, view=borrow(frame, 942, 4, frame.phase)),
+                dict(instruction=V + 6074, view=borrow(owner, 218, 4, frame.phase, True)),
+                dict(instruction=V + 6078, view=borrow(owner, 214, 4, frame.phase, True)),
+            ),
+        }
     )
     return result
 
 
-def _history_led_source(objects, rows, parents, controls, frame, ancestor_protected):
+def _history_led_source(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    controls: ControlsEffects,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> SuffixSource:
     """The fixed eight history elements, reduced bool and complete LED fields.
 
     This relation is conditional on the same complete Controls assignment.
@@ -592,6 +902,8 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
         "Tail history lacks its complete same-frame Controls predecessor",
     )
     control_source = controls["source"]["normal"]
+    if control_source is None:
+        raise AssertionError("Tail history lacks its complete same-frame Controls predecessor")
     state = control_source["after"]
     V = _parent_inputs(objects, rows, parents, state, frame)
     require(
@@ -612,9 +924,9 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             _object(control_source["ScreenQ"].header, "retired Screen Q"),
         ),
     )
-    calls = []
-    errors = []
-    result = dict(
+    calls: list[SourceInvocation] = []
+    errors: list[SourceError] = []
+    result: SuffixSource = dict(
         controls=controls,
         before=state,
         invocations=(),
@@ -627,24 +939,31 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
         completed_ordinary_group_issued=False,
     )
 
-    def finish():
-        result.update(invocations=tuple(calls), errors=tuple(errors))
+    def finish() -> SuffixSource:
+        result.update({"invocations": tuple(calls), "errors": tuple(errors)})
         return result
 
-    def edge_at(site, semantic):
+    def edge_at(site: int, semantic: str) -> BodyRecord:
         edge = next(
             (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == V + site),
             None,
         )
-        require(edge is not None, "Tail fixed suffix loses its actual source call")
+        if edge is None:
+            raise AssertionError("Tail fixed suffix loses its actual source call")
         proof = children[edge[2], edge[3]]
         require(
             proof.get("semantic_role") == semantic, "Tail fixed suffix changes its source semantic"
         )
         return proof
 
-    def record(call, cause, code, count, completed):
-        after = cause["state"] if "state" in cause else cause["after"]
+    def record(
+        call: SourceInvocation,
+        cause: SourceCause,
+        code: int | None,
+        count: int,
+        completed: tuple[str, ...],
+    ) -> None:
+        after = _cause_after(cause)
         errors.append(
             dict(
                 field=call["field"],
@@ -657,7 +976,15 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             )
         )
 
-    def scalar(field, site, current, semantic, guards, count, completed):
+    def scalar(
+        field: str,
+        site: int,
+        current: SequenceInterface,
+        semantic: str,
+        guards: tuple[Storage, ...],
+        count: int,
+        completed: tuple[str, ...],
+    ) -> tuple[ScalarInvocation, SequenceInterface | None, tuple[SequenceOutcome, ...]]:
         proof = edge_at(site, semantic)
         # The primitive API reserves all eight Q bytes; its actual output
         # tuples write only the count. Keep the authored stable top-D cell
@@ -702,7 +1029,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
         for option in child["outcomes"]:
             outputs = tuple(dict.fromkeys(v for v, off, size in option["possible_writes"]))
             require_writes(outputs, option["possible_writes"], stable)
-        call = dict(
+        call: ScalarInvocation = dict(
             field=field,
             site=V + site,
             before=current,
@@ -739,7 +1066,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
         base + (top_count, _object(state.decoder.header, "Tail D")),
     )
     current = SequenceInterface(history_q, state.decoder, Span(8, 8))
-    history = []
+    history: list[ScalarInvocation] = []
     for index, site in enumerate((6144, 6170, 6460, 6534, 6562, 6590, 6616, 6642)):
         captured = (
             ()
@@ -764,15 +1091,15 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             result["history"] = dict(invocations=tuple(history), normal=None)
             return finish()
         if index == 6:
-            captured = borrow(frame, 284, 4, phase, True)
+            captured_cell = borrow(frame, 284, 4, phase, True)
             require_writes(
-                (captured,),
-                ((captured, 0, 4),),
+                (captured_cell,),
+                ((captured_cell, 0, 4),),
                 base + (top_count, _object(history_q, "live history Q")),
             )
         current = after
     require(current.count == Span(0, 0), "Tail history omits a fixed element")
-    history_normal = dict(
+    history_normal: HistoryNormal = dict(
         after=current, domain=(0, 65535), values=tuple(history), Q_retired_after=V + 6734
     )
     result["history"] = dict(invocations=tuple(history), normal=history_normal)
@@ -780,7 +1107,8 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
     call, after, good = scalar(
         "reduced_motion", 6736, reduced_state, "seq_bool", base, 1, ("Controls", "history")
     )
-    result["reduced"] = dict(invocation=call, normal=None)
+    reduced: ReducedSource = dict(invocation=call, normal=None)
+    result["reduced"] = reduced
     require(
         all(v["value_domain"] == (0, 1) for v in good),
         "Tail reduced motion loses source bool domain",
@@ -788,23 +1116,21 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
     if after is None:
         return finish()
     require(after.count == Span(1, 1), "Tail reduced motion has another counted successor")
-    result["reduced"]["normal"] = dict(after=after, domain=(0, 1), outcomes=good)
+    reduced["normal"] = dict(after=after, domain=(0, 1), outcomes=good)
     led_q = borrow(frame, 1000, 8, phase, True)
     require_writes(
         (led_q,), ((led_q, 0, 8),), base + (top_count, _object(state.decoder.header, "Tail D"))
     )
     current = SequenceInterface(led_q, after.decoder, Span(7, 7))
-    led_calls = []
-    patterns = []
+    led_calls: list[LedInvocation | ScalarInvocation] = []
+    patterns: list[PatternPackage] = []
     for index, site in enumerate((6792, 6828)):
         edge = next(
             (e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == V + site),
             None,
         )
-        require(
-            edge is not None and edge[3] == ROLES["LedPattern"],
-            "Tail LED loses its paired current Pattern source",
-        )
+        if not (edge is not None and edge[3] == ROLES["LedPattern"]):
+            raise AssertionError("Tail LED loses its paired current Pattern source")
         proof = tail_coverage(objects, _name(objects, edge[3], edge[2]), rows)
         activation = Storage(
             frame.space, "Tail Pattern " + str(index), frame.start - 48, 48, 8, phase, True
@@ -813,7 +1139,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
         child = led_pattern_interface(
             objects, rows, proof, current, output, activation, base + (top_count,), V + site
         )
-        call = dict(
+        pattern_call: LedInvocation = dict(
             field=("normal_pattern", "warning_pattern")[index],
             site=V + site,
             before=current,
@@ -821,14 +1147,16 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             output=output,
             predecessor=calls[-1],
         )
-        calls.append(call)
-        led_calls.append(call)
+        calls.append(pattern_call)
+        led_calls.append(pattern_call)
         for error in child["errors"]:
-            record(call, error, error["error"], 1, ("Controls", "history", "reduced_motion"))
+            record(
+                pattern_call, error, error["error"], 1, ("Controls", "history", "reduced_motion")
+            )
         if child["none"] is not None:
             none = child["none"]
             record(
-                call,
+                pattern_call,
                 dict(after=none["after"], cursor=none["after"].decoder.cursor, none=none),
                 14,
                 1,
@@ -841,7 +1169,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             return finish()
         patterns.append(
             dict(
-                invocation=call,
+                invocation=pattern_call,
                 source=child["normal"],
                 output=output,
                 opaque_bytes=child["normal"]["opaque_bytes"],
@@ -866,7 +1194,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
     for off in (280, 284):
         target = borrow(frame, off, 4, phase, True)
         require_writes((target,), ((target, 0, 4),), base + (top_count, _object(led_q, "LED Q")))
-    bools = []
+    bools: list[ScalarInvocation] = []
     for index, site in enumerate((6876, 6900, 6926, 6952, 6978)):
         captured_bools = tuple(
             _object(borrow(frame, off, 4, phase), "captured LED bool " + str(off))
@@ -901,7 +1229,7 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
             )
         current = next_state
     require(current.count == Span(0, 0), "Tail LED omits a pattern or bool field")
-    led_normal = dict(after=current, patterns=tuple(patterns), bools=tuple(bools))
+    led_normal: LEDNormal = dict(after=current, patterns=tuple(patterns), bools=tuple(bools))
     result["LED"] = dict(invocations=tuple(led_calls), patterns=tuple(patterns), normal=led_normal)
     result["normal"] = dict(
         after=replace(state, count=Span(1, 1), decoder=current.decoder),
@@ -915,7 +1243,14 @@ def _history_led_source(objects, rows, parents, controls, frame, ancestor_protec
     return finish()
 
 
-def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
+def _suffix_effects(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    source: SuffixSource,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> SuffixEffects:
     """Keep completed history/reduced groups on later LED parse failure.
 
     The physical LED assignment starts only after every Pattern and bool has
@@ -929,6 +1264,7 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
     V = _parent_inputs(objects, rows, parents, source["before"], frame)
     require(
         controls["frame"] is frame
+        and controls["source"]["normal"] is not None
         and controls["source"]["normal"]["after"] is source["before"]
         and controls["complete_after"] == V + 6118
         and parents == _parents(objects, rows, V, owner.start),
@@ -955,7 +1291,7 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
         for off, size in ((0, 14528), (14569, 5), (14575, 29))
         for space in ("address", frame.space)
     )
-    result = dict(
+    result: SuffixEffects = dict(
         source=source,
         owner=owner,
         history=(),
@@ -1022,8 +1358,8 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
                 ),
                 "Tail history publication skips its ordered source predecessor",
             )
-    written = set()
-    stages = []
+    written: set[int] = set()
+    stages: list[HistoryStage] = []
     for site, offset, size, index in (
         (6672, 14542, 2, 7),
         (6680, 14540, 2, 6),
@@ -1088,12 +1424,12 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
         return result
     patterns = led["patterns"]
     lnormal = led["normal"]
-    calls = led["invocations"]
+    led_calls = led["invocations"]
     require(
         len(patterns) == 2
-        and len(calls) == 7
+        and len(led_calls) == 7
         and len(lnormal["bools"]) == 5
-        and tuple(v["site"] - V for v in calls) == (6792, 6828, 6876, 6900, 6926, 6952, 6978)
+        and tuple(v["site"] - V for v in led_calls) == (6792, 6828, 6876, 6900, 6926, 6952, 6978)
         and source["normal"] is not None
         and source["normal"]["physical_top_count"] == 1
         and source["normal"]["LEDQ"] is lnormal["after"]
@@ -1101,13 +1437,17 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
         "Tail LED publication precedes its complete same-source Pattern/bool chain",
     )
     for index, pattern in enumerate(patterns):
-        call = calls[index]
+        pattern_call = led_calls[index]
+        if not _is_led_call(pattern_call):
+            raise AssertionError(
+                "Tail LED publication mixes Pattern epoch, output or original return"
+            )
         require(
-            pattern["invocation"] is call
-            and pattern["source"] is call["result"]["normal"]
-            and call["output"] is pattern["output"]
+            pattern["invocation"] is pattern_call
+            and pattern["source"] is pattern_call["result"]["normal"]
+            and pattern_call["output"] is pattern["output"]
             and len(pattern["original_return"]) == 1
-            and pattern["original_return"][0]["return_PC"] == call["site"] + 4
+            and pattern["original_return"][0]["return_PC"] == pattern_call["site"] + 4
             and pattern["original_return"][0]["return_SP"] == frame.start
             and pattern["source"]["opaque_bytes"] == (1, 5, 9),
             "Tail LED publication mixes Pattern epoch, output or original return",
@@ -1118,35 +1458,40 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
             else patterns[index - 1]["source"]["after"].decoder
         )
         require(
-            call["before"].decoder is prior_decoder,
+            pattern_call["before"].decoder is prior_decoder,
             "Tail LED Pattern has another prior source cursor",
         )
-    for index, call in enumerate(calls[2:]):
-        previous = calls[index + 1]
-        before = (
-            patterns[1]["source"]["after"]
-            if index == 0
-            else _joined_sequence(
+    for index, bool_call in enumerate(led_calls[2:]):
+        if not _is_scalar_call(bool_call):
+            raise AssertionError("Tail LED publication skips its actual bool source predecessor")
+        previous = led_calls[index + 1]
+        if index == 0:
+            before = patterns[1]["source"]["after"]
+        else:
+            if not _is_scalar_call(previous):
+                raise AssertionError(
+                    "Tail LED publication skips its actual bool source predecessor"
+                )
+            before = _joined_sequence(
                 tuple(v for v in previous["result"]["outcomes"] if v["kind"] == "some")
             )
-        )
         require(
-            call["predecessor"] is previous
-            and call["before"] == before
-            and call["before"].count == Span(5 - index, 5 - index)
-            and call["result"]["semantic_role"] == "seq_bool",
+            bool_call["predecessor"] is previous
+            and bool_call["before"] == before
+            and bool_call["before"].count == Span(5 - index, 5 - index)
+            and bool_call["result"]["semantic_role"] == "seq_bool",
             "Tail LED publication skips its actual bool source predecessor",
         )
     written = set()
-    stages = []
+    led_stages: list[LEDStage] = []
     for site, offset, size, origin in (
         (7026, 14556, 4, patterns[1]),
         (7034, 14546, 4, patterns[0]),
-        (7038, 14568, 1, calls[6]),
-        (7046, 14567, 1, calls[5]),
-        (7054, 14566, 1, calls[4]),
-        (7062, 14565, 1, calls[3]),
-        (7068, 14564, 1, calls[2]),
+        (7038, 14568, 1, led_calls[6]),
+        (7046, 14567, 1, led_calls[5]),
+        (7054, 14566, 1, led_calls[4]),
+        (7062, 14565, 1, led_calls[3]),
+        (7068, 14564, 1, led_calls[2]),
         (7076, 14555, 1, patterns[1]),
         (7082, 14554, 1, patterns[1]),
         (7088, 14545, 1, patterns[0]),
@@ -1169,7 +1514,7 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
         )
         require_writes((out,), ((out, 0, size),), guards + retained)
         written.update(range(offset, offset + size))
-        stages.append(
+        led_stages.append(
             dict(
                 site=V + site,
                 source=origin,
@@ -1183,9 +1528,11 @@ def _suffix_effects(objects, rows, parents, source, frame, ancestor_protected):
         "Tail LED assignment misses a physical field or writes settings padding",
     )
     result.update(
-        LED=tuple(stages),
-        complete_after=V + 7112,
-        early_success_register=V + 7100,
-        written_opaque_LED_bytes=(14545, 14549, 14553, 14555, 14559, 14563),
+        {
+            "LED": tuple(led_stages),
+            "complete_after": V + 7112,
+            "early_success_register": V + 7100,
+            "written_opaque_LED_bytes": (14545, 14549, 14553, 14555, 14559, 14563),
+        }
     )
     return result

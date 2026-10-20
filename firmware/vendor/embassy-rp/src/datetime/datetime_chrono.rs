@@ -22,7 +22,7 @@ pub enum Error {
 /// Convert to Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
 ///
 /// # Errors
-/// Returns error if DateTime is before 1970-01-01.
+/// Returns an error for years outside 1970..=4095.
 #[cfg(feature = "_rp235x")]
 pub fn timestamp_millis(dt: &DateTime) -> Result<u64, Error> {
     crate::datetime::epoch::datetime_to_millis(dt)

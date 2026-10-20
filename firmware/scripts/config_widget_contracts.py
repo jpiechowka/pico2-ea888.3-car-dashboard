@@ -7,7 +7,23 @@ Only the finite Widget group is selected; parent-relative targets include
 explicit stopped frontiers and confer no Sources/visitor-return authority.
 """
 
-GRAMMARS = {
+from typing import Literal, TypeAlias, TypedDict
+from config_body_types import BodyContract
+
+
+class PrintableAsciiRange(TypedDict):
+    kind: Literal["printable_ascii_range"]
+    extent: int
+
+
+class SameConfig(TypedDict):
+    kind: Literal["same_Config"]
+
+
+WidgetObject: TypeAlias = PrintableAsciiRange | SameConfig
+
+
+GRAMMARS: dict[str, BodyContract[WidgetObject]] = {
     "visitor_416": {
         "extent": 3092,
         "frame": 1608,
@@ -1810,7 +1826,7 @@ GRAMMARS = {
     },
 }
 
-ROLES = {
+ROLES: dict[str, str] = {
     "color": "_RINvYINtNtNtCs_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCs_10serde_core2de9SeqAccess12next_elementNtNtCs_16dashboard_config10appearance5ColorEB2j_",
     "warning_colors": "_RINvYINtNtNtCs_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCs_10serde_core2de9SeqAccess12next_elementNtNtCs_16dashboard_config10appearance13WarningColorsEB2j_",
     "OUTLINED_FUNCTION_21": "@outline:widget_packed_u16_tag",

@@ -5,6 +5,11 @@ physical live storage. These functions cannot validate Config or issue an
 owner. Bands' pending diagnostic cut remains a separate unresolved alternative.
 """
 
+from collections.abc import Iterable
+from config_validator_access import ValidatorContext
+from config_body_types import BodyRecord, Callback, InstructionMap
+from config_stack import DiagnosticObjects
+from config_validator_child_contracts import NormalObject
 import re
 from dataclasses import replace
 from config_finite import _literal_body
@@ -17,7 +22,9 @@ from config_validator_child_contracts import NORMAL_CHILDREN, NORMAL_ROLES
 from validation import require
 
 
-def _object(objects, address, descriptor):
+def _object(
+    objects: DiagnosticObjects, address: int, descriptor: NormalObject
+) -> tuple[Callback, ...]:
     if descriptor["kind"] == "source_location":
         require(
             descriptor["role"] == "bands_slice",
@@ -38,7 +45,24 @@ def _object(objects, address, descriptor):
     return ()
 
 
-def _normal_body(objects, name, instructions, family, _ancestry=()):
+class NormalBody(BodyRecord):
+    children: dict[int | str, "NormalBody"]
+    normal_physical_paths: tuple[tuple[int, ...], ...]
+    normal_preserves: tuple[str, ...]
+    external_writes: tuple[()]
+    architectural_LR_preserved: bool
+    original_return_PC_restored: bool
+    parent_frame_required: tuple[int, str] | None
+    diagnostic_pending: bool
+
+
+def _normal_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    family: str,
+    _ancestry: tuple[int, ...] = (),
+) -> NormalBody:
     require(
         family in NORMAL_CHILDREN and name in objects.elf.functions,
         "unknown normal validator child",
@@ -66,9 +90,9 @@ def _normal_body(objects, name, instructions, family, _ancestry=()):
         a: replace(r, operands=r.operands.split("@", 1)[0].split("<", 1)[0].strip())
         for a, r in instructions.items()
     }
-    nested = {}
+    nested: dict[int | str, NormalBody] = {}
 
-    def function(objects, address, raw_role):
+    def function(objects: DiagnosticObjects, address: int, raw_role: str) -> tuple[int, int, str]:
         if address == start and family == "text_restore":
             extent, raw = _typed_function_extent(objects, address, raw_role)
             require(
@@ -78,7 +102,13 @@ def _normal_body(objects, name, instructions, family, _ancestry=()):
             return extent, 0, raw
         return _helper_function(objects, address, raw_role)
 
-    def outline(objects, child, records, raw_role, ancestry):
+    def outline(
+        objects: DiagnosticObjects,
+        child: str,
+        records: InstructionMap,
+        raw_role: str,
+        ancestry: tuple[int, ...],
+    ) -> NormalBody:
         require(
             family == "text_valid" and raw_role == "@outline:text_restore" and ancestry == (start,),
             "normal validator child gains another parent-owned outline",
@@ -113,15 +143,15 @@ def _normal_body(objects, name, instructions, family, _ancestry=()):
         wanted = (
             "range_u8" if family == "text_valid" else "luminance" if family == "contrasts" else None
         )
-        require(
+        if not (
             wanted is not None
             and NORMAL_ROLES.get(raw_role) == wanted
             and (
                 (family == "text_valid" and offset == 34)
                 or (family == "contrasts" and offset in (6, 14))
-            ),
-            "normal child gains another callee/argument phase",
-        )
+            )
+        ):
+            raise AssertionError("normal child gains another callee/argument phase")
         extent, actual, child = _helper_function(objects, target, raw_role)
         nested[offset] = _normal_body(objects, child, instructions, wanted, _ancestry + (start,))
         require(
@@ -140,22 +170,24 @@ def _normal_body(objects, name, instructions, family, _ancestry=()):
         "channel_domain": ((8,),),
         "bands": ((0,),),
     }[family]
-    proof.update(
-        children=nested,
-        normal_physical_paths=physical,
-        normal_preserves=tuple("r" + str(i) for i in range(4, 12)) + ("sp", "d8-d15"),
-        external_writes=(),
-        architectural_LR_preserved=False,
-        original_return_PC_restored=True,
-        parent_frame_required=(32, "high12 then low20 exact text saves")
+    return {
+        **proof,
+        "children": nested,
+        "normal_physical_paths": physical,
+        "normal_preserves": tuple("r" + str(i) for i in range(4, 12)) + ("sp", "d8-d15"),
+        "external_writes": (),
+        "architectural_LR_preserved": False,
+        "original_return_PC_restored": True,
+        "parent_frame_required": (32, "high12 then low20 exact text saves")
         if family == "text_restore"
         else None,
-        diagnostic_pending=family == "bands",
-    )
-    return proof
+        "diagnostic_pending": family == "bands",
+    }
 
 
-def _normal_storage(proof, context, readonly):
+def _normal_storage(
+    proof: NormalBody, context: ValidatorContext, readonly: Iterable[View]
+) -> tuple[tuple[int, int], ...]:
     """Map every nested save write below actual Q and protect live inputs."""
     q = context.frame
     readonly = tuple(readonly)

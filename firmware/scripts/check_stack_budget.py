@@ -6,7 +6,10 @@ those paths/dependencies require disassembly review of the child allowances.
 See docs/configurator/configuration-storage.md. Never increase budgets to pass.
 """
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import NotRequired, TypeAlias, TypedDict
+from elf_image import InspectableImage
 import re
 import struct
 from validation import require
@@ -14,6 +17,27 @@ from validation import require
 CORE1_BYTES = 32768
 CORE1_RESERVE = 4096
 CORE0_RESERVE = 8192
+
+
+FunctionTable: TypeAlias = Mapping[str, tuple[int, int, int]]
+FrameSizes: TypeAlias = Mapping[int, int]
+
+
+class FrameBounds(TypedDict):
+    boot: int
+    constructor: int
+    runtime: int
+    dashboard: int
+    radio: NotRequired[int]
+
+
+class FrameRecord(TypedDict):
+    schema: int
+    method: str
+    bounds: FrameBounds
+    core0_reserve: int
+    core1_bytes: int
+    core1_reserve: int
 
 
 @dataclass(frozen=True)
@@ -26,9 +50,12 @@ class FrameAdmission:
     dashboard: int
     radio: int | None = None
 
-    def to_record(self):
-        values = {
-            key: getattr(self, key) for key in ("boot", "constructor", "runtime", "dashboard")
+    def to_record(self) -> FrameRecord:
+        values: FrameBounds = {
+            "boot": self.boot,
+            "constructor": self.constructor,
+            "runtime": self.runtime,
+            "dashboard": self.dashboard,
         }
         if self.radio is not None:
             values["radio"] = self.radio
@@ -46,9 +73,10 @@ class FrameAdmission:
         )
 
 
-def frames(data):
+def frames(data: bytes | bytearray) -> dict[int, int]:
     require(data, "missing stack frame metadata")
-    result, cursor = {}, 0
+    result: dict[int, int] = {}
+    cursor = 0
     while cursor < len(data):
         require(cursor + 4 <= len(data), "truncated stack function address")
         address = struct.unpack_from("<I", data, cursor)[0] & ~1
@@ -70,7 +98,14 @@ def frames(data):
     return result
 
 
-def budgets(boot, constructor, runtime, dashboard, headroom, radio=None):
+def budgets(
+    boot: int,
+    constructor: int,
+    runtime: int,
+    dashboard: int,
+    headroom: int,
+    radio: int | None = None,
+) -> None:
     require(boot + CORE0_RESERVE <= headroom, "boot stack path lacks 8 KiB reserve")
     require(dashboard + CORE0_RESERVE <= headroom, "dashboard stack path lacks 8 KiB reserve")
     require(
@@ -81,7 +116,7 @@ def budgets(boot, constructor, runtime, dashboard, headroom, radio=None):
         require(radio + CORE0_RESERVE <= headroom, "radio stack path lacks 8 KiB reserve")
 
 
-def task_frames(functions, sizes, name):
+def task_frames(functions: FunctionTable, sizes: FrameSizes, name: str) -> int:
     matches = {
         address & ~1
         for symbol, (address, _, _) in functions.items()
@@ -115,24 +150,23 @@ REVIEWED_STARTUP_FRAMES = {
 }
 
 
-def startup_frames(functions, sizes):
-    names, addresses = set(), set()
+def startup_frames(functions: FunctionTable, sizes: FrameSizes) -> tuple[set[str], set[int]]:
+    names: set[str] = set()
+    addresses: set[int] = set()
     for identity, ceiling in REVIEWED_STARTUP_FRAMES.items():
         matches = {n for n in functions if re.sub(r"Cs[A-Za-z0-9]+_", "Cs_", n) == identity}
         entries = {functions[n][0] & ~1 for n in matches}
         require(len(entries) <= 1, "ambiguous reviewed startup helper: " + identity)
         for address in entries:
             size = sizes.get(address)
-            require(
-                type(size) is int and 0 <= size <= ceiling,
-                "missing or enlarged startup helper frame: " + identity,
-            )
+            if type(size) is not int or not 0 <= size <= ceiling:
+                raise AssertionError("missing or enlarged startup helper frame: " + identity)
         names.update(matches)
         addresses.update(entries)
     return names, addresses
 
 
-def configuration_frames(functions, sizes):
+def configuration_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
     """Reviewed slot call tree, with sibling branches taking their maximum.
 
     Required emitted boundaries come from the traced LLVM 23 ARM captures.
@@ -141,9 +175,9 @@ def configuration_frames(functions, sizes):
     Unknown config helpers, including validation descendants, require review.
     This is intentionally a named-path gate, not an instruction decoder.
     """
-    covered = set()
+    covered: set[str] = set()
 
-    def select(*tokens, optional=False):
+    def select(*tokens: str, optional: bool = False) -> set[int]:
         names = [n for n in functions if all(t in n for t in tokens)]
         addresses = {functions[n][0] & ~1 for n in names}
         require(
@@ -155,20 +189,20 @@ def configuration_frames(functions, sizes):
         covered.update(names)
         return addresses
 
-    def weight(path):
+    def weight(path: set[int]) -> int:
         return sum(sizes[a] for a in path)
 
-    def branch(parent, *children):
+    def branch(parent: set[int], *children: set[int]) -> set[int]:
         # Deduplicate aliases across the complete simultaneously resident path.
         return max((parent | c for c in children), key=weight) if children else parent
 
-    def dec(token):
+    def dec(token: str) -> set[int]:
         return select("dashboard_config", "12next_element", token)
 
-    def ser(token):
+    def ser(token: str) -> set[int]:
         return select("dashboard_config", "15serialize_field", token)
 
-    def outlined(*tokens):
+    def outlined(*tokens: str) -> set[int]:
         return select("dashboard_config", *tokens, optional=True)
 
     # Oct17 v5 demo280 source/ELF review: Widget decoding is inlined into
@@ -181,7 +215,7 @@ def configuration_frames(functions, sizes):
     orientation = any("11orientation11Orientation" in n for n in functions)
     ble = any("3ble11BleSettings" in n for n in functions)
 
-    def reviewed_inline(*tokens):
+    def reviewed_inline(*tokens: str) -> set[int]:
         addresses = select("dashboard_config", *tokens, optional=True)
         require(len(addresses) <= 1, "ambiguous reviewed inline stack path: " + str(tokens))
         return addresses
@@ -387,7 +421,7 @@ def configuration_frames(functions, sizes):
     return weight(result)
 
 
-def radio_frames(functions, sizes):
+def radio_frames(functions: FunctionTable, sizes: FrameSizes) -> int | None:
     """Optional core0 radio poll bound, reviewed against the compact BLE ELF.
 
     Async future storage is already static RAM. These are synchronous frames
@@ -416,7 +450,7 @@ def radio_frames(functions, sizes):
         return None
     task = task_frames(functions, sizes, "radio_task_task")
 
-    def select(*tokens):
+    def select(*tokens: str) -> set[int]:
         entries = {
             a & ~1
             for n, (a, _, _) in functions.items()
@@ -426,10 +460,10 @@ def radio_frames(functions, sizes):
         require(all(a in sizes for a in entries), "missing radio frame metadata: " + str(tokens))
         return entries
 
-    def weight(path):
+    def weight(path: set[int]) -> int:
         return sum(sizes[a] for a in path)
 
-    def branch(parent, *children):
+    def branch(parent: set[int], *children: set[int]) -> set[int]:
         return max((parent | child for child in children), key=weight)
 
     if any("3ble4host" in n and "Future4poll" in n for n in functions):
@@ -469,7 +503,7 @@ def radio_frames(functions, sizes):
     return task + weight(branch(set(), host | security, host | application, bus, initialize)) + 4096
 
 
-def publication_frames(functions, sizes):
+def publication_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
     # Nested path: firmware publication -> immutable owner -> private storage
     # -> sensor snapshot. Retain legacy capture support for baseline comparison.
     split = any("AcquisitionOwner" in n or "AcquisitionState" in n for n in functions)
@@ -512,7 +546,7 @@ def publication_frames(functions, sizes):
     return sum(sizes[address] for address in matches)
 
 
-def constructor_frames(functions, sizes):
+def constructor_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
     # Constructors may inline. Every emitted owner/storage/policy frame must be
     # counted, including the extra owner boundary; aliases count once by address.
     matches = {
@@ -564,7 +598,7 @@ def constructor_frames(functions, sizes):
     return sum(sizes[address] for address in matches)
 
 
-def check(elf, headroom, source_context=None):
+def check(elf: InspectableImage, headroom: int, source_context: object = None) -> FrameAdmission:
     if source_context is not None:
         from config_build_source import inspect_source_context
 
@@ -580,7 +614,7 @@ def check(elf, headroom, source_context=None):
             )
     sizes = frames(elf.section_bytes(".stack_sizes"))
 
-    def selected(predicate, required=False):
+    def selected(predicate: Callable[[str], bool], required: bool = False) -> int:
         matches = {elf.functions[name][0] & ~1 for name in elf.functions if predicate(name)}
         if required:
             require(len(matches) == 1, "missing or ambiguous stack path: " + str(matches))
@@ -590,7 +624,7 @@ def check(elf, headroom, source_context=None):
             values.append(sizes[address])
         return sum(values)
 
-    def task(name):
+    def task(name: str) -> int:
         return task_frames(elf.functions, sizes, name)
 
     boot_poll = task("embassy_main_task")

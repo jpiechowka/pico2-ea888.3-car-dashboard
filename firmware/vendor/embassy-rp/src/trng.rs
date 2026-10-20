@@ -6,6 +6,7 @@ use core::ops::Not;
 use core::task::Poll;
 
 use embassy_hal_internal::{Peri, PeripheralType};
+use embassy_hal_internal::drop::OnDrop;
 use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::interrupt::typelevel::{Binding, Interrupt};
@@ -179,6 +180,10 @@ impl<'d, T: Instance> Trng<'d, T> {
     }
 
     fn stop_rng(&self) {
+        Self::stop_rng_inner();
+    }
+
+    fn stop_rng_inner() {
         let regs = T::regs();
         let source_enable_register = regs.rnd_source_enable();
         source_enable_register.write(|w| w.set_rnd_src_en(false));
@@ -211,10 +216,6 @@ impl<'d, T: Instance> Trng<'d, T> {
 
     fn enable_irq(&self) {
         unsafe { T::Interrupt::enable() }
-    }
-
-    fn disable_irq(&self) {
-        T::Interrupt::disable();
     }
 
     fn blocking_wait_for_successful_generation(&self) {
@@ -269,6 +270,11 @@ impl<'d, T: Instance> Trng<'d, T> {
             return; // Nothing to fill
         }
 
+        // Also stop the source and IRQ when the caller cancels this future.
+        let _cleanup = OnDrop::new(|| {
+            T::Interrupt::disable();
+            Self::stop_rng_inner();
+        });
         self.start_rng();
         self.enable_irq();
 
@@ -287,8 +293,6 @@ impl<'d, T: Instance> Trng<'d, T> {
         poll_fn(|context| {
             waker.register(context.waker());
             if bytes_transferred == destination_length {
-                self.stop_rng();
-                self.disable_irq();
                 Poll::Ready(())
             } else {
                 if trng_busy_register.read().trng_busy() {
@@ -312,8 +316,6 @@ impl<'d, T: Instance> Trng<'d, T> {
                         bytes_transferred += remaining
                     }
                     if bytes_transferred == destination_length {
-                        self.stop_rng();
-                        self.disable_irq();
                         Poll::Ready(())
                     } else {
                         Poll::Pending

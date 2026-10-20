@@ -7,11 +7,24 @@ initialized prefixes, physical storage and parent loops remain caller proofs.
 Disconnected UTF8 and Band.label contexts are deliberately absent.
 """
 
-NORMAL_CHILDREN = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract, SourceLocationObject
+
+
+class ReadonlyValues(TypedDict):
+    kind: Literal["readonly_values"]
+    role: str
+    hex: str
+    alignment: int
+
+
+NormalObject = SourceLocationObject | ReadonlyValues
+
+NORMAL_CHILDREN: dict[str, BodyContract[NormalObject]] = {
     "range_u16": {
         "extent": 48,
         "frame": 8,
-        "mapping": [[0, 48, "t"]],
+        "mapping": [(0, 48, "t")],
         "instructions": [
             (0, 2, "push {r7, lr}"),
             (2, 2, "mov r7, sp"),
@@ -43,7 +56,7 @@ NORMAL_CHILDREN = {
     "range_u8": {
         "extent": 50,
         "frame": 8,
-        "mapping": [[0, 50, "t"]],
+        "mapping": [(0, 50, "t")],
         "instructions": [
             (0, 2, "push {r7, lr}"),
             (2, 2, "mov r7, sp"),
@@ -76,7 +89,7 @@ NORMAL_CHILDREN = {
     "text_valid": {
         "extent": 76,
         "frame": 32,
-        "mapping": [[0, 72, "t"], [72, 76, "d"]],
+        "mapping": [(0, 72, "t"), (72, 76, "d")],
         "instructions": [
             (0, 2, "cbz r1, @self+40"),
             (2, 2, "push {r4, r5, r6, r7, lr}"),
@@ -127,7 +140,7 @@ NORMAL_CHILDREN = {
     "contrasts": {
         "extent": 54,
         "frame": 16,
-        "mapping": [[0, 54, "t"]],
+        "mapping": [(0, 54, "t")],
         "instructions": [
             (0, 2, "push {r4, r5, r7, lr}"),
             (2, 2, "add r7, sp, #0x8"),
@@ -158,7 +171,7 @@ NORMAL_CHILDREN = {
     "channel_domain": {
         "extent": 72,
         "frame": 8,
-        "mapping": [[0, 52, "t"], [52, 72, "d"]],
+        "mapping": [(0, 52, "t"), (52, 72, "d")],
         "instructions": [
             (0, 2, "push {r7, lr}"),
             (2, 2, "mov r7, sp"),
@@ -192,7 +205,7 @@ NORMAL_CHILDREN = {
     "bands": {
         "extent": 28,
         "frame": 8,
-        "mapping": [[0, 24, "t"], [24, 28, "d"]],
+        "mapping": [(0, 24, "t"), (24, 28, "d")],
         "instructions": [
             (0, 4, "ldrb.w r1, [r0, #0x3c]"),
             (4, 2, "cmp r1, #0x4"),
@@ -211,7 +224,7 @@ NORMAL_CHILDREN = {
     "text_restore": {
         "extent": 6,
         "frame": 0,
-        "mapping": [[0, 6, "t"]],
+        "mapping": [(0, 6, "t")],
         "instructions": [(0, 4, "pop.w {r8, r9, r11}"), (4, 2, "pop {r4, r5, r6, r7, pc}")],
         "data": [],
         "objects": [],
@@ -219,7 +232,7 @@ NORMAL_CHILDREN = {
     "luminance": {
         "extent": 72,
         "frame": 16,
-        "mapping": [[0, 64, "t"], [64, 72, "d"]],
+        "mapping": [(0, 64, "t"), (64, 72, "d")],
         "instructions": [
             (0, 2, "push {r4, r6, r7, lr}"),
             (2, 2, "add r7, sp, #0x8"),

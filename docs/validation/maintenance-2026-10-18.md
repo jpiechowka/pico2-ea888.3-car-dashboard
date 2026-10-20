@@ -1,5 +1,9 @@
 # Repository maintenance audit, 18 October 2026
 
+Historical checkpoint. See the [20 October whole-code audit](full-code-audit-2026-10-20.md)
+for later fixes, complete Python typing and current verification, and the
+[diagnostics re-audit](diagnostics-reaudit-2026-10-20.md) for the detailed field trace.
+
 Baseline: `4fed659f74d911b92e12db4c3fa9a2c235b9af3d`. This pass covers firmware,
 shared libraries, Studio, native tooling, scripts and documentation. The earlier
 BLE prototype is one part of that scope. All findings below are software findings;

@@ -11,11 +11,12 @@ import zipfile
 
 import benchmark_environment as environment
 from compare_benchmarks import BENCH, RUNNERS, BUILD_INPUTS, compare, load
+from benchmark_records import BenchmarkMetadata
 
 SOURCES = {name: b"fixture" for name in (BENCH, *RUNNERS, *BUILD_INPUTS)}
 
 
-def metadata():
+def metadata() -> BenchmarkMetadata:
     return {
         "capture_policy": 2,
         "runner_id": "controlled-runner",
@@ -32,14 +33,14 @@ def metadata():
 
 
 class Comparison(unittest.TestCase):
-    def test_filter_cannot_inject_criterion_options(self):
+    def test_filter_cannot_inject_criterion_options(self) -> None:
         for value in ["--measurement-time=0.1", "--sample-size=10", "--", "-h"]:
             with self.assertRaises(ValueError):
                 environment.validate_filter(value)
         for value in ["", "scene/|acquisition/", r"\-literal"]:
             environment.validate_filter(value)
 
-    def test_all_workload_and_capture_helpers_are_part_of_identity(self):
+    def test_all_workload_and_capture_helpers_are_part_of_identity(self) -> None:
         for name in [
             "host/benches/vehicle_port/mod.rs",
             "host/benches/data/fixture.bin",
@@ -59,7 +60,7 @@ class Comparison(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare(before, after, 20)
 
-    def test_gate_distinguishes_normal_noise_review_and_disjoint_regression(self):
+    def test_gate_distinguishes_normal_noise_review_and_disjoint_regression(self) -> None:
         before = (metadata(), {"fixture": (100, 95, 105)})
         for value, low, want in [
             (90, 85, "pass"),
@@ -71,7 +72,7 @@ class Comparison(unittest.TestCase):
                 compare(before, (metadata(), {"fixture": (value, low, value + 5)}), 20)[0][-1], want
             )
 
-    def test_changed_runner_compiler_config_features_or_fixture_cannot_be_gated(self):
+    def test_changed_runner_compiler_config_features_or_fixture_cannot_be_gated(self) -> None:
         before = (metadata(), {"fixture": (100, 95, 105)})
         for key in [
             "runner_id",
@@ -85,13 +86,13 @@ class Comparison(unittest.TestCase):
             "command",
         ]:
             after = copy.deepcopy(before)
-            after[0][key] = {BENCH: "changed"} if key == "sha256" else "changed"
-            with self.assertRaises(ValueError):
-                compare(before, after, 20)
+            with patch.dict(after[0], {key: {BENCH: "changed"} if key == "sha256" else "changed"}):
+                with self.assertRaises(ValueError):
+                    compare(before, after, 20)
         for value in [None, "", "   "]:
-            before[0]["runner_id"] = value
-            with self.assertRaises(ValueError):
-                compare(before, before, 20)
+            with patch.dict(before[0], {"runner_id": value}):
+                with self.assertRaises(ValueError):
+                    compare(before, before, 20)
         before = (metadata(), {"fixture": (100, 95, 105)})
         with self.assertRaisesRegex(ValueError, "measurement coverage differs"):
             compare(before, (metadata(), {}), 20)
@@ -99,7 +100,7 @@ class Comparison(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare(before, before, budget)
 
-    def test_raw_capture_integrity_and_counts_are_required(self):
+    def test_raw_capture_integrity_and_counts_are_required(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             record = path / "fixture"
@@ -109,7 +110,7 @@ class Comparison(unittest.TestCase):
             with zipfile.ZipFile(path / "source.zip", "w") as archive:
                 for name, data in SOURCES.items():
                     archive.writestr(name, data)
-            sample = {"iters": [1] * 30, "times": [100] * 30}
+            sample: dict[str, list[float]] = {"iters": [1] * 30, "times": [100] * 30}
             (record / "sample.json").write_text(json.dumps(sample), encoding="utf-8")
             estimate = {
                 "median": {
@@ -125,6 +126,20 @@ class Comparison(unittest.TestCase):
             for filename in ["benchmark.json", "tukey.json"]:
                 (record / filename).write_text("{}", encoding="utf-8")
             self.assertEqual(load(path)[1]["fixture"], (100, 95, 105))
+            corruptions: list[tuple[Path, object, object]] = [
+                (path / "metadata.json", m, []),
+                (record / "sample.json", sample, None),
+                (record / "sample.json", sample, {"iters": "bad", "times": [100] * 30}),
+                (record / "estimates.json", estimate, {"median": None}),
+            ]
+            for invalid_path, valid, invalid in corruptions:
+                with self.subTest(filename=invalid_path.name, invalid=invalid):
+                    invalid_path.write_text(json.dumps(invalid), encoding="utf-8")
+                    try:
+                        with self.assertRaises(ValueError):
+                            load(path)
+                    finally:
+                        invalid_path.write_text(json.dumps(valid), encoding="utf-8")
             for filename in ["benchmark.json", "tukey.json"]:
                 (record / filename).unlink()
                 with self.assertRaises(ValueError):
@@ -141,18 +156,18 @@ class Comparison(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load(path)
             (record / "sample.json").write_text(json.dumps(sample), encoding="utf-8")
-            for key, value in [
+            for key, corrupt_value in [
                 ("sample_counts", {"fixture": 31}),
                 ("sha256", {BENCH: "bad"}),
                 ("median_ns", {"fixture": 99}),
             ]:
-                bad = copy.deepcopy(m)
-                bad[key] = value
-                (path / "metadata.json").write_text(json.dumps(bad), encoding="utf-8")
+                bad_metadata = copy.deepcopy(m)
+                with patch.dict(bad_metadata, {key: corrupt_value}):
+                    (path / "metadata.json").write_text(json.dumps(bad_metadata), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     load(path)
 
-    def test_capture_rejects_hidden_compiler_overrides_without_logging_values(self):
+    def test_capture_rejects_hidden_compiler_overrides_without_logging_values(self) -> None:
         for key in [
             "RUSTC",
             "RUSTC_WRAPPER",

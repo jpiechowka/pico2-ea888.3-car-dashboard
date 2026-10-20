@@ -2,8 +2,8 @@
 required-version = "==0.17.1"
 target-version = "py311"
 line-length = 100
-include = ["firmware/scripts/**/*.py", "host/scripts/**/*.py", "configurator/scripts/**/*.py", "studio-helper/tests/**/*.py", "scripts/**/*.py"]
-extend-exclude = ["**/target", "firmware/vendor", "host/baselines", ".superpowers", "ea888-pico2-audit-bundle"]
+include = ["**/*.py"]
+extend-exclude = ["**/target", "host/baselines", ".superpowers", "ea888-pico2-audit-bundle"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "B006", "B012", "B018", "B019", "B021", "B024", "B027", "B032", "B904", "RUF006", "RUF100"]
@@ -11,17 +11,16 @@ select = ["E4", "E7", "E9", "F", "B006", "B012", "B018", "B019", "B021", "B024",
 [tool.ruff.format]
 line-ending = "lf"
 
-# Type production binary-reader, process and reproducibility boundaries. Legacy
-# instruction-proof modules remain linted; they are not claimed to be fully typed.
+# All Python, including tests, vendor generation and deferred research. CI uses
+# check_python.py's Git inventory so a new directory cannot silently escape.
 [tool.mypy]
 python_version = "3.11"
 strict = true
 files = [
-    "firmware/scripts/validation.py",
-    "firmware/scripts/elf_image.py",
-    "host/scripts/source_inventory.py",
-    "host/scripts/benchmark_environment.py",
-    "host/scripts/owned_process.py",
-    "firmware/scripts/check_vendor.py",
-    "firmware/scripts/check_radio_vendor.py",
+    "firmware/scripts",
+    "host/scripts",
+    "configurator/scripts",
+    "studio-helper/tests",
+    "firmware/vendor/trouble-host/gen_config.py",
+    "docs",
 ]

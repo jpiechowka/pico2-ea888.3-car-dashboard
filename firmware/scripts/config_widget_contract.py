@@ -7,10 +7,46 @@ families, never learned as a new body policy. Compiler/source/ABI changes need
 complete phase, object, effect and caller review. No runtime generation.
 """
 
-WIDGET_CONTRACT = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+from config_entry_contracts import EntryStaticObject
+
+
+class WidgetNamed(TypedDict):
+    kind: Literal[
+        "widget_label_pointers",
+        "widget_label_lengths",
+        "widget_limit_modes",
+        "widget_f32_payload_table",
+        "widget_warning_default",
+        "widget_payload_scalar",
+    ]
+
+
+WidgetObject = EntryStaticObject | WidgetNamed
+
+
+class ChannelCase(TypedDict):
+    channel: int
+    name: str
+    length: int
+    label: str
+    afr_bool: int
+    readout: int
+    decimals: int
+    graph: int
+    average: int
+    extrema: int
+    trend: int
+    afr: int
+    warning_enabled: int
+    limit_mode: int
+
+
+WIDGET_CONTRACT: BodyContract[WidgetObject] = {
     "extent": 728,
     "frame": 456,
-    "mapping": [[0, 134, "t"], [134, 142, "d"], [142, 256, "t"], [256, 316, "d"], [316, 728, "t"]],
+    "mapping": [(0, 134, "t"), (134, 142, "d"), (142, 256, "t"), (256, 316, "d"), (316, 728, "t")],
     "instructions": [
         (0, 2, "cmp r0, #0x0"),
         (2, 4, "beq.w @self+2d8"),
@@ -250,7 +286,7 @@ WIDGET_CONTRACT = {
     ],
     "data": [(134, 8, "043313180e2f5b1b"), (256, 60, "@prior_typed_pools")],
 }
-CHANNEL_CASES = [
+CHANNEL_CASES: list[ChannelCase] = [
     {
         "channel": 0,
         "name": "Boost",
@@ -380,7 +416,7 @@ CHANNEL_CASES = [
         "limit_mode": 2,
     },
 ]
-WIDGET_WRITES = [
+WIDGET_WRITES: list[tuple[int, int, int, str]] = [
     (432, 17, 1, "decimals"),
     (438, 12, 1, "graph"),
     (442, 0, 4, "GraphRange Auto tag; inactive payload4..12 remains opaque"),
@@ -417,10 +453,10 @@ WIDGET_WRITES = [
     (706, 218, 1, "view1"),
     (714, 216, 1, "row i/4"),
 ]
-COPY28_CONTRACT = {
+COPY28_CONTRACT: BodyContract[WidgetObject] = {
     "extent": 6,
     "frame": 0,
-    "mapping": [[0, 6, "t"]],
+    "mapping": [(0, 6, "t")],
     "instructions": [(0, 2, "movs r2, #0x1c"), (2, 4, "b.w @role:__aeabi_memcpy")],
     "objects": [],
 }

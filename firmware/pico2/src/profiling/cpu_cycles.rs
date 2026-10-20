@@ -63,14 +63,14 @@ pub fn elapsed(
     dashboard_core::cpu_math::checked_segment(CPU_FREQ_HZ.load(Ordering::Relaxed), start, end, elapsed_us)
 }
 
-/// Calculate CPU utilization in tenths-of-percent (0–1000 → 0.0%–100.0%).
+/// Calculate instrumented work in tenths-of-percent (0–1000 → 0.0%–100.0%).
 ///
 /// Returns 10× the percentage so callers can display one decimal place
 /// without floating-point math (e.g. 163 → "16.3%").
 ///
 /// `cycles_used`: DWT cycles consumed by work during the measurement window.
 /// `elapsed_us`: duration of the measurement window in microseconds
-///               (e.g. per-frame time on Core 0, or 1_000_000 for Core 1's 1-second window).
+///               (Core 1 publishes after at least one second).
 pub fn calc_util_percent(
     cycles_used: u64,
     elapsed_us: u64,

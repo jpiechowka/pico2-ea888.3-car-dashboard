@@ -254,12 +254,7 @@ fn irq_handler<const N: usize>(bank: pac::io::Io, wakers: &[AtomicWaker; N]) {
         // we can just clear all interrupt enables for that pin without having
         // to check which event was signalled.
         if event != 0 {
-            proc_intx.inte(pin / 8).write_clear(|w| {
-                w.set_edge_high(pin_group, true);
-                w.set_edge_low(pin_group, true);
-                w.set_level_high(pin_group, true);
-                w.set_level_low(pin_group, true);
-            });
+            disarm_wait(proc_intx, pin);
             wakers[pin].wake();
         }
     }
@@ -280,11 +275,64 @@ fn IO_IRQ_QSPI() {
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct InputFuture<'d> {
     pin: Peri<'d, AnyPin>,
+    interrupts: pac::io::Int,
+}
+
+fn disarm_wait(interrupts: pac::io::Int, pin: usize) {
+    interrupts.inte(pin / 8).write_clear(|w| {
+        w.set_edge_high(pin % 8, true);
+        w.set_edge_low(pin % 8, true);
+        w.set_level_high(pin % 8, true);
+        w.set_level_low(pin % 8, true);
+    });
+}
+
+impl Drop for InputFuture<'_> {
+    fn drop(&mut self) {
+        disarm_wait(self.interrupts, self.pin.pin() as usize);
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_disarms_only_the_owned_pin() {
+        let mut registers = [0u32; 4096];
+        let interrupts = unsafe { pac::io::Int::from_ptr(registers.as_mut_ptr().cast()) };
+        let wait = InputFuture {
+            pin: unsafe { AnyPin::steal(10) },
+            interrupts,
+        };
+        drop(wait);
+        let clear_mask = registers[(0x3000 + 4) / 4];
+        assert_eq!(clear_mask, 0xf << 8);
+        assert_eq!(registers[0x3000 / 4], 0);
+    }
+
+    #[test]
+    fn wait_observes_its_original_interrupt_bank() {
+        let mut registers = [0u32; 4096];
+        let interrupts = unsafe { pac::io::Int::from_ptr(registers.as_mut_ptr().cast()) };
+        let mut wait = InputFuture {
+            pin: unsafe { AnyPin::steal(10) },
+            interrupts,
+        };
+        let mut cx = Context::from_waker(core::task::Waker::noop());
+        interrupts.inte(1).write_value(pac::io::regs::Int(1 << 11));
+        assert!(FuturePin::new(&mut wait).poll(&mut cx).is_pending());
+        // An adjacent pin does not keep our wait pending.
+        interrupts.inte(1).write_value(pac::io::regs::Int(1 << 12));
+        assert!(FuturePin::new(&mut wait).poll(&mut cx).is_ready());
+    }
 }
 
 impl<'d> InputFuture<'d> {
     fn new(pin: Peri<'d, AnyPin>, level: InterruptTrigger) -> Self {
         let pin_group = (pin.pin() % 8) as usize;
+        let interrupts = pin.int_proc();
+        disarm_wait(interrupts, pin.pin() as usize);
         // first, clear the INTR register bits. without this INTR will still
         // contain reports of previous edges, causing the IRQ to fire early
         // on stale state. clearing these means that we can only detect edges
@@ -301,7 +349,7 @@ impl<'d> InputFuture<'d> {
         // Each INTR register is divided into 8 groups, one group for each
         // pin, and each group consists of LEVEL_LOW, LEVEL_HIGH, EDGE_LOW,
         // and EDGE_HIGH.
-        pin.int_proc()
+        interrupts
             .inte((pin.pin() / 8) as usize)
             .write_set(|w| match level {
                 InterruptTrigger::LevelHigh => {
@@ -322,7 +370,7 @@ impl<'d> InputFuture<'d> {
                 }
             });
 
-        Self { pin }
+        Self { pin, interrupts }
     }
 }
 
@@ -339,11 +387,8 @@ impl<'d> Future for InputFuture<'d> {
         };
         waker.register(cx.waker());
 
-        // self.int_proc() will get the register offset for the current cpu,
-        // then we want to access the interrupt enable register for our
-        // pin (there are 4 of these PROC0_INTE0, PROC0_INTE1, PROC0_INTE2, and
-        // PROC0_INTE3 per cpu).
-        let inte: pac::io::regs::Int = self.pin.int_proc().inte((self.pin.pin() / 8) as usize).read();
+        // Keep the interrupt bank of the CPU that armed this wait.
+        let inte: pac::io::regs::Int = self.interrupts.inte((self.pin.pin() / 8) as usize).read();
         // The register is divided into groups of four, one group for
         // each pin. Each group consists of four trigger levels LEVEL_LOW,
         // LEVEL_HIGH, EDGE_LOW, and EDGE_HIGH for each pin.

@@ -5,7 +5,22 @@ source guards, effects, ownership, epoch and returns remain separate.
 No runtime grammar learning, body-hash permission or later frontier authority.
 """
 
-GRAMMARS = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+
+
+class SameConfig(TypedDict):
+    kind: Literal["same_Config"]
+
+
+class WarningMask(TypedDict):
+    kind: Literal["warning_error_mask"]
+    hex: str
+
+
+SourceObject = SameConfig | WarningMask
+
+GRAMMARS: dict[str, BodyContract[SourceObject]] = {
     "visitor_4376": {
         "extent": 26,
         "frame": 1608,

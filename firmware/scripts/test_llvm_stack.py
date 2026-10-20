@@ -1,6 +1,7 @@
 """Pinned decoder framing and mapping regressions; target code is never run."""
 
 import copy
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,30 +9,29 @@ import sys
 import struct
 import time
 import hashlib
-import ctypes
-import os
-import subprocess
+from typing import BinaryIO
 from unittest.mock import patch
 import llvm_stack
+import owned_process
 from llvm_stack import capability_elf, decode_listing, mapping_ranges, _run
 from elf_image import ElfImage
 
 
 class Decoder(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> ElfImage:
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         path = Path(folder.name) / "probe.elf"
         path.write_bytes(capability_elf())
         return ElfImage(path)
 
-    def test_duplicate_thumb_mapping_names_and_literal_interval_are_retained(self):
+    def test_duplicate_thumb_mapping_names_and_literal_interval_are_retained(self) -> None:
         elf = self.fixture()
         self.assertEqual([n for n, _, _ in elf.mapping_symbols], ["$t", "$d", "$t"])
         self.assertEqual(mapping_ranges(elf, "probe"), [(0x10000000, 0x10000020, "t")])
         self.assertEqual(mapping_ranges(elf, "tail"), [(0x10000024, 0x10000028, "t")])
 
-    def test_raw_symbol_metadata_retains_size_type_section_and_same_name_candidates(self):
+    def test_raw_symbol_metadata_retains_size_type_section_and_same_name_candidates(self) -> None:
         elf = self.fixture()
         data = bytearray(elf.data)
         offset = elf.sections[2][4]
@@ -47,7 +47,7 @@ class Decoder(unittest.TestCase):
         self.assertEqual(entries, [("probe", 0x10000001, 1, 1, 1), ("probe", 0x10000025, 4, 17, 1)])
         self.assertEqual(parsed.symbols["probe"], 0x10000025)
 
-    def test_nonlocal_typed_and_nonzero_mapping_symbols_reject(self):
+    def test_nonlocal_typed_and_nonzero_mapping_symbols_reject(self) -> None:
         elf = self.fixture()
         offset = elf.sections[2][4] + 3 * 16
         for field, value in [("info", 16), ("info", 2), ("size", 2)]:
@@ -62,7 +62,7 @@ class Decoder(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "mapping symbol"):
                 ElfImage(path)
 
-    def test_raw_instruction_bytes_coverage_and_literal_data(self):
+    def test_raw_instruction_bytes_coverage_and_literal_data(self) -> None:
         elf = self.fixture()
         rows = [
             "10000000: f000 f810 bl 0x10000024 <tail>",
@@ -95,7 +95,7 @@ class Decoder(unittest.TestCase):
             with self.subTest(changed=changed[:55]), self.assertRaises(AssertionError):
                 decode_listing(changed, elf)
 
-    def test_missing_conflicting_arm_and_hidden_code_mappings_reject(self):
+    def test_missing_conflicting_arm_and_hidden_code_mappings_reject(self) -> None:
         elf = self.fixture()
         for entries in [
             [],
@@ -109,7 +109,7 @@ class Decoder(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 mapping_ranges(bad, "probe")
 
-    def test_alias_extents_must_agree_and_overlapping_owners_reject(self):
+    def test_alias_extents_must_agree_and_overlapping_owners_reject(self) -> None:
         elf = self.fixture()
         for function in [(0x10000001, 30, 1), (0x10000005, 4, 1)]:
             bad = copy.deepcopy(elf)
@@ -117,7 +117,7 @@ class Decoder(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "conflicting|overlapping"):
                 decode_listing("", bad)
 
-    def test_child_diagnostics_output_bounds_and_deadline_are_fail_closed(self):
+    def test_child_diagnostics_output_bounds_and_deadline_are_fail_closed(self) -> None:
         self.assertEqual(_run([sys.executable, "-c", 'print("ok")'], 128), "ok\n")
         for script in [
             'import sys; sys.stderr.write("warning")',
@@ -129,7 +129,7 @@ class Decoder(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "deadline"):
             _run([sys.executable, "-c", "import time; time.sleep(5)"], 128, timeout=0.1)
 
-    def test_inherited_pipe_cannot_extend_decoder_deadline(self):
+    def test_deadline_terminates_inherited_pipe_descendant(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             marker = Path(folder) / "finished"
             script = (
@@ -148,63 +148,46 @@ class Decoder(unittest.TestCase):
                     _run([sys.executable, "-c", parent], 128, timeout=0.2)
                 self.assertLess(time.monotonic() - started, 0.7)
             finally:
-                # The fixture's only descendant ends itself; keep its lifetime
-                # owned and wait for its completion before removing test files.
-                deadline = time.monotonic() + 3
+                # The negative fixture exits itself after one second even on
+                # the old broken adapter. A passing supervisor prevents its write.
+                deadline = time.monotonic() + 1.2
                 while not marker.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
-                self.assertTrue(marker.exists(), "fixture descendant did not complete")
+                self.assertFalse(marker.exists(), "decoder descendant survived its deadline")
 
-    def test_pipe_setup_failure_reaps_child_and_closes_both_pipes(self):
-        # Exercise the real owned child. Only the failing platform setup is
-        # injected; leaving setup outside cleanup makes these assertions fail.
-        original = subprocess.Popen
-        platforms = [("posix", os, "set_blocking")]
-        # WinDLL/msvcrt is native Windows setup; Linux verifies its own POSIX
-        # setup owner without pretending that Windows imports are available.
-        if os.name == "nt":
-            platforms.insert(0, ("nt", ctypes, "WinDLL"))
-        for platform, owner, attribute in platforms:
-            children = []
+    def test_supervisor_reader_failure_reaps_child(self) -> None:
+        original = owned_process.OwnedProcess
+        children: list[owned_process.OwnedProcess] = []
 
-            def spawn(*args, **kwargs):
-                child = original(*args, **kwargs)
-                children.append(child)
-                return child
+        def spawn(
+            command: Sequence[str],
+            *,
+            stdout: BinaryIO,
+            stderr: BinaryIO,
+            stdin: BinaryIO | None = None,
+            cwd: str | Path | None = None,
+            env: Mapping[str, str] | None = None,
+        ) -> owned_process.OwnedProcess:
+            child = original(command, stdout=stdout, stderr=stderr, stdin=stdin, cwd=cwd, env=env)
+            children.append(child)
+            return child
 
-            with self.subTest(platform=platform):
-                try:
-                    with (
-                        patch.object(llvm_stack.subprocess, "Popen", side_effect=spawn),
-                        patch.object(llvm_stack.os, "name", platform),
-                        patch.object(
-                            owner,
-                            attribute,
-                            side_effect=OSError("injected pipe setup failure"),
-                            create=True,
-                        ),
-                    ):
-                        with self.assertRaisesRegex(OSError, "injected pipe setup failure"):
-                            _run(
-                                [sys.executable, "-c", "import time; time.sleep(30)"],
-                                128,
-                                timeout=1,
-                            )
-                    self.assertEqual(len(children), 1)
-                    child = children[0]
-                    self.assertIsNotNone(child.poll(), "owned child survived setup failure")
-                    self.assertTrue(child.stdout.closed, "stdout survived setup failure")
-                    self.assertTrue(child.stderr.closed, "stderr survived setup failure")
-                finally:
-                    # RED also owns its cleanup: never leave its failed child.
-                    for child in children:
-                        if child.poll() is None:
-                            child.kill()
-                        child.wait(timeout=3)
-                        child.stdout.close()
-                        child.stderr.close()
+        try:
+            with (
+                patch("owned_process.OwnedProcess", side_effect=spawn),
+                patch(
+                    "owned_process._read_available", side_effect=OSError("injected reader failure")
+                ),
+                self.assertRaisesRegex(OSError, "injected reader failure"),
+            ):
+                _run([sys.executable, "-c", "import time; time.sleep(30)"], 128, timeout=1)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll(), "owned child survived reader failure")
+        finally:
+            for child in children:
+                child.cleanup()
 
-    def test_compiler_change_during_decoder_execution_rejects(self):
+    def test_compiler_and_supervisor_identity_changes_reject(self) -> None:
         elf = self.fixture()
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "source.elf"
@@ -214,7 +197,7 @@ class Decoder(unittest.TestCase):
             tool = Path(folder) / "objdump"
             tool.write_bytes(b"decoder")
             context = llvm_stack.LlvmContext(
-                1,
+                llvm_stack.SCHEMA,
                 str(compiler),
                 hashlib.sha256(compiler.read_bytes()).hexdigest(),
                 "reviewed compiler",
@@ -228,13 +211,22 @@ class Decoder(unittest.TestCase):
                 "fixture",
                 "output",
                 hashlib.sha256(Path(llvm_stack.__file__).read_bytes()).hexdigest(),
+                llvm_stack._supervisor_digest(),
             )
             # Isolate the identity boundary with a real byte-checked leaf. The
             # external invocation is the only mocked dependency and changes the
             # compiler bytes while it runs.
             elf.functions = {"tail": elf.functions["tail"]}
 
-            def output(*args):
+            with (
+                patch.object(llvm_stack, "_supervisor_digest", return_value="changed"),
+                patch.object(llvm_stack, "_run") as invocation,
+                self.assertRaisesRegex(AssertionError, "context identity changed"),
+            ):
+                llvm_stack.disassemble(source, elf, context)
+            invocation.assert_not_called()
+
+            def output(argv: Sequence[str], limit: int, timeout: float = 60) -> str:
                 compiler.write_bytes(b"compiler-after")
                 return "10000024: e7ec b 0x10000000 <probe>\n10000026: 4770 bx lr\n"
 

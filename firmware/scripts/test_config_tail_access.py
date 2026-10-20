@@ -4,18 +4,32 @@ import copy
 import json
 import unittest
 from dataclasses import replace
+from config_platform import Dependency
+from config_source_access import SourceFamily
+from config_tail_access import TailFamily
+from script_values import array_items, object_fields, integer_value
+from image_test_support import fixture_fields, fixture_items, dynamic_call
+
+
+def tail_family(value: Dependency) -> TailFamily:
+    if not isinstance(value, TailFamily):
+        raise AssertionError("Tail fixture contains another family")
+    return value
 
 
 class TailPolicyV8(unittest.TestCase):
     @staticmethod
-    def augment(values):
+    def augment(values: tuple[Dependency, ...]) -> tuple[Dependency, ...]:
         # Supplied dependency geometry only; no decoded source or completed
         # ordinary path is manufactured by this test transport.
         from config_regions import Storage, borrow
         from config_tail_access import TailAccessContext, TailFamily
 
-        assert len(values) == 24
+        if len(values) != 24:
+            raise AssertionError("Tail fixture requires all 24 prior dependencies")
         source = values[23]
+        if not isinstance(source, SourceFamily):
+            raise AssertionError("Tail fixture requires its Source predecessor")
         old = source.context
         phase = "decoded_controls_tail_group"
         loader = replace(old.loader, phase=phase)
@@ -87,14 +101,17 @@ class TailPolicyV8(unittest.TestCase):
                     "sizez",
                     parent,
                     source.caller,
-                    tuple((parent + off, *rest) for off, *rest in sites),
+                    tuple(
+                        (parent + off, raw, offset, width, direction, epoch)
+                        for off, raw, offset, width, direction, epoch in sites
+                    ),
                     context,
                     epochs,
                 )
             )
         return values + tuple(added)
 
-    def test_prior_24_dependencies_cannot_replace_the_three_tail_requirements(self):
+    def test_prior_24_dependencies_cannot_replace_the_three_tail_requirements(self) -> None:
         from test_config_stack import ConditionalStackPolicy, ValidatorPlatformFamilies
         import config_platform as subject
 
@@ -106,22 +123,22 @@ class TailPolicyV8(unittest.TestCase):
                 objects, view, context, contradictory_effects=(), owned_dependencies=values
             )
 
-    def test_previous_scope_is_rejected_even_with_the_same_input_and_no_owned_accesses(self):
+    def test_previous_scope_is_rejected_even_with_the_same_input_and_no_owned_accesses(
+        self,
+    ) -> None:
         from test_config_stack import ConditionalStackPolicy
         import config_platform as subject
 
         objects, view, context = ConditionalStackPolicy().fixture()
         policy = subject.reviewed_eav_policy(objects, view, context, contradictory_effects=())
         record = policy.to_record()
-        record.update(
-            schema=6,
-            scope="h2-rp2350-secure-owned-access-v7",
-            scope_sha256="50408f1a4774caff701c236184a4f17060cb9e17ade5fffaa0ca208d4f1b6181",
-        )
+        record["schema"] = 6
+        record["scope"] = "h2-rp2350-secure-owned-access-v7"
+        record["scope_sha256"] = "50408f1a4774caff701c236184a4f17060cb9e17ade5fffaa0ca208d4f1b6181"
         with self.assertRaises(AssertionError):
             subject.read_policy(record, policy)
 
-    def test_complete_conditional_tuple_roundtrips_without_claiming_completion(self):
+    def test_complete_conditional_tuple_roundtrips_without_claiming_completion(self) -> None:
         from test_config_stack import ConditionalStackPolicy, ValidatorPlatformFamilies
         import config_platform as subject
 
@@ -139,18 +156,22 @@ class TailPolicyV8(unittest.TestCase):
                 "0decd7e28e1eaa62d95730efe4bb0eb02ced8f457c92939190c0f7eb722bcf03",
             ),
         )
-        record = json.loads(json.dumps(policy.to_record()))
+        raw_record: object = json.loads(json.dumps(policy.to_record()))
+        record = object_fields(raw_record, "policy roundtrip")
         self.assertEqual(subject.read_policy(record, policy), policy)
         self.assertFalse(record["hardware_qualified"])
         self.assertEqual(
-            tuple(v.role for v in values[24:]),
+            tuple(tail_family(v).role for v in values[24:]),
             ("Screen_output_words", "first_Screen_scratch_words", "first_Config_Screen_words"),
         )
         self.assertTrue(
-            all(v.to_record()["physical_tag_is_completed_Tail"] is False for v in values[24:])
+            all(
+                tail_family(v).to_record()["physical_tag_is_completed_Tail"] is False
+                for v in values[24:]
+            )
         )
 
-    def test_missing_reordered_cross_caller_or_cross_activation_tail_is_rejected(self):
+    def test_missing_reordered_cross_caller_or_cross_activation_tail_is_rejected(self) -> None:
         from test_config_stack import ConditionalStackPolicy, ValidatorPlatformFamilies
         import config_platform as subject
 
@@ -166,6 +187,8 @@ class TailPolicyV8(unittest.TestCase):
                 changed[-3], changed[-2] = changed[-2], changed[-3]
             else:
                 family = changed[-3]
+                if not isinstance(family, TailFamily):
+                    raise AssertionError("Tail fixture lost its tail family")
                 c = family.context
                 if fault == "caller":
                     changed[-3] = replace(
@@ -203,12 +226,18 @@ class TailPolicyV8(unittest.TestCase):
 
 class TailAccessRecords(unittest.TestCase):
     @staticmethod
-    def values():
+    def values() -> tuple[TailFamily, ...]:
         from test_config_stack import ValidatorPlatformFamilies
 
-        return ValidatorPlatformFamilies().dependencies("sizez")[24:]
+        values = ValidatorPlatformFamilies().dependencies("sizez")[24:]
+        result = []
+        for value in values:
+            if not isinstance(value, TailFamily):
+                raise AssertionError("Tail fixture contains another family")
+            result.append(value)
+        return tuple(result)
 
-    def test_three_output_epochs_and_first_only_parent_footprints(self):
+    def test_three_output_epochs_and_first_only_parent_footprints(self) -> None:
         from config_tail_access import read_tail_family
 
         a, b, c = self.values()
@@ -228,12 +257,14 @@ class TailAccessRecords(unittest.TestCase):
             self.assertEqual(read_tail_family(json.loads(json.dumps(value.to_record()))), value)
             for bad in (-1, True, 1.0, 3):
                 with self.subTest(role=value.role, index=bad), self.assertRaises(AssertionError):
-                    value.footprints(bad)
+                    dynamic_call(value.footprints, bad)
         for value in (b, c):
             with self.assertRaises(AssertionError):
                 value.footprints(1)
 
-    def test_reader_rejects_wrong_width_role_epoch_numeric_type_and_claimed_completion(self):
+    def test_reader_rejects_wrong_width_role_epoch_numeric_type_and_claimed_completion(
+        self,
+    ) -> None:
         from config_tail_access import read_tail_family
 
         for family in self.values():
@@ -256,6 +287,12 @@ class TailAccessRecords(unittest.TestCase):
                 "epoch",
             ):
                 bad = copy.deepcopy(original)
+                sites = fixture_items(bad["sites"])
+                first_site = fixture_fields(sites[0])
+                context = fixture_fields(bad["context"])
+                frame = fixture_fields(context["frame"])
+                config = fixture_fields(context["config"])
+                epochs = fixture_items(bad["epochs"])
                 if fault == "missing":
                     bad.pop("source_phase")
                 elif fault == "extra":
@@ -265,33 +302,33 @@ class TailAccessRecords(unittest.TestCase):
                 elif fault == "role":
                     bad["role"] = "result_words"
                 elif fault == "site":
-                    bad["sites"][0]["site"] += 2
+                    first_site["site"] = integer_value(first_site["site"], "site") + 2
                 elif fault == "float_width":
-                    bad["sites"][0]["width"] = 4.0
+                    first_site["width"] = 4.0
                 elif fault == "bool_offset":
-                    bad["sites"][0]["offset"] = True
+                    first_site["offset"] = True
                 elif fault == "direction":
-                    bad["sites"][0]["direction"] = "execute"
+                    first_site["direction"] = "execute"
                 elif fault == "source_phase":
-                    bad["sites"][0]["source_phase"] = "same_width_LED"
+                    first_site["source_phase"] = "same_width_LED"
                 elif fault == "complete":
                     bad["physical_tag_is_completed_Tail"] = True
                 elif fault == "frame":
-                    bad["context"]["frame"]["extent"] -= 8
+                    frame["extent"] = integer_value(frame["extent"], "extent") - 8
                 elif fault == "protection":
-                    bad["context"]["protected"].pop(0)
+                    fixture_items(context["protected"]).pop(0)
                 elif fault == "config":
-                    bad["context"]["config"]["storage"]["identity"] = "raw pointer"
+                    fixture_fields(config["storage"])["identity"] = "raw pointer"
                 elif fault == "duplicate_site":
-                    bad["sites"][1] = copy.deepcopy(bad["sites"][0])
-                elif bad["epochs"]:
-                    bad["epochs"][1][1] = 940
+                    sites[1] = copy.deepcopy(sites[0])
+                elif epochs:
+                    fixture_items(epochs[1])[1] = 940
                 else:
-                    bad["epochs"] = [[bad["caller"] + 5712, 940, 3]]
+                    bad["epochs"] = [[integer_value(bad["caller"], "caller") + 5712, 940, 3]]
                 with self.subTest(role=family.role, fault=fault), self.assertRaises(AssertionError):
                     read_tail_family(bad)
 
-    def test_physical_alias_and_saved_cell_overlap_reject_despite_space_labels(self):
+    def test_physical_alias_and_saved_cell_overlap_reject_despite_space_labels(self) -> None:
         from config_regions import Storage
 
         for family in self.values():
@@ -306,16 +343,26 @@ class TailAccessRecords(unittest.TestCase):
             ):
                 replace(family, context=replace(c, protected=c.protected + (guard,)))
 
-    def test_current_artifact_rechecks_six_sites_typed_roles_and_relocated_metadata(self):
+    def test_current_artifact_rechecks_six_sites_typed_roles_and_relocated_metadata(self) -> None:
         from config_tail_access import current_tail_family
         from test_config_stack import ValidatorPlatformFamilies
 
         for delta in (0, 0x2000):
             objects = ValidatorPlatformFamilies().artifact("sizez")
             if delta:
-                section = list(objects.elf.sections[0])
-                section[3] += delta
-                objects.elf.sections[0] = tuple(section)
+                section = objects.elf.sections[0]
+                objects.elf.sections[0] = (
+                    section[0],
+                    section[1],
+                    section[2],
+                    section[3] + delta,
+                    section[4],
+                    section[5],
+                    section[6],
+                    section[7],
+                    section[8],
+                    section[9],
+                )
                 objects.elf.functions = {
                     n: (at + delta, extent, section)
                     for n, (at, extent, section) in objects.elf.functions.items()
@@ -329,7 +376,10 @@ class TailAccessRecords(unittest.TestCase):
                     family,
                     parent=family.parent + delta,
                     caller=family.caller + delta,
-                    sites=tuple((at + delta, *rest) for at, *rest in family.sites),
+                    sites=tuple(
+                        (at + delta, raw, off, width, direction, epoch)
+                        for at, raw, off, width, direction, epoch in family.sites
+                    ),
                     epochs=tuple((at + delta, out, count) for at, out, count in family.epochs),
                 )
                 self.assertEqual(current_tail_family(objects, current), current)
@@ -350,7 +400,7 @@ class TailAccessRecords(unittest.TestCase):
                     finally:
                         objects.elf.data = old
 
-    def test_current_metadata_cannot_substitute_a_different_role_frame_or_mapping(self):
+    def test_current_metadata_cannot_substitute_a_different_role_frame_or_mapping(self) -> None:
         from config_tail_access import current_tail_family
         from config_tail_contracts import ROLES
         from config_headers import VISITOR
@@ -389,7 +439,9 @@ class TailAccessRecords(unittest.TestCase):
                 with self.subTest(role=family.role, fault=fault), self.assertRaises(AssertionError):
                     current_tail_family(objects, family)
 
-    def test_image_reader_rechecks_all_six_tail_sites_with_a_coherently_updated_digest(self):
+    def test_image_reader_rechecks_all_six_tail_sites_with_a_coherently_updated_digest(
+        self,
+    ) -> None:
         import hashlib
         from config_platform import current_image_policy
         from test_config_stack import ValidatorPlatformFamilies
@@ -399,8 +451,9 @@ class TailAccessRecords(unittest.TestCase):
         self.assertEqual(len(current_image_policy(record, elf, eav).owned_dependencies), 27)
         original = elf.data
         for dependency in record["owned_dependencies"][24:]:
-            for site in dependency["sites"]:
-                at = site["site"]
+            for raw_site in array_items(dependency["sites"], "tail sites"):
+                site = object_fields(raw_site, "tail site")
+                at = integer_value(site["site"], "site")
                 section = next(s for s in elf.sections if s[3] <= at < at + 4 <= s[3] + s[5])
                 changed = bytearray(original)
                 changed[section[4] + at - section[3]] ^= 1

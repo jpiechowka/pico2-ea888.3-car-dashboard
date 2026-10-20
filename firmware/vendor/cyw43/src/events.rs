@@ -347,28 +347,26 @@ impl EventMask {
         }
     }
 
-    fn enable(&mut self, event: Event) {
+    fn bit(event: Event) -> Option<(usize, u32)> {
         let n = event as u32;
-        let word = n / u32::BITS;
-        let bit = n % u32::BITS;
+        // Unknown and LAST are sentinels, not subscribable firmware events.
+        (n < Event::LAST as u32).then_some(((n / u32::BITS) as usize, 1 << (n % u32::BITS)))
+    }
 
-        self.mask[word as usize] |= 1 << bit;
+    fn enable(&mut self, event: Event) {
+        if let Some((word, bit)) = Self::bit(event) {
+            self.mask[word] |= bit;
+        }
     }
 
     fn disable(&mut self, event: Event) {
-        let n = event as u32;
-        let word = n / u32::BITS;
-        let bit = n % u32::BITS;
-
-        self.mask[word as usize] &= !(1 << bit);
+        if let Some((word, bit)) = Self::bit(event) {
+            self.mask[word] &= !bit;
+        }
     }
 
     fn is_enabled(&self, event: Event) -> bool {
-        let n = event as u32;
-        let word = n / u32::BITS;
-        let bit = n % u32::BITS;
-
-        self.mask[word as usize] & (1 << bit) > 0
+        Self::bit(event).is_some_and(|(word, bit)| self.mask[word] & bit != 0)
     }
 }
 

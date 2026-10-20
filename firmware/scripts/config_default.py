@@ -5,6 +5,14 @@ It does not expose a complete or validated Config. Incoming private-slot/fault
 ownership, all remaining phases and whole-image indirect closure remain owed.
 """
 
+from collections.abc import Iterable
+from typing import Literal, Never, TypedDict
+from config_body_types import BodyContract, BodyRecord, Callback, InstructionMap
+from config_stack import DiagnosticObjects
+from config_entry_contracts import EntryStaticObject
+from config_construction import StringResult
+from config_regions import View
+from config_roots import WindowRecord
 import re
 import struct
 from config_abstract import Span
@@ -19,6 +27,81 @@ from config_roots import root_window
 from config_stack import canonical_symbol, typed_function, transfer_family
 from llvm_stack import mapping_ranges
 from validation import require
+
+
+class DefaultScalar(TypedDict):
+    kind: Literal["default_scalar"]
+    value: int
+
+
+class DefaultBytes(TypedDict):
+    kind: Literal["default_bytes"]
+    bytes: bytes
+
+
+DefaultObject = EntryStaticObject | DefaultScalar | DefaultBytes
+Writes = tuple[tuple[View, int, int], ...]
+
+
+class PreparedView(TypedDict):
+    count: int
+    element_offset: int
+    name_capacity: int
+    initialized_name: InitializedPrefix
+    opaque_string_transport: tuple[int, int]
+    id_offset: int
+
+
+class WidgetHandoff(TypedDict):
+    channels: tuple[int, ...]
+    array: View
+    signed_offset: int
+    count: int
+    cursor_cell: View
+    required_affine_relation: str
+
+
+class CapacityFailure(TypedDict):
+    root: WindowRecord
+    error_payload_bytes: int
+    child_result_tag: int
+    local_writes: Writes
+    argument_address: int
+    argument_reference_levels: int
+    requires_nonreturn_diagnostic_closure: bool
+
+
+class DefaultTargetStore(TypedDict):
+    operation: str
+    site: int
+    address: int
+    width: int
+    unaligned: bool
+    owner_role: str
+    status: str
+
+
+class PreparedDefault(TypedDict):
+    proof: BodyRecord
+    prologue_frame: int
+    config: View
+    view: PreparedView
+    widget_handoff: WidgetHandoff
+    fault: Storage
+    protected: tuple[Storage, ...]
+    local_writes: Writes
+    config_writes: Writes
+    child: StringResult
+    capacity_failure: CapacityFailure
+    readonly_float_pools: tuple[int, ...]
+    continuation: int
+    state_coordinate: str
+    target_access_requirements: tuple[DefaultTargetStore, ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_incoming_SP_r7_frame_and_contextual_predecessor_transport: bool
+    requires_incoming_typed_fault_exclusive_slot_and_all_remaining_phases: bool
+    requires_whole_image_indirect_ingress_and_stage_coverage: bool
+
 
 _TRY = HELPER_SEMANTIC_ROLES["string_try14"]
 _PREPARE = (
@@ -80,7 +163,7 @@ _PREPARE = (
     (178, 2, "str r0, [sp, #0x20]"),
     (180, 2, "ldr r0, [pc, @object5.pc_slot]"),
 )
-_OBJECTS = (
+_OBJECTS: tuple[DefaultObject, ...] = (
     {"kind": "entry_static", "role": CONFIG},
     {"kind": "default_scalar", "value": 0x10004},
     {"kind": "default_bytes", "bytes": b"Overview"},
@@ -90,7 +173,9 @@ _OBJECTS = (
 )
 
 
-def _object(objects, address, descriptor):
+def _object(
+    objects: DiagnosticObjects, address: int, descriptor: DefaultObject
+) -> tuple[Callback, ...]:
     if descriptor["kind"] == "entry_static":
         return entry_object(objects, address, descriptor)
     if descriptor["kind"] == "default_scalar":
@@ -107,17 +192,18 @@ def _object(objects, address, descriptor):
     return ()
 
 
-def _no_outline(*args):
-    require(False, "unreviewed default-preparation outline")
+def _no_outline(*args: object) -> Never:
+    raise AssertionError("unreviewed default-preparation outline")
 
 
-def _ingress(instructions, parent, extent, start, end):
+def _ingress(instructions: InstructionMap, parent: int, extent: int, start: int, end: int) -> None:
     for at, row in instructions.items():
         family = transfer_family(row.mnemonic.removesuffix(".w"))
         operand = row.operands.split("@", 1)[0].strip()
         if family in ("b", "bl", "cbz", "cbnz"):
             target = re.search(r"(?<![#\w])0x([0-9a-f]+)(?:\s|$)", operand)
-            require(target is not None, "default prefix has unresolved direct ingress")
+            if target is None:
+                raise AssertionError("default prefix has unresolved direct ingress")
             require(
                 not (start < int(target[1], 16) < end and not start <= at < end),
                 "foreign default-preparation interior ingress",
@@ -147,7 +233,13 @@ def _ingress(instructions, parent, extent, start, end):
             )
 
 
-def default_preparation(objects, name, instructions, frame, ancestor_protected):
+def default_preparation(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> PreparedDefault:
     """Current SizeZ prepared entry -> View -> widget-loop before-call state.
 
     No absolute capture address or body hash is a selector. Root shape, unique
@@ -172,7 +264,7 @@ def default_preparation(objects, name, instructions, frame, ancestor_protected):
     )
     ancestor_protected = tuple(ancestor_protected)
     require_disjoint((frame,) + ancestor_protected)
-    prologue = dict(extent=14, instructions=ROOT_ROWS[:5], objects=[])
+    prologue: BodyContract[DefaultObject] = dict(extent=14, instructions=ROOT_ROWS[:5], objects=[])
     _literal_body(
         objects,
         name,
@@ -198,10 +290,10 @@ def default_preparation(objects, name, instructions, frame, ancestor_protected):
             or branch.mnemonic != "beq.w"
         ):
             continue
-        target = re.match(r"0x([0-9a-f]+)(?:\s|$)", branch.operands)
-        if target is None:
+        branch_target = re.match(r"0x([0-9a-f]+)(?:\s|$)", branch.operands)
+        if branch_target is None:
             continue
-        destination = int(target[1], 16)
+        destination = int(branch_target[1], 16)
         capacity = []
         # This is structural discovery, not target acceptance. The complete
         # typed suffix below must start at that same current branch target.
@@ -217,7 +309,7 @@ def default_preparation(objects, name, instructions, frame, ancestor_protected):
         if len(capacity) != 1:
             continue
         failure = capacity[0]
-        contract = dict(
+        contract: BodyContract[DefaultObject] = dict(
             extent=182,
             instructions=[
                 (

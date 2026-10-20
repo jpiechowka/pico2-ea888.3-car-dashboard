@@ -12,7 +12,7 @@ or weaken fixed budgets. Linked software evidence is not device high-water
 proof. Initial full-byte review: task-2-format-bridges-report.md (ignored).
 """
 
-FORMAT_GRAMMARS = {
+FORMAT_GRAMMARS: dict[str, tuple[int, int, list[str]]] = {
     "_RNvNtCs_4core3fmt5write": (
         262,
         56,

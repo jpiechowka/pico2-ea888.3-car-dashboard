@@ -6,7 +6,52 @@ edge. Changed bytes/source/ABI require fresh whole-body review, mutations and
 varied-link checks; no auto learning, frame allowance or hardware claim.
 """
 
-CONTROL_GRAMMARS = {
+from typing import Literal, NotRequired, TypedDict
+
+
+class ObjectLocation(TypedDict):
+    pool: NotRequired[int]
+    site: NotRequired[int]
+    register: NotRequired[str]
+
+
+class BytesObject(ObjectLocation):
+    kind: Literal["bytes"]
+    hex: str
+
+
+class PointerTableObject(ObjectLocation):
+    kind: Literal["pointer_table"]
+    labels: list[str]
+
+
+class CallbackObject(ObjectLocation):
+    kind: Literal["callback"]
+    role: str
+    frame: int
+
+
+class VtableObject(ObjectLocation):
+    kind: Literal["vtable"]
+    layout: tuple[int, int, int]
+    roles: list[str]
+
+
+ControlObject = BytesObject | PointerTableObject | CallbackObject | VtableObject
+
+
+class ControlGrammar(TypedDict):
+    role: str
+    extent: int
+    frame: int
+    mapping: list[tuple[int, int, str]]
+    grammar: list[str]
+    widths: list[int]
+    objects: list[ControlObject]
+    data: list[tuple[int, str]]
+
+
+CONTROL_GRAMMARS: dict[str, ControlGrammar] = {
     "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field3_finish:166:40": {
         "role": "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field3_finish",
         "extent": 166,

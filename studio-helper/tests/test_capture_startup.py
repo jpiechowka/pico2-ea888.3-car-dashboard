@@ -1,29 +1,28 @@
 """Focused startup capture identity tests; no firmware compile or USB access."""
 
-import importlib.util
+import sys
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location(
-    "capture", ROOT / "firmware/scripts/capture_target_bench.py"
-)
-capture = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(capture)
+sys.path.insert(0, str(ROOT / "firmware/scripts"))
+import capture_target_bench as capture  # noqa: E402
 
 
 class StartupCapture(unittest.TestCase):
-    def test_exact_snapshot_and_generated_identity(self):
+    def test_exact_snapshot_and_generated_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "profile"
             source.write_bytes(bytes(16))
             destination = root / "capture"
             destination.mkdir()
-            environment = {}
+            environment: dict[str, str] = {}
             record = capture.freeze_startup(source, None, destination, environment)
+            if record is None:
+                self.fail("explicit profile must produce a record")
             build = root / "build"
             build.mkdir()
             out = build / "out"
@@ -43,7 +42,7 @@ class StartupCapture(unittest.TestCase):
             with self.assertRaises(ValueError):
                 capture.verify_startup(json.dumps(row), build, destination, record)
 
-    def test_size_bound_and_ambient_rejected(self):
+    def test_size_bound_and_ambient_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             profile = root / "profile"

@@ -51,6 +51,9 @@ pub struct Sdu<P> {
 
 impl<P> Sdu<P> {
     /// Create a new SDU using the allocated packet that has been pre-populated with data.
+    ///
+    /// `len` must not exceed the packet's byte capacity. Accessing an SDU created
+    /// with an excessive length panics, just like indexing beyond a slice.
     pub fn new(packet: P, len: usize) -> Self {
         Self {
             pdu: Pdu::new(packet, len),

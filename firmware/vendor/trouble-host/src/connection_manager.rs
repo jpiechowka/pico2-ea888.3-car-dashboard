@@ -69,21 +69,25 @@ impl PrepareWriteState {
     }
 
     fn queue(&mut self, handle: u16, offset: u16, value: &[u8]) -> Result<(), crate::att::AttErrorCode> {
-        if self.handle == 0 {
-            // Empty: start a new queued write
+        if handle == 0 {
+            return Err(crate::att::AttErrorCode::INVALID_HANDLE);
+        }
+        let empty = self.handle == 0;
+        if !empty && (self.handle != handle || self.offset.checked_add(self.len) != Some(offset)) {
+            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
+        }
+
+        let buf_offset = if empty { 0 } else { usize::from(self.len) };
+        if value.len() > self.buf.len() - buf_offset {
+            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
+        }
+        let end = buf_offset + value.len();
+        // Publish only a fully admitted chunk. A rejected first chunk must not
+        // reserve this handle or change the starting offset.
+        if empty {
             self.handle = handle;
             self.offset = offset;
-            self.len = 0;
-        } else if self.handle != handle || self.offset + self.len != offset {
-            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
         }
-
-        let buf_offset = (offset - self.offset) as usize;
-        let end = buf_offset + value.len();
-        if end > self.buf.len() {
-            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
-        }
-
         self.buf[buf_offset..end].copy_from_slice(value);
         self.len = end as u16;
         Ok(())
@@ -92,6 +96,47 @@ impl PrepareWriteState {
     fn clear(&mut self) {
         self.handle = 0;
         self.len = 0;
+    }
+}
+
+#[cfg(all(test, feature = "att-queued-writes"))]
+mod prepare_tests {
+    use super::PrepareWriteState;
+    use crate::att::AttErrorCode;
+
+    #[test]
+    fn rejected_first_chunk_preserves_empty_queue_and_later_valid_write() {
+        let mut queue = PrepareWriteState::new();
+        let oversized = [0u8; crate::config::PREPARE_WRITE_BUFFER_SIZE + 1];
+        assert_eq!(queue.queue(1, 7, &oversized), Err(AttErrorCode::PREPARE_QUEUE_FULL));
+        assert_eq!((queue.handle, queue.offset, queue.len), (0, 0, 0));
+        assert_eq!(queue.queue(2, 0, &[1, 2]), Ok(()));
+        assert_eq!(queue.queue(2, 2, &[3]), Ok(()));
+        assert_eq!(&queue.buf[..usize::from(queue.len)], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn offset_wrap_and_wrong_handle_preserve_queued_bytes() {
+        let mut queue = PrepareWriteState::new();
+        assert_eq!(queue.queue(1, u16::MAX, &[7]), Ok(()));
+        assert_eq!(queue.queue(1, 0, &[8]), Err(AttErrorCode::PREPARE_QUEUE_FULL));
+        assert_eq!(queue.queue(2, 0, &[9]), Err(AttErrorCode::PREPARE_QUEUE_FULL));
+        assert_eq!(
+            (queue.handle, queue.offset, queue.len, queue.buf[0]),
+            (1, u16::MAX, 1, 7)
+        );
+    }
+
+    #[test]
+    fn zero_handle_cannot_alias_an_empty_queue() {
+        let mut queue = PrepareWriteState::new();
+        assert_eq!(queue.queue(0, 0, &[1]), Err(AttErrorCode::INVALID_HANDLE));
+        assert_eq!((queue.handle, queue.len), (0, 0));
+        assert_eq!(queue.queue(1, 0, &[]), Ok(()));
+        assert_eq!(queue.queue(1, 0, &[2]), Ok(()));
+        assert_eq!(queue.len, 1);
+        queue.clear();
+        assert_eq!(queue.queue(2, 3, &[4]), Ok(()));
     }
 }
 
@@ -104,6 +149,14 @@ struct State {
 
 type EventChannel = Channel<NoopRawMutex, ConnectionEvent, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
 type GattChannel<P> = Channel<NoopRawMutex, Pdu<P>, { config::L2CAP_RX_QUEUE_SIZE }>;
+
+#[cfg(feature = "gatt")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AttTransaction {
+    Idle,
+    Pending(u8),
+    Received,
+}
 
 pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     state: RefCell<State>,
@@ -289,6 +342,62 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     #[cfg(feature = "gatt")]
+    pub(crate) fn acquire_gatt_client(&self, index: u8) -> Result<(), Error> {
+        let mut storage = self.connection_mut(index);
+        if storage.state != ConnectionState::Connected {
+            return Err(Error::Disconnected);
+        }
+        if storage.gatt_client_owned {
+            return Err(Error::Busy);
+        }
+        storage.gatt_client_owned = true;
+        Ok(())
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn release_gatt_client(&self, index: u8) {
+        self.connection_mut(index).gatt_client_owned = false;
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn begin_att_request(&self, index: u8, opcode: u8) -> Result<(), Error> {
+        let mut storage = self.connection_mut(index);
+        if storage.state != ConnectionState::Connected {
+            return Err(Error::Disconnected);
+        }
+        if storage.att_transaction != AttTransaction::Idle {
+            return Err(Error::Busy);
+        }
+        storage.att_transaction = AttTransaction::Pending(opcode);
+        Ok(())
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn finish_att_request(&self, index: u8) {
+        self.connection_mut(index).att_transaction = AttTransaction::Idle;
+    }
+
+    // Validate at ingress, not when the client task eventually polls its queue.
+    // The slot remains busy until the sole request owner consumes the response.
+    #[cfg(feature = "gatt")]
+    pub(crate) fn accept_att_response(&self, handle: ConnHandle, bytes: &[u8]) -> Result<(), Error> {
+        let mut storage = self.connection_by_handle_mut(handle).ok_or(Error::Disconnected)?;
+        let AttTransaction::Pending(request) = storage.att_transaction else {
+            return Err(Error::UnexpectedGattResponse);
+        };
+        let matches = match bytes {
+            [crate::att::ATT_ERROR_RSP, opcode, _, _, _] => *opcode == request,
+            [opcode, ..] => request.checked_add(1) == Some(*opcode),
+            [] => false,
+        };
+        if !matches {
+            return Err(Error::UnexpectedGattResponse);
+        }
+        storage.att_transaction = AttTransaction::Received;
+        Ok(())
+    }
+
+    #[cfg(feature = "gatt")]
     pub(crate) async fn next_gatt_client(&self, index: u8) -> Option<Pdu<P::Packet>> {
         poll_fn(|cx| {
             let mut connections = self.connections.borrow_mut();
@@ -313,7 +422,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         poll_fn(|cx| {
             let mut connections = self.connections.borrow_mut();
             let storage = &mut connections[index as usize];
-            if storage.state == ConnectionState::Disconnected {
+            if storage.state != ConnectionState::Connected {
                 return Poll::Ready(Err(Error::Disconnected));
             }
             if !storage.indication_in_flight {
@@ -341,12 +450,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         poll_fn(|cx| {
             let mut connections = self.connections.borrow_mut();
             let storage = &mut connections[index as usize];
+            if storage.state != ConnectionState::Connected {
+                return Poll::Ready(Err(Error::Disconnected));
+            }
             if storage.indication_cfm_received {
                 storage.indication_cfm_received = false;
                 return Poll::Ready(Ok(()));
-            }
-            if storage.state == ConnectionState::Disconnected {
-                return Poll::Ready(Err(Error::Disconnected));
             }
             storage.indication_cfm_waker.register(cx.waker());
             Poll::Pending
@@ -357,8 +466,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "gatt")]
     pub(crate) fn signal_indication_confirmation(&self, h: ConnHandle) {
         if let Some(mut entry) = self.connection_by_handle_mut(h) {
-            entry.indication_cfm_received = true;
-            entry.indication_cfm_waker.wake();
+            if entry.state == ConnectionState::Connected && entry.indication_in_flight {
+                entry.indication_cfm_received = true;
+                entry.indication_cfm_waker.wake();
+            }
         }
     }
 
@@ -596,6 +707,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.att_mtu = None;
                 storage.disconnect_reason = None;
                 storage.local_disconnect_error = None;
+                #[cfg(feature = "gatt")]
+                {
+                    storage.gatt_client_owned = false;
+                    storage.att_transaction = AttTransaction::Idle;
+                }
                 storage.handle = handle;
                 #[cfg(feature = "security")]
                 let identity = self
@@ -1278,6 +1394,10 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "gatt")]
     pub(crate) gatt_client_waker: WakerRegistration,
     #[cfg(feature = "gatt")]
+    gatt_client_owned: bool,
+    #[cfg(feature = "gatt")]
+    att_transaction: AttTransaction,
+    #[cfg(feature = "gatt")]
     pub(crate) indication_in_flight: bool,
     #[cfg(feature = "gatt")]
     pub(crate) indication_slot_waker: WakerRegistration,
@@ -1397,6 +1517,10 @@ impl<P> ConnectionStorage<P> {
             gatt_client: GattChannel::new(),
             #[cfg(feature = "gatt")]
             gatt_client_waker: WakerRegistration::new(),
+            #[cfg(feature = "gatt")]
+            gatt_client_owned: false,
+            #[cfg(feature = "gatt")]
+            att_transaction: AttTransaction::Idle,
             #[cfg(feature = "gatt")]
             indication_in_flight: false,
             #[cfg(feature = "gatt")]
@@ -1594,6 +1718,7 @@ pub(crate) mod tests {
     pub const ADDR_2: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
 
     #[test]
+    #[cfg(feature = "gatt")]
     fn local_disconnect_stops_queued_gatt_before_controller_ack() {
         let mgr = setup();
         let handle = ConnHandle::new(0);

@@ -1,10 +1,30 @@
 """Finite numeric formatting witnesses; caller value/options/sink closure required."""
 
 import re
+from collections.abc import Sequence
+from typing import TypedDict
 from config_numeric_contracts import NUMERIC_VARIANTS
-from config_stack import canonical_symbol, typed_function
-from llvm_stack import mapping_ranges
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
+from llvm_stack import Instruction, mapping_ranges
 from validation import require
+
+
+NumericTransfer = tuple[int, str, int | None, str, int | None]
+
+
+class NumericRecord(TypedDict):
+    role: str
+    kind: str
+    function: int
+    extent: int
+    frame: int
+    objects: dict[str, int]
+    transfers: tuple[NumericTransfer, ...]
+    default_sites: tuple[int, ...]
+    excluded_sites: tuple[int, ...]
+    requires_options: tuple[int, int, int]
+    requires_originating_value_and_live_sink: bool
+
 
 NUMERIC_OBJECTS = {
     "decimal_pairs": b"".join(f"{i:02}".encode() for i in range(100)),
@@ -38,7 +58,9 @@ DEFAULT_TRANSFERS = {
 }
 
 
-def numeric_format(objects, name, instructions):
+def numeric_format(
+    objects: DiagnosticObjects, name: str, instructions: Sequence[Instruction]
+) -> NumericRecord:
     """Check complete emitted bodies, including excluded custom option paths.
 
     No numeric path is admitted merely by this result: its caller must prove
@@ -63,7 +85,7 @@ def numeric_format(objects, name, instructions):
     code = {a for lo, hi, k in mapping if k == "t" for a in range(lo, hi)}
     data = {a for lo, hi, k in mapping if k == "d" for a in range(lo, hi)}
     instructions_grammar = []
-    data_covered = set()
+    data_covered: set[int] = set()
     for line in grammar:
         offset = int(line.split(" ", 1)[0], 16)
         if " DATA " in line:
@@ -82,9 +104,9 @@ def numeric_format(objects, name, instructions):
         data_covered == data and len(rows) == len(instructions_grammar),
         "numeric instruction/data inventory differs",
     )
-    covered = set()
-    pairs = {}
-    transfers = []
+    covered: set[int] = set()
+    pairs: dict[str, dict[str, int]] = {}
+    transfers: list[NumericTransfer] = []
     for record, line in zip(rows, instructions_grammar):
         offset = int(line.split(" ", 1)[0], 16)
         mnemonic, expected = line.split(" ", 1)[1].split("\t", 1)
@@ -108,10 +130,8 @@ def numeric_format(objects, name, instructions):
         external = re.search(r"@role:(\S+)", expected)
         if producer:
             match = re.fullmatch(r"(r[0-9]+|lr), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                match is not None and int(match[2], 0) <= 0xFFFF,
-                "invalid numeric readonly producer",
-            )
+            if match is None or int(match[2], 0) > 0xFFFF:
+                raise AssertionError("invalid numeric readonly producer")
             key = producer[1]
             part = producer[2]
             require(part not in pairs.setdefault(key, {}), "ambiguous numeric readonly producer")
@@ -119,14 +139,13 @@ def numeric_format(objects, name, instructions):
             actual = match[1] + ", " + producer[0]
         elif local:
             target = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                target is not None and int(target[1], 16) == start + int(local[1], 16),
-                "numeric local target differs",
-            )
+            if target is None or int(target[1], 16) != start + int(local[1], 16):
+                raise AssertionError("numeric local target differs")
             actual = actual[: target.start()] + local[0]
         elif external:
             target = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(target is not None, "unresolved numeric ordinary transfer")
+            if target is None:
+                raise AssertionError("unresolved numeric ordinary transfer")
             address = int(target[1], 16)
             _, child_frame, _ = typed_function(objects, address, external[1])
             transfers.append((offset, mnemonic, address, external[1], child_frame))
@@ -139,9 +158,10 @@ def numeric_format(objects, name, instructions):
     for key, pair in pairs.items():
         require(set(pair) == {"low", "high"}, "incomplete numeric readonly producer")
         address = pair["low"] | (pair["high"] << 16)
-        expected = NUMERIC_OBJECTS[key]
+        expected_bytes = NUMERIC_OBJECTS[key]
         require(
-            objects.read_only(address, len(expected)) == expected, "numeric table/string differs"
+            objects.read_only(address, len(expected_bytes)) == expected_bytes,
+            "numeric table/string differs",
         )
         resolved[key] = address
     active = DEFAULT_TRANSFERS[(kind, extent)]

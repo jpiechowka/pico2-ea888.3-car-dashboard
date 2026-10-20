@@ -73,7 +73,7 @@ pub const IMAGE_TYPE_EXE_TYPE_SECURITY_UNSPECIFIED: u16 = 0x0000;
 /// A [`ITEM_1BS_IMAGE_TYPE`] value bitmask to mark the CPU security mode as Non Secure
 pub const IMAGE_TYPE_EXE_TYPE_SECURITY_NS: u16 = 0x0010;
 
-/// A [`ITEM_1BS_IMAGE_TYPE`] value bitmask to mark the CPU security mode as Non Secure
+/// A [`ITEM_1BS_IMAGE_TYPE`] value bitmask to mark the CPU security mode as Secure
 pub const IMAGE_TYPE_EXE_TYPE_SECURITY_S: u16 = 0x0020;
 
 /// A [`ITEM_1BS_IMAGE_TYPE`] value bitmask to mark the CPU type as Arm
@@ -401,7 +401,10 @@ impl Partition {
     }
 
     /// Set the name of the partition
+    ///
+    /// Panics if the UTF-8 name exceeds 127 bytes.
     pub const fn with_name(self, name: &str) -> Self {
+        core::assert!(name.len() <= 127);
         let mut new_name = [0u8; 128];
         let name = name.as_bytes();
         let mut idx = 0;
@@ -419,9 +422,9 @@ impl Partition {
 
     /// Set the extra families for the partition.
     ///
-    /// You can supply up to four.
+    /// You can supply up to three, as encoded by the ROM's two-bit count.
     pub const fn with_extra_families(self, extra_families: &[u32]) -> Self {
-        core::assert!(extra_families.len() <= 4);
+        core::assert!(extra_families.len() <= 3);
         let mut new_extra_families = [0u32; 4];
         let mut idx = 0;
         while idx < extra_families.len() {
@@ -659,17 +662,20 @@ impl PartitionTableBlock {
             }
 
             // e. Name
-            let mut name_idx = 0;
-            while name_idx < partitions[partition_no].name[0] as usize {
-                let name_chunk = [
-                    partitions[partition_no].name[name_idx],
-                    partitions[partition_no].name[name_idx + 1],
-                    partitions[partition_no].name[name_idx + 2],
-                    partitions[partition_no].name[name_idx + 3],
-                ];
-                new_table.contents[idx] = u32::from_le_bytes(name_chunk);
-                name_idx += 4;
-                idx += 1;
+            if partitions[partition_no].permissions_and_flags & Partition::FLAGS_HAS_NAME != 0 {
+                let mut name_idx = 0;
+                // The stored name includes its length byte and zero padding.
+                while name_idx <= partitions[partition_no].name[0] as usize {
+                    let name_chunk = [
+                        partitions[partition_no].name[name_idx],
+                        partitions[partition_no].name[name_idx + 1],
+                        partitions[partition_no].name[name_idx + 2],
+                        partitions[partition_no].name[name_idx + 3],
+                    ];
+                    new_table.contents[idx] = u32::from_le_bytes(name_chunk);
+                    name_idx += 4;
+                    idx += 1;
+                }
             }
 
             partition_no += 1;
@@ -950,12 +956,58 @@ pub const fn item_entry_point(entry_point: u32, initial_sp: u32) -> [u32; 3] {
 /// The delta is the number of bytes into the image that 0x10000000 should
 /// be mapped.
 pub const fn item_rolling_window(delta: u32) -> [u32; 2] {
-    [item_generic_1bs(0, 3, ITEM_1BS_ROLLING_WINDOW_DELTA), delta]
+    [item_generic_1bs(0, 2, ITEM_1BS_ROLLING_WINDOW_DELTA), delta]
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn names_preserve_length_prefix_and_word_boundary_bytes() {
+        let bytes = [b'n'; 127];
+        for len in [0, 1, 3, 4, 7, 8, 126, 127] {
+            let name = core::str::from_utf8(&bytes[..len]).unwrap();
+            let table = PartitionTableBlock::new()
+                .add_partition_item(UnpartitionedSpace::new(), &[Partition::new(0, 1).with_name(name)]);
+            let name_words = (len + 1).div_ceil(4);
+            assert_eq!(table.num_items, 4 + name_words, "name length {len}");
+            for idx in 0..len + 1 {
+                let byte = table.contents[5 + idx / 4].to_le_bytes()[idx % 4];
+                assert_eq!(byte, if idx == 0 { len as u8 } else { b'n' });
+            }
+            assert_eq!(table.contents[5 + name_words + 2], BLOCK_MARKER_END);
+        }
+        let unnamed = PartitionTableBlock::new()
+            .add_partition_item(UnpartitionedSpace::new(), &[Partition::new(0, 1)]);
+        assert_eq!(unnamed.num_items, 4);
+    }
+
+    #[test]
+    #[should_panic]
+    fn four_extra_families_cannot_fit_the_rom_count_field() {
+        let _ = Partition::new(0, 1).with_extra_families(&[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn three_extra_families_and_replacement_preserve_other_flags() {
+        let part = Partition::new(0, 1)
+            .with_permission(Permission::SecureRead)
+            .with_extra_families(&[1, 2, 3]);
+        assert_eq!((part.permissions_and_flags >> 7) & 3, 3);
+        let part = part.with_extra_families(&[9]);
+        assert_eq!(part.get_extra_families(), &[9]);
+        assert_eq!((part.permissions_and_flags >> 7) & 3, 1);
+        assert!(part.has_permission(Permission::SecureRead));
+        assert!(!part.has_flag(PartitionFlag::NotBootableArm));
+    }
+
+    #[test]
+    fn rolling_window_item_size_matches_its_two_words() {
+        let item = item_rolling_window(0x1000);
+        assert_eq!((item[0] >> 8) & 0xff, item.len() as u32);
+        assert_eq!(item[1], 0x1000);
+    }
 
     /// I used this JSON, with `picotool partition create`:
     ///

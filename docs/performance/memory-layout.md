@@ -1,5 +1,26 @@
 # Linked RAM boundaries and sampled stack depth
 
+The [20 October diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+records current measurement semantics and checked images. Dated tables below
+remain evidence for their exact earlier artifacts.
+
+## Current linker conventions
+
+Both active ARM maps align `_stext` to the actual `.text` section alignment,
+including over-aligned sections. The scratch regions use upstream RP2350 names
+`SRAM8` and `SRAM9`, at `0x20080000` and `0x20081000`, each 4096 bytes.
+This naming correction changes no address, allocation or diagnostic denominator:
+the main arena remains 512 KiB. The inactive copied RISC-V map uses the same
+names without implying supported RISC-V firmware.
+
+Real ARM link regressions cover 16/32/256-byte text alignment in both active
+maps, exact scratch-bank origins and sizes, and independent one-byte overflow
+rejection in each bank. The [complete upstream comparison](../dependencies/full-code-audit-2026-10-20.md)
+accounts for the optional whole-program RAM execution mode and preserves this
+project's XIP, boot metadata, settings and capture reservations.
+
+## Original linked-boundary repair
+
 The extended review found a linker integration regression after upgrading to
 `cortex-m-rt` 0.7.7. Its default `__sheap` and `_stack_end` definitions use the
 location counter after `.uninit`. Our RP2350 `.end_block` insertion switches
@@ -141,6 +162,17 @@ The historical trace plus 300 MHz diagnostic build used 373264 bytes of static R
 left 151024 bytes before the core 0 stack top. These numbers vary with features
 and source changes. They are allocation evidence, not measured worst-case
 stack use. The ELF check and linker assertions are the continuing gates.
+
+### Current audit images (2026-10-20)
+
+The full-code/diagnostics audit's stock and 280/70 traced BLE dashboard images
+allocate 458520 bytes and leave 65768 bytes before the core-0 stack top. This
+passes the unchanged 65536-byte geometry floor by **232 bytes**. The floor is
+not a physical stack measurement or an additional free-allocation budget.
+The corresponding standalone probe images allocate 406432 bytes and leave
+117856 bytes. Both retain two 153600-byte buffers and the 32768-byte core-1
+stack. Source, compiler, features, named stack bounds and exact artifact hashes
+are recorded in the [current image evidence](../validation/full-code-audit-2026-10-20.md#final-linked-images).
 
 ### BLE prototype integration evidence (2026-10-18)
 

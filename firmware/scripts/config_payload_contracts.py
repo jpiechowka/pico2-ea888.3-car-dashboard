@@ -6,7 +6,45 @@ source/bytes/ABI require full review, mutations and varied links. No automatic
 grammar learning, scalar-domain widening, budget or hardware claim.
 """
 
-PAYLOAD_ROLES = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+
+
+class LiteralObject(TypedDict):
+    kind: Literal["literal"]
+    bytes: str
+    length: int
+
+
+class EnumLengthsObject(TypedDict):
+    kind: Literal["enum_lengths"]
+    enum: str
+    lengths: list[int]
+
+
+class EnumPointersObject(TypedDict):
+    kind: Literal["enum_pointers"]
+    enum: str
+    labels: list[str]
+
+
+class DebugVtableObject(TypedDict):
+    kind: Literal["debug_vtable"]
+    layout: list[int]
+    roles: list[str]
+
+
+class RawDebugObject(TypedDict):
+    kind: Literal["raw_debug_callback"]
+    roles: list[str]
+
+
+PayloadObject = (
+    LiteralObject | EnumLengthsObject | EnumPointersObject | DebugVtableObject | RawDebugObject
+)
+
+
+PAYLOAD_ROLES: dict[str, list[str]] = {
     "_RNvXs1g_NtCs_4core3fmtRINtNtB8_6option6OptionNtNtCs_16dashboard_config5model7ChannelENtB6_5Debug3fmtCs_5pico2": [
         "payload_5e6aed46ab8c775e"
     ],
@@ -74,7 +112,7 @@ PAYLOAD_ROLES = {
     "@outline:utf8_struct2_transport": ["payload_c6dfd6e2f0100439"],
 }
 
-PAYLOAD_GRAMMARS = {
+PAYLOAD_GRAMMARS: dict[str, BodyContract[PayloadObject]] = {
     "payload_5e6aed46ab8c775e": {
         "extent": 70,
         "frame": 16,

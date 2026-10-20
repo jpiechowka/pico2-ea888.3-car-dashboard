@@ -1,17 +1,27 @@
 """Independent practical BLE utility admission. Never admits Studio artifacts."""
 
 import argparse
+from collections.abc import Mapping
 import hashlib
 import json
 import re
 from pathlib import Path
+from typing import TypedDict
 
 from check_memory_layout import geometry
-from check_program_image import inspect_program, read_uf2, verify_uf2
+from check_program_image import (
+    ProgramMap,
+    ProgramRecord,
+    Uf2Record,
+    inspect_program,
+    read_uf2,
+    verify_uf2,
+)
 from check_stack_budget import frames, task_frames
 from check_flash_lockout import check as check_flash_lockout
-from elf_image import ElfImage
+from elf_image import ElfImage, InspectableImage
 from validation import require
+from script_values import integer_value, object_fields, string_value
 
 GATE = "ble_probe_practical_image"
 FLASH_START = 0x10000000
@@ -40,11 +50,63 @@ FILES = (
 )
 
 
-def sha(data):
+class IdentityRecord(TypedDict):
+    digest: str
+    available: bool
+    snapshot_bound: bool
+    physical_address: int
+    bytes: int
+
+
+class ReservationRecord(TypedDict):
+    captures_start: int
+    captures_end: int
+    bytes: int
+    settings_start: int
+    policy: str
+
+
+class ProbeStackRecord(TypedDict):
+    method: str
+    bounds: dict[str, int]
+    core0_reserve: int
+    core1_bytes: int
+    core1_reserve: int
+    emitted_frame_total: int
+    nonradio_frame_total: int
+    largest_emitted_frame: int
+
+
+class ProbeLayoutRecord(TypedDict):
+    schema: int
+    gate: str
+    status: str
+    hardware_qualified: bool
+    complete_instruction_proof: bool
+    source_bound: bool
+    uf2_checked: bool
+    elf_sha256: str
+    static_ram_bytes: int
+    headroom: int
+    objects: dict[str, int]
+    stack: ProbeStackRecord
+    program: ProgramRecord
+    capture_reservation: ReservationRecord
+    source_identity: IdentityRecord
+    reviewed_flash_lockout: bool
+
+
+class ProbeImageRecord(ProbeLayoutRecord):
+    manifest_sha256: str
+    uf2: Uf2Record
+    limitations: list[str]
+
+
+def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def source_hashes(repo):
+def source_hashes(repo: Path) -> dict[str, str]:
     paths = {repo / name for name in FILES if (repo / name).is_file()}
     for name in ROOTS:
         paths.update(
@@ -56,24 +118,27 @@ def source_hashes(repo):
     return {path.relative_to(repo).as_posix(): sha(path.read_bytes()) for path in sorted(paths)}
 
 
-def check_sources(repo, expected):
+def check_sources(repo: Path, expected: object) -> None:
     require(type(expected) is dict and bool(expected), "missing source snapshot")
     require(source_hashes(repo) == expected, "source changed since build snapshot")
 
 
-def source_digest(sources):
+def _source_inventory(sources: object) -> dict[str, str]:
+    fields = object_fields(sources, "source inventory bound")
+    require(0 < len(fields) <= 20000, "source inventory bound")
+    result: dict[str, str] = {}
+    for path, member in fields.items():
+        digest = string_value(member, "invalid source inventory entry")
+        require(
+            bool(path) and re.fullmatch(r"[0-9a-f]{64}", digest), "invalid source inventory entry"
+        )
+        result[path] = digest
+    return result
+
+
+def source_digest(sources: object) -> str:
     """Canonical source inventory identity, not a compiler-input closure proof."""
-    require(type(sources) is dict and 0 < len(sources) <= 20000, "source inventory bound")
-    require(
-        all(
-            type(path) is str
-            and bool(path)
-            and type(digest) is str
-            and re.fullmatch(r"[0-9a-f]{64}", digest)
-            for path, digest in sources.items()
-        ),
-        "invalid source inventory entry",
-    )
+    sources = _source_inventory(sources)
     return sha(
         json.dumps(sources, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
             "utf-8"
@@ -81,7 +146,7 @@ def source_digest(sources):
     )
 
 
-def linked_identity(elf, expected=None):
+def linked_identity(elf: InspectableImage, expected: str | None = None) -> IdentityRecord:
     sections = [
         (index, section)
         for index, name, section in elf.section_entries
@@ -137,7 +202,7 @@ def linked_identity(elf, expected=None):
     }
 
 
-def capture_reservation(elf, mapping):
+def capture_reservation(elf: InspectableImage, mapping: ProgramMap) -> ReservationRecord:
     expected = {
         "__captures_start": CAPTURES_START,
         "__captures_end": CAPTURES_END,
@@ -151,7 +216,7 @@ def capture_reservation(elf, mapping):
             "capture/settings boundary symbol " + name,
         )
 
-    def below_capture(start, end):
+    def below_capture(start: int, end: int) -> None:
         require(
             FLASH_START <= start < end <= CAPTURES_START,
             "program range overlaps captures or leaves flash",
@@ -166,8 +231,8 @@ def capture_reservation(elf, mapping):
             below_capture(physical, physical + memsz)
     for address, payload in mapping["fragments"]:
         below_capture(address, address + len(payload))
-    for kind in ("erase_ranges", "verification_ranges"):
-        for start, end in mapping[kind]:
+    for ranges in (mapping["erase_ranges"], mapping["verification_ranges"]):
+        for start, end in ranges:
             below_capture(start, end)
     for address, page in mapping["pages"].items():
         require(address % 256 == 0 and len(page) == 256, "invalid program UF2 page")
@@ -181,7 +246,7 @@ def capture_reservation(elf, mapping):
     }
 
 
-def objects(elf):
+def objects(elf: InspectableImage) -> dict[str, int]:
     expected = {
         "BLE_PROBE_FRAMEBUFFER_0": 153600,
         "BLE_PROBE_FRAMEBUFFER_1": 153600,
@@ -200,7 +265,7 @@ def objects(elf):
     return expected
 
 
-def stack_budgets(bounds, headroom):
+def stack_budgets(bounds: Mapping[str, int], headroom: int) -> None:
     require(set(bounds) == {"boot", "core0", "radio", "render"}, "stack path set")
     require(all(type(v) is int and v >= 0 for v in bounds.values()), "stack bounds")
     require(headroom >= 65536, "core0 headroom below 64 KiB")
@@ -209,12 +274,10 @@ def stack_budgets(bounds, headroom):
     require(bounds["render"] + 4096 <= 32768, "core1 render reserve")
 
 
-def stack_check(elf, headroom):
+def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
     section = elf.named.get(".stack_sizes")
-    require(
-        section is not None and section[1] == 1 and not section[2] & 2,
-        "missing/noninformational stack metadata",
-    )
+    if section is None or section[1] != 1 or section[2] & 2:
+        raise AssertionError("missing/noninformational stack metadata")
     for kind, offset, _, _, size, _, _, _ in elf.segments:
         if kind == 1 and size:
             require(
@@ -287,7 +350,7 @@ def stack_check(elf, headroom):
     }
 
 
-def inspect_elf(elf):
+def inspect_elf(elf: InspectableImage) -> ProbeLayoutRecord:
     """CI layout stage only; full capture also requires sources and UF2 equality."""
     static, headroom = geometry(elf)
     mapping, program = inspect_program(elf)
@@ -314,11 +377,21 @@ def inspect_elf(elf):
     }
 
 
-def check(elf_path, uf2_path, manifest_path, repo):
-    raw = manifest_path.read_bytes()
+def check(elf_path: Path, uf2_path: Path, manifest_path: Path, repo: Path) -> ProbeImageRecord:
+    with manifest_path.open("rb") as stream:
+        raw = stream.read(8 * 1024 * 1024 + 1)
     require(len(raw) <= 8 * 1024 * 1024, "source manifest bound")
-    manifest = json.loads(raw)
-    require(manifest.get("gate") == GATE and manifest.get("schema") == 1, "utility manifest schema")
+    manifest = object_fields(json.loads(raw), "utility manifest schema")
+    require(
+        manifest.get("gate") == GATE
+        and integer_value(manifest.get("schema"), "utility manifest schema") == 1,
+        "utility manifest schema",
+    )
+    require(
+        {"sources", "source_digest", "target", "target_cpu", "elf_sha256", "uf2_sha256"}
+        <= manifest.keys(),
+        "utility manifest required fields",
+    )
     check_sources(repo, manifest["sources"])
     digest = source_digest(manifest["sources"])
     require(manifest.get("source_digest") == digest, "source manifest digest mismatch")
@@ -365,7 +438,7 @@ def check(elf_path, uf2_path, manifest_path, repo):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("uf2", type=Path, nargs="?")

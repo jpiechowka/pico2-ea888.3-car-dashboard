@@ -11,7 +11,7 @@ from browser_process import OwnedProcess
 
 
 class OwnershipTests(unittest.TestCase):
-    def exercise(self, root_exits):
+    def exercise(self, root_exits: bool) -> None:
         with tempfile.TemporaryDirectory(prefix="studio-process-test-") as folder:
             marker = pathlib.Path(folder) / "heartbeat"
             child = (
@@ -47,18 +47,18 @@ class OwnershipTests(unittest.TestCase):
                 self.assertIsNotNone(process.returncode)
                 process.cleanup()  # Idempotent; cannot target a later reused PID.
 
-    def test_root_exit_does_not_release_surviving_child(self):
+    def test_root_exit_does_not_release_surviving_child(self) -> None:
         self.exercise(True)
 
-    def test_deadline_stops_root_and_child(self):
+    def test_deadline_stops_root_and_child(self) -> None:
         self.exercise(False)
 
-    def test_failed_spawn_is_reported(self):
+    def test_failed_spawn_is_reported(self) -> None:
         with tempfile.TemporaryFile() as log:
             with self.assertRaises(OSError):
                 OwnedProcess(["nonexistent-studio-test-executable-1739"], stdout=log, stderr=log)
 
-    def test_cleanup_does_not_touch_another_owned_tree(self):
+    def test_cleanup_does_not_touch_another_owned_tree(self) -> None:
         with tempfile.TemporaryFile() as log:
             with OwnedProcess(
                 [sys.executable, "-c", "import time; time.sleep(60)"], stdout=log, stderr=log

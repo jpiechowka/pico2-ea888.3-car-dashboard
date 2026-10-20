@@ -18,6 +18,8 @@ pub enum Error {
     Abort(AbortReason),
     /// User passed in a response buffer that was 0 length
     InvalidResponseBufferLength,
+    /// User passed in a command buffer that was 0 length.
+    InvalidListenBufferLength,
     /// The response buffer length was too short to contain the message
     ///
     /// The length parameter will always be the length of the buffer, and is
@@ -28,6 +30,50 @@ pub enum Error {
     /// The length parameter will always be the length of the buffer, and is
     /// provided as a convenience for matching alongside `Command::GeneralCall`.
     PartialGeneralCall(usize),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::{future::Future, pin::Pin, task::Context};
+
+    #[test]
+    fn empty_listen_is_rejected_without_consuming_pending_data() {
+        let mut driver = I2cSlave::<crate::peripherals::I2C0> {
+            phantom: PhantomData,
+            pending_byte: Some(0xa5),
+            config: Config::default(),
+        };
+        let mut empty = [];
+        let mut cx = Context::from_waker(core::task::Waker::noop());
+        {
+            let mut future = core::pin::pin!(driver.listen(&mut empty));
+            assert_eq!(
+                Pin::as_mut(&mut future).poll(&mut cx),
+                Poll::Ready(Err(Error::InvalidListenBufferLength))
+            );
+        }
+        assert_eq!(driver.pending_byte, Some(0xa5));
+    }
+
+    #[test]
+    fn pending_byte_survives_empty_or_full_destination() {
+        let mut driver = I2cSlave::<crate::peripherals::I2C0> {
+            phantom: PhantomData,
+            pending_byte: Some(0xa5),
+            config: Config::default(),
+        };
+        driver.drain_fifo(&mut [], &mut 0);
+        assert_eq!(driver.pending_byte, Some(0xa5));
+        let mut buffer = [0u8];
+        let mut offset = 1;
+        driver.drain_fifo(&mut buffer, &mut offset);
+        assert_eq!(driver.pending_byte, Some(0xa5));
+        assert_eq!(buffer, [0]);
+        offset = 0;
+        driver.drain_fifo(&mut buffer, &mut offset);
+        assert_eq!((buffer, offset, driver.pending_byte), ([0xa5], 1, None));
+    }
 }
 
 /// Received command
@@ -125,6 +171,7 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
     /// You can recover the bus by calling this function, but doing so will almost certainly cause
     /// an i/o error in the master.
     pub fn reset(&mut self) {
+        self.pending_byte = None;
         let p = T::regs();
 
         let reset = T::reset();
@@ -195,6 +242,9 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
 
     #[inline(always)]
     fn drain_fifo(&mut self, buffer: &mut [u8], offset: &mut usize) {
+        if *offset >= buffer.len() {
+            return;
+        }
         let p = T::regs();
 
         if let Some(pending) = self.pending_byte.take() {
@@ -227,6 +277,9 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
     /// Wait asynchronously for commands from an I2C master.
     /// `buffer` is provided in case master does a 'write', 'write read', or 'general call' and is unused for 'read'.
     pub async fn listen(&mut self, buffer: &mut [u8]) -> Result<Command, Error> {
+        if buffer.is_empty() {
+            return Err(Error::InvalidListenBufferLength);
+        }
         let p = T::regs();
 
         // set rx fifo watermark to 1 byte

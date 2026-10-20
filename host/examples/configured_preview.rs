@@ -22,6 +22,11 @@ fn main() {
         .get(2)
         .map_or(config.config().boot_view, |id| id.to_str().unwrap().parse().unwrap());
     let layout = Layout::new(&config, view, false).expect("unknown configured view ID");
+    let geometry = config
+        .config()
+        .view_orientation(view)
+        .expect("validated view")
+        .geometry();
     let mut model = AcquisitionModel::demo_configured(&config);
     let mut presentation = PresentationState::new();
     for n in 0..60 {
@@ -46,9 +51,9 @@ fn main() {
         overlay: None,
     };
     let mut frame = AlignedFrame::boxed();
-    scene.draw_full(&mut St7789Renderer::new(&mut frame.0));
+    scene.draw_full(&mut St7789Renderer::with_geometry(&mut frame.0, geometry));
     let mut file = std::fs::File::create(&args[0]).unwrap();
-    file.write_all(b"P6\n320 240\n255\n").unwrap();
+    write!(file, "P6\n{} {}\n255\n", geometry.width(), geometry.height()).unwrap();
     for pixel in frame.0.as_chunks::<2>().0 {
         let rgb = u16::from_be_bytes([pixel[0], pixel[1]]);
         let (r, g, b) = ((rgb >> 11) as u8, ((rgb >> 5) & 63) as u8, (rgb & 31) as u8);

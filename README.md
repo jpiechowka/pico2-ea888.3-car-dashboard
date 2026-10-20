@@ -465,6 +465,16 @@ counter records observed backpressure, `Flush` becomes `--` when idle, and UI-wo
 cycles exclude cooperative yields. Invalid stack readings and unavailable cycle
 counters display `--`. [Measurement definitions and audit](docs/performance/diagnostic-measurements.md).
 
+The [detailed 20 October diagnostics re-audit](docs/validation/diagnostics-reaudit-2026-10-20.md)
+traces every field through its producer, sampling, handoff and rendering.
+UI work and cycles now share one completed observation; invalid SPI metadata
+stays unavailable. Probe read durations exclude later publication waits, and
+future scan-error timestamps cannot become a valid saved observation or a false
+zero age. Synthetic Studio FPS displays `--` because it has no Pico transfer measurement.
+The audit's traced BLE dashboard images retain 65,768 bytes of core-0 headroom,
+232 bytes above the unchanged admission floor; the probe retains 117,856 bytes.
+[Exact images, stack assumptions and verification](docs/validation/full-code-audit-2026-10-20.md#final-linked-images).
+
 The [2026-10-19 audit and validation record](docs/validation/probe-offline-audit-2026-10-19.md)
 maps fixes to both firmware routes, records tests and linked memory, and separates
 remaining hardware checks from software results.
@@ -512,21 +522,33 @@ format and state tests, native recovery, ten-theme visual checks and final image
 limits. CI runs the browser suite in an isolated profile and keeps strict nightly
 Clippy. The instruction-level proof remains separate unfinished research.
 
-Maintained Python is formatted/linted by Ruff and selected production boundaries
-are checked with strict Mypy on Windows/Ubuntu with Python 3.11 and 3.15. Install
-the hash-locked development tools in a virtual environment:
+All tracked Python, including tests, the vendored generator and deferred
+instruction research, is formatted/linted by Ruff and checked with strict Mypy.
+CI covers Windows/Ubuntu with Python 3.11 and 3.15. The shared checker discovers
+the complete inventory and rejects missing or escaping paths. Install the
+hash-locked development tools in a virtual environment:
 
 ```text
 python -m pip install --require-hashes -r python-quality-requirements.txt
-python -m ruff check .
-python -m ruff format --check .
-python -m mypy
+python host/scripts/check_python.py lint
+python host/scripts/check_python.py format
+python host/scripts/check_python.py mypy
 ```
 
 The [maintenance audit](docs/validation/maintenance-2026-10-18.md) records storage,
 process, concurrency and failure-path fixes, source coverage and the remaining
 physical-validation boundaries. Vendor source/archive verification now uses
 the typed, bounded [Rust verifier](crates/dashboard-provenance/README.md).
+
+The [20 October full-code audit](docs/validation/full-code-audit-2026-10-20.md)
+records shared runtime, vendor, tool and test corrections. The
+[copied-input review](docs/dependencies/full-code-audit-2026-10-20.md) retains
+Embassy RP 0.10.0 with reviewed fixes and upgrades both `memory.x` text alignments
+and upstream scratch-bank names
+without changing the settings or probe-capture reservations. Bluetooth firmware
+is pinned to the upstream 0065 Data Length Extension fix; Wi-Fi and Pico 2 W NVRAM
+bytes are unchanged. Source tests and linked-image checks do not establish
+physical radio behavior or diagnose the earlier watchdog resets.
 
 The [overhaul acceptance record](docs/validation/overhaul-2026-10-11.md) maps
 the implemented stages and review corrections to local test/build evidence and
@@ -619,8 +641,9 @@ The pass preserves all gauges, animations, controls and validation gates.
 - **BLE RAM:** exact compact histograms recover 7,344 bytes. Bluetooth-only HCI
   and unused Wi-Fi payload bounds recover another 8,916 bytes before metadata.
   All HCI queue slots, ATT capacity and dashboard features remain. Traced stock
-  and 280/70 BLE images pass the unchanged memory gates with 66,120 bytes before
-  the core 0 stack top. [Bounds and measured tradeoffs](docs/performance/memory-layout.md#ble-prototype-integration-evidence-2026-10-18).
+  and 280/70 BLE images at that delivery passed the unchanged memory gates with
+  66,120 bytes before the core 0 stack top. Later images require their own
+  measurements. [Bounds and measured tradeoffs](docs/performance/memory-layout.md#ble-prototype-integration-evidence-2026-10-18).
 - **Native orientation:** both shapes render directly into the existing buffers,
   with no transpose or additional framebuffer. A
   [matched landscape comparison](docs/performance/orientation-landscape-2026-10-17.md)

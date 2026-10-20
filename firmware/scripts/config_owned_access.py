@@ -8,6 +8,11 @@ requirements remain unresolved and cannot be converted by a JSON consumer.
 """
 
 from dataclasses import dataclass, asdict
+from typing import TYPE_CHECKING
+from script_values import object_fields, array_items, string_value, integer_value
+
+if TYPE_CHECKING:
+    from config_stack import DiagnosticObjects
 from config_regions import Storage, View, require_writes
 from validation import require
 
@@ -35,10 +40,10 @@ class OwnedAccess:
     owner: View
     frame: Storage
     receiver_register: str
-    protected: tuple
+    protected: tuple[Storage, ...]
     loop_index: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.role, str) and self.role in ROLES, "unreviewed owned single-access role"
         )
@@ -132,9 +137,9 @@ class OwnedAccess:
         require_writes((self.owner,), ((self.owner, 0, extent),), self.protected)
         require(access + 4 <= extent, "owned store exceeds its source object")
 
-    def to_record(self):
-        record = asdict(self)
-        record["protected"] = list(record["protected"])
+    def to_record(self) -> dict[str, object]:
+        record: dict[str, object] = asdict(self)
+        record["protected"] = [asdict(v) for v in self.protected]
         record.update(
             operation="ordinary_single_STR",
             direction="write",
@@ -146,23 +151,64 @@ class OwnedAccess:
         return record
 
 
-def _storage(record):
-    require(
-        isinstance(record, dict) and set(record) == set(Storage.__dataclass_fields__),
-        "malformed owned storage",
+def _boolean(value: object, message: str) -> bool:
+    if type(value) is not bool:
+        raise AssertionError(message)
+    return value
+
+
+def _optional_int(value: object) -> int | None:
+    return None if value is None else integer_value(value, "malformed optional integer")
+
+
+def _integer_triple(value: object) -> tuple[int, int, int]:
+    items = array_items(value, "malformed integer triple")
+    require(len(items) == 3, "malformed integer triple")
+    return _tuple_member(items, 0), _tuple_member(items, 1), _tuple_member(items, 2)
+
+
+def _integer_quadruple(value: object) -> tuple[int, int, int, int]:
+    items = array_items(value, "malformed integer quadruple")
+    require(len(items) == 4, "malformed integer quadruple")
+    return (
+        _tuple_member(items, 0),
+        _tuple_member(items, 1),
+        _tuple_member(items, 2),
+        _tuple_member(items, 3),
     )
-    return Storage(**record)
 
 
-def _view(record):
-    require(
-        isinstance(record, dict) and set(record) == set(View.__dataclass_fields__),
-        "malformed owned view",
+def _tuple_member(items: list[object], index: int) -> int:
+    return integer_value(items[index], "malformed integer tuple member")
+
+
+def _storage(value: object) -> Storage:
+    record = object_fields(value, "malformed owned storage")
+    require(set(record) == set(Storage.__dataclass_fields__), "malformed owned storage")
+    return Storage(
+        string_value(record["space"], "malformed storage space"),
+        string_value(record["identity"], "malformed storage identity"),
+        integer_value(record["start"], "malformed storage start"),
+        integer_value(record["extent"], "malformed storage extent"),
+        integer_value(record["alignment"], "malformed storage alignment"),
+        string_value(record["phase"], "malformed storage phase"),
+        _boolean(record["writable"], "malformed storage mutability"),
     )
-    return View(_storage(record["storage"]), record["offset"], record["extent"], record["writable"])
 
 
-def read_owned_access(record):
+def _view(value: object) -> View:
+    record = object_fields(value, "malformed owned view")
+    require(set(record) == set(View.__dataclass_fields__), "malformed owned view")
+    return View(
+        _storage(record["storage"]),
+        integer_value(record["offset"], "malformed view offset"),
+        integer_value(record["extent"], "malformed view extent"),
+        _boolean(record["writable"], "malformed view mutability"),
+    )
+
+
+def read_owned_access(value: object) -> OwnedAccess:
+    record = object_fields(value, "malformed OwnedAccess record")
     keys = set(OwnedAccess.__dataclass_fields__) | {
         "operation",
         "direction",
@@ -175,19 +221,19 @@ def read_owned_access(record):
         isinstance(record, dict)
         and set(record) == keys
         and isinstance(record["protected"], list)
-        and 1 <= len(record["protected"]) <= 16,
+        and 1 <= len(array_items(record["protected"], "malformed protected")) <= 16,
         "missing/extra owned dependency fields",
     )
     value = OwnedAccess(
-        record["role"],
-        record["anchor"],
-        record["site"],
-        record["activation"],
+        string_value(record["role"], "malformed role"),
+        integer_value(record["anchor"], "malformed anchor"),
+        integer_value(record["site"], "malformed site"),
+        string_value(record["activation"], "malformed activation"),
         _view(record["owner"]),
         _storage(record["frame"]),
-        record["receiver_register"],
-        tuple(_storage(v) for v in record["protected"]),
-        record["loop_index"],
+        string_value(record["receiver_register"], "malformed receiver_register"),
+        tuple(_storage(v) for v in array_items(record["protected"], "malformed protected")),
+        _optional_int(record["loop_index"]),
     )
     require(
         type(record["width"]) is int
@@ -199,7 +245,7 @@ def read_owned_access(record):
     return value
 
 
-def current_owned_access(objects, value):
+def current_owned_access(objects: "DiagnosticObjects", value: OwnedAccess) -> OwnedAccess:
     """Rebind a producer fact to its artifact; never recreate parent proof."""
     from config_stack import canonical_symbol, _typed_function_extent
     from config_headers import ROOT

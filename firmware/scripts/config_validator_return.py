@@ -5,6 +5,29 @@ only a readonly description pending diagnostics and loader continuation, and
 never an owner, validated/publication capability, policy or resource result.
 """
 
+from typing import Never, TypedDict
+from config_body_types import BodyRecord, InstructionMap, OutlineConsumer
+from config_stack import DiagnosticObjects
+from config_default_sources import SourceTerminal
+from config_validator_access import ValidatorContext
+from config_loader_boundary import LoaderBoundary
+from config_refill_handoff import FaultSource
+from config_validator_result import ValidatorResult
+from config_validator_traversal import (
+    AuditedRegions,
+    ChildBinding,
+    ColorCapture,
+    NormalCall,
+    PhaseRelations,
+    ReceiverArguments,
+    SourceArguments,
+    SourceInputs,
+)
+from config_validator_activation import ActivationClosure, ComputedDisposition
+from config_build_source import SourceBinding
+from config_regions import View
+from config_abstract_compare import InitializedPrefix
+from config_logger import LoggerRecord
 from dataclasses import replace
 from config_refill_handoff import _checksum_refill_state
 from config_validator_controls import validator_controls, _child as control_child
@@ -28,7 +51,7 @@ from config_validator_activation import (
     computed_context_dispositions,
 )
 from config_validator_traversal_contracts import COLOR_CAPTURE_ROLE
-from config_validator_children import _normal_body, _normal_storage
+from config_validator_children import _normal_body as _normal_body, _normal_storage
 from config_validator_child_contracts import NORMAL_ROLES
 from config_finite import _literal_body
 from config_helpers import _helper_function
@@ -39,10 +62,109 @@ from config_stack import canonical_symbol
 from validation import require
 
 
-def _outlines(objects, rows, context, checked):
-    def consume(objects, name, records, role, ancestry):
+class ValidatorGeometry(TypedDict):
+    function: int
+    extent: int
+    frame: tuple[int, int]
+    result: tuple[int, int]
+
+
+class ValidatorReturn(TypedDict):
+    return_to: int
+    restored_SP: int
+    original_r8: int
+    saved_return_slot: int
+    preserved: tuple[str, ...]
+    architectural_LR_preservation_claimed: bool
+    r0: str
+
+
+class ErrorAlternative(TypedDict):
+    kind: str
+    first_Some_tags: tuple[int, ...]
+    writes: tuple[tuple[int, int], ...]
+    tag_after_payload: bool
+    None2_diagnostic_pending: bool
+
+
+class SuccessAlternative(TypedDict):
+    kind: str
+    tag: int
+    writes: tuple[tuple[int, int], ...]
+    tag_after_payload: bool
+    requires_valid_and_guarded_stoichiometric_s0: bool
+    opaque: tuple[tuple[int, int], ...]
+
+
+class ValidatorDescription(TypedDict):
+    phase: str
+    mode: str
+    claim_scope: str
+    return_after_unclosed_diagnostic_not_covered: bool
+    checksum_alternative_observed_taken: bool
+    source_context: SourceBinding
+    initialized_inputs: dict[str, int]
+    validator: ValidatorGeometry
+    normal_return: ValidatorReturn
+    normal_alternatives: tuple[ErrorAlternative, SuccessAlternative]
+    normal_physical_child_paths: tuple[tuple[int, ...], ...]
+    normal_child_low: int
+    typed_phase_relations: PhaseRelations
+    current_coverage: AuditedRegions
+    computed_exclusions: tuple[ComputedDisposition, ...]
+    guard_stopped_normal_activation_closure: ActivationClosure
+    normal_typed_call_count: int
+    pending_diagnostics: tuple[tuple[str, int] | tuple[int, str], ...]
+    diagnostic_closure_pending: bool
+    loader_continuation_pending: bool
+    decoded_caller_and_other_routes_pending: bool
+    other_optimization_variants_pending: bool
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    requires_M2_pre_init_source_reconciliation: bool
+    requires_H8_consumed_input_closure: bool
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    target_access_requirements_unresolved: bool
+    requires_complete_same_B_loader_before_owner: bool
+    requires_full_diagnostic_and_activation_graph_and_resource_gates: bool
+    hardware_qualified: bool
+
+
+class ValidatorState(TypedDict):
+    result: ValidatorResult
+    parent: BodyRecord
+    rows: InstructionMap
+    projection: set[int]
+    computed: dict[int, tuple[int, ...]]
+    closure: ActivationClosure
+    relations: PhaseRelations
+    children: dict[int, ChildBinding]
+    fault_source: FaultSource
+
+
+class DiagnosticFrontier(TypedDict):
+    site: int
+    kind: str
+    proof: BodyRecord
+
+
+def _outlines(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: ValidatorContext,
+    checked: dict[tuple[int, str], BodyRecord],
+) -> OutlineConsumer:
+    def consume(
+        objects: DiagnosticObjects,
+        name: str,
+        records: InstructionMap,
+        role: str,
+        ancestry: tuple[int, ...],
+    ) -> BodyRecord:
         require(role.startswith("@outline:"), "validator outline has another origin")
         label = role[9:]
+        proof: BodyRecord
         if label in MATH:
             proof = _math_body(objects, name, records, label)
         elif label in ("first_capture", "band_capture"):
@@ -51,7 +173,7 @@ def _outlines(objects, rows, context, checked):
             proof = control_child(objects, name, records, label, {})
         elif label in ("first_tail", "validator_restore"):
 
-            def none(*args):
+            def none(*args: object) -> Never:
                 raise AssertionError("validator Result outline gains an activation")
 
             proof = _literal_body(
@@ -80,7 +202,14 @@ def _outlines(objects, rows, context, checked):
     return consume
 
 
-def _source_arguments(family, offset, source, inputs, context, parent):
+def _source_arguments(
+    family: str,
+    offset: int,
+    source: SourceTerminal,
+    inputs: SourceInputs,
+    context: ValidatorContext,
+    parent: BodyRecord,
+) -> SourceArguments:
     """Finite actual caller families; no scalar ISA/transcript execution."""
     q = context.frame
     owner = context.config.storage
@@ -117,6 +246,7 @@ def _source_arguments(family, offset, source, inputs, context, parent):
                 3 if family == "range_u8" else 6,
                 phase,
             )
+        values: tuple[View, ...]
         if offset == 68:
             values = (borrow(owner, 242, 2, phase),)
         elif offset == 734:
@@ -150,13 +280,17 @@ def _source_arguments(family, offset, source, inputs, context, parent):
             exhausted_initialized_false=True,
         )
     if family == "text_valid":
+        strings: tuple[InitializedPrefix, ...]
+        maxima: tuple[int, ...]
         if offset == 1060:
             strings = (source["widget"]["prepared"]["view"]["initialized_name"],)
             maxima = (14,)
         else:
             require(offset in (1648, 3370), "text child has no reviewed source field")
-            key = "initialized_label" if offset == 1648 else "initialized_warning"
-            strings = tuple(W[key] for W in source["widget"]["iterations"])
+            strings = tuple(
+                W["initialized_label"] if offset == 1648 else W["initialized_warning"]
+                for W in source["widget"]["iterations"]
+            )
             maxima = (12, 24) if offset == 1648 else (20,)
         prefixes = tuple(
             borrow(owner, item.view.start - owner.start, item.length.upper, phase)
@@ -215,7 +349,9 @@ def _source_arguments(family, offset, source, inputs, context, parent):
     )
 
 
-def _checksum_refill_validator_state(objects, instructions, source_context):
+def _checksum_refill_validator_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[ValidatorDescription, SourceTerminal, ValidatorContext, LoaderBoundary, ValidatorState]:
     description, source, context, boundary = _checksum_refill_state(
         objects, instructions, source_context
     )
@@ -233,18 +369,18 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
         a: replace(r, operands=r.operands.split("@", 1)[0].split("<", 1)[0].strip())
         for a, r in instructions.items()
     }
-    outlines = {}
+    outlines: dict[tuple[int, str], BodyRecord] = {}
     parent = _complete_sequence(
         objects, name, rows, context.config.start, _outlines(objects, rows, context, outlines)
     )
     require(not parent["indirect_sites"], "selected validator gains a callback")
     copies = _led_copies(objects, rows, parent, context)
     catalogue = _source_catalogue(objects, rows, parent, context, source)
-    children = {}
-    normal = []
-    diagnostics = []
-    paths = []
-    color_capture = None
+    children: dict[int, ChildBinding] = {}
+    normal: list[NormalCall] = []
+    diagnostics: list[DiagnosticFrontier] = []
+    paths: list[tuple[int, ...]] = []
+    color_capture: ColorCapture | None = None
     known_controls = {v["function"]: (k, v) for k, v in controls["children"].items()}
     known_pointers = {v["function"]: (k, v) for k, v in controls["pointer"]["children"].items()}
     for offset, operation, target, role, frame in parent["ordinary_edges"]:
@@ -261,22 +397,30 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
         stops_at_cut = False
         interface = ""
         family = NORMAL_ROLES.get(role)
-        arguments = {}
-        bodies = None
+        arguments: ReceiverArguments
+        bodies: tuple[LoggerRecord, ...] | None = None
+        proof: BodyRecord
         if family:
-            proof = _normal_body(objects, child_name, rows, family)
-            arguments = _source_arguments(family, offset, source, inputs, context, parent)
-            saved = _normal_storage(proof, context, arguments["readonly"])
-            paths.extend(proof["normal_physical_paths"])
+            normal_proof = _normal_body(objects, child_name, rows, family)
+            proof = normal_proof
+            source_arguments = _source_arguments(family, offset, source, inputs, context, parent)
+            saved = _normal_storage(normal_proof, context, source_arguments["readonly"])
+            paths.extend(normal_proof["normal_physical_paths"])
             normal.append(
-                dict(site=at, family=family, proof=proof, arguments=arguments, save_intervals=saved)
+                dict(
+                    site=at,
+                    family=family,
+                    proof=normal_proof,
+                    arguments=source_arguments,
+                    save_intervals=saved,
+                )
             )
             interface = "complete typed " + family + " source/loop/normal-return relation"
             arguments = dict(
                 source="typed " + family,
                 site=at,
-                kind=arguments["kind"],
-                readonly_ranges=tuple((v.start, v.extent) for v in arguments["readonly"]),
+                kind=source_arguments["kind"],
+                readonly_ranges=tuple((v.start, v.extent) for v in source_arguments["readonly"]),
             )
         elif (target, role) in outlines:
             proof = outlines[target, role]
@@ -313,8 +457,8 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
                 count=relation["count"],
             )
         elif at in catalogue:
-            relation = catalogue[at]
-            proof = relation["proof"]
+            catalogue_relation = catalogue[at]
+            proof = catalogue_relation["proof"]
             family = proof["shape"]
             interface = "same Source Definition/Channel constructor"
             paths.append((frame,))
@@ -323,22 +467,21 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
             )
         elif role == COLOR_CAPTURE_ROLE:
             require(offset == 3462, "Color capture has another actual caller phase")
-            proof = _color_capture(objects, child_name, rows, parent, context, inputs)
-            color_capture = proof
+            color_capture = _color_capture(objects, child_name, rows, parent, context, inputs)
             interface = "same current Widget ColorRole first-error capture"
             paths.append((16,))
-            proof = proof["proof"]
+            proof = color_capture["proof"]
             family = "Color_capture"
             arguments = dict(
                 source="same current Widget/ColorRole/first/valid references", site=at, Q=q.start
             )
         elif role == "__aeabi_memcpy" and offset == 342:
-            relation = result["error_copy"]
-            bodies = relation["children"]
+            error_copy = result["error_copy"]
+            bodies = error_copy["children"]
             proof = bodies[0]
             family = "copy_wrapper"
             interface = "Err ten-byte payload before leading tag"
-            paths.extend(relation["physical_activation_paths"])
+            paths.extend(error_copy["physical_activation_paths"])
             arguments = dict(
                 source="same first Some payload before Result tag",
                 site=at,
@@ -382,9 +525,8 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
             effects=(),
             copy_bodies=bodies,
         )
-    require(
-        color_capture is not None, "validator omits its complete ColorRole first-error constructor"
-    )
+    if color_capture is None:
+        raise AssertionError("validator omits its complete ColorRole first-error constructor")
     relations = _phase_relations(
         objects,
         parent,
@@ -449,7 +591,7 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
     )
     # The readonly description exposes physical facts, never internal mutable
     # Views/ValidatorContext or an authority record acceptable to this API.
-    alternatives = (
+    alternatives: tuple[ErrorAlternative, SuccessAlternative] = (
         dict(
             kind="Err",
             first_Some_tags=(0, 1),
@@ -466,7 +608,7 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
             opaque=((context.result.start + 2, 2), (context.result.start + 8, 4)),
         ),
     )
-    description = dict(
+    validator_description: ValidatorDescription = dict(
         phase="checksum_refill_validator_return_pending_diagnostics_and_loader_continuation",
         mode="sizez",
         claim_scope="selected ordinary execution before a pending diagnostic, exception or other invocation",
@@ -518,7 +660,7 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
     )
 
     return (
-        description,
+        validator_description,
         source,
         context,
         boundary,
@@ -536,5 +678,7 @@ def _checksum_refill_validator_state(objects, instructions, source_context):
     )
 
 
-def checksum_refill_validator_return(objects, instructions, source_context):
+def checksum_refill_validator_return(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> ValidatorDescription:
     return _checksum_refill_validator_state(objects, instructions, source_context)[0]

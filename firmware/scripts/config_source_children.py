@@ -6,12 +6,15 @@ normal/error/None effects before any complete Source is consumed.
 """
 
 import re
+from collections.abc import Sequence
+from typing import Never, NotRequired, TypedDict
+from config_body_types import BodyRecord, InstructionMap
 from config_source_contracts import GRAMMARS, ROLES
 from config_widget_children import _outline as _widget_outline, _function as _widget_function
-from config_regions import Region, Transfer, audit_coverage, _control
+from config_regions import CoverageRecord, Region, Transfer, audit_coverage, _control
 from config_owner_entry import _direct_target
 from config_finite import _complete_body
-from config_stack import canonical_symbol
+from config_stack import DiagnosticObjects, canonical_symbol
 from validation import require
 from config_structural import _structural
 
@@ -21,20 +24,47 @@ _OUTLINES = {v: k for k, v in ROLES.items() if v.startswith("@outline:")}
 ACCESS_TARGET_OFFSETS = (314, 84, 182, 226, 126, 252)
 
 
-def _function(objects, address, role):
+class SourceFields(TypedDict):
+    access_targets: NotRequired[tuple[int, ...]]
+    guarded_access_index_domain: NotRequired[tuple[int, int]]
+    requires_same_source_successful_varint_argument: NotRequired[bool]
+    original_return_outline_remaining_saves: NotRequired[int]
+
+
+class SourceBodyRecord(BodyRecord, SourceFields):
+    pass
+
+
+class SourceCoverageRecord(SourceBodyRecord):
+    coverage: CoverageRecord
+
+
+def _function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     extent, frame, name = _widget_function(objects, address, role)
     if role == CHANNEL_SOURCE:
         require((extent, frame) == (754, 72), "Source current aggregate extent/frame differs")
     return extent, frame, name
 
 
-def _outline(objects, name, rows, role, ancestry=()):
+def _outline(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    role: str,
+    ancestry: tuple[int, ...] = (),
+) -> BodyRecord:
     if role in _OUTLINES:
         return source_body(objects, name, rows, role, ancestry)
     return _widget_outline(objects, name, rows, role, ancestry)
 
 
-def source_body(objects, name, rows, outline_role=None, ancestry=()):
+def source_body(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    outline_role: str | None = None,
+    ancestry: tuple[int, ...] = (),
+) -> SourceBodyRecord:
     """Exact finite family; an override can only identify a named outline."""
     role = outline_role or canonical_symbol(name)
     if outline_role is not None:
@@ -47,10 +77,10 @@ def source_body(objects, name, rows, outline_role=None, ancestry=()):
         require(role == CHANNEL_SOURCE, "unreviewed Source ordinary body")
         shape = "ChannelSource"
 
-    def no_object(*args):
-        require(False, "unexpected Source child readonly object")
+    def no_object(*args: object) -> Never:
+        raise AssertionError("unexpected Source child readonly object")
 
-    proof = _complete_body(
+    base = _complete_body(
         objects,
         name,
         rows,
@@ -62,6 +92,8 @@ def source_body(objects, name, rows, outline_role=None, ancestry=()):
         ancestry,
         function_consumer=_function,
     )
+    extra: SourceFields = {}
+    proof: SourceBodyRecord = {**base, **extra}
     require(not proof["indirect_sites"], "Source contains an unreviewed executable callback")
     if shape == "ChannelSource":
         start = proof["function"]
@@ -72,17 +104,17 @@ def source_body(objects, name, rows, outline_role=None, ancestry=()):
             and all(at in rows for at in targets),
             "Source Access table/typed arm targets differ",
         )
-        proof.update(
-            access_targets=targets,
-            guarded_access_index_domain=(0, 5),
-            requires_same_source_successful_varint_argument=True,
-            original_return_outline_remaining_saves=36,
-        )
+        proof["access_targets"] = targets
+        proof["guarded_access_index_domain"] = (0, 5)
+        proof["requires_same_source_successful_varint_argument"] = True
+        proof["original_return_outline_remaining_saves"] = 36
     return proof
 
 
 @_structural(2)
-def source_coverage(objects, name, rows, outline_role=None):
+def source_coverage(
+    objects: DiagnosticObjects, name: str, rows: InstructionMap, outline_role: str | None = None
+) -> SourceCoverageRecord:
     proof = source_body(objects, name, rows, outline_role)
     start = proof["function"]
     contract = GRAMMARS[proof["shape"]]
@@ -177,7 +209,7 @@ def source_coverage(objects, name, rows, outline_role=None):
                 )
             )
 
-    def child(objects, address, role):
+    def child(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
         if not role.startswith("@outline:"):
             return _function(objects, address, role)
         names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == address]
@@ -185,20 +217,21 @@ def source_coverage(objects, name, rows, outline_role=None):
         p = _outline(objects, names[0], rows, role)
         return p["extent"], p["frame"], names[0]
 
-    proof["coverage"] = audit_coverage(
-        objects, name, rows, context, regions, _function_consumer=child
-    )
-    return proof
+    coverage = audit_coverage(objects, name, rows, context, regions, _function_consumer=child)
+    return {**proof, "coverage": coverage}
 
 
-def source_children(objects, rows, parents):
+def source_children(
+    objects: DiagnosticObjects, rows: InstructionMap, parents: Sequence[BodyRecord]
+) -> dict[tuple[int, str], BodyRecord]:
     """Current complete transitive bodies, with no unknown child waiver."""
     from config_widget_children import _name, widget_body
     from config_widget_contracts import ROLES as WIDGET
-    from config_helpers import HELPER_SEMANTIC_ROLES, helper_coverage
+    from config_helper_contracts import HELPER_SEMANTIC_ROLES
+    from config_helpers import helper_coverage
     from config_logger import logger_body
 
-    proofs = {}
+    proofs: dict[tuple[int, str], BodyRecord] = {}
     pending = [edge for p in parents for edge in p["ordinary_edges"]]
     while pending:
         off, operation, target, role, frame = pending.pop()
@@ -220,14 +253,14 @@ def source_children(objects, rows, parents):
         elif role in ("__aeabi_memcpy", "_RNvNtCs_17compiler_builtins3mem6memcpy"):
             proof = logger_body(objects, _name(objects, role, target), rows)
         else:
-            require(False, "unclassified Sources child")
+            raise AssertionError("unclassified Sources child")
         require(proof["frame"] == frame, "Sources child changes its current activation frame")
         proofs[key] = proof
         pending.extend(proof["ordinary_edges"])
     return proofs
 
 
-def source_return_profiles():
+def source_return_profiles() -> dict[str, set[int]]:
     from config_decoded_views import _views_return_profiles
     from config_widget_contracts import ROLES as WIDGET
 

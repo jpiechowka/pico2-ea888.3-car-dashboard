@@ -12,6 +12,8 @@ pub(crate) mod fmt;
 #[cfg(feature = "bluetooth")]
 /// Bluetooth module.
 pub mod bluetooth;
+#[cfg(feature = "bluetooth")]
+mod bluetooth_firmware;
 mod consts;
 mod control;
 mod countries;

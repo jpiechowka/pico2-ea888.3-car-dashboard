@@ -14,15 +14,20 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
-from types import SimpleNamespace
+from image_test_support import ImageFixture
+from elf_image import Section, SectionEntry
+from config_build_source import SourceContext
+from collections.abc import Sequence
+import hashlib
 from unittest.mock import patch
 import practical_image as practical
 import check_memory_layout as image
 from config_build_source import make_source_context, SOURCE_PATHS, write_source_context
 import test_stack_budget
+from script_values import integer_value
 
 
-def fixture(version=6, radio=False):
+def fixture(version: int = 6, radio: bool = False) -> tuple[ImageFixture, bytes, SourceContext]:
     B = 0x10000000
     data = bytearray(4096)
     data[0x100:0x114] = struct.pack("<5I", 0xFFFFDED3, 0x10210142, 0x000001FF, 0, 0xAB123579)
@@ -32,7 +37,7 @@ def fixture(version=6, radio=False):
     data[512 : 512 + len(eav)] = eav
     functions, sizes = test_stack_budget.StackBudget().slot_fixture()
     if radio:
-        captured, metadata = test_stack_budget.StackBudget().ble_fixture()
+        captured, radio_sizes = test_stack_budget.StackBudget().ble_fixture()
         functions.update(
             {
                 n: v
@@ -40,7 +45,7 @@ def fixture(version=6, radio=False):
                 if "dashboard_config" not in n and "from_utf8" not in n
             }
         )
-        sizes.update(metadata)
+        sizes.update(radio_sizes)
     names = [
         "TaskStorage4pollembassy_main_task",
         "TaskStorage4polldashboard_task_task",
@@ -63,7 +68,7 @@ def fixture(version=6, radio=False):
         metadata.append(size)
     data.extend(metadata)
 
-    def section(kind, flags, address, offset, size):
+    def section(kind: int, flags: int, address: int, offset: int, size: int) -> Section:
         return (
             0,
             kind,
@@ -77,7 +82,7 @@ def fixture(version=6, radio=False):
             0,
         )
 
-    entries = [
+    entries: list[SectionEntry] = [
         (1, ".start_block", section(1, 2, B + 256, 256, 20)),
         (2, ".dashboard_config", section(1, 2, B + 512, 512, len(eav))),
         (3, ".data", section(1, 3, 0x20000000, 768, 128)),
@@ -94,7 +99,7 @@ def fixture(version=6, radio=False):
         SIO_IRQ_FIFO=0x20000101,
         sio_fifo_ram=0x20000109,
     )
-    elf = SimpleNamespace(
+    elf = ImageFixture(
         data=bytes(data),
         sections=[s for _, _, s in entries],
         section_entries=entries,
@@ -108,9 +113,6 @@ def fixture(version=6, radio=False):
             ("__dashboard_config_end", B + 512 + len(eav), 0, 0x10, 2),
         ],
     )
-    elf.section_bytes = lambda name: elf.data[
-        elf.named[name][4] : elf.named[name][4] + elf.named[name][5]
-    ]
     repo = Path(__file__).resolve().parents[2]
     context = make_source_context(
         elf.data,
@@ -122,23 +124,23 @@ def fixture(version=6, radio=False):
 
 
 class PracticalImage(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.enterContext(redirect_stdout(io.StringIO()))
         self.flash = self.enterContext(patch.object(image, "check_flash_lockout"))
 
-    def test_current_envelope_admission_rejects_legacy_and_preserves_exact_bounds(self):
+    def test_current_envelope_admission_rejects_legacy_and_preserves_exact_bounds(self) -> None:
         # Catch cross-language version drift before compiling a full ARM image.
         shipped = (Path(__file__).resolve().parents[2] / "configs/default.eav").read_bytes()
         self.assertEqual(struct.unpack_from("<H", shipped, 4)[0], practical.CURRENT_EAV_VERSION)
         elf, eav, _ = fixture()
         self.assertEqual(practical._configuration(elf, eav), eav)
         for version in (0, 1, 2, 3, 4, 5, 7, 65535):
-            legacy, raw, _ = fixture(version)
+            legacy, legacy_raw, _ = fixture(version)
             with (
                 self.subTest(version=version),
                 self.assertRaisesRegex(AssertionError, "envelope/checksum"),
             ):
-                practical._configuration(legacy, raw)
+                practical._configuration(legacy, legacy_raw)
         for fault in ("length", "magic", "crc", "payload", "truncated", "expected"):
             elf, eav, _ = fixture()
             raw = bytearray(eav)
@@ -161,7 +163,7 @@ class PracticalImage(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 practical._configuration(elf, expected)
 
-    def test_radio_receipt_required_only_when_present_in_linked_image(self):
+    def test_radio_receipt_required_only_when_present_in_linked_image(self) -> None:
         elf, eav, context = fixture(radio=True)
         record = practical.check(elf, eav, context)
         self.assertEqual(record["stack"]["bounds"]["radio"], 16856)
@@ -181,7 +183,7 @@ class PracticalImage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             image.read_selected_image_result(old, legacy, raw, source)
 
-    def test_producer_rechecks_named_frames_geometry_source_and_linked_eav(self):
+    def test_producer_rechecks_named_frames_geometry_source_and_linked_eav(self) -> None:
         elf, eav, context = fixture()
         record = practical.check(elf, eav, context)
         self.assertEqual(record["status"], "STATIC_IMAGE_CHECKS_PASS")
@@ -195,10 +197,10 @@ class PracticalImage(unittest.TestCase):
         for key in ("boot", "constructor", "runtime", "dashboard"):
             self.assertGreater(record["stack"]["bounds"][key], 0)
 
-    def test_mutated_receipt_gate_scope_bounds_and_identities_reject(self):
+    def test_mutated_receipt_gate_scope_bounds_and_identities_reject(self) -> None:
         elf, eav, context = fixture()
         record = practical.check(elf, eav, context)
-        changes = [
+        changes: list[tuple[str, object]] = [
             ("schema", True),
             ("schema", 2),
             ("gate", "full_memory_layout"),
@@ -214,25 +216,28 @@ class PracticalImage(unittest.TestCase):
             ("limitations", []),
         ]
         for key, value in changes:
-            bad = deepcopy(record)
-            bad[key] = value
+            bad_record: dict[str, object] = dict(deepcopy(record))
+            bad_record[key] = value
             with self.subTest(key=key), self.assertRaises(AssertionError):
-                image.read_selected_image_result(bad, elf, eav, context)
+                image.read_selected_image_result(bad_record, elf, eav, context)
         for key in ("boot", "constructor", "runtime", "dashboard"):
             bad = deepcopy(record)
-            bad["stack"]["bounds"][key] -= 1
+            bounds = dict(bad["stack"]["bounds"])
+            bounds[key] = integer_value(bounds[key], "fixture stack bound") - 1
+            bad_record = dict(bad)
+            bad_record["stack"] = dict(bad["stack"], bounds=bounds)
             with self.assertRaises(AssertionError):
-                image.read_selected_image_result(bad, elf, eav, context)
-        bad = deepcopy(record)
-        bad["execution_scope"] = {}
+                image.read_selected_image_result(bad_record, elf, eav, context)
+        bad_record = dict(deepcopy(record))
+        bad_record["execution_scope"] = {}
         with self.assertRaises(AssertionError):
-            image.read_selected_image_result(bad, elf, eav, context)
+            image.read_selected_image_result(bad_record, elf, eav, context)
         with self.assertRaises(AssertionError):
             image.read_selected_image_result(record, elf, eav, context, "experimental-full")
         with self.assertRaises(AssertionError):
             image.read_selected_image_result(record, elf, eav, context, "unknown")
 
-    def test_actual_inputs_and_required_checks_fail_closed(self):
+    def test_actual_inputs_and_required_checks_fail_closed(self) -> None:
         for fault in ("eav", "source", "geometry", "frame", "flash", "load", "envelope"):
             elf, eav, context = fixture()
             if fault == "eav":
@@ -251,14 +256,12 @@ class PracticalImage(unittest.TestCase):
                 raw = bytearray(elf.data)
                 raw[512 + 8] ^= 1
                 elf.data = bytes(raw)
-                context = replace(
-                    context, elf_sha256=practical.hashlib.sha256(elf.data).hexdigest()
-                )
+                context = replace(context, elf_sha256=hashlib.sha256(elf.data).hexdigest())
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 practical.check(elf, eav, context)
             self.flash.side_effect = None
 
-    def test_capture_default_and_frozen_result_recheck(self):
+    def test_capture_default_and_frozen_result_recheck(self) -> None:
         import capture_target_bench as capture
 
         elf, eav, context = fixture()
@@ -271,7 +274,7 @@ class PracticalImage(unittest.TestCase):
             frozen.write_bytes(elf.data)
             result = practical.check(elf, eav, context)
 
-            def child(command, **kwargs):
+            def child(command: Sequence[str], **kwargs: object) -> None:
                 self.assertEqual(command[command.index("--gate") + 1], "practical")
                 self.assertTrue(kwargs["check"])
                 Path(command[command.index("--result-json") + 1]).write_text(json.dumps(result))
@@ -297,7 +300,7 @@ class PracticalImage(unittest.TestCase):
                         destination / "memory-layout.json", frozen, eav, context
                     )
 
-    def test_cli_default_practical_and_explicit_experimental_never_downgrades(self):
+    def test_cli_default_practical_and_explicit_experimental_never_downgrades(self) -> None:
         elf, eav, context = fixture()
         with (
             tempfile.TemporaryDirectory() as folder,

@@ -134,10 +134,12 @@ MSVC/SDK prerequisites must be installed first. A browser-only page cannot run C
 `cargo run` in the firmware context can invoke the hardware flashing runner;
 use `cargo build` for compilation without device operations.
 
-- Maintained Python uses hash-locked Ruff formatting/linting and strict Mypy for
-  the selected production boundary modules in `pyproject.toml`. Preserve typing
-  and regression coverage when changing those boundaries. Deferred instruction
-  research is linted, but not claimed to be fully typed or proved.
+- All tracked Python, including tests, vendored generators and deferred research,
+  uses hash-locked Ruff formatting/linting and strict Mypy. Run
+  `host/scripts/check_python.py` with `lint`, `format` and `mypy`; its Git-based
+  inventory prevents newly added scripts from bypassing checks. Preserve precise
+  types and regression coverage. Typed instruction research remains unfinished
+  proof work, separate from practical image admission.
 - Reuse `host/scripts/owned_process.py` for bounded Python tool execution. Keep
   process-tree ownership, output limits, diagnostic tails and cancellation cleanup
   coherent across wrappers. Bind supervisor source into benchmark identity.
@@ -336,6 +338,10 @@ See [editor state](docs/configurator/editor-state.md),
   percentages describe their instrumented scope; stack pointers are samples, not
   continuous high-water measurements. Saved capture headers show the current
   Pico's diagnostics, while the capture body contains frozen boot-relative data.
+  Keep cycle/work/time publication coherent through discarded renders. Preserve
+  unavailable clock metadata through Debug and benchmark admission; synthetic
+  Studio FPS is unavailable without a hardware completion observation. See the
+  [detailed diagnostic trace](docs/validation/diagnostics-reaudit-2026-10-20.md).
 - Before delivery, audit the affected path end-to-end and check code, comments,
   defaults, codecs, toolchain pins, Cargo profiles, UI/help, scripts, tests, README
   and relevant docs for drift. State exactly what ran and what remains unverified.

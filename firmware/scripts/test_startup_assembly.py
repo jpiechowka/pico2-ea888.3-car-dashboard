@@ -2,38 +2,49 @@
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 from llvm_stack import Instruction
-from config_stack import DiagnosticObjects, typed_function
+from config_stack import typed_function
 from config_startup import assembly_pre_init, startup_configuration_copy
+from image_test_support import DiagnosticFixture, ImageFixture, diagnostic_fixture
+from script_values import array_items, integer_value, object_fields, string_value
 import test_config_stack as historical
 
 
 class AssemblyStartup(unittest.TestCase):
-    def fixture(self, address=0x10000198):
-        f = json.loads(
-            (Path(__file__).parent / "fixtures/config-startup-assembly.json").read_text()
+    def fixture(
+        self, address: int = 0x10000198
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction]]:
+        f = object_fields(
+            json.loads(
+                (Path(__file__).parent / "fixtures/config-startup-assembly.json").read_text()
+            ),
+            "assembly fixture",
         )
-        old = f["function"][0] & ~1
-        raw = bytes.fromhex(f["body_hex"])
-        rows = {}
-        for r in f["records"]:
-            a = address + r["address"] - old
-            operand = r["operands"]
-            if r["mnemonic"] == "bne":
+        function = array_items(f["function"], "fixture function")
+        old = integer_value(function[0], "fixture address") & ~1
+        raw = bytes.fromhex(string_value(f["body_hex"], "fixture body"))
+        rows: dict[int, Instruction] = {}
+        for record in array_items(f["records"], "fixture records"):
+            r = object_fields(record, "fixture instruction")
+            a = address + integer_value(r["address"], "instruction address") - old
+            operand = string_value(r["operands"], "instruction operands")
+            mnemonic = string_value(r["mnemonic"], "instruction mnemonic")
+            if mnemonic == "bne":
                 operand = hex(int(operand, 16) + address - old)
-            rows[a] = Instruction(a, bytes.fromhex(r["bytes"]), r["mnemonic"], operand)
-        elf = SimpleNamespace(
+            rows[a] = Instruction(
+                a, bytes.fromhex(string_value(r["bytes"], "instruction bytes")), mnemonic, operand
+            )
+        elf = ImageFixture(
             data=raw,
             sections=[(0, 1, 6, address, 0, len(raw), 0, 0, 4, 0)],
             functions={"__pre_init": (address | 1, 42, 0)},
             symbol_entries=[("__pre_init", address | 1, 42, 18, 0)],
             mapping_symbols=[("$t", address, 0), ("$d", address + 44, 0)],
         )
-        return DiagnosticObjects(elf, {}), rows
+        return diagnostic_fixture(elf, {}), rows
 
-    def test_current_body_and_relocation_require_no_generic_missing_frame_fallback(self):
+    def test_current_body_and_relocation_require_no_generic_missing_frame_fallback(self) -> None:
         for address in (0x10000198, 0x10071000):
             objects, rows = self.fixture(address)
             proof = assembly_pre_init(objects, rows)
@@ -44,7 +55,7 @@ class AssemblyStartup(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "missing typed function frame"):
                 typed_function(objects, address, "__pre_init")
 
-    def test_every_code_byte_mutation_is_rejected_even_with_stale_decoder_text(self):
+    def test_every_code_byte_mutation_is_rejected_even_with_stale_decoder_text(self) -> None:
         for offset in range(42):
             objects, rows = self.fixture()
             raw = bytearray(objects.elf.data)
@@ -53,7 +64,7 @@ class AssemblyStartup(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 assembly_pre_init(objects, rows)
 
-    def test_all_three_mmio_addresses_are_exact(self):
+    def test_all_three_mmio_addresses_are_exact(self) -> None:
         for offset in (44, 48, 52):
             objects, rows = self.fixture()
             raw = bytearray(objects.elf.data)
@@ -65,7 +76,7 @@ class AssemblyStartup(unittest.TestCase):
             ):
                 assembly_pre_init(objects, rows)
 
-    def test_metadata_mapping_frame_and_pool_alias_mutations_reject(self):
+    def test_metadata_mapping_frame_and_pool_alias_mutations_reject(self) -> None:
         for fault in (
             "extent",
             "symbol_type",
@@ -104,7 +115,7 @@ class AssemblyStartup(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 assembly_pre_init(objects, rows)
 
-    def test_same_bytes_with_wrong_return_or_branch_text_reject(self):
+    def test_same_bytes_with_wrong_return_or_branch_text_reject(self) -> None:
         for offset, op, args in (
             (40, "bx", "r0"),
             (16, "bne", "0x100001ae"),
@@ -117,7 +128,7 @@ class AssemblyStartup(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 assembly_pre_init(objects, rows)
 
-    def install(self, objects, rows):
+    def install(self, objects: DiagnosticFixture, rows: dict[int, Instruction]) -> int:
         base = historical.StartupConfigurationCopy()
         elf = objects.elf
         fresh, newrows = self.fixture(0x10071000)
@@ -141,7 +152,7 @@ class AssemblyStartup(unittest.TestCase):
         rows[reset] = Instruction(reset, encoded, "bl", hex(address))
         return reset
 
-    def test_current_hook_composes_with_unchanged_Reset_copy_contract(self):
+    def test_current_hook_composes_with_unchanged_Reset_copy_contract(self) -> None:
         for mode in ("speed2", "sizes", "sizez"):
             base = historical.StartupConfigurationCopy()
             objects, rows, _ = base.fixture(mode)
@@ -153,7 +164,7 @@ class AssemblyStartup(unittest.TestCase):
             self.assertEqual(proof["copy"]["pre_init_stack"], (proof["copy"]["initial_sp"],) * 2)
             self.assertEqual(proof["reset"]["ordinary_edges"][0][4], 0)
 
-    def test_current_hook_preserves_complete_selected_history_and_closed_LR(self):
+    def test_current_hook_preserves_complete_selected_history_and_closed_LR(self) -> None:
         from config_boot_history import first_boot_history
         from config_build_source import make_source_context
 

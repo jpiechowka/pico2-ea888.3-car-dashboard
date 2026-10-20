@@ -445,7 +445,7 @@ fn service_client<const N: usize>(
     GattClient {
         known_services: RefCell::new(Vec::new()),
         _phantom: PhantomData,
-        connection: connection.clone(),
+        connection: ClientConnection::acquire(connection).unwrap(),
         response_channel: Channel::new(),
         notifications: PubSubChannel::new(),
     }

@@ -1,5 +1,59 @@
 use dashboard_host_validation::cpu_math::{CycleWindow, checked_segment};
-use dashboard_host_validation::diagnostic_values::{WorkObservation, memory_kib, rate_text, work_text};
+use dashboard_host_validation::diagnostic_values::{
+    FrameWorkObservation,
+    WorkObservation,
+    memory_kib,
+    rate_text,
+    spi_clock_hz,
+    work_text,
+};
+
+#[test]
+fn frame_work_and_cycles_share_publication_and_expiry() {
+    let mut published = FrameWorkObservation::EMPTY;
+    assert_eq!((published.work(0), published.cycles(0)), (None, None));
+    published = FrameWorkObservation::new(1_000_000, 150_000_000, Some(15_000_000), 1_000_000);
+    // The caller retains this whole observation until another iteration commits.
+    assert_eq!(
+        (published.work(1_200_000), published.cycles(1_200_000)),
+        (Some(100), Some(15_000_000))
+    );
+    published = FrameWorkObservation::new(1_300_000, 150_000_000, Some(30_000_000), 1_000_000);
+    assert_eq!(
+        (published.work(1_300_000), published.cycles(1_300_000)),
+        (Some(200), Some(30_000_000))
+    );
+    for now in [1_299_999, 3_300_001] {
+        assert_eq!((published.work(now), published.cycles(now)), (None, None));
+    }
+    assert_eq!(published.cycles(3_300_000), Some(30_000_000));
+    for (hz, cycles, elapsed) in [(0, Some(1), 1), (150_000_000, None, 100), (150_000_000, Some(1), 0)] {
+        let invalid = FrameWorkObservation::new(0, hz, cycles, elapsed);
+        assert_eq!((invalid.work(0), invalid.cycles(0)), (None, None));
+    }
+    let zero = FrameWorkObservation::new(0, 150_000_000, Some(0), 1);
+    assert_eq!((zero.work(0), zero.cycles(0)), (Some(0), Some(0)));
+    let wide = FrameWorkObservation::new(0, 150_000_000, Some(u64::from(u32::MAX) + 1), 60_000_000);
+    assert_eq!(wide.work(0), Some(477));
+    assert_eq!(wide.cycles(0), None);
+}
+
+#[test]
+fn spi_register_rate_rejects_unknown_dividers_and_keeps_fractional_profiles() {
+    assert_eq!(spi_clock_hz(150_000_000, 2, 1), Some(37_500_000));
+    assert_eq!(spi_clock_hz(250_000_000, 2, 1), Some(62_500_000));
+    assert_eq!(spi_clock_hz(290_400_000, 2, 2), Some(48_400_000));
+    assert_eq!(spi_clock_hz(150_000_000, 254, 255), Some(2306));
+    assert_eq!(spi_clock_hz(u32::MAX, 2, 0), Some(2_147_483_647));
+    for prescale in 0..=u8::MAX {
+        assert_eq!(
+            spi_clock_hz(150_000_000, prescale, 0).is_some(),
+            prescale >= 2 && prescale % 2 == 0
+        );
+    }
+    assert_eq!(spi_clock_hz(0, 2, 0), None);
+    assert_eq!(spi_clock_hz(1, 254, 255), None);
+}
 use dashboard_host_validation::display::telemetry::CompletionRate;
 
 #[test]

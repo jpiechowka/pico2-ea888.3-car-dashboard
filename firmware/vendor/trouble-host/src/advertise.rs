@@ -263,6 +263,7 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 props: AdvEventProps::new()
                     .set_connectable_adv(true)
                     .set_scannable_adv(false)
+                    .set_directed_adv(true)
                     .set_high_duty_cycle_directed_connectable_adv(true)
                     .set_anonymous_adv(false)
                     .set_legacy_adv(true),
@@ -297,7 +298,10 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 peer: None,
             },
             Advertisement::ExtConnectableNonscannableDirected { adv_data, peer } => RawAdvertisement {
-                props: AdvEventProps::new().set_connectable_adv(true).set_scannable_adv(false),
+                props: AdvEventProps::new()
+                    .set_connectable_adv(true)
+                    .set_scannable_adv(false)
+                    .set_directed_adv(true),
                 adv_data,
                 scan_data: &[],
                 peer: Some(peer),
@@ -453,59 +457,67 @@ impl AdStructure<'_> {
     }
 
     pub(crate) fn encode(&self, w: &mut WriteCursor<'_>) -> Result<(), codec::Error> {
+        // The AD length remains one octet even inside extended advertising.
+        let length = |count: usize, width: usize, overhead: usize| {
+            count
+                .checked_mul(width)
+                .and_then(|n| n.checked_add(overhead))
+                .and_then(|n| u8::try_from(n).ok())
+                .ok_or(codec::Error::InvalidValue)
+        };
         match self {
             AdStructure::Flags(flags) => {
                 w.append(&[0x02, 0x01, *flags])?;
             }
             AdStructure::IncompleteServiceUuids16(uuids) => {
-                w.append(&[(uuids.len() * 2 + 1) as u8, 0x02])?;
+                w.append(&[length(uuids.len(), 2, 1)?, 0x02])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid16(*uuid))?;
                 }
             }
             AdStructure::CompleteServiceUuids16(uuids) => {
-                w.append(&[(uuids.len() * 2 + 1) as u8, 0x03])?;
+                w.append(&[length(uuids.len(), 2, 1)?, 0x03])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid16(*uuid))?;
                 }
             }
             AdStructure::IncompleteServiceUuids32(uuids) => {
-                w.append(&[(uuids.len() * 4 + 1) as u8, 0x04])?;
+                w.append(&[length(uuids.len(), 4, 1)?, 0x04])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid32(*uuid))?;
                 }
             }
             AdStructure::CompleteServiceUuids32(uuids) => {
-                w.append(&[(uuids.len() * 4 + 1) as u8, 0x05])?;
+                w.append(&[length(uuids.len(), 4, 1)?, 0x05])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid32(*uuid))?;
                 }
             }
             AdStructure::IncompleteServiceUuids128(uuids) => {
-                w.append(&[(uuids.len() * 16 + 1) as u8, 0x06])?;
+                w.append(&[length(uuids.len(), 16, 1)?, 0x06])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid128(*uuid))?;
                 }
             }
             AdStructure::CompleteServiceUuids128(uuids) => {
-                w.append(&[(uuids.len() * 16 + 1) as u8, 0x07])?;
+                w.append(&[length(uuids.len(), 16, 1)?, 0x07])?;
                 for uuid in uuids.iter() {
                     w.write_ref(&Uuid::Uuid128(*uuid))?;
                 }
             }
             AdStructure::ShortenedLocalName(name) => {
-                w.append(&[(name.len() + 1) as u8, 0x08])?;
+                w.append(&[length(name.len(), 1, 1)?, 0x08])?;
                 w.append(name)?;
             }
             AdStructure::CompleteLocalName(name) => {
-                w.append(&[(name.len() + 1) as u8, 0x09])?;
+                w.append(&[length(name.len(), 1, 1)?, 0x09])?;
                 w.append(name)?;
             }
             AdStructure::TxPowerLevel(power) => {
                 w.append(&[0x02, 0x0a, *power as u8])?;
             }
             AdStructure::ServiceData16 { uuid, data } => {
-                w.append(&[(data.len() + 3) as u8, 0x16])?;
+                w.append(&[length(data.len(), 1, 3)?, 0x16])?;
                 w.write(Uuid::Uuid16(*uuid))?;
                 w.append(data)?;
             }
@@ -513,12 +525,12 @@ impl AdStructure<'_> {
                 company_identifier,
                 payload,
             } => {
-                w.append(&[(payload.len() + 3) as u8, 0xff])?;
+                w.append(&[length(payload.len(), 1, 3)?, 0xff])?;
                 w.write(*company_identifier)?;
                 w.append(payload)?;
             }
             AdStructure::Unknown { ty, data } => {
-                w.append(&[(data.len() + 1) as u8, *ty])?;
+                w.append(&[length(data.len(), 1, 1)?, *ty])?;
                 w.append(data)?;
             }
         }
@@ -679,6 +691,72 @@ impl<'d> Iterator for AdStructureIter<'d> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_fields_are_rejected_even_when_the_destination_is_large() {
+        let data = [0x55; 255];
+        let uuids16 = [[0; 2]; 128];
+        let uuids32 = [[0; 4]; 64];
+        let uuids128 = [[0; 16]; 16];
+        for item in [
+            AdStructure::CompleteLocalName(&data),
+            AdStructure::ShortenedLocalName(&data),
+            AdStructure::Unknown { ty: 0x40, data: &data },
+            AdStructure::ManufacturerSpecificData {
+                company_identifier: 1,
+                payload: &data[..253],
+            },
+            AdStructure::ServiceData16 {
+                uuid: [1, 2],
+                data: &data[..253],
+            },
+            AdStructure::CompleteServiceUuids16(&uuids16),
+            AdStructure::IncompleteServiceUuids16(&uuids16),
+            AdStructure::CompleteServiceUuids32(&uuids32),
+            AdStructure::IncompleteServiceUuids32(&uuids32),
+            AdStructure::CompleteServiceUuids128(&uuids128),
+            AdStructure::IncompleteServiceUuids128(&uuids128),
+        ] {
+            assert!(AdStructure::encode_slice(&[item], &mut [0; 512]).is_err(), "{item:?}");
+        }
+    }
+
+    #[test]
+    fn every_directed_variant_sets_directed_property_and_retains_peer() {
+        let peer = Address::random([1, 2, 3, 4, 5, 0xc6]);
+        for item in [
+            Advertisement::ConnectableNonscannableDirected { peer },
+            Advertisement::ConnectableNonscannableDirectedHighDuty { peer },
+            Advertisement::ExtConnectableNonscannableDirected {
+                peer,
+                adv_data: &[2, 1, 4],
+            },
+            Advertisement::ExtNonconnectableScannableDirected { peer, scan_data: &[] },
+            Advertisement::ExtNonconnectableNonscannableDirected {
+                peer,
+                adv_data: &[],
+                anonymous: false,
+            },
+        ] {
+            let raw: RawAdvertisement = item.into();
+            assert!(raw.props.directed_adv(), "{item:?}");
+            assert_eq!(raw.peer, Some(peer));
+        }
+    }
+
+    #[test]
+    fn maximum_length_field_round_trips_and_tiny_buffer_returns_error() {
+        let name = [b'x'; 254];
+        let mut buffer = [0; 256];
+        assert_eq!(
+            AdStructure::encode_slice(&[AdStructure::CompleteLocalName(&name)], &mut buffer).unwrap(),
+            256
+        );
+        assert!(
+            matches!(AdStructure::decode(&buffer).next(), Some(Ok(AdStructure::CompleteLocalName(decoded))) if decoded == name)
+        );
+        assert!(AdStructure::encode_slice(&[AdStructure::Flags(4)], &mut [0; 2]).is_err());
+    }
 
     #[test]
     fn adv_name_truncate() {

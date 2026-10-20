@@ -382,7 +382,18 @@ fn import_mapping_retains_fixed_rejection_reasons_without_input_content() {
     assert_eq!(rejected.category, Category::ImportExport);
     assert_eq!(rejected.severity, Severity::Warn);
     assert!(!rejected.message.contains("CAPABILITY") && !rejected.message.contains("private"));
-    assert!(import_outcome(Err(ImportFailure::TooLarge)).message.contains("128 KiB"));
+    for (limit_bytes, expected) in [
+        (dashboard_config_tools::project::MAX_PROJECT_BYTES, "9437184"),
+        (dashboard_configurator::config::MAX_JSON_BYTES, "131072"),
+    ] {
+        let notice = import_outcome(Err(ImportFailure::TooLarge { limit_bytes }));
+        assert_eq!(
+            notice.message,
+            format!("Import exceeds its {expected} byte size limit; document unchanged")
+        );
+        assert_eq!(notice.code, "import.rejected");
+        assert_eq!(notice.severity, Severity::Warn);
+    }
     assert!(import_outcome(Err(ImportFailure::Read)).message.contains("read"));
     assert!(
         import_outcome(Err(ImportFailure::Rejected(EditorError::JsonPending)))

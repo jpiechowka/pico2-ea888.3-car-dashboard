@@ -7,7 +7,19 @@ be proved separately before stack admission. Changes require full byte/source
 review and meaningful mutation/varied-link evidence; never learn new shapes.
 """
 
-ROOT_WINDOWS = {
+from config_body_types import BodyContract, SourceLocationObject
+from config_payload_contracts import PayloadObject
+
+WindowObject = SourceLocationObject | PayloadObject
+
+
+class WindowContract(BodyContract[WindowObject]):
+    caller: str
+    kind: str
+    location: str
+
+
+ROOT_WINDOWS: dict[str, WindowContract] = {
     "spawn_core0:unwrap:0": {
         "caller": "_RINvMNtNtCs_16embassy_executor8platform6threadNtB3_8Executor3runNCNvCs_5pico218___cortex_m_rt_main0EB1f_",
         "kind": "unwrap",

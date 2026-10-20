@@ -7,7 +7,7 @@ these digests automatically. See docs/hardware/flash-persistence.md.
 import hashlib
 import struct
 import sys
-from elf_image import ElfImage
+from elf_image import ElfImage, InspectableImage
 from validation import require
 
 
@@ -54,7 +54,7 @@ REVIEWED_TUPLES = (
 )
 
 
-def check(elf):
+def check(elf: InspectableImage) -> None:
     data = elf.named[".data"]
     require(
         data[1] == 1 and data[2] & 7 == 7,

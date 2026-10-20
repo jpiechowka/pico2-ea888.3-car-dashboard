@@ -474,8 +474,9 @@ impl Preview {
             },
             boost_psi: session.boost_psi(),
             fps_mode: session.fps(),
-            fps_instant: 0.0,
-            fps_average: 0.0,
+            // Synthetic presentation has no HAL transfer-rate observation.
+            fps_instant: f32::NAN,
+            fps_average: f32::NAN,
             backgrounds: [BLACK; 8],
             overlay: if inspection {
                 Overlay::configured_for_page(session.page(), user_overlay, None)
@@ -652,8 +653,8 @@ impl Preview {
             blink_on: blink,
             boost_psi: options.boost_psi,
             fps_mode: FpsMode::Off,
-            fps_instant: 0.0,
-            fps_average: 0.0,
+            fps_instant: f32::NAN,
+            fps_average: f32::NAN,
             backgrounds: [BLACK; 8], // Configured renderer resolves palettes itself.
             overlay: warning.map(Overlay::Warnings),
         };
@@ -806,8 +807,8 @@ impl Preview {
                 blink_on: false,
                 boost_psi: options.boost_psi,
                 fps_mode: FpsMode::Off,
-                fps_instant: 0.0,
-                fps_average: 0.0,
+                fps_instant: f32::NAN,
+                fps_average: f32::NAN,
                 backgrounds: [BLACK; 8],
                 overlay: None,
             };

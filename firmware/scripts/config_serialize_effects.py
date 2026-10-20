@@ -7,15 +7,28 @@ the enclosing caller/ingress/phase. Unknown scalar families/child roles reject.
 """
 
 import struct
+from collections.abc import Sequence
+from typing import TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord, IndexResult
+from config_compare_effects import CompareEffect
+from config_stack import DiagnosticObjects
+from config_regions import View
 from config_compare_effects import CompareState, SourceBytes, compare_effect, _source_bytes
 from config_decode_effects import _current, _object
-from config_helpers import helper_coverage, helper_frame, index_prefix, HELPER_SEMANTIC_ROLES
+from config_helpers import helper_coverage, helper_frame, index_prefix
+from config_helper_contracts import HELPER_SEMANTIC_ROLES
 from config_regions import Storage, Argument, borrow, require_disjoint, require_writes
 from config_stack import canonical_symbol
 from validation import require
 
 
-def _child(objects, instructions, proof, semantic):
+def _child(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    semantic: str,
+) -> HelperCoverageRecord:
     interfaces = {
         "serialize_u8": ("compare_extend",),
         "serialize_u16": ("range_to_inclusive_index_mut", "compare_extend"),
@@ -43,7 +56,7 @@ def _child(objects, instructions, proof, semantic):
     )
 
 
-def _frame(parent, semantic, size):
+def _frame(parent: Storage, semantic: str, size: int) -> Storage:
     return Storage(
         parent.space,
         parent.identity + ":" + semantic,
@@ -55,7 +68,7 @@ def _frame(parent, semantic, size):
     )
 
 
-def _varint(value):
+def _varint(value: int) -> bytes:
     result = []
     for group in range(5):
         byte = value & 127
@@ -66,7 +79,32 @@ def _varint(value):
     raise AssertionError("scalar exceeded reviewed five-group usize width")
 
 
-def serialize_effect(objects, instructions, proof, state, value, frame, ancestor_protected):
+class SerializeEffect(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    state: CompareState
+    original_state: CompareState
+    registers: dict[str, int]
+    error: int | None
+    encoded: bytes | None
+    local_write_envelopes: tuple[tuple[View, int, int], ...]
+    writes: tuple[tuple[View, int, bytes], ...]
+    children: tuple["SerializeEffect | CompareEffect", ...]
+    index: IndexResult | None
+    conservative_activation_paths: tuple[tuple[int, ...], ...]
+    normal_preserves: tuple[str, ...]
+    requires_machine_source_field_arguments_lifetime_ingress_and_enclosing_graph: bool
+
+
+def serialize_effect(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: CompareState,
+    value: Argument | SourceBytes,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> SerializeEffect:
     """One fixed serialization operation, including its ordered child effects."""
     proof = _current(objects, instructions, proof)
     semantic = proof["semantic_role"]
@@ -102,13 +140,15 @@ def serialize_effect(objects, instructions, proof, state, value, frame, ancestor
         active["protected"] + (prologue, _object(state.payload, "immutable-input")),
     )
     original = state
-    children = []
-    local_writes = ()
-    index = None
+    children: list[SerializeEffect | CompareEffect] = []
+    local_writes: tuple[tuple[View, int, int], ...] = ()
+    index: IndexResult | None = None
     encoded = None
     status = 2
-    paths = []
+    paths: list[tuple[int, ...]] = []
     if semantic == "serialize_str":
+        if not isinstance(value, SourceBytes):
+            raise AssertionError("serialized bytes have no typed initialized source borrow")
         data = _source_bytes(objects, value, frame)
         try:
             data.decode("utf-8")
@@ -148,12 +188,13 @@ def serialize_effect(objects, instructions, proof, state, value, frame, ancestor
             paths.append((frame.extent, 24, 32))
     else:
         kind, bits = scalar[semantic]
-        require(
+        if not (
             isinstance(value, Argument)
             and (value.kind, value.view, value.levels, value.bits) == (kind, None, 0, bits)
-            and len(value.domain) == 1,
-            "serializer lacks one concrete typed source scalar/ABI",
-        )
+            and value.domain is not None
+            and len(value.domain) == 1
+        ):
+            raise AssertionError("serializer lacks one concrete typed source scalar/ABI")
         number = next(iter(value.domain))
         require(
             semantic != "varint_u32_small" or number <= 127,
@@ -206,10 +247,9 @@ def serialize_effect(objects, instructions, proof, state, value, frame, ancestor
                 location_role=location_role,
             )
             outcome = index["outcomes"]
+            prefix_view = outcome[0].get("prefix") if len(outcome) == 1 else None
             require(
-                len(outcome) == 1
-                and "prefix" in outcome[0]
-                and outcome[0]["prefix"].extent == len(encoded),
+                isinstance(prefix_view, View) and prefix_view.extent == len(encoded),
                 "typed scalar failed its proved bounded index",
             )
             paths.append((frame.extent,) + index["conservative_frame_metadata"])

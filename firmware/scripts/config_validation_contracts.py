@@ -1,6 +1,11 @@
 """Finite ValidationError source-field assembly, reviewed Task2 contracts."""
 
-VALIDATION_BUILDERS = {
+from typing import Literal
+
+Producer = tuple[tuple[int, int], tuple[Literal["literal"], bytes] | tuple[Literal["debug"], str]]
+Builder = tuple[int, int, tuple[tuple[int, int, str], ...], tuple[Producer, ...], list[str]]
+
+VALIDATION_BUILDERS: dict[str, Builder] = {
     "wide": (
         158,
         80,

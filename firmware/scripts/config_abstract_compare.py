@@ -7,6 +7,12 @@ No exact API accepts these interfaces; no arbitrary helper/ISA is evaluated.
 """
 
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from typing import NotRequired, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_helpers import HelperCoverageRecord, IndexResult
+from config_logger import LoggerRecord
+from config_stack import DiagnosticObjects
 from config_abstract import Span, DecoderInterface, _policy
 from config_platform import PlatformPolicy
 from config_compare_effects import _memcmp_dependency
@@ -24,7 +30,7 @@ class CompareInterface:
     cursor: Span
     platform_policy: PlatformPolicy | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Structural checks only: C.word4 is remaining LENGTH, never D.end.
         DecoderInterface(self.header, self.payload, self.cursor)
         require(
@@ -38,7 +44,7 @@ class InitializedPrefix:
     view: View
     length: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             isinstance(self.view, View)
             and not self.view.writable
@@ -55,7 +61,7 @@ class ScalarInterface:
     kind: str
     domain: Span
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         widths = {"u8": 8, "u16": 16, "u32": 32, "usize": 32, "f32_bits": 32}
         require(
             self.kind in widths
@@ -65,7 +71,7 @@ class ScalarInterface:
         )
 
 
-def _source(objects, source, frame):
+def _source(objects: DiagnosticObjects, source: InitializedPrefix, frame: Storage) -> Storage:
     require(isinstance(source, InitializedPrefix), "missing initialized source-prefix interface")
     view = source.view
     require(
@@ -80,7 +86,37 @@ def _source(objects, source, frame):
     return _object(view, "live-canonical-source")
 
 
-def compare_interface(objects, instructions, proof, state, source, frame, ancestor_protected):
+class CompareOutcome(TypedDict):
+    kind: str
+    state: CompareInterface
+    possible_writes: tuple[tuple[View, int, int], ...]
+    status: int
+    phase: NotRequired[str]
+
+
+class CompareInterfaceResult(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    builtin: LoggerRecord
+    outcomes: tuple[CompareOutcome, ...]
+    source: InitializedPrefix
+    possible_input_read_envelopes: tuple[View, InitializedPrefix]
+    conservative_activation_frames: tuple[int, ...]
+    platform_policy: PlatformPolicy | None
+    requires_parent_preserve_dependent_platform_policy: bool
+    normal_preserves: tuple[str, ...]
+    requires_actual_stage_receiver_transport_and_complete_parent_graph: bool
+
+
+def compare_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: CompareInterface,
+    source: InitializedPrefix,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> CompareInterfaceResult:
     proof = _current(objects, instructions, proof)
     require(
         proof["semantic_role"] == "compare_extend"
@@ -101,7 +137,7 @@ def compare_interface(objects, instructions, proof, state, source, frame, ancest
     require_disjoint((child_frame,) + active["protected"])
     require_disjoint((child_frame, guard))
     require_writes((state.header,), ((state.header, 0, 8),), (child_frame,))
-    outcomes = []
+    outcomes: list[CompareOutcome] = []
     lo, hi = state.cursor.lower, state.cursor.upper
     n = state.payload.extent
     # No equality result is computed. Both byte-comparison outcomes are kept;
@@ -132,7 +168,33 @@ def compare_interface(objects, instructions, proof, state, source, frame, ancest
     )
 
 
-def serialize_interface(objects, instructions, proof, state, value, frame, ancestor_protected):
+class SerializeInterfaceResult(TypedDict):
+    semantic_role: str
+    proof: HelperCoverageRecord
+    outcomes: tuple[CompareOutcome, ...]
+    children: tuple["SerializeInterfaceResult | CompareInterfaceResult", ...]
+    index: IndexResult | None
+    encoded_length: Span | None
+    local_write_envelopes: tuple[tuple[View, int, int], ...]
+    conservative_activation_paths: tuple[tuple[int, ...], ...]
+    conservative_activation_frames: tuple[int, ...]
+    requires_actual_stage_receiver_transport_and_complete_parent_graph: bool
+    platform_policy: PlatformPolicy | None
+    requires_parent_preserve_dependent_platform_policy: bool
+    requires_hard_float_s0: bool
+    requires_source_valid_string_reference: bool
+    normal_preserves: tuple[str, ...]
+
+
+def serialize_interface(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    state: CompareInterface,
+    value: ScalarInterface | InitializedPrefix,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> SerializeInterfaceResult:
     proof = _current(objects, instructions, proof)
     semantic = proof["semantic_role"]
     kinds = {
@@ -166,12 +228,14 @@ def serialize_interface(objects, instructions, proof, state, value, frame, ances
         ((state.header, 0, 8),),
         active["protected"] + (prologue, _object(state.payload, "immutable-input")),
     )
-    children = []
-    outcomes = []
-    paths = []
-    index = None
-    local_writes = ()
+    children: list[SerializeInterfaceResult | CompareInterfaceResult] = []
+    outcomes: list[CompareOutcome] = []
+    paths: list[tuple[int, ...]] = []
+    index: IndexResult | None = None
+    local_writes: tuple[tuple[View, int, int], ...] = ()
     if semantic == "serialize_str":
+        if not isinstance(value, InitializedPrefix):
+            raise AssertionError("missing initialized source-prefix interface")
         guard = _source(objects, value, frame)
         require_disjoint((frame, guard))
         require_writes((state.header,), ((state.header, 0, 8),), (guard,))
@@ -189,7 +253,7 @@ def serialize_interface(objects, instructions, proof, state, value, frame, ances
         paths.append((frame.extent,) + prefix["conservative_activation_frames"])
         for alternative in prefix["outcomes"]:
             if alternative["kind"] == "error2":
-                outcomes.append(dict(alternative, phase="prefix_failed"))
+                outcomes.append({**alternative, "phase": "prefix_failed"})
                 continue
             child = _child(objects, instructions, proof, "compare_extend")
             body = compare_interface(
@@ -205,18 +269,17 @@ def serialize_interface(objects, instructions, proof, state, value, frame, ances
             paths.append((frame.extent,) + body["conservative_activation_frames"])
             for final in body["outcomes"]:
                 outcomes.append(
-                    dict(
-                        final,
-                        phase="complete" if final["kind"] == "success" else "body_failed",
-                        possible_writes=alternative["possible_writes"] + final["possible_writes"],
-                    )
+                    {
+                        **final,
+                        "phase": "complete" if final["kind"] == "success" else "body_failed",
+                        "possible_writes": alternative["possible_writes"]
+                        + final["possible_writes"],
+                    }
                 )
         length = None
     else:
-        require(
-            isinstance(value, ScalarInterface) and value.kind == kinds[semantic],
-            "serializer lacks its source scalar type",
-        )
+        if not (isinstance(value, ScalarInterface) and value.kind == kinds[semantic]):
+            raise AssertionError("serializer lacks its source scalar type")
         require(
             semantic != "varint_u32_small" or value.domain.upper <= 127,
             "specialized abstract u32 lacks its guarded<=127 domain",
@@ -285,7 +348,7 @@ def serialize_interface(objects, instructions, proof, state, value, frame, ances
         outcomes.extend(compared["outcomes"])
         paths.append((frame.extent,) + compared["conservative_activation_frames"])
     success = 255 if semantic in ("varint_usize", "varint_u32_small") else 0xFFFFFFFF
-    outcomes = [dict(o, status=success if o["kind"] == "success" else 2) for o in outcomes]
+    outcomes = [{**o, "status": success if o["kind"] == "success" else 2} for o in outcomes]
     return dict(
         semantic_role=semantic,
         proof=proof,

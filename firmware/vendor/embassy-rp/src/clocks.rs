@@ -675,7 +675,11 @@ pub struct PllConfig {
 impl PllConfig {
     /// Calculate the output frequency for this PLL configuration
     /// given an input frequency.
+    ///
+    /// # Panics
+    /// Panics if [`Self::is_valid`] rejects the configuration.
     pub fn output_frequency(&self, input_hz: u32) -> u32 {
+        assert!(self.is_valid(input_hz), "invalid PLL configuration");
         let ref_freq = input_hz / self.refdiv as u32;
         let vco_freq = ref_freq * self.fbdiv as u32;
         vco_freq / ((self.post_div1 * self.post_div2) as u32)
@@ -709,10 +713,10 @@ impl PllConfig {
         }
 
         // Calculate VCO frequency
-        let vco_freq = ref_freq * self.fbdiv as u32;
+        let vco_freq = ref_freq as u64 * self.fbdiv as u64;
 
-        // Check VCO frequency range
-        vco_freq >= VCO_MIN && vco_freq <= VCO_MAX
+        // Check before narrowing: extreme but well-shaped inputs can overflowu32.
+        vco_freq >= VCO_MIN as u64 && vco_freq <= VCO_MAX as u64
     }
 }
 
@@ -1168,8 +1172,7 @@ pub(crate) unsafe fn init(config: ClockConfig) {
             // SysClkSrc::Gpin0 => (Src::CLKSRC_CLK_SYS_AUX, Aux::CLKSRC_GPIN0, gpin0_freq),
             // SysClkSrc::Gpin1 => (Src::CLKSRC_CLK_SYS_AUX, Aux::CLKSRC_GPIN1, gpin1_freq),
         };
-        let div = config.sys_clk.div_int as u64 * 256 + config.sys_clk.div_frac as u64;
-        (src, aux, ((freq as u64 * 256) / div) as u32)
+        (src, aux, divided_clock_frequency(freq, config.sys_clk.div_int as u64, config.sys_clk.div_frac as u64))
     };
     assert!(clk_sys_freq != 0);
     CLOCKS.sys.store(clk_sys_freq, Ordering::Relaxed);
@@ -1765,10 +1768,10 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         };
 
         let div = c.clk_gpout_div(self.gpout.number()).read();
-        let int = if div.int() == 0 { 0xFFFF } else { div.int() } as u64;
+        let int = div.int() as u64;
         let frac = div.frac() as u64;
 
-        ((base as u64 * 256) / (int * 256 + frac)) as u32
+        divided_clock_frequency(base, int, frac)
     }
 }
 
@@ -1984,9 +1987,35 @@ pub fn dormant_sleep() {
     }
 }
 
+fn divided_clock_frequency(base: u32, int: u64, frac: u64) -> u32 {
+    #[cfg(feature = "rp2040")]
+    const FRAC_BITS: u32 = 8;
+    #[cfg(feature = "_rp235x")]
+    const FRAC_BITS: u32 = 16;
+    // SYS and GPOUT encode the maximum integer divisor as zero.
+    let int = if int == 0 { 1u64 << (32 - FRAC_BITS) } else { int };
+    ((base as u64 * (1 << FRAC_BITS)) / ((int << FRAC_BITS) + frac)) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pll_validation_rejects_overflowing_vco() {
+        let config = PllConfig { refdiv: 1, fbdiv: 320, post_div1: 7, post_div2: 7 };
+        assert!(!config.is_valid(800_000_000));
+        assert!(!config.is_valid(u32::MAX));
+    }
+
+    #[cfg(feature = "_rp235x")]
+    #[test]
+    fn rp2350_fractional_clock_and_zero_integer_encoding() {
+        assert_eq!(divided_clock_frequency(150_000_000, 1, 32768), 100_000_000);
+        assert_eq!(divided_clock_frequency(150_000_000, 2, 0), 75_000_000);
+        assert_eq!(divided_clock_frequency(65_536_000, 0, 0), 1000);
+        assert_eq!(divided_clock_frequency(u32::MAX, 1, 0), u32::MAX);
+    }
 
     #[cfg(feature = "rp2040")]
     #[test]

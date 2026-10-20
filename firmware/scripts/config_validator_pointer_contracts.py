@@ -7,7 +7,44 @@ are typed relocations; source-entry, protected lifetime, selectors and whole
 graph composition remain independent requirements of the consumer.
 """
 
-REGIONS = [
+from collections.abc import Sequence
+from typing import Literal, NotRequired, TypedDict
+from config_body_types import BodyContract
+
+
+class ConfigPool(TypedDict):
+    kind: Literal["config"]
+
+
+class ScalarPool(TypedDict):
+    kind: Literal["scalar"]
+    value: int
+
+
+class SourceRegion(TypedDict):
+    label: str
+    offset: int
+    extent: int
+    instructions: Sequence[tuple[int, int, str]]
+    pools: Sequence[ConfigPool | ScalarPool]
+    mapping: NotRequired[Sequence[tuple[int, int, str]]]
+    data: NotRequired[Sequence[tuple[int, int, str]]]
+
+
+class LeafContract(TypedDict):
+    role: str
+    contract: BodyContract[object]
+
+
+class StoreFootprint(TypedDict, total=False):
+    owner_offsets: list[int]
+    Q_range: list[int]
+    paired_index: str
+    Q_possible_union: list[int]
+    width: int
+
+
+REGIONS: list[SourceRegion] = [
     {
         "label": "edges_pages",
         "offset": 402,
@@ -767,7 +804,7 @@ REGIONS = [
     },
 ]
 
-CHILDREN = {
+CHILDREN: dict[str, LeafContract] = {
     "action_destination": {
         "role": "_RNvMs0_NtCs_16dashboard_config8controlsNtB5_13ControlAction11destination",
         "contract": {
@@ -935,7 +972,7 @@ CHILDREN = {
     },
 }
 
-STORES = [
+STORES: list[tuple[int, str, int, str, StoreFootprint]] = [
     (346, "result", 2, "strh r4, [r5]", {"owner_offsets": [0, 2]}),
     (560, "page_array", 4, "strh.w r2, [r10]", {"owner_offsets": [0, 2], "Q_range": [120, 122]}),
     (

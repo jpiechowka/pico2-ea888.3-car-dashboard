@@ -489,8 +489,14 @@ declare_rom_function! {
     ///
     /// See datasheet section 5.5.9.2 for more details.
     ///
+    /// # Safety
+    /// `ok` must point to writable storage for the access result. `write` must
+    /// be the RCP boolean 0xa500a500 (write access) or 0x00c300c3 (read access);
+    /// other values can cause the ROM to halt. The returned pointer may only be
+    /// used when `*ok` is the RCP true value.
+    ///
     /// Supported architectures: ARM-S, RISC-V
-    unsafe fn validate_ns_buffer() -> () {
+    unsafe fn validate_ns_buffer(addr: *const u8, size: u32, write: u32, ok: *mut u32) -> *mut u8 {
         crate::rom_data::rom_table_lookup(*b"VB", crate::rom_data::inner::rt_flags::FUNC_ARM_SEC_RISCV)
     }
 }

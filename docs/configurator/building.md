@@ -139,6 +139,12 @@ those bytes under its existing size/type bounds and holds them against mutation
 through compilation and verification. Changing a firmware blob is therefore a
 source-identity change, even when the Rust application text is identical.
 
+The snapshot and capture identity also include both firmware workspace members,
+`pico2` and `ble-probe`. Cargo needs the sibling manifest when loading the workspace;
+the dashboard command still selects only `dashboard-pico2`, and `pico2` remains
+the default member. Copying the probe source does not enable its features in the
+dashboard. See Cargo's [workspace package selection](https://doc.rust-lang.org/cargo/reference/workspaces.html#package-selection).
+
 280/70 is the user's observed working overclock on this device. It is outside
 the manufacturer's stock operating specification. Do not use 290/72.5 on this
 device; the user observed display corruption. See the existing
@@ -319,6 +325,11 @@ Wasm pipeline validation and device access are explicitly `not_checked`.
 `ready` therefore does not admit firmware, prove USB access, or enable flashing.
 This command checks prerequisites only; the separate `serve` command provides
 the HTTP/build/flash adapters.
+
+The native check, build and artifact validator share Python executable selection:
+absolute PATH entries only, preferring `python.exe`, with `python3.exe` as a
+fallback. The PowerShell Setup and build wrappers require the `python` command
+described above.
 
 Native checks require Windows 10/11 x64. Each fixed probe is assigned to a
 non-inheritable Windows Job Object at process creation, with no breakaway flag,

@@ -1,11 +1,11 @@
 """Require the specific no-security feature-unification rejection."""
 
 import argparse
-import json
 from pathlib import Path
 import sys
 
 from validation import require
+from cargo_diagnostics import compiler_errors
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "host/scripts"))
@@ -14,18 +14,12 @@ from owned_process import run_checked  # noqa: E402
 GUARD = "discovery-no-security forbids the security feature; build the BLE probe separately from pairing-enabled firmware"
 
 
-def verify_rejection(code, output):
-    errors = []
-    for line in output.splitlines():
-        if not line.startswith("{"):
-            continue
-        record = json.loads(line)
-        if record.get("reason") == "compiler-message" and record["message"]["level"] == "error":
-            errors.append(record["message"]["message"])
+def verify_rejection(code: int, output: str) -> None:
+    errors = [error.message for error in compiler_errors(output)]
     require(code != 0 and errors == [GUARD], "expected only discovery-no-security feature guard")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
     args = parser.parse_args()

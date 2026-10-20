@@ -26,10 +26,12 @@ mod no_deps {
         }
     }
 
-    fn days_from_epoch_to_year(year: u16) -> u32 {
+    const fn days_from_epoch_to_year(year: u16) -> u32 {
         let mut days = 0u32;
-        for y in EPOCH_YEAR..year {
+        let mut y = EPOCH_YEAR;
+        while y < year {
             days += if is_leap_year(y) { 366 } else { 365 };
+            y += 1;
         }
         days
     }
@@ -39,8 +41,26 @@ mod no_deps {
     }
 
     pub(crate) fn datetime_to_millis(dt: &DateTime) -> Result<u64, Error> {
+        if dt.year > 4095 {
+            return Err(Error::InvalidYear);
+        }
         if dt.year < EPOCH_YEAR {
             return Err(Error::OutOfRange);
+        }
+        if !(1..=12).contains(&dt.month) {
+            return Err(Error::InvalidMonth);
+        }
+        if dt.day == 0 || dt.day > days_in_month(dt.year, dt.month) {
+            return Err(Error::InvalidDay);
+        }
+        if dt.hour > 23 {
+            return Err(Error::InvalidHour);
+        }
+        if dt.minute > 59 {
+            return Err(Error::InvalidMinute);
+        }
+        if dt.second > 59 {
+            return Err(Error::InvalidSecond);
         }
 
         let mut total_days = days_from_epoch_to_year(dt.year);
@@ -60,8 +80,11 @@ mod no_deps {
 
     #[cfg(not(feature = "chrono"))]
     pub(crate) fn millis_to_datetime(millis: u64) -> Result<DateTime, Error> {
-        // Use u64 for initial division, then cast to u32 for subsequent calculations
-        // Max total_days for year 4095 is ~776,000, fits in u32
+        const END_DAYS: u64 = days_from_epoch_to_year(4096) as u64;
+        if millis / MS_PER_DAY >= END_DAYS {
+            return Err(Error::InvalidTimestamp);
+        }
+        // Only the supported calendar range is narrowed to u32.
         let total_days = (millis / MS_PER_DAY) as u32;
         // remaining_ms is at most MS_PER_DAY - 1 = 86,399,999, fits in u32
         let remaining_ms = (millis % MS_PER_DAY) as u32;
@@ -135,6 +158,9 @@ mod chrono_rp235x {
         if dt.year() < EPOCH_YEAR as i32 {
             return Err(Error::OutOfRange);
         }
+        if dt.year() > 4095 {
+            return Err(Error::InvalidYear);
+        }
 
         let timestamp_millis = dt.and_utc().timestamp_millis();
         if timestamp_millis < 0 {
@@ -162,3 +188,80 @@ mod chrono_rp235x {
 
 #[cfg(all(feature = "chrono", feature = "_rp235x"))]
 pub(crate) use chrono_rp235x::{datetime_to_millis, millis_to_datetime};
+
+#[cfg(all(test, not(feature = "chrono")))]
+mod tests {
+    use super::*;
+    use crate::datetime::{DateTime, DayOfWeek, Error};
+
+    fn epoch() -> DateTime {
+        DateTime {
+            year: 1970,
+            month: 1,
+            day: 1,
+            day_of_week: DayOfWeek::Thursday,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        }
+    }
+
+    #[test]
+    fn invalid_calendar_fields_return_errors() {
+        for month in [0, 13, 255] {
+            let mut dt = epoch();
+            dt.month = month;
+            assert_eq!(datetime_to_millis(&dt), Err(Error::InvalidMonth));
+        }
+        for (year, month, day) in [(1970, 1, 0), (2023, 2, 29), (2100, 2, 29), (2024, 4, 31)] {
+            let mut dt = epoch();
+            dt.year = year;
+            dt.month = month;
+            dt.day = day;
+            assert_eq!(datetime_to_millis(&dt), Err(Error::InvalidDay));
+        }
+        for (hour, minute, second, error) in [
+            (24, 0, 0, Error::InvalidHour),
+            (0, 60, 0, Error::InvalidMinute),
+            (0, 0, 60, Error::InvalidSecond),
+        ] {
+            let mut dt = epoch();
+            dt.hour = hour;
+            dt.minute = minute;
+            dt.second = second;
+            assert_eq!(datetime_to_millis(&dt), Err(error));
+        }
+    }
+
+    #[test]
+    fn timestamp_bounds_are_checked_before_narrowing() {
+        for millis in [u64::MAX, (1u64 << 32) * 86_400_000] {
+            assert!(millis_to_datetime(millis).is_err());
+        }
+        let mut dt = epoch();
+        dt.year = 4096;
+        assert_eq!(datetime_to_millis(&dt), Err(Error::InvalidYear));
+        dt.year = 1969;
+        assert_eq!(datetime_to_millis(&dt), Err(Error::OutOfRange));
+    }
+
+    #[test]
+    fn leap_day_and_last_supported_second_round_trip() {
+        assert_eq!(datetime_to_millis(&epoch()), Ok(0));
+        let leap = millis_to_datetime(951_782_400_000).unwrap();
+        assert_eq!((leap.year, leap.month, leap.day), (2000, 2, 29));
+        assert_eq!(leap.day_of_week, DayOfWeek::Tuesday);
+        assert_eq!(datetime_to_millis(&leap), Ok(951_782_400_000));
+        let mut last = epoch();
+        last.year = 4095;
+        last.month = 12;
+        last.day = 31;
+        last.hour = 23;
+        last.minute = 59;
+        last.second = 59;
+        let millis = datetime_to_millis(&last).unwrap();
+        let decoded = millis_to_datetime(millis + 999).unwrap();
+        assert_eq!(datetime_to_millis(&decoded), Ok(millis));
+        assert!(millis_to_datetime(millis + 1000).is_err());
+    }
+}

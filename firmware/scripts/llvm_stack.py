@@ -1,19 +1,24 @@
 """Bounded selected-toolchain LLVM decoding; no target execution or PATH fallback."""
 
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import tempfile
-import time
+from typing import TypedDict
 
-from elf_image import ElfImage
+from elf_image import ElfImage, MappedImage
 from validation import require
 
-SCHEMA = 1
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "host/scripts"))
+import owned_process
+
+SCHEMA = 2
 TARGET = "thumbv8m.main-none-eabihf"
 DECODER_ARGS = ("--disassemble", "--disassemble-zeroes", "--triple=" + TARGET, "--mcpu=cortex-m33")
 
@@ -26,7 +31,7 @@ class Instruction:
     operands: str
 
 
-def capability_elf():
+def capability_elf() -> bytes:
     """Literal reviewed Thumb fixture, including branch-looking mapped data.
 
     BL tail; BNE; IT/POPEQ; VPUSH/VPOP 64 B; VCMP/VMRS; BLX R3;
@@ -89,12 +94,12 @@ def capability_elf():
     return bytes(blob)
 
 
-def mapping_ranges(elf, name):
+def mapping_ranges(elf: MappedImage, name: str) -> list[tuple[int, int, str]]:
     address, length, section_index = elf.functions[name]
     address &= ~1
     section = elf.sections[section_index]
     require(section[2] & 4, "function is outside executable section")
-    entries = {}
+    entries: dict[int, str] = {}
     for label, value, index in elf.mapping_symbols:
         if index != section_index:
             continue
@@ -122,12 +127,14 @@ def mapping_ranges(elf, name):
     return result
 
 
-def decode_listing(text, elf, names=None):
+def decode_listing(
+    text: str, elf: MappedImage, names: Iterable[str] | None = None
+) -> dict[int, Instruction]:
     """Check raw bytes and complete mapped code coverage before using LLVM text."""
     selected = list(elf.functions if names is None else names)
     ranges = []
-    raw = {}
-    extents = {}
+    raw: dict[int, int] = {}
+    extents: dict[int, tuple[int, int]] = {}
     for name in selected:
         start = elf.functions[name][0] & ~1
         extent = (elf.functions[name][1], elf.functions[name][2])
@@ -145,7 +152,7 @@ def decode_listing(text, elf, names=None):
         ranges.extend(mapping_ranges(elf, name))
     code = {address for start, end, kind in ranges if kind == "t" for address in range(start, end)}
     records = {}
-    covered = set()
+    covered: set[int] = set()
     for line in text.splitlines():
         prefix = re.match(r"^\s*([0-9a-fA-F]+):\s*(.*)$", line)
         if not prefix:
@@ -156,7 +163,8 @@ def decode_listing(text, elf, names=None):
         match = re.fullmatch(
             r"((?:(?:[0-9a-fA-F]{4}|[0-9a-fA-F]{2})\s+)+)(\S+)(?:\s+(.*))?", prefix[2]
         )
-        require(match is not None, "invalid LLVM instruction record")
+        if match is None:
+            raise AssertionError("invalid LLVM instruction record")
         groups = match[1].split()
         require(all(len(g) == 4 for g in groups), "unexpected instruction byte grammar")
         data = b"".join(int(g, 16).to_bytes(2, "little") for g in groups)
@@ -183,111 +191,71 @@ def decode_listing(text, elf, names=None):
     return records
 
 
-def _digest(path):
+def _digest(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _run(argv, limit, timeout=60):
-    """Bound execution and pipe draining by one deadline, including cleanup.
+def _supervisor_digest() -> str:
+    return _digest(owned_process.__file__)
 
-    No blocking reader thread can outlive this call. Windows PeekNamedPipe
-    supports the declared Python 3.11 minimum without nonblocking-pipe APIs
-    introduced in later Python releases. Only these fixed tools are launched.
+
+def _run(argv: Sequence[str], limit: int, timeout: float = 60) -> str:
+    """Bound both output streams and own every descendant of the selected tool.
+
+    The shared supervisor limits execution/draining to timeout, then allows up
+    to ten seconds on Windows or 5.2 seconds on POSIX for owned-tree cleanup. The
+    child receives only the fixed minimal environment. No shell or PATH fallback
+    is added by this adapter.
     """
     env = {
         k: v for k, v in os.environ.items() if k.upper() in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP")
     }
     env.update(LC_ALL="C", LANG="C")
-    deadline = time.monotonic() + timeout
-    running_deadline = deadline - min(0.25, timeout / 2)
-    child = subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        bufsize=0,
-    )
-    streams = (child.stdout, child.stderr)
     try:
-        # Child ownership begins at spawn, including platform pipe setup.
-        buffers = [bytearray(), bytearray()]
-        ended = [False, False]
-        if os.name == "nt":
-            import ctypes
-            from ctypes import wintypes
-            import msvcrt
-
-            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-            peek = kernel.PeekNamedPipe
-            peek.argtypes = [
-                wintypes.HANDLE,
-                wintypes.LPVOID,
-                wintypes.DWORD,
-                wintypes.LPVOID,
-                ctypes.POINTER(wintypes.DWORD),
-                wintypes.LPVOID,
-            ]
-            peek.restype = wintypes.BOOL
-
-            def read(pipe):
-                available = wintypes.DWORD()
-                if not peek(
-                    msvcrt.get_osfhandle(pipe.fileno()),
-                    None,
-                    0,
-                    None,
-                    ctypes.byref(available),
-                    None,
-                ):
-                    require(ctypes.get_last_error() in (109, 232), "LLVM pipe inspection failed")
-                    return b""
-                return (
-                    os.read(pipe.fileno(), min(available.value, 65536)) if available.value else None
-                )
-        else:
-            for pipe in streams:
-                os.set_blocking(pipe.fileno(), False)
-
-            def read(pipe):
-                try:
-                    return os.read(pipe.fileno(), 65536)
-                except BlockingIOError:
-                    return None
-
-        while True:
-            require(time.monotonic() < running_deadline, "LLVM child/drain deadline exceeded")
-            for index, pipe in enumerate(streams):
-                if ended[index]:
-                    continue
-                chunk = read(pipe)
-                if chunk is None:
-                    continue
-                if not chunk:
-                    ended[index] = True
-                    continue
-                require(len(buffers[index]) + len(chunk) <= limit, "LLVM output bound exceeded")
-                buffers[index].extend(chunk)
-            if all(ended) and child.poll() is not None:
-                break
-            time.sleep(0.001)
-        status = child.wait(timeout=max(0.001, deadline - time.monotonic()))
-    finally:
-        if child.poll() is None:
-            child.kill()
-        try:
-            child.wait(timeout=max(0.001, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired as error:
-            raise AssertionError("LLVM direct child cleanup deadline exceeded") from error
-        finally:
-            for pipe in streams:
-                pipe.close()
+        result = owned_process.run_bounded(
+            argv,
+            env=env,
+            timeout=timeout,
+            stdout_limit=limit,
+            stderr_limit=limit,
+            on_stderr=lambda _: None,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError("LLVM child/drain deadline exceeded") from error
+    except owned_process.OutputLimitError as error:
+        raise AssertionError("LLVM output bound exceeded") from error
     require(
-        status == 0,
-        "LLVM child failed: " + bytes(buffers[1]).decode("utf-8", errors="replace")[:512],
+        result.returncode == 0,
+        "LLVM child failed: " + result.stderr.decode("utf-8", errors="replace")[:512],
     )
-    require(not buffers[1], "LLVM diagnostic output is not permitted")
-    return bytes(buffers[0]).decode("utf-8", errors="strict").replace("\r\n", "\n")
+    require(not result.stderr, "LLVM diagnostic output is not permitted")
+    return result.stdout.decode("utf-8", errors="strict").replace("\r\n", "\n")
+
+
+class LlvmContextRecord(TypedDict):
+    schema: int
+    compiler_path: str
+    compiler_sha256: str
+    compiler_version: str
+    sysroot: str
+    host: str
+    executable: str
+    executable_sha256: str
+    version: str
+    target: str
+    arguments: tuple[str, ...]
+    capability_sha256: str
+    capability_output_sha256: str
+    adapter_sha256: str
+    supervisor_sha256: str
+
+
+class DisassemblyEvidence(TypedDict):
+    context: LlvmContextRecord
+    command: list[str]
+    elf_sha256: str
+    output_sha256: str
+    covered_instructions: int
 
 
 @dataclass(frozen=True)
@@ -302,22 +270,43 @@ class LlvmContext:
     executable_sha256: str
     version: str
     target: str
-    arguments: tuple
+    arguments: tuple[str, ...]
     capability_sha256: str
     capability_output_sha256: str
     adapter_sha256: str
+    supervisor_sha256: str
+
+    def to_record(self) -> LlvmContextRecord:
+        return {
+            "schema": self.schema,
+            "compiler_path": self.compiler_path,
+            "compiler_sha256": self.compiler_sha256,
+            "compiler_version": self.compiler_version,
+            "sysroot": self.sysroot,
+            "host": self.host,
+            "executable": self.executable,
+            "executable_sha256": self.executable_sha256,
+            "version": self.version,
+            "target": self.target,
+            "arguments": self.arguments,
+            "capability_sha256": self.capability_sha256,
+            "capability_output_sha256": self.capability_output_sha256,
+            "adapter_sha256": self.adapter_sha256,
+            "supervisor_sha256": self.supervisor_sha256,
+        }
 
 
-def resolve(rustc, version):
+def resolve(rustc: str | Path, version: str) -> LlvmContext:
+    adapter_hash = _digest(__file__)
+    supervisor_hash = _supervisor_digest()
     compiler = Path(rustc)
     require(compiler.is_absolute() and compiler.is_file(), "missing absolute selected compiler")
     compiler = compiler.resolve()
     compiler_hash = _digest(compiler)
     require(_run([str(compiler), "-Vv"], 16384) == version, "selected compiler identity changed")
     host = re.search(r"^host: ([a-z0-9_-]+)$", version, re.M)
-    require(
-        host is not None and "LLVM version: 23.1.3" in version, "unreviewed compiler/LLVM identity"
-    )
+    if host is None or "LLVM version: 23.1.3" not in version:
+        raise AssertionError("unreviewed compiler/LLVM identity")
     sysroot = Path(_run([str(compiler), "--print", "sysroot"], 16384).strip()).resolve()
     require(compiler.parent == sysroot / "bin", "compiler is outside selected sysroot")
     tool = (
@@ -364,7 +353,10 @@ def resolve(rustc, version):
         "LLVM capability targets differ",
     )
     require(
-        _digest(tool) == tool_hash and _digest(compiler) == compiler_hash,
+        _digest(tool) == tool_hash
+        and _digest(compiler) == compiler_hash
+        and _digest(__file__) == adapter_hash
+        and _supervisor_digest() == supervisor_hash,
         "decoder/compiler changed during probe",
     )
     return LlvmContext(
@@ -381,11 +373,14 @@ def resolve(rustc, version):
         DECODER_ARGS,
         hashlib.sha256(probe).hexdigest(),
         hashlib.sha256(output.encode()).hexdigest(),
-        _digest(__file__),
+        adapter_hash,
+        supervisor_hash,
     )
 
 
-def disassemble(path, elf, context):
+def disassemble(
+    path: str | Path, elf: ElfImage, context: LlvmContext
+) -> tuple[dict[int, Instruction], DisassemblyEvidence]:
     require(
         isinstance(context, LlvmContext)
         and context.schema == SCHEMA
@@ -395,7 +390,8 @@ def disassemble(path, elf, context):
     require(
         _digest(context.executable) == context.executable_sha256
         and _digest(context.compiler_path) == context.compiler_sha256
-        and _digest(__file__) == context.adapter_sha256,
+        and _digest(__file__) == context.adapter_sha256
+        and _supervisor_digest() == context.supervisor_sha256,
         "LLVM context identity changed",
     )
     source = Path(path).resolve()
@@ -406,11 +402,12 @@ def disassemble(path, elf, context):
     require(
         source.read_bytes() == elf.data
         and _digest(context.executable) == context.executable_sha256
-        and _digest(context.compiler_path) == context.compiler_sha256,
+        and _digest(context.compiler_path) == context.compiler_sha256
+        and _supervisor_digest() == context.supervisor_sha256,
         "ELF/decoder/compiler changed during admission",
     )
-    evidence = dict(
-        context=asdict(context),
+    evidence: DisassemblyEvidence = dict(
+        context=context.to_record(),
         command=command,
         elf_sha256=hashlib.sha256(elf.data).hexdigest(),
         output_sha256=hashlib.sha256(output.encode()).hexdigest(),

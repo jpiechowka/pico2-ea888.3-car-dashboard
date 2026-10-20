@@ -6,7 +6,31 @@ Named ordinary source effects stay separate from mutable ownership, eventual
 semantic validation, exceptional resume and the unavailable final producer.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypedDict, TypeGuard, cast
+from config_abstract import DecoderInterface, SequenceInterface
+from config_source_effects import SourceAlternative
+from config_source_lineage import WarningRelation, FuelRelation
+from config_widget_uses import AllocationLineage
+
+if TYPE_CHECKING:
+    from config_source_control import _SourceActiveControl
+    from config_decoded_sources import (
+        _SourcePhasesState,
+        _SourcePhase,
+        PhaseGraph,
+        PhaseToken,
+        PhaseNode,
+        PhasePair,
+        ArrayInvocation,
+        SourcePackage,
+        WarningAssignment,
+        RemainingStep,
+        FuelAssignment,
+    )
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_source_access import (
@@ -22,7 +46,53 @@ from config_source_children import CHANNEL_SOURCE
 from validation import require
 
 
-def _family_data(control):
+class RouteLocalSource(TypedDict):
+    source_phase: tuple[int, int, str]
+    Route: SourceAlternative
+    invocation: ArrayInvocation
+
+
+class RouteOutputSource(TypedDict):
+    source_phase: tuple[int, int, str]
+    package: SourcePackage
+    Route_alternatives: tuple[SourceAlternative, ...]
+    inactive_route_payload_opaque: tuple[int, int]
+    source_success_is_semantic_Config_validity: bool
+
+
+class WarningSource(TypedDict):
+    source_phase: tuple[int, str]
+    warning: WarningAssignment
+    transitions: tuple[RemainingStep, ...]
+    actual_parent_relation: WarningRelation
+
+
+class FuelSource(TypedDict):
+    source_phase: tuple[int, str, int, int]
+    assignment: FuelAssignment
+    actual_parent_relation: FuelRelation
+    inactive_payload_remains_opaque: bool
+    later_Colors_success_required: bool
+
+
+UseSource = RouteLocalSource | RouteOutputSource | WarningSource | FuelSource
+
+
+def is_fuel_source(value: UseSource) -> TypeGuard[FuelSource]:
+    return "assignment" in value
+
+
+def is_route_local_source(value: UseSource) -> TypeGuard[RouteLocalSource]:
+    return "Route" in value
+
+
+def is_route_output_source(value: UseSource) -> TypeGuard[RouteOutputSource]:
+    return "package" in value
+
+
+def _family_data(
+    control: _SourceActiveControl,
+) -> tuple[tuple[SourceFamily, ...], AllocationLineage]:
     from config_source_control import _SourceActiveControl
     from config_decoded_sources import _SourcePhasesState
 
@@ -93,7 +163,10 @@ def _family_data(control):
             borrow(config, 0, 14576, _PHASE),
             protected + ((saved, physical) if local else ()),
         )
-        sites = tuple((parent + off, *rest) for off, *rest in SITE_SHAPES[role])
+        sites = tuple(
+            (parent + off, raw, cell, width, direction, phase)
+            for off, raw, cell, width, direction, phase in SITE_SHAPES[role]
+        )
         epochs = (
             tuple((V + off, out, tag, 8 - i) for i, (off, out, tag) in enumerate(SOURCE_EPOCHS))
             if local
@@ -113,7 +186,9 @@ def _family_data(control):
     return tuple(families), lineage
 
 
-def _guards(state, phase, index=None):
+def _guards(
+    state: _SourcePhasesState, phase: _SourcePhase, index: int | None = None
+) -> tuple[Storage, ...]:
     c = state.widgets.views.context
     frame = c.headers["visitor_frame"]
     q = phase.entry.sequence
@@ -175,17 +250,17 @@ class _SourceUse:
     role: str
     phase_index: int
     source_index: int
-    before: object
-    after: object
+    before: DecoderInterface
+    after: DecoderInterface
     output: View
-    footprint: tuple
-    protected: tuple
-    source: dict
-    continuation: tuple
+    footprint: tuple[int, int]
+    protected: tuple[Storage, ...]
+    source: UseSource
+    continuation: tuple[int, ...]
     completed_prefix_issued: bool = False
 
 
-def _member_graph(graph, root):
+def _member_graph(graph: PhaseGraph, root: PhaseToken) -> PhaseGraph:
     """Canonical reachable projection of one immutable shared snapshot.
 
     No projected graph is retained per use. This preserves exact node values
@@ -193,17 +268,15 @@ def _member_graph(graph, root):
     It neither evaluates source state nor supplies execution authority.
     """
     original = graph[1]
-    nodes = []
-    memo = {}
-    active = set()
+    nodes: list[PhaseNode | None] = []
+    memo: dict[int, int] = {}
+    active: set[int] = set()
 
-    def visit(ref):
+    def visit(ref: PhaseToken) -> PhaseToken:
         if ref[0] == "value":
             return ref
-        require(
-            ref[0] == "reference" and type(ref[1]) is int and 0 <= ref[1] < len(original),
-            "malformed Source member snapshot reference",
-        )
+        if not (ref[0] == "reference" and type(ref[1]) is int and 0 <= ref[1] < len(original)):
+            raise AssertionError("malformed Source member snapshot reference")
         old = ref[1]
         require(old not in active, "cyclic Source member snapshot")
         if old in memo:
@@ -213,38 +286,56 @@ def _member_graph(graph, root):
         nodes.append(None)
         active.add(old)
         node = original[old]
+        # The private phase writer owns these frozen tagged node layouts.
+        value: PhaseNode
         if node[0] == "mapping":
-            value = ("mapping", tuple((visit(k), visit(v)) for k, v in node[1]))
+            value = (
+                "mapping",
+                tuple((visit(k), visit(v)) for k, v in cast("tuple[PhasePair, ...]", node[1])),
+            )
         elif node[0] in ("tuple", "list"):
-            value = (node[0], tuple(visit(v) for v in node[1]))
+            value = (node[0], tuple(visit(v) for v in cast("tuple[PhaseToken, ...]", node[1])))
         else:
             require(node[0] == "dataclass", "unsupported Source member snapshot node")
-            value = (*node[:3], tuple((name, visit(v)) for name, v in node[3]))
+            value = (
+                *node[:3],
+                tuple(
+                    (name, visit(v))
+                    for name, v in cast("tuple[tuple[object, PhaseToken], ...]", node[3])
+                ),
+            )
         nodes[new] = value
         active.remove(old)
         return ("reference", new)
 
-    return visit(root), tuple(nodes)
+    # Successful traversal has filled all reserved slots; cycles raise above.
+    return visit(root), cast("tuple[PhaseNode, ...]", tuple(nodes))
 
 
 def _make_use(
-    families, role, phase_index, index, before, after, output, guards, source, continuation
-):
+    families: Sequence[SourceFamily],
+    role: str,
+    phase_index: int,
+    index: int,
+    before: object,
+    after: object,
+    output: View,
+    guards: tuple[Storage, ...],
+    source: UseSource,
+    continuation: tuple[int, ...],
+) -> _SourceUse:
     from config_abstract import DecoderInterface
 
     family = next(v for v in families if v.role == role)
     element = index if role in EXPECTED_SOURCE_ROLES[:2] else 0
-    require(
+    if not (
         type(before) is DecoderInterface
         and type(after) is DecoderInterface
         and before.header == after.header
         and before.payload == after.payload
-        and before.cursor.lower
-        <= after.cursor.lower
-        <= after.cursor.upper
-        <= before.payload.extent,
-        "Sources reached use changes its current source/header/cursor epoch",
-    )
+        and before.cursor.lower <= after.cursor.lower <= after.cursor.upper <= before.payload.extent
+    ):
+        raise AssertionError("Sources reached use changes its current source/header/cursor epoch")
     footprint = family.footprints(element)
     require(
         len(footprint) == 1
@@ -282,7 +373,9 @@ def _make_use(
     return _SourceUse(*fields)
 
 
-def _reached_data(control, families):
+def _reached_data(
+    control: _SourceActiveControl, families: Sequence[SourceFamily]
+) -> tuple[_SourceUse, ...]:
     from config_abstract import Span
 
     state = control.state
@@ -329,12 +422,14 @@ def _reached_data(control, families):
                 response = tuple(o["state"] for o in last["outcomes"] if o["kind"] == "some")
                 require(
                     len(request) == len(response) == 1
+                    and isinstance(request[0], SequenceInterface)
+                    and isinstance(response[0], SequenceInterface)
                     and request[0].count == Span(1, 1)
                     and response[0].count == Span(0, 0)
                     and response[0].decoder == route["after"],
                     "Sources Route local read has an unpaired counted-field return",
                 )
-                source = dict(
+                local_source: RouteLocalSource = dict(
                     source_phase=(phase_index, index, "Route Physical11"),
                     Route=route,
                     invocation=invocation,
@@ -349,7 +444,7 @@ def _reached_data(control, families):
                         route["after"],
                         borrow(child, 24, 4, frame.phase),
                         protected,
-                        source,
+                        local_source,
                         tuple(start + o for o in (474, 478, 482, 486, 490, 494, 506)),
                     )
                 )
@@ -366,7 +461,7 @@ def _reached_data(control, families):
                 and guard["invocations"][index]["output_store_reached"],
                 "Sources Route output use precedes its full Source last-store/original-return relation",
             )
-            source = dict(
+            output_source: RouteOutputSource = dict(
                 source_phase=(phase_index, index, "complete Source output"),
                 package=package,
                 Route_alternatives=normal["route"],
@@ -383,7 +478,7 @@ def _reached_data(control, families):
                     normal["after"],
                     package["output"],
                     protected,
-                    source,
+                    output_source,
                     (start + 724, start + 730, start + 734, site + 4),
                 )
             )
@@ -391,12 +486,12 @@ def _reached_data(control, families):
         if remaining is None:
             continue
         relation = guard["suffix_lineage"]
-        require(
+        if not (
             guard["publication_lineage"] is not None
             and guard["complete_Source_array"]
-            and relation is not None,
-            "Sources suffix accesses precede actual array publication lineage",
-        )
+            and relation is not None
+        ):
+            raise AssertionError("Sources suffix accesses precede actual array publication lineage")
         protected = _guards(state, phase)
         warning = remaining["warning"]
         if warning is not None:
@@ -410,6 +505,8 @@ def _reached_data(control, families):
                 and tuple(v["site"] - V for v in steps) == (4814, 4850, 5190)
                 and steps[0]["before"] == remaining["before"].decoder
                 and steps[0]["after"] == steps[1]["before"]
+                and isinstance(steps[2]["before"], SequenceInterface)
+                and isinstance(steps[2]["after"], SequenceInterface)
                 and steps[2]["before"].decoder == steps[1]["after"]
                 and steps[2]["after"].count == Span(0, 0)
                 and warning["after"] == steps[2]["after"].decoder
@@ -419,14 +516,16 @@ def _reached_data(control, families):
                 and warning["complete_store"] == V + 5040,
                 "Sources Warning read loses its same scope/mode/page source epoch",
             )
-            require(
+            if not (
                 relation["warning"] is not None
                 and len(relation["warning"]["children"]) == len(steps)
                 and all(a is b for a, b in zip(relation["warning"]["children"], steps))
-                and relation["warning"]["complete_store"] == warning["complete_store"],
-                "Sources Warning use loses its checked same-parent argument/return relation",
-            )
-            source = dict(
+                and relation["warning"]["complete_store"] == warning["complete_store"]
+            ):
+                raise AssertionError(
+                    "Sources Warning use loses its checked same-parent argument/return relation"
+                )
+            warning_source: WarningSource = dict(
                 source_phase=(phase_index, "WarningPresentation"),
                 warning=warning,
                 transitions=steps,
@@ -442,7 +541,7 @@ def _reached_data(control, families):
                     warning["after"],
                     borrow(frame, 1064, 3, frame.phase),
                     protected,
-                    source,
+                    warning_source,
                     (V + 5220, V + 5224, V + 5228, V + 5040),
                 )
             )
@@ -481,7 +580,7 @@ def _reached_data(control, families):
             guards = protected + (
                 _object(borrow(c.owner, 208, 4, frame.phase), "completed WarningPresentation"),
             )
-            source = dict(
+            fuel_source: FuelSource = dict(
                 source_phase=(phase_index, "Fuel", wire, emitted),
                 assignment=assignment,
                 actual_parent_relation=parent[0],
@@ -498,7 +597,7 @@ def _reached_data(control, families):
                     assignment["after"],
                     borrow(c.owner, 0, 32, frame.phase, True),
                     guards,
-                    source,
+                    fuel_source,
                     (V + 5534, V + 5566, V + 5568, V + 5570),
                 )
             )
@@ -507,13 +606,13 @@ def _reached_data(control, families):
 
 @dataclass(frozen=True)
 class _SourceAccessBridge:
-    control: object
-    families: tuple
-    allocation_lineage: tuple
-    uses: tuple
-    checkpoint: object
+    control: _SourceActiveControl
+    families: tuple[SourceFamily, ...]
+    allocation_lineage: AllocationLineage
+    uses: tuple[_SourceUse, ...]
+    checkpoint: PhaseGraph
 
-    def current(self):
+    def current(self) -> _SourceAccessBridge:
         from config_decoded_sources import _phase_graph
 
         _checked_bridge_graph(self)
@@ -528,7 +627,7 @@ class _SourceAccessBridge:
         return self
 
 
-def _checked_bridge_graph(bridge):
+def _checked_bridge_graph(bridge: _SourceAccessBridge) -> None:
     from config_decoded_sources import _phase_graph
 
     require(
@@ -546,7 +645,7 @@ def _checked_bridge_graph(bridge):
     )
 
 
-def _source_access_bridge(control):
+def _source_access_bridge(control: _SourceActiveControl) -> _SourceAccessBridge:
     from config_source_control import _SourceActiveControl
     from config_decoded_sources import _phase_graph
 
@@ -566,20 +665,20 @@ def _source_access_bridge(control):
     )
 
 
-def _check_source_use(bridge, use):
+def _check_source_use(bridge: object, use: object) -> _SourceUse:
     """Check a retained member record, not fresh upstream source currentness.
 
     This private diagnostic check must not authorize a source-reached access
     or owner. Authoritative collection consumption uses _check_source_uses,
     whose non-yielding scope revalidates the actual full bridge first.
     """
-    require(
+    if not (
         type(bridge) is _SourceAccessBridge
         and type(use) is _SourceUse
         and any(use is v for v in bridge.uses)
-        and use.completed_prefix_issued is False,
-        "Sources access is not the internally derived use",
-    )
+        and use.completed_prefix_issued is False
+    ):
+        raise AssertionError("Sources access is not the internally derived use")
     # A local projection cannot detect an equal-copy substitution whose other
     # reference is in another use or its control/package record. Retain the
     # complete cross-member/current-control association at this boundary too.
@@ -587,7 +686,7 @@ def _check_source_use(bridge, use):
     return _check_member(bridge, use, next(i for i, v in enumerate(bridge.uses) if v is use))
 
 
-def _check_source_uses(bridge):
+def _check_source_uses(bridge: object) -> tuple[_SourceUse, ...]:
     """Consume the closed actual collection in one fresh, non-yielding scope.
 
     No reusable approval token or caller-selected index escapes. Whole bridge
@@ -596,14 +695,15 @@ def _check_source_uses(bridge):
     graph is rebuilt after that complete comparison. The standalone record
     checker above deliberately grants no fresh source-use authority.
     """
-    require(type(bridge) is _SourceAccessBridge, "Sources batch lacks its actual private bridge")
+    if type(bridge) is not _SourceAccessBridge:
+        raise AssertionError("Sources batch lacks its actual private bridge")
     bridge.current()
     for index, use in enumerate(bridge.uses):
         _check_member(bridge, use, index)
     return bridge.uses
 
 
-def _check_member(bridge, use, index):
+def _check_member(bridge: _SourceAccessBridge, use: _SourceUse, index: int) -> _SourceUse:
     require(
         type(use) is _SourceUse
         and type(index) is int

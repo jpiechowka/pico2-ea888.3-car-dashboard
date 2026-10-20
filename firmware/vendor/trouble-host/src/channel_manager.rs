@@ -27,6 +27,10 @@ use crate::{config, BleHostError, Error, PacketPool};
 
 const BASE_ID: u16 = 0x40;
 
+#[cfg(all(test, feature = "default-packet-pool"))]
+#[path = "channel_regression_tests.rs"]
+mod regression_tests;
+
 /// BT Core Spec Vol 3, Part A, Section 6.2.1: RTX signaling timeout.
 const L2CAP_RTX_TIMEOUT: embassy_time::Duration = embassy_time::Duration::from_secs(30);
 
@@ -166,10 +170,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         self.state.borrow_mut().disconnect_waker.wake();
     }
 
-    pub(crate) fn disconnect_by_cid(&self, channel: u16) {
+    pub(crate) fn disconnect_by_cid(&self, conn: ConnHandle, channel: u16) {
         if channel >= BASE_ID && usize::from(channel - BASE_ID) < self.channels.as_ptr().len() {
             let index = ChannelIndex((channel - BASE_ID) as u8);
-            self.channel_mut(index).disconnect();
+            let mut storage = self.channel_mut(index);
+            if storage.conn != Some(conn) {
+                return;
+            }
+            storage.disconnect();
             self.state.borrow_mut().disconnect_waker.wake();
         }
     }
@@ -180,6 +188,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     /// Vol 3, Part A, Section 10.1 and `Err(Error::InvalidValue)` is returned.
     fn check_len(
         &self,
+        conn: ConnHandle,
         channel: u16,
         actual: u16,
         limit: impl FnOnce(&ChannelStorage<P::Packet>) -> u16,
@@ -190,18 +199,21 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
         let index = ChannelIndex((channel - BASE_ID) as u8);
         let mut storage = self.channel_mut(index);
+        if storage.conn != Some(conn) || storage.state != ChannelState::Connected {
+            return Err(Error::InvalidChannelId);
+        }
         let max = limit(&storage);
         storage
             .check_len(actual, max, label)
             .inspect_err(|_| self.state.borrow_mut().disconnect_waker.wake())
     }
 
-    pub(crate) fn check_sdu_len(&self, channel: u16, sdu_len: u16) -> Result<(), Error> {
-        self.check_len(channel, sdu_len, |s| s.mtu, "SDU")
+    pub(crate) fn check_sdu_len(&self, conn: ConnHandle, channel: u16, sdu_len: u16) -> Result<(), Error> {
+        self.check_len(conn, channel, sdu_len, |s| s.mtu, "SDU")
     }
 
-    pub(crate) fn check_pdu_len(&self, channel: u16, pdu_len: u16) -> Result<(), Error> {
-        self.check_len(channel, pdu_len, |s| s.mps, "PDU")
+    pub(crate) fn check_pdu_len(&self, conn: ConnHandle, channel: u16, pdu_len: u16) -> Result<(), Error> {
+        self.check_len(conn, channel, pdu_len, |s| s.mps, "PDU")
     }
 
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
@@ -324,6 +336,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         config: &L2capChannelConfig,
         ble: BleHost<'d, T, P>,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
+        // The pending handle transferred its reference to this operation.
+        // Keep it owned across validation and the first awaited signal send.
+        let ondrop = OnDrop::new(|| self.drop_pending(index));
         let L2capChannelConfig {
             mtu,
             mps,
@@ -335,6 +350,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let mps = mps.unwrap_or(P::MTU as u16 - 4);
         if mps > P::MTU as u16 - 4 {
             return Err(Error::InsufficientSpace.into());
+        }
+        if !valid_credit_parameters(mtu, mps) {
+            return Err(Error::InvalidValue.into());
         }
 
         let (conn, req_id, mps, mtu, cid, credits) = {
@@ -375,6 +393,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             &mut tx[..],
         )
         .await?;
+        ondrop.defuse();
         Ok(L2capChannel::new(index, self))
     }
 
@@ -385,6 +404,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         result: LeCreditConnResultCode,
         ble: BleHost<'_, T, P>,
     ) -> Result<(), BleHostError<T::Error>> {
+        let _ondrop = OnDrop::new(|| self.drop_pending(index));
         let (conn, req_id) = {
             let mut chan = self.channel_mut(index);
             let req_id = match chan.state {
@@ -392,7 +412,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 _ => return Err(Error::NotFound.into()),
             };
             let conn = chan.conn.unwrap();
-            chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
             chan.close();
             (conn, req_id)
         };
@@ -403,12 +422,19 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Drop a pending connection without sending a response (peer will time out).
+    /// Release the reference owned by an unfinished create, accept or reject operation.
     pub(crate) fn drop_pending(&self, index: ChannelIndex) {
         let mut chan = self.channel_mut(index);
-        if matches!(chan.state, ChannelState::PeerConnecting(_)) {
-            chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+        chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+        if matches!(
+            chan.state,
+            ChannelState::PeerConnecting(_) | ChannelState::Connecting(_) | ChannelState::ConnectFailed(_)
+        ) {
             chan.close();
+        } else if chan.refcount == 0 {
+            // A successful handshake may have reached the peer before cancellation.
+            chan.disconnect();
+            self.state.borrow_mut().disconnect_waker.wake();
         }
     }
 
@@ -435,6 +461,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         if mps > P::MTU as u16 - 4 {
             return Err(Error::InsufficientSpace.into());
         }
+        if !valid_credit_parameters(mtu, mps) {
+            return Err(Error::InvalidValue.into());
+        }
 
         // Allocate space for our new channel.
         let idx = self.alloc(conn, None, |storage| {
@@ -445,7 +474,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             storage.mps = mps;
             storage.flow_control = CreditFlowControl::new(*flow_policy, credits);
             storage.state = ChannelState::Connecting(req_id);
+            // Retain the slot even if a response or link loss closes it before
+            // this future resumes. Its cleanup must never touch a reused slot.
+            storage.inc_ref();
         })?;
+        // Install before the first await: controller backpressure and startup
+        // can suspend the initial request just as they suspend its response.
+        let ondrop = OnDrop::new(|| self.drop_pending(idx));
 
         let mut tx = [0; 18];
         // Send the initial connect request.
@@ -457,9 +492,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             credits,
         };
         ble.l2cap_signal(conn, req_id, &command, &mut tx[..]).await?;
-
-        // Clean up the channel slot if the future is dropped before completion.
-        let ondrop = OnDrop::new(|| self.channel_mut(idx).close());
 
         // Wait until a response is accepted.
         let result = with_timeout(
@@ -487,12 +519,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
         let mut storage = self.channel_mut(idx);
         // Check if we've been disconnected while waiting
-        if !ble.connections().is_handle_connected(conn) {
+        if !ble.connections().is_handle_connected(conn) || storage.conn != Some(conn) {
             return Poll::Ready(Err(Error::Disconnected.into()));
         }
-
-        //// Make sure something hasn't gone wrong
-        assert_eq!(Some(conn), storage.conn);
 
         match storage.state {
             ChannelState::ConnectFailed(result) => {
@@ -503,13 +532,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 return Poll::Ready(Err(Error::Disconnected.into()));
             }
             ChannelState::Connected => {
-                if storage.refcount != 0 {
+                if storage.refcount != 1 {
                     core::mem::drop(storage);
                     self.log_status(true);
                     panic!("unexpected refcount");
                 }
-                assert_eq!(storage.refcount, 0);
-                storage.inc_ref();
+                // Transfer the create future's reference to the returned channel.
                 return Poll::Ready(Ok(L2capChannel::new(idx, self)));
             }
             _ => {}
@@ -517,7 +545,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Poll::Pending
     }
 
-    pub(crate) fn received(&self, channel: u16, credits: u16) -> Result<(), Error> {
+    pub(crate) fn received(&self, conn: ConnHandle, channel: u16, credits: u16) -> Result<(), Error> {
         if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
         }
@@ -525,7 +553,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let index = ChannelIndex((channel - BASE_ID) as u8);
         let mut storage = self.channel_mut(index);
         match storage.state {
-            ChannelState::Connected if channel == storage.cid => {
+            ChannelState::Connected if channel == storage.cid && storage.conn == Some(conn) => {
                 if storage.flow_control.available() == 0 {
                     #[cfg(feature = "channel-metrics")]
                     storage.metrics.blocked_receive();
@@ -545,7 +573,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
-    pub(crate) fn dispatch(&self, channel: u16, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+    pub(crate) fn dispatch(&self, conn: ConnHandle, channel: u16, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
         }
@@ -556,7 +584,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
         let mut sdu = None;
         match storage.state {
-            ChannelState::Connected if channel == storage.cid => {
+            ChannelState::Connected if channel == storage.cid && storage.conn == Some(conn) => {
                 // Reassembly and accounting is already done
                 #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                 sdu.replace(pdu);
@@ -579,7 +607,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     #[cfg(feature = "channel-metrics")]
                     storage.metrics.received(1);
                     if !storage.reassembly.in_progress() {
-                        let (first, _) = pdu.as_ref().split_at(2);
+                        let Some(first) = pdu.as_ref().get(..2) else {
+                            storage.disconnect();
+                            self.state.borrow_mut().disconnect_waker.wake();
+                            return Err(Error::InvalidValue);
+                        };
                         let sdu_len: u16 = u16::from_le_bytes([first[0], first[1]]);
 
                         storage
@@ -613,7 +645,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     }
                 }
             }
-            _ => {}
+            _ => return Err(Error::InvalidChannelId),
         }
 
         if let Some(sdu) = sdu {
@@ -636,7 +668,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             while !remaining.is_empty() {
                 let (header, rest) = L2capSignalHeader::from_hci_bytes(remaining)?;
                 if header.length as usize > rest.len() {
-                    Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
+                    if header.identifier != 0 {
+                        Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
+                    }
                     return Err(Error::InvalidValue);
                 }
                 remaining = &rest[header.length as usize..];
@@ -647,6 +681,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         while !data.is_empty() {
             let (header, remaining) = L2capSignalHeader::from_hci_bytes(data)?;
             let (signal_data, next) = remaining.split_at(header.length as usize);
+            if header.identifier == 0 {
+                data = next;
+                continue;
+            }
             let result = (|| match header.code {
                 L2capSignalCode::LE_CREDIT_CONN_REQ => {
                     let req = LeCreditConnReq::from_hci_bytes_complete(signal_data)?;
@@ -668,12 +706,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 L2capSignalCode::DISCONNECTION_REQ => {
                     let req = DisconnectionReq::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
-                    self.handle_disconnect_request(conn, header.identifier, req.dcid, manager)
+                    self.handle_disconnect_request(conn, header.identifier, req.dcid, req.scid, manager)
                 }
                 L2capSignalCode::DISCONNECTION_RES => {
                     let res = DisconnectionRes::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                    self.handle_disconnect_response(res.scid)
+                    self.handle_disconnect_response(conn, res.scid, res.dcid)
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
                     if manager.role_by_handle(conn) != Some(LeConnRole::Central) {
@@ -709,14 +747,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         );
                         Self::try_send_signal(conn, header.identifier, &ConnParamUpdateRes { result: 1 }, manager)?;
                     } else {
-                        let req = ConnectionParamsRequest::new(
-                            params,
-                            conn,
-                            #[cfg(feature = "connection-params-update")]
-                            true,
-                        );
+                        let req = ConnectionParamsRequest::new(params, conn, header.identifier);
 
-                        let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
+                        if manager
+                            .post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req))
+                            .is_err()
+                        {
+                            Self::try_send_signal(conn, header.identifier, &ConnParamUpdateRes { result: 1 }, manager)?;
+                        }
                     }
                     Ok(())
                 }
@@ -754,7 +792,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     ) -> Result<(), Error> {
         let result = {
             let mut state = self.state.borrow_mut();
-            if !state.is_spsm_registered(req.spsm) {
+            if !(0x40..=0x7f).contains(&req.scid) {
+                Err(LeCreditConnResultCode::InvalidSourceId)
+            } else if !valid_credit_parameters(req.mtu, req.mps) {
+                Err(LeCreditConnResultCode::UnacceptableParameters)
+            } else if !state.is_spsm_registered(req.spsm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
             } else if !manager.is_l2cap_listening(conn) {
                 Err(LeCreditConnResultCode::NoResources)
@@ -792,6 +834,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
         let mut channels = self.channels.borrow_mut();
+        let duplicate_cid = channels
+            .iter()
+            .any(|s| s.conn == Some(conn) && s.peer_cid == res.dcid && s.state != ChannelState::Disconnected);
 
         // Find the channel matching this response identifier
         let matched = channels.iter_mut().find(|storage| {
@@ -820,6 +865,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
         match res.result {
             LeCreditConnResultCode::Success => {
+                if !(0x40..=0x7f).contains(&res.dcid) || !valid_credit_parameters(res.mtu, res.mps) || duplicate_cid {
+                    storage.close();
+                    self.state.borrow_mut().create_waker.wake();
+                    return Err(Error::InvalidValue);
+                }
                 storage.peer_cid = res.dcid;
                 storage.peer_credits = res.credits;
                 storage.peer_mps = res.mps;
@@ -876,10 +926,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         conn: ConnHandle,
         identifier: u8,
         cid: u16,
+        peer_cid: u16,
         manager: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
-            if cid == storage.cid {
+            if cid == storage.cid
+                && storage.peer_cid == peer_cid
+                && storage.conn == Some(conn)
+                && matches!(storage.state, ChannelState::Connected | ChannelState::Disconnecting)
+            {
                 storage.state = ChannelState::PeerDisconnecting(identifier);
                 let _ = storage.inbound.close();
                 self.state.borrow_mut().disconnect_waker.wake();
@@ -893,9 +948,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Self::try_send_signal(conn, identifier, &CommandRejectRes { reason: 2 }, manager)
     }
 
-    fn handle_disconnect_response(&self, cid: u16) -> Result<(), Error> {
+    fn handle_disconnect_response(&self, conn: ConnHandle, cid: u16, peer_cid: u16) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
-            if storage.state == ChannelState::Disconnecting && cid == storage.cid {
+            if storage.state == ChannelState::Disconnecting
+                && cid == storage.cid
+                && storage.peer_cid == peer_cid
+                && storage.conn == Some(conn)
+            {
                 storage.close();
                 break;
             }
@@ -1086,10 +1145,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     pub(crate) async fn send_conn_param_update_res<T: Controller>(
         &self,
         handle: ConnHandle,
+        identifier: u8,
         host: &BleHost<'_, T, P>,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
-        let identifier = self.next_request_id();
+        if identifier == 0 {
+            return Err(Error::InvalidValue.into());
+        }
         let mut tx = [0; 16];
         host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
     }
@@ -1285,6 +1347,11 @@ impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
     pub fn confirm(self) {
         self.channels.borrow_mut()[self.index.0 as usize].state = ChannelState::Disconnected;
     }
+}
+
+// Core Vol 3, Part A, sections 4.22/4.23: LE credit channel limits.
+fn valid_credit_parameters(mtu: u16, mps: u16) -> bool {
+    mtu >= 23 && (23..=65533).contains(&mps)
 }
 
 fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) -> Result<usize, Error> {
@@ -1664,6 +1731,7 @@ mod tests {
             .channels()
             .alloc(conn, None, |storage| {
                 storage.state = ChannelState::Connecting(42);
+                storage.inc_ref();
             })
             .unwrap();
 
@@ -1678,5 +1746,7 @@ mod tests {
             chan,
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
+        ble.channels().drop_pending(idx);
+        assert_eq!(ble.channels().channel(idx).refcount, 0);
     }
 }

@@ -5,8 +5,30 @@ mutable owner. Actual candidate/source/effect joins consume these separately.
 """
 
 from dataclasses import dataclass, asdict, replace
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+from config_abstract import DecoderInterface
+from config_body_types import BodyRecord, InstructionMap
+from config_build_source import SourceContext
+from config_decoded_views import _ViewsState, _StructuralControl, Children
+from config_finite_returns import ReturnNode
+from config_regions import View
+from config_stack import DiagnosticObjects
+from config_structural import FrozenValue
+
+if TYPE_CHECKING:
+    from config_decoded_widgets import (
+        _WidgetLengthEntry,
+        _WidgetControlInput,
+        _WidgetActiveControl,
+        _CommittedWidget,
+        _OrdinaryCommitEvidence,
+    )
+
+from config_regions import Storage
+
 from config_build_source import validate_source_context, inspect_source_context
-from config_regions import Storage, borrow
+from config_regions import borrow
 from config_structural import _freeze, _FrozenObjects
 from config_widget_access import (
     WidgetContext,
@@ -17,10 +39,24 @@ from config_widget_access import (
 )
 from validation import require
 
+AllocationLineage = tuple[
+    tuple[Storage, Storage],
+    tuple[Storage, Storage],
+    tuple[Storage, Storage],
+    tuple[str, int, int, int, int, int, int],
+]
+
 _PHASE = "decoded_widget_group"
 
 
-def _checkpoint(state, parents, children, returns, structural, entries):
+def _checkpoint(
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    returns: Sequence[ReturnNode],
+    structural: _StructuralControl,
+    entries: Sequence["_WidgetLengthEntry"],
+) -> FrozenValue:
     # This is an immutable independent copy of already checked inputs, not a
     # body digest or inferred policy. Mutation requires rebinding the relation.
     return _freeze(
@@ -50,7 +86,7 @@ def _checkpoint(state, parents, children, returns, structural, entries):
     )
 
 
-def _input_checkpoint(objects, rows):
+def _input_checkpoint(objects: DiagnosticObjects, rows: InstructionMap) -> FrozenValue:
     if type(objects) is _FrozenObjects:
         require(
             rows is objects._rows, "Widget family lineage input rows leave the immutable package"
@@ -59,23 +95,29 @@ def _input_checkpoint(objects, rows):
     # Unsupported providers gain no structural memoization. Retain a complete
     # independent value snapshot and recheck their current metadata/rows.
     elf = objects.elf
-    return _freeze(
-        dict(
-            data=elf.data,
-            sections=elf.sections,
-            segments=elf.segments,
-            functions=dict(elf.functions),
-            symbol_entries=elf.symbol_entries,
-            mapping_symbols=elf.mapping_symbols,
-            symbols=dict(getattr(elf, "symbols", {})),
-            named=dict(getattr(elf, "named", {})),
-            sizes=dict(objects.sizes),
-            rows=dict(rows),
-        )
+    attributes: dict[str, object] = dict(
+        data=elf.data,
+        sections=elf.sections,
+        segments=elf.segments,
+        functions=dict(elf.functions),
+        symbol_entries=elf.symbol_entries,
+        mapping_symbols=elf.mapping_symbols,
+        symbols=dict(getattr(elf, "symbols", {})),
+        named=dict(getattr(elf, "named", {})),
+        sizes=dict(objects.sizes),
+        rows=dict(rows),
     )
+    return _freeze(attributes)
 
 
-def _canonical(loader, visitor, config, protected, families, lineage):
+def _canonical(
+    loader: Storage,
+    visitor: Storage,
+    config: Storage,
+    protected: Sequence[Storage],
+    families: Sequence[WidgetFamily],
+    lineage: AllocationLineage,
+) -> FrozenValue:
     return _freeze(
         dict(
             loader=asdict(loader),
@@ -90,27 +132,27 @@ def _canonical(loader, visitor, config, protected, families, lineage):
 
 @dataclass(frozen=True)
 class _WidgetFamilyBridge:
-    objects: object
-    rows: object
-    state: object
-    parents: tuple
-    children: dict
-    returns: tuple
-    structural: object
-    source_context: object
+    objects: DiagnosticObjects
+    rows: InstructionMap
+    state: _ViewsState
+    parents: tuple[BodyRecord, ...]
+    children: Children
+    returns: tuple[ReturnNode, ...]
+    structural: _StructuralControl
+    source_context: SourceContext
     loader: Storage
     visitor: Storage
     config: Storage
-    protected: tuple
-    families: tuple
-    allocation_lineage: tuple
+    protected: tuple[Storage, ...]
+    families: tuple[WidgetFamily, ...]
+    allocation_lineage: AllocationLineage
     checkpoint: object
     canonical_checkpoint: object
-    input_pair: tuple
+    input_pair: tuple[DiagnosticObjects, InstructionMap]
     input_checkpoint: object
-    entries: tuple
+    entries: tuple["_WidgetLengthEntry", ...]
 
-    def current(self):
+    def current(self) -> "_WidgetFamilyBridge":
         selection = self.structural.selection
         require(
             selection.context is self.state.context and selection.children is self.children,
@@ -175,8 +217,16 @@ class _WidgetFamilyBridge:
 
 
 def _widget_family_bridge(
-    objects, rows, state, parents, children, returns, structural, source_context, entries
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: tuple[BodyRecord, ...],
+    children: Children,
+    returns: tuple[ReturnNode, ...],
+    structural: _StructuralControl,
+    source_context: object,
+    entries: tuple["_WidgetLengthEntry", ...],
+) -> _WidgetFamilyBridge:
     """Map one checked actual first-Boot allocation into canonical metadata.
 
     Preserve actual geometry/identity and every stable ancestor guard. The one
@@ -388,7 +438,10 @@ def _widget_family_bridge(
         context = WidgetContext(
             loader, active, current, borrow(config, 0, 14576, _PHASE), owner, guards
         )
-        sites = tuple((parent + offset, *rest) for offset, *rest in SITE_SHAPES[role])
+        sites = tuple(
+            (parent + offset, raw, cell, width, direction, phase)
+            for offset, raw, cell, width, direction, phase in SITE_SHAPES[role]
+        )
         families.append(
             current_widget_family(
                 objects, WidgetFamily(role, "sizez", parent, sites, context, loop)
@@ -437,21 +490,30 @@ class _GuardedWidgetUse:
     role: str
     candidate: int
     element: int
-    decoder: object
-    after: object
-    output: object
-    footprints: tuple
-    guards: tuple
+    decoder: DecoderInterface
+    after: DecoderInterface
+    output: View
+    footprints: tuple[tuple[int, int], ...]
+    guards: tuple[Storage, ...]
     source_fields: object
     guard: str
-    ordinary_continuation: tuple
+    ordinary_continuation: tuple[int, ...]
     checked_values: object
     completed_prefix_issued: bool = False
 
 
 def _use_checkpoint(
-    role, candidate, element, before, after, output, guards, source_fields, guard, continuation
-):
+    role: str,
+    candidate: int,
+    element: int,
+    before: DecoderInterface,
+    after: DecoderInterface,
+    output: View,
+    guards: Sequence[Storage],
+    source_fields: object,
+    guard: str,
+    continuation: tuple[int, ...],
+) -> tuple[FrozenValue, object]:
     # Freeze the exact values after the caller/source/effect checks. Source
     # fields have already been recursively frozen by each closed factory.
     # This preserves those checked values; it does not replace any predicate.
@@ -473,7 +535,15 @@ def _use_checkpoint(
     )
 
 
-def _active_candidate(bridge, active, value, entry, index, committed, control):
+def _active_candidate(
+    bridge: _WidgetFamilyBridge,
+    active: _ViewsState,
+    value: "_WidgetControlInput",
+    entry: "_WidgetLengthEntry",
+    index: int,
+    committed: tuple["_CommittedWidget", ...],
+    control: "_WidgetActiveControl",
+) -> DecoderInterface:
     from config_decoded_widgets import (
         _WidgetControlInput,
         _WidgetActiveControl,
@@ -550,7 +620,7 @@ def _active_candidate(bridge, active, value, entry, index, committed, control):
     return before
 
 
-def _active_guards(active, extra=()):
+def _active_guards(active: _ViewsState, extra: Sequence[Storage] = ()) -> tuple[Storage, ...]:
     from config_decode_effects import _object
 
     c = active.context
@@ -585,18 +655,18 @@ def _active_guards(active, extra=()):
 
 
 def _family_use(
-    bridge,
-    role,
-    candidate,
-    element,
-    before,
-    after,
-    output,
-    guards,
-    source_fields,
-    guard,
-    continuation,
-):
+    bridge: _WidgetFamilyBridge,
+    role: str,
+    candidate: int,
+    element: int,
+    before: DecoderInterface,
+    after: DecoderInterface,
+    output: View,
+    guards: Sequence[Storage],
+    source_fields: object,
+    guard: str,
+    continuation: tuple[int, ...],
+) -> _GuardedWidgetUse:
     from config_regions import View, require_writes
 
     family = next(v for v in bridge.families if v.role == role)
@@ -657,7 +727,15 @@ def _family_use(
     return result
 
 
-def _candidate_uses(bridge, active, value, entry, index, committed, control):
+def _candidate_uses(
+    bridge: _WidgetFamilyBridge,
+    active: _ViewsState,
+    value: "_WidgetControlInput",
+    entry: "_WidgetLengthEntry",
+    index: int,
+    committed: tuple["_CommittedWidget", ...],
+    control: "_WidgetActiveControl",
+) -> tuple[_GuardedWidgetUse, ...]:
     """Only source-reached scratch alternatives; no spare Widget or prefix."""
     from config_decoded_widgets import _band_assembly_effects
     from config_decode_effects import _object
@@ -673,9 +751,18 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
     outer = "same N>i AND (N<=64 OR post-length remaining<N)"
     graph = tuple(v for label, v in value.source.children if label == "GraphRange paired variants")
     if "display" in fields:
+        if len(graph) != 1 or not isinstance(graph[0], dict):
+            raise AssertionError("Widget graph use loses its branch-paired source/opaque transport")
+        pair = graph[0]
+        auto: object = pair["Auto"]
+        fixed: object = pair["Fixed"]
+        if not isinstance(auto, DecoderInterface) or not (
+            fixed is None or isinstance(fixed, DecoderInterface)
+        ):
+            raise AssertionError("Widget graph use splices the Fixed cursor/domain into Auto")
         require(
             len(graph) == 1
-            and graph[0]["Auto_payload_opaque"] is True
+            and pair["Auto_payload_opaque"] is True
             and fields["display"]
             == dict(
                 decimals=(0, 255),
@@ -685,9 +772,6 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
             ),
             "Widget graph use loses its branch-paired source/opaque transport",
         )
-        pair = graph[0]
-        auto = pair["Auto"]
-        fixed = pair["Fixed"]
         require(
             auto.header == before.header
             and auto.payload == before.payload
@@ -750,15 +834,15 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
     )
     previous = length_normal[0] if length_normal else None
     for j, candidate in band_records:
-        after = candidate["normal_decoder"]
-        if after is None:
+        band_after = candidate["normal_decoder"]
+        if band_after is None:
             continue
         incoming = candidate["incoming_decoder"]
         require(
             incoming.header == before.header
             and incoming.payload == before.payload
-            and after.header == before.header
-            and after.payload == before.payload
+            and band_after.header == before.header
+            and band_after.payload == before.payload
             and previous is not None
             and previous == incoming
             and candidate["count_after_primitive_children"] == Span(1, 1)
@@ -767,7 +851,7 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
             == "length==0 OR (all bytes in32..126 AND at least one byte!=32)",
             "Widget Band use loses its actual source/count/normalized-label epoch",
         )
-        previous = after
+        previous = band_after
         if j == 3:
             continue  # parsed fourth candidate rejects before a spare slot
         require(0 <= j < 3, "Widget Band use has an unbounded source index")
@@ -804,7 +888,7 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
                 index,
                 j,
                 incoming,
-                after,
+                band_after,
                 borrow(frame, 1068 + 16 * j, 16, phase, True),
                 protected,
                 source,
@@ -862,7 +946,17 @@ def _candidate_uses(bridge, active, value, entry, index, committed, control):
     return tuple(uses)
 
 
-def _widget_commit_use(bridge, active, value, entry, index, committed, control, evidence, after):
+def _widget_commit_use(
+    bridge: _WidgetFamilyBridge,
+    active: _ViewsState,
+    value: "_WidgetControlInput",
+    entry: "_WidgetLengthEntry",
+    index: int,
+    committed: tuple["_CommittedWidget", ...],
+    control: "_WidgetActiveControl",
+    evidence: "_OrdinaryCommitEvidence",
+    after: DecoderInterface,
+) -> _GuardedWidgetUse:
     from config_decoded_widgets import _OrdinaryCommitEvidence
     from config_decode_effects import _object
     from config_abstract import Span
@@ -926,26 +1020,24 @@ def _widget_commit_use(bridge, active, value, entry, index, committed, control, 
     )
 
 
-def _check_use(bridge, use):
+def _check_use(bridge: _WidgetFamilyBridge, use: object) -> _GuardedWidgetUse:
     """Recheck an immutable use; descriptors/receipts cannot replace it."""
     from config_abstract import DecoderInterface
     from config_regions import View, require_writes
     from config_decode_effects import _object
 
-    require(
+    if not (
         type(use) is _GuardedWidgetUse
         and use.bridge is bridge
         and use.completed_prefix_issued is False
         and type(use.candidate) is int
         and 0 <= use.candidate <= 64
-        and type(use.element) is int,
-        "Widget actual use is not its checked same-lineage relation",
-    )
+        and type(use.element) is int
+    ):
+        raise AssertionError("Widget actual use is not its checked same-lineage relation")
     family = next((v for v in bridge.families if v.role == use.role), None)
-    require(
-        family is not None and use.footprints == family.footprints(use.element),
-        "Widget actual use changed its bounded family/iteration",
-    )
+    if not (family is not None and use.footprints == family.footprints(use.element)):
+        raise AssertionError("Widget actual use changed its bounded family/iteration")
     c = bridge.state.context
     frame = c.headers["visitor_frame"]
     V = c.headers["visitor"]["proof"]["function"]

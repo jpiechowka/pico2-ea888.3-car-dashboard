@@ -7,10 +7,17 @@ policy must be established by contextual composition before gate admission.
 """
 
 import re
+from collections.abc import Iterable
+from typing import TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap, SourceLocationObject
 from config_finite import _complete_body
-from config_helper_contracts import HELPER_GRAMMARS, HELPER_ROLES, HELPER_SEMANTIC_ROLES
+from config_helper_contracts import (
+    HELPER_GRAMMARS,
+    HELPER_ROLES,
+    HELPER_SEMANTIC_ROLES as HELPER_SEMANTIC_ROLES,
+)
 from config_logger import _logger_function
-from config_roots import root_location, root_adapter
+from config_roots import LocationRecord, RootRecord, root_location, root_adapter
 from config_regions import (
     Region,
     Transfer,
@@ -22,8 +29,10 @@ from config_regions import (
     require_writes,
     audit_coverage,
     _control,
+    Context,
+    CoverageRecord,
 )
-from config_stack import canonical_symbol, transfer_family
+from config_stack import DiagnosticObjects, canonical_symbol, transfer_family
 from validation import require
 from config_structural import _structural
 from config_construction_contracts import CONSTRUCTION_GRAMMARS, CONSTRUCTION_SEMANTIC_ROLES
@@ -36,7 +45,7 @@ HELPER_ROLES.update({role: semantic for semantic, role in CONSTRUCTION_SEMANTIC_
 
 # (complete maximum frame, saved-cell start, exact optional scratch subview).
 # Adding a body never manufactures a frame/effect contract by default.
-FRAME_LAYOUTS = {
+FRAME_LAYOUTS: dict[str, tuple[int, int, tuple[int, int] | None]] = {
     "compare_extend": (24, 0, None),
     "serialize_str": (24, 0, None),
     "slice_pop": (16, 0, None),
@@ -62,7 +71,52 @@ FRAME_LAYOUTS = {
 }
 
 
-def _helper_function(objects, address, role):
+class HelperRecord(BodyRecord):
+    semantic_role: str
+    transfers: tuple[tuple[int, str, str], ...]
+    requires_source_inputs_owned_effects_and_child_closure: bool
+    requires_parent_frame_and_abi: str | None
+    requires_u32_domain_maximum: int | None
+    requires_hard_float_s0: bool
+    requires_unaligned_single_ldr_policy: bool
+
+
+class HelperCoverageRecord(HelperRecord):
+    coverage: CoverageRecord
+    nonreturn_boundaries: tuple[RootRecord, ...]
+
+
+class HelperFrame(TypedDict):
+    frame: Storage
+    scratch: tuple[View, ...]
+    protected: tuple[Storage, ...]
+    local_writes: tuple[tuple[View, int, int], ...]
+    child_result_scratch: tuple[View, ...]
+    requires_caller_sp_inputs_child_effects_and_initialization: bool
+
+
+class IndexSuccess(TypedDict):
+    endpoint: int
+    prefix: View
+
+
+class IndexFailure(TypedDict):
+    endpoint: int
+    diagnostic_arguments: tuple[int, int, int, int]
+    nonreturn: str
+
+
+class IndexResult(TypedDict):
+    outcomes: tuple[IndexSuccess | IndexFailure, ...]
+    payload_writes: tuple[()]
+    location: LocationRecord
+    normal_preserves: tuple[str, ...]
+    conservative_frame_metadata: tuple[int, ...]
+    restored_tail_storage: bool
+    requires_machine_arguments_child_graph_and_source_lifetime: bool
+
+
+def _helper_function(objects: DiagnosticObjects, address: int, role: str) -> tuple[int, int, str]:
     extent, frame, name = _logger_function(objects, address, role)
     if role in HELPER_ROLES:
         expected = HELPER_GRAMMARS[HELPER_ROLES[role]]
@@ -73,7 +127,9 @@ def _helper_function(objects, address, role):
     return extent, frame, name
 
 
-def _helper_object(objects, address, descriptor):
+def _helper_object(
+    objects: DiagnosticObjects, address: int, descriptor: SourceLocationObject
+) -> tuple[Callback, ...]:
     require(
         descriptor["kind"] == "source_location"
         and descriptor["role"]
@@ -85,19 +141,25 @@ def _helper_object(objects, address, descriptor):
 
 
 @_structural(2)
-def helper_body(objects, name, instructions, outline_role=None, _ancestry=()):
+def helper_body(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: object = None,
+    _ancestry: tuple[int, ...] = (),
+) -> HelperRecord:
     require(name in objects.elf.functions, "missing small helper body")
     start = objects.elf.functions[name][0] & ~1
     require(start not in _ancestry, "small helper outline cycle")
     role = canonical_symbol(name)
     if outline_role is not None:
-        require(
+        if not (
             isinstance(outline_role, str)
             and outline_role.startswith("@outline:")
             and outline_role in HELPER_ROLES
-            and re.fullmatch(r"OUTLINED_FUNCTION_[0-9]+", name),
-            "unreviewed small helper outline role/origin",
-        )
+            and re.fullmatch(r"OUTLINED_FUNCTION_[0-9]+", name)
+        ):
+            raise AssertionError("unreviewed small helper outline role/origin")
         role = outline_role
     require(role in HELPER_ROLES, "unreviewed exact small helper receiver/outline")
     semantic = HELPER_ROLES[role]
@@ -113,25 +175,31 @@ def helper_body(objects, name, instructions, outline_role=None, _ancestry=()):
         _ancestry,
         function_consumer=_helper_function,
     )
-    proof.update(
-        semantic_role=semantic,
-        transfers=tuple(
+    return {
+        **proof,
+        "semantic_role": semantic,
+        "transfers": tuple(
             (r.address - start, r.mnemonic, r.operands.split("@", 1)[0].strip())
             for a, r in sorted(instructions.items())
             if start <= a < start + proof["extent"]
             and (transfer_family(r.mnemonic.removesuffix(".w")) or re.search(r"\bpc\b", r.operands))
         ),
-        requires_source_inputs_owned_effects_and_child_closure=True,
-        requires_parent_frame_and_abi=semantic if outline_role else None,
-        requires_u32_domain_maximum=127 if semantic == "varint_u32_small" else None,
-        requires_hard_float_s0=semantic == "serialize_f32",
-        requires_unaligned_single_ldr_policy=semantic == "deserialize_seed_f32",
-    )
-    return proof
+        "requires_source_inputs_owned_effects_and_child_closure": True,
+        "requires_parent_frame_and_abi": semantic if outline_role else None,
+        "requires_u32_domain_maximum": 127 if semantic == "varint_u32_small" else None,
+        "requires_hard_float_s0": semantic == "serialize_f32",
+        "requires_unaligned_single_ldr_policy": semantic == "deserialize_seed_f32",
+    }
 
 
 @_structural(2)
-def helper_coverage(objects, name, instructions, context, outline_role=None):
+def helper_coverage(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    context: Context,
+    outline_role: object = None,
+) -> HelperCoverageRecord:
     """Reconcile complete matched helper inventories, retaining O5 obligations."""
     proof = helper_body(objects, name, instructions, outline_role)
     start = proof["function"]
@@ -181,12 +249,10 @@ def helper_coverage(objects, name, instructions, context, outline_role=None):
                 Transfer(at, row.mnemonic, kind, target, "complete helper typed child", role)
             )
         else:
-            target = re.search(r"0x([0-9a-f]+)(?:\s|$)", operands)
-            require(
-                target is not None and family in ("b", "cbz", "cbnz"),
-                "unreviewed helper transfer inventory",
-            )
-            target = int(target[1], 16)
+            match = re.search(r"0x([0-9a-f]+)(?:\s|$)", operands)
+            if match is None or family not in ("b", "cbz", "cbnz"):
+                raise AssertionError("unreviewed helper transfer inventory")
+            target = int(match[1], 16)
             edges.append(
                 Transfer(
                     at,
@@ -224,7 +290,7 @@ def helper_coverage(objects, name, instructions, context, outline_role=None):
                 )
             )
 
-    def target_consumer(objects, target, role):
+    def target_consumer(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, int, str]:
         if not role.startswith("@outline:"):
             return _helper_function(objects, target, role)
         names = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
@@ -235,11 +301,12 @@ def helper_coverage(objects, name, instructions, context, outline_role=None):
     coverage = audit_coverage(
         objects, name, instructions, context, regions, _function_consumer=target_consumer
     )
-    proof.update(coverage=coverage, nonreturn_boundaries=tuple(nonreturn_boundaries))
-    return proof
+    return {**proof, "coverage": coverage, "nonreturn_boundaries": tuple(nonreturn_boundaries)}
 
 
-def helper_frame(proof, frame, ancestor_protected):
+def helper_frame(
+    proof: HelperRecord, frame: Storage, ancestor_protected: Iterable[Storage]
+) -> HelperFrame:
     """Bind closed local scratch/save maps to a caller-established actual SP.
 
     These are subobjects of one active frame, not independent allocations.
@@ -300,17 +367,17 @@ def helper_frame(proof, frame, ancestor_protected):
 
 
 def index_prefix(
-    objects,
-    instructions,
-    proof,
-    buffer,
-    frame,
-    ancestor_protected,
-    location,
-    index,
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: HelperCoverageRecord,
+    buffer: View,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+    location: int,
+    index: Argument,
     *,
-    location_role,
-):
+    location_role: str,
+) -> IndexResult:
     """Fixed inclusive-index effects on caller-established typed local borrows.
 
     The writable-return capability must avoid protected cells even though these
@@ -390,12 +457,12 @@ def index_prefix(
             index,
             location_role=location_role,
         )
-        result.update(
-            conservative_frame_metadata=(8,) + result["conservative_frame_metadata"],
-            restored_tail_storage=True,
-        )
+        result["conservative_frame_metadata"] = (8,) + result["conservative_frame_metadata"]
+        result["restored_tail_storage"] = True
         return result
-    outcomes = []
+    outcomes: list[IndexSuccess | IndexFailure] = []
+    if index.domain is None:
+        raise AssertionError("inclusive endpoint lacks its source usize domain")
     for endpoint in sorted(index.domain):
         if endpoint < buffer.extent:
             outcomes.append(

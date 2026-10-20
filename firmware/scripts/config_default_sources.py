@@ -4,6 +4,21 @@ Matched source constructors and owned effects retain abstract inactive payload.
 This does not establish actual incoming ownership, validation or a graph pass.
 """
 
+from collections.abc import Iterable
+from typing import Never, TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap, OrdinaryEdge
+from config_stack import DiagnosticObjects
+from config_regions import View
+from config_default import Writes
+from config_default_widget import WidgetLoop, TargetRequirement
+from config_refill_children import (
+    RefillCoverageRecord,
+    DefinitionOutcome,
+    DefinitionResult,
+    PeriodResult,
+    OpaqueCopyResult,
+)
+from config_source_contract import SourceObject
 import re
 from config_default import _ingress
 from config_default_widget import widget_loop, _store
@@ -24,15 +39,72 @@ from config_stack import canonical_symbol, transfer_family
 from validation import require
 
 
+class SourceChildHistory(TypedDict):
+    definition: DefinitionResult
+    possible_period: PeriodResult
+
+
+class SourceIteration(TypedDict):
+    index: int
+    id: int
+    channel: int
+    offset: int
+    source: View
+    typed_definition: DefinitionOutcome
+    child_history: SourceChildHistory
+    poll: tuple[str, int | None]
+    opaque_poll_payload: tuple[int, int] | tuple[()]
+    route: str
+    opaque_route_payload: tuple[int, int]
+    physical_access_range: tuple[int, int]
+    active_access_payload_ranges: tuple[tuple[int, int], ...]
+    trailing_padding: tuple[int, int]
+    freshness_ms: int
+    opaque_copy: OpaqueCopyResult
+    requires_complete_source_constructor_and_child_result_transport: bool
+
+
+class ValidatorHandoff(TypedDict):
+    call: OrdinaryEdge
+    result: View
+    r8: int
+    r0: int
+    r1: int
+    r10: int
+    r11: int
+    requires_specialized_validator_receiver_Result_preservation_and_graph: bool
+
+
+class SourceTerminal(TypedDict):
+    proof: BodyRecord
+    widget: WidgetLoop
+    region: Region
+    iterations: tuple[SourceIteration, ...]
+    local_writes: Writes
+    possible_writes: Writes
+    history_count: int
+    led_padding: tuple[int, ...]
+    normal_exit_count: int
+    target_access_requirements: tuple[TargetRequirement, ...]
+    parent_frame: int
+    physical_peak_child_paths: tuple[tuple[int, ...], ...]
+    outgoing: ValidatorHandoff
+    requires_actual_parent_ownership_fault_SP_and_complete_ingress: bool
+    requires_validation_all_outcomes_fault_publication_and_epilogue: bool
+    requires_full_ordinary_diagnostic_default_sink_PANICKED_boot_graph: bool
+
+
 _LED = bytes.fromhex("0100e007640090013200020000f8640090013200010000000000")
 _LED_PADDING = (1, 5, 9, 11, 15, 19, 25)
 
 
-def _object(objects, value, descriptor):
+def _object(
+    objects: DiagnosticObjects, value: int, descriptor: SourceObject
+) -> tuple[Callback, ...]:
     kind = descriptor["kind"]
-    if kind == "entry_static":
+    if descriptor["kind"] == "entry_static":
         return entry_object(objects, value, descriptor)
-    if kind == "source_literal":
+    if descriptor["kind"] == "source_literal":
         require(value == descriptor["value"], "source ID/control literal differs")
     elif kind == "source_channels":
         require(
@@ -48,11 +120,17 @@ def _object(objects, value, descriptor):
     return ()
 
 
-def _no_outline(*args):
+def _no_outline(*args: object) -> Never:
     raise AssertionError("source phase has no outline child")
 
 
-def _coverage(objects, name, instructions, start, proof):
+def _coverage(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    start: int,
+    proof: BodyRecord,
+) -> Region:
     end = start + 342
     rows = {a: r for a, r in instructions.items() if start <= a < end}
     edges = {start + v[0]: v for v in proof["ordinary_edges"]}
@@ -66,7 +144,8 @@ def _coverage(objects, name, instructions, start, proof):
         stops = False
         if kind in ("b", "bl", "cbz", "cbnz"):
             match = re.search(r"(?<![#\w])0x([0-9a-f]+)(?:\s|$)", row.operands.split("@", 1)[0])
-            require(match is not None, "source transfer is unresolved")
+            if match is None:
+                raise AssertionError("source transfer is unresolved")
             target = int(match[1], 16)
             if kind == "bl":
                 require(at in edges, "source ordinary transfer lacks current binding")
@@ -111,7 +190,13 @@ def _coverage(objects, name, instructions, start, proof):
     )
 
 
-def _child(objects, instructions, proof, offset, shape):
+def _child(
+    objects: DiagnosticObjects,
+    instructions: InstructionMap,
+    proof: BodyRecord,
+    offset: int,
+    shape: str,
+) -> RefillCoverageRecord:
     edge = next(e for e in proof["ordinary_edges"] if e[0] == offset)
     names = [
         n
@@ -129,7 +214,13 @@ def _child(objects, instructions, proof, offset, shape):
     return bound
 
 
-def source_terminal(objects, name, instructions, frame, ancestor_protected):
+def source_terminal(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    frame: Storage,
+    ancestor_protected: Iterable[Storage],
+) -> SourceTerminal:
     ancestor_protected = tuple(ancestor_protected)
     widget = widget_loop(objects, name, instructions, frame, ancestor_protected)
     start = widget["continuation"]
@@ -186,7 +277,7 @@ def source_terminal(objects, name, instructions, frame, ancestor_protected):
         for site, owner, o, n, field in SOURCE_WRITES
         if owner == "P"
     )
-    iterations = []
+    iterations: list[SourceIteration] = []
     writes = []
     for i, case in enumerate(SOURCE_CASES):
         require(

@@ -80,7 +80,9 @@ cancels a DMA operation and reuses its memory. Flash maintenance still requires
 the completed bus boundary and all existing acknowledgments before XIP is stopped.
 Core 1 catalogue/rendering and the two fixed framebuffers are unchanged.
 
-The current WLAN image is 231077 bytes and Bluetooth patch 6164 bytes; backplane
+At this transport review, the WLAN image was 231077 bytes and the Bluetooth
+patch was 6164 bytes. The [20 October copied-input review](../dependencies/full-code-audit-2026-10-20.md)
+subsequently adopted the 6970-byte Bluetooth 0065 patch; WLAN is unchanged. Backplane
 writes use 64-byte chunks. Rough raw serialization at 2.5 MHz is about 0.9 seconds
 including chunk command overhead, before initialization waits and scheduling.
 One 2048-byte transfer takes about 6.6 ms plus protocol overhead. These estimates

@@ -17,6 +17,7 @@ pub(crate) struct MockBus {
     pub header: [u8; 4],
     pub reads: usize,
     pub writes: usize,
+    pub patch_writes: std::vec::Vec<(u32, std::vec::Vec<u8>)>,
     pub f2_reads: usize,
     pub f2_continuous: bool,
     pub ring: Option<std::boxed::Box<[u8; 4096]>>,
@@ -75,8 +76,9 @@ impl SealedBus for MockBus {
         }
     }
 
-    async fn bp_write(&mut self, _: u32, _: &[u8]) {
+    async fn bp_write(&mut self, addr: u32, bytes: &[u8]) {
         self.writes += 1;
+        self.patch_writes.push((addr, bytes.to_vec()));
     }
 
     async fn bp_read8(&mut self, _: u32) -> u8 {
@@ -247,4 +249,156 @@ fn ready_tx_cannot_starve_rx_or_boundary() {
     assert_eq!(boundaries.get(), 4);
     // The malformed RX header faults transport despite perpetually ready TX.
     assert!(_driver.test_faulted());
+}
+
+fn f2_event(event_type: u32, status: u32) -> Aligned<A4, [u8; 16 + crate::structs::EventPacket::SIZE]> {
+    use crate::structs::*;
+    let mut event = EventPacket {
+        eth: EthernetHeader {
+            destination_mac: [0; 6],
+            source_mac: [0; 6],
+            ether_type: 0x886c,
+        },
+        hdr: EventHeader {
+            subtype: 32769,
+            length: EventPacket::SIZE as u16,
+            version: 0,
+            oui: [0, 0x10, 0x18],
+            user_subtype: 1,
+        },
+        msg: EventMessage {
+            version: 2,
+            flags: 0,
+            event_type,
+            status,
+            reason: 0,
+            auth_type: 0,
+            datalen: 0,
+            addr: [0; 6],
+            ifname: [0; 16],
+            ifidx: 0,
+            bsscfgidx: 0,
+        },
+    };
+    event.byteswap();
+    let mut packet = Aligned::<A4, _>([0u8; 16 + EventPacket::SIZE]);
+    let len = packet.len() as u16;
+    packet[..2].copy_from_slice(&len.to_le_bytes());
+    packet[2..4].copy_from_slice(&(!len).to_le_bytes());
+    packet[5] = CHANNEL_TYPE_EVENT;
+    packet[7] = 12;
+    packet[16..].copy_from_slice(&event.to_bytes());
+    packet
+}
+
+#[test]
+fn unknown_f2_events_are_ignored_without_aliasing_known_events() {
+    use crate::events::Event;
+    let mut state = crate::State::new();
+    let (ch, _) = embassy_net_driver_channel::new(
+        &mut state.net.ch,
+        embassy_net_driver_channel::driver::HardwareAddress::Ethernet([0; 6]),
+    );
+    let mut runner = Runner::new(
+        ch,
+        MockBus::default(),
+        &state.ioctl_state,
+        &state.net.events,
+        &state.net.secure_network,
+        None,
+    );
+    // This path is also active in Bluetooth-only mode without WiFi Control.
+    runner.rx(&mut f2_event(255, 0)[..]);
+    let mut subscriber = state.net.events.queue.subscriber().unwrap();
+    state.net.events.mask.enable(&[Event::SET_SSID, Event::JOIN]);
+    for kind in [190, 191, 254, 255, 256, 257, 0x10001, u32::MAX] {
+        runner.rx(&mut f2_event(kind, 0)[..]);
+        assert!(subscriber.try_next_message_pure().is_none(), "unknown event {kind}");
+    }
+    runner.rx(&mut f2_event(Event::JOIN as u32, 0)[..]);
+    let event = subscriber.try_next_message_pure().unwrap();
+    assert_eq!(event.header.event_type, Event::JOIN);
+    assert_eq!(event.header.status, 0);
+}
+
+#[test]
+fn wide_f2_status_cannot_create_a_successful_link() {
+    use crate::events::Event;
+    use embassy_net_driver_channel::driver::{Driver, LinkState};
+    let mut state = crate::State::new();
+    let (ch, mut device) = embassy_net_driver_channel::new(
+        &mut state.net.ch,
+        embassy_net_driver_channel::driver::HardwareAddress::Ethernet([0; 6]),
+    );
+    let mut runner = Runner::new(
+        ch,
+        MockBus::default(),
+        &state.ioctl_state,
+        &state.net.events,
+        &state.net.secure_network,
+        None,
+    );
+    let mut subscriber = state.net.events.queue.subscriber().unwrap();
+    state.net.events.mask.enable(&[Event::JOIN]);
+    let mut cx = Context::from_waker(Waker::noop());
+    for status in [256, 512, 0x10000, u32::MAX] {
+        runner.rx(&mut f2_event(Event::JOIN as u32, status)[..]);
+        assert!(matches!(device.link_state(&mut cx), LinkState::Down));
+        assert_eq!(subscriber.try_next_message_pure().unwrap().header.status, status);
+    }
+    runner.rx(&mut f2_event(Event::JOIN as u32, 0)[..]);
+    assert!(matches!(device.link_state(&mut cx), LinkState::Up));
+    runner.rx(&mut f2_event(Event::LINK as u32, 0)[..]);
+    assert!(matches!(device.link_state(&mut cx), LinkState::Down));
+}
+
+#[test]
+fn event_mask_handles_every_encoded_event_and_keeps_sentinels_disabled() {
+    use crate::events::{Event, SharedEventMask};
+    let mask = SharedEventMask::new();
+    for raw in 0..=u8::MAX {
+        let event = Event::from(raw);
+        assert!(!mask.is_enabled(event));
+        mask.enable(&[event]);
+        assert_eq!(mask.is_enabled(event), !matches!(event, Event::Unknown | Event::LAST));
+        mask.disable(&[event]);
+        assert!(!mask.is_enabled(event));
+    }
+    mask.enable(&[Event::JOIN, Event::LINK]);
+    mask.disable_all();
+    assert!(!mask.is_enabled(Event::JOIN));
+    assert!(!mask.is_enabled(Event::LINK));
+}
+
+#[test]
+fn sdio_register_reads_and_writes_preserve_sixteen_bit_wire_values() {
+    struct Sdio([u8; 2]);
+    impl crate::SdioBusCyw43<64> for Sdio {
+        type Error = core::convert::Infallible;
+        fn set_bus_to_high_speed(&mut self, _: u32) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn cmd52(&mut self, _: u32) -> Result<u16, Self::Error> {
+            Ok(0)
+        }
+        async fn cmd53_block_read(&mut self, _: u32, _: &mut [Aligned<A4, [u8; 64]>]) -> Result<(), Self::Error> {
+            panic!("unexpected block read")
+        }
+        async fn cmd53_byte_read(&mut self, _: u32, bytes: &mut Aligned<A4, [u8]>) -> Result<(), Self::Error> {
+            bytes.copy_from_slice(&self.0);
+            Ok(())
+        }
+        async fn cmd53_block_write(&mut self, _: u32, _: &[Aligned<A4, [u8; 64]>]) -> Result<(), Self::Error> {
+            panic!("unexpected block write")
+        }
+        async fn cmd53_byte_write(&mut self, _: u32, bytes: &Aligned<A4, [u8]>) -> Result<(), Self::Error> {
+            assert!(bytes.iter().copied().eq(self.0));
+            Ok(())
+        }
+    }
+    for value in [0u16, 1, 0x1234, 0x8001, u16::MAX] {
+        let mut bus = crate::SdioBus::new(Sdio(value.to_le_bytes()));
+        assert_eq!(block_on(bus.read16(1, 0)), value);
+        block_on(bus.write16(1, 0, value));
+    }
 }

@@ -1,7 +1,9 @@
 """Finite configuration stack roles and diagnostic root regressions."""
 
+from config_actual_loader_return import LoaderDescription
 import unittest
-from types import SimpleNamespace
+import operator
+from collections.abc import Callable, Iterable
 import struct
 import json
 import re
@@ -9,6 +11,758 @@ from pathlib import Path
 import config_stack
 from llvm_stack import Instruction
 from config_stack import error_root_role
+from typing import (
+    overload,
+    Unpack,
+    TypeGuard,
+    TypeVar,
+    TypedDict,
+    NotRequired,
+    cast,
+    Literal,
+    Never,
+)
+from image_test_support import (
+    matches_fixture as _matches_fixture,
+    dynamic_call,
+    fixture_fields as _fixture_object,
+    fixture_items as _fixture_array,
+    checked_fixture as _checked_fixture,
+)
+from config_logger_contracts import LoggerObject
+from config_entry_contracts import ENTRY_GRAMMARS
+from config_build_source import SourceContext
+
+from image_test_support import (
+    DiagnosticFixture,
+    ImageFixture,
+    QualifiedImageFixture,
+    diagnostic_fixture,
+    section_fields,
+    segment_fields,
+)
+from script_values import object_fields, array_items, integer_value, string_value
+
+from config_helpers import HelperCoverageRecord, IndexSuccess, IndexFailure
+from config_regions import Storage, View, Argument, Region
+from config_body_types import BodyContract, BodyRecord, InstructionMap
+from elf_image import Section
+from config_decode_effects import (
+    DecoderState,
+    SequenceState,
+    DecoderArguments,
+    DecodeEffect,
+    SequenceEffect,
+)
+from config_compare_effects import CompareState, SourceBytes
+from config_abstract import DecoderInterface, SequenceInterface
+from config_abstract_compare import InitializedPrefix, CompareInterface
+from config_construction import VecInterface
+from config_refill_children import RefillCoverageRecord
+from config_refill_contracts import CATALOG_DISPATCH
+from config_platform import StackBounds, StackRecord, Dependency, PlatformPolicy
+from config_owned_access import OwnedAccess
+from config_validator_access import ValidatorFamily, ValidatorContext
+from config_source_access import SourceFamily
+from config_tail_access import TailFamily
+from config_led_access import LedFamily
+from config_widget_access import WidgetFamily
+from config_decoded_prefix import PrefixDescription
+from config_decoded_views import ViewsDescription, _ViewsState
+from config_utf8 import UTF8Slice, UTF8Result
+from config_widget_children import ColorResult, WarningColorsResult
+from config_validator_children import NormalBody
+from config_structural import _FrozenObjects
+from config_decoded_widgets import _WidgetControlInput, _WidgetActiveControl, WidgetsDescription
+
+_FixtureValue = TypeVar("_FixtureValue")
+
+IndexArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    View,
+    Storage,
+    tuple[Storage, ...],
+    int,
+    Argument,
+]
+AbstractDecodeArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    DecoderInterface,
+    Storage,
+    tuple[Storage, ...],
+]
+AbstractSequenceArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    SequenceInterface,
+    Storage,
+    tuple[Storage, ...],
+]
+AbstractCompareArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    CompareInterface,
+    InitializedPrefix,
+    Storage,
+    tuple[Storage, ...],
+]
+AbstractSerializeArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    CompareInterface,
+    Storage,
+    tuple[Storage, ...],
+]
+IndexCallArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    View,
+    Storage,
+    Iterable[Storage],
+    int,
+    Argument,
+]
+DecodeArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    DecoderState,
+    Storage,
+    tuple[Storage, ...],
+]
+SequenceArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    SequenceState,
+    Storage,
+    tuple[Storage, ...],
+]
+CompareArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    CompareState,
+    SourceBytes,
+    Storage,
+    tuple[Storage, ...],
+]
+SerializeArgs = tuple[
+    DiagnosticFixture,
+    dict[int, Instruction],
+    HelperCoverageRecord,
+    CompareState,
+    Argument,
+    Storage,
+    tuple[Storage, ...],
+]
+
+
+def _index_success(value: IndexSuccess | IndexFailure) -> TypeGuard[IndexSuccess]:
+    return "prefix" in value
+
+
+def _index_failure(value: IndexSuccess | IndexFailure) -> TypeGuard[IndexFailure]:
+    return "diagnostic_arguments" in value
+
+
+class MutableSymbol:
+    """Keep ELF symbol columns typed while negative tests edit individual cells."""
+
+    def __init__(self, symbol: tuple[str, int, int, int, int]) -> None:
+        self._name, self._address, self._size, self._info, self._section = symbol
+
+    @overload
+    def __getitem__(self, index: Literal[0]) -> str: ...
+
+    @overload
+    def __getitem__(self, index: Literal[1, 2, 3, 4]) -> int: ...
+
+    def __getitem__(self, index: int) -> str | int:
+        return self.as_tuple()[index]
+
+    @overload
+    def __setitem__(self, index: Literal[0], value: str) -> None: ...
+
+    @overload
+    def __setitem__(self, index: Literal[1, 2, 3, 4], value: int) -> None: ...
+
+    def __setitem__(self, index: int, value: str | int) -> None:
+        if index == 0 and isinstance(value, str):
+            self._name = value
+        elif isinstance(value, int):
+            if index == 1:
+                self._address = value
+            elif index == 2:
+                self._size = value
+            elif index == 3:
+                self._info = value
+            elif index == 4:
+                self._section = value
+            else:
+                raise AssertionError("invalid fixture symbol column")
+        else:
+            raise AssertionError("invalid fixture symbol field")
+
+    def as_tuple(self) -> tuple[str, int, int, int, int]:
+        return self._name, self._address, self._size, self._info, self._section
+
+    def copy(self) -> "MutableSymbol":
+        return MutableSymbol(self.as_tuple())
+
+
+class FixtureAlias(TypedDict):
+    name: str
+    address: int
+    size: int
+
+
+class FormatTarget(TypedDict):
+    pointer: int
+    frame: int
+    aliases: list[FixtureAlias]
+
+
+class FormatProducer(TypedDict):
+    address: int
+    first24_hex: str
+    targets: NotRequired[list[FormatTarget]]
+    pool: NotRequired[int]
+    low_site: NotRequired[int]
+    high_site: NotRequired[int]
+    register: NotRequired[str]
+    origin_role: NotRequired[str]
+    vtable_words: NotRequired[list[int]]
+
+
+class FormatEdge(TypedDict):
+    aliases: list[FixtureAlias]
+    frame: int
+
+
+class FormatFixture(TypedDict):
+    address: int
+    size: int
+    frame: int
+    aliases: list[FixtureAlias]
+    address_producers: list[FormatProducer]
+    ordinary_edges: list[FormatEdge]
+    lines: list[str]
+    body_hex: NotRequired[str]
+    mapping: NotRequired[list[tuple[int, int, str]]]
+    mode: NotRequired[str]
+    role: NotRequired[str]
+
+
+def _fixture_alias(value: object) -> FixtureAlias:
+    item = object_fields(value, "fixture alias")
+    return FixtureAlias(
+        name=string_value(item["name"], "alias name"),
+        address=integer_value(item["address"], "alias address"),
+        size=integer_value(item["size"], "alias size"),
+    )
+
+
+def _fixture_interval(value: object) -> tuple[int, int, str]:
+    item = array_items(value, "fixture interval")
+    if len(item) != 3:
+        raise AssertionError("fixture interval arity")
+    return (
+        integer_value(item[0], "interval start"),
+        integer_value(item[1], "interval end"),
+        string_value(item[2], "interval kind"),
+    )
+
+
+def _format_fixture(value: object) -> FormatFixture:
+    item = object_fields(value, "format fixture")
+    producers: list[FormatProducer] = []
+    for raw in array_items(item["address_producers"], "fixture producers"):
+        obj = object_fields(raw, "fixture producer")
+        producer = FormatProducer(
+            address=integer_value(obj["address"], "producer address"),
+            first24_hex=string_value(obj["first24_hex"], "producer bytes"),
+        )
+        if "targets" in obj:
+            targets: list[FormatTarget] = []
+            for raw_target in array_items(obj["targets"], "producer targets"):
+                target = object_fields(raw_target, "producer target")
+                targets.append(
+                    FormatTarget(
+                        pointer=integer_value(target["pointer"], "target pointer"),
+                        frame=integer_value(target["frame"], "target frame"),
+                        aliases=[
+                            _fixture_alias(v)
+                            for v in array_items(target["aliases"], "target aliases")
+                        ],
+                    )
+                )
+            producer["targets"] = targets
+        if "pool" in obj:
+            producer["pool"] = integer_value(obj["pool"], "producer pool")
+        if "low_site" in obj:
+            producer["low_site"] = integer_value(obj["low_site"], "producer low site")
+            producer["high_site"] = integer_value(obj["high_site"], "producer high site")
+            producer["register"] = string_value(obj["register"], "producer register")
+        if "origin_role" in obj:
+            producer["origin_role"] = string_value(obj["origin_role"], "producer role")
+        if "vtable_words" in obj:
+            producer["vtable_words"] = [
+                integer_value(v, "vtable word")
+                for v in array_items(obj["vtable_words"], "vtable words")
+            ]
+        producers.append(producer)
+    edges: list[FormatEdge] = []
+    for raw in array_items(item["ordinary_edges"], "format edges"):
+        edge = object_fields(raw, "format edge")
+        edges.append(
+            FormatEdge(
+                frame=integer_value(edge["frame"], "edge frame"),
+                aliases=[_fixture_alias(v) for v in array_items(edge["aliases"], "edge aliases")],
+            )
+        )
+    result = FormatFixture(
+        address=integer_value(item["address"], "format address"),
+        size=integer_value(item["size"], "format size"),
+        frame=integer_value(item["frame"], "format frame"),
+        aliases=[_fixture_alias(v) for v in array_items(item["aliases"], "format aliases")],
+        address_producers=producers,
+        ordinary_edges=edges,
+        lines=[string_value(v, "format line") for v in array_items(item["lines"], "format lines")],
+    )
+    if "body_hex" in item:
+        result["body_hex"] = string_value(item["body_hex"], "format bytes")
+    if "mapping" in item:
+        result["mapping"] = [
+            _fixture_interval(v) for v in array_items(item["mapping"], "format mapping")
+        ]
+    if "mode" in item:
+        result["mode"] = string_value(item["mode"], "format mode")
+    if "role" in item:
+        result["role"] = string_value(item["role"], "format role")
+    return result
+
+
+class ControlLiteral(TypedDict):
+    first256: str
+    kind: str
+    value: int
+    pool: NotRequired[int]
+    low: NotRequired[int]
+    high: NotRequired[int]
+    register: NotRequired[str]
+
+
+class ControlInstruction(TypedDict):
+    address: int
+    bytes: str
+    text: str
+
+
+class FixtureDataRange(TypedDict):
+    start: int
+
+
+class ControlFunction(TypedDict):
+    data: list[FixtureDataRange]
+    address: int
+    aliases: list[FixtureAlias]
+    frame: int
+    size: int
+    role: str
+    instructions: list[ControlInstruction]
+    intervals: list[tuple[int, int, str]]
+    literals: list[ControlLiteral]
+
+
+class ControlChild(TypedDict):
+    address: int
+    aliases: list[FixtureAlias]
+    frame: int
+    extent: int
+
+
+class ControlFixture(TypedDict):
+    mode: str
+    key: str
+    body_hex: str
+    function: ControlFunction
+    objects: list[tuple[int, str]]
+    extra_functions: list[ControlChild]
+    pointer_offsets: NotRequired[list[tuple[int, int]]]
+    shape: NotRequired[str]
+    support: NotRequired[bool]
+    window: NotRequired[int]
+    site: NotRequired[int]
+    source_role: NotRequired[str]
+
+
+def _control_fixture(value: object) -> ControlFixture:
+    item = object_fields(value, "control fixture")
+    fn = object_fields(item["function"], "control function")
+    literals: list[ControlLiteral] = []
+    for raw in array_items(fn["literals"], "control literals"):
+        obj = object_fields(raw, "control literal")
+        literal = ControlLiteral(
+            first256=string_value(obj["first256"], "literal object bytes"),
+            kind=string_value(obj["kind"], "literal kind"),
+            value=integer_value(obj["value"], "literal value"),
+        )
+        if "pool" in obj:
+            literal["pool"] = integer_value(obj["pool"], "literal pool")
+        if "low" in obj:
+            literal["low"] = integer_value(obj["low"], "literal low")
+            literal["high"] = integer_value(obj["high"], "literal high")
+            literal["register"] = string_value(obj["register"], "literal register")
+        literals.append(literal)
+    rows: list[ControlInstruction] = []
+    for raw in array_items(fn["instructions"], "control instructions"):
+        row = object_fields(raw, "control instruction")
+        rows.append(
+            ControlInstruction(
+                address=integer_value(row["address"], "instruction address"),
+                bytes=string_value(row["bytes"], "instruction bytes"),
+                text=string_value(row["text"], "instruction text"),
+            )
+        )
+    function = ControlFunction(
+        data=[
+            FixtureDataRange(
+                start=integer_value(object_fields(v, "function data")["start"], "data start")
+            )
+            for v in array_items(fn["data"], "function data ranges")
+        ],
+        address=integer_value(fn["address"], "function address"),
+        frame=integer_value(fn["frame"], "function frame"),
+        size=integer_value(fn["size"], "function size"),
+        role=string_value(fn["role"], "function role"),
+        aliases=[_fixture_alias(v) for v in array_items(fn["aliases"], "function aliases")],
+        instructions=rows,
+        literals=literals,
+        intervals=[
+            _fixture_interval(v) for v in array_items(fn["intervals"], "function intervals")
+        ],
+    )
+    children: list[ControlChild] = []
+    for raw in array_items(item["extra_functions"], "control children"):
+        child = object_fields(raw, "control child")
+        children.append(
+            ControlChild(
+                address=integer_value(child["address"], "child address"),
+                frame=integer_value(child["frame"], "child frame"),
+                extent=integer_value(child["extent"], "child extent"),
+                aliases=[_fixture_alias(v) for v in array_items(child["aliases"], "child aliases")],
+            )
+        )
+    objects: list[tuple[int, str]] = []
+    for raw in array_items(item["objects"], "control objects"):
+        pair = array_items(raw, "control object")
+        if len(pair) != 2:
+            raise AssertionError("control object arity")
+        objects.append(
+            (integer_value(pair[0], "object address"), string_value(pair[1], "object bytes"))
+        )
+    result = ControlFixture(
+        mode=string_value(item["mode"], "fixture mode"),
+        key=string_value(item["key"], "fixture key"),
+        body_hex=string_value(item["body_hex"], "fixture bytes"),
+        function=function,
+        objects=objects,
+        extra_functions=children,
+    )
+    if "pointer_offsets" in item:
+        offsets = [
+            _fixture_integers(v, 2) for v in array_items(item["pointer_offsets"], "pointer offsets")
+        ]
+        result["pointer_offsets"] = [(v[0], v[1]) for v in offsets]
+    if "support" in item:
+        support = item["support"]
+        if type(support) is not bool:
+            raise AssertionError("fixture support must be boolean")
+        result["support"] = support
+    if "shape" in item:
+        result["shape"] = string_value(item["shape"], "fixture shape")
+    if "source_role" in item:
+        result["source_role"] = string_value(item["source_role"], "fixture source role")
+    if "window" in item:
+        result["window"] = integer_value(item["window"], "fixture window")
+    if "site" in item:
+        result["site"] = integer_value(item["site"], "fixture site")
+    return result
+
+
+class ResolvedAddress(TypedDict):
+    address: int
+
+
+class FixtureResolved(TypedDict):
+    name: NotRequired[ResolvedAddress]
+    buffer: NotRequired[ResolvedAddress]
+
+
+class FixtureLocation(TypedDict):
+    kind: Literal["location"]
+
+
+class FixtureObject(TypedDict):
+    value: int
+    type: LoggerObject | FixtureLocation
+    resolved: NotRequired[FixtureResolved]
+
+
+class FixtureInstruction(TypedDict):
+    address: int
+    bytes: str
+    text: str
+    offset: NotRequired[int]
+    listing: NotRequired[str]
+
+
+class FixtureInstance(TypedDict):
+    role: str
+    name: NotRequired[str]
+    entry: NotRequired[int]
+    address: NotRequired[int]
+    extent: NotRequired[int]
+    frame: NotRequired[int]
+    shape: NotRequired[str]
+    own_frame: NotRequired[int]
+    typed_role: NotRequired[str]
+    aliases: NotRequired[list[FixtureAlias]]
+
+
+class FixtureIssuer(TypedDict):
+    name: str
+    start: int
+    end: int
+
+
+class FixtureMovObject(TypedDict):
+    high: int
+    low: int
+    target_section: int
+    value: int
+
+
+class FixturePoolObject(TypedDict):
+    target_section: int
+    pool: int
+    value: int
+
+
+class FixtureDelta(TypedDict):
+    segments: list[tuple[int, int, str]]
+    symbol_entries: list[tuple[str, int, int, int, int]]
+    functions: dict[str, tuple[int, int, int]]
+    sizes: dict[str, int]
+
+
+class SourceDelta(FixtureDelta):
+    pointer_cells: list[int]
+
+
+class EntryFixture(FixtureDelta):
+    mode: str
+    objects: list[FixtureObject]
+    sections: list[list[int]]
+    named: dict[str, int]
+    elf_sha256: NotRequired[str]
+    instances: NotRequired[list[FixtureInstance]]
+    records: NotRequired[list[FixtureInstruction]]
+    mapping_symbols: NotRequired[list[tuple[str, int, int]]]
+    issuer: NotRequired[FixtureIssuer]
+    mov_objects: NotRequired[list[FixtureMovObject]]
+    relocations: NotRequired[list[int]]
+    pool_objects: NotRequired[list[FixturePoolObject]]
+
+
+class DecodedInstruction(TypedDict):
+    address: int
+    bytes: str
+    mnemonic: str
+    operands: str
+
+
+class LoaderParent(TypedDict):
+    role: str
+    raw_roles: list[str]
+    address: int
+    extent: int
+    frame: int
+    mapping: list[tuple[int, int, str]]
+    prologue: list[tuple[int, int, str]]
+    receivers: list[tuple[str, int, int, str]]
+
+
+class LoaderFixture(TypedDict):
+    mode: str
+    config: int
+    parents: list[LoaderParent]
+    records: list[DecodedInstruction]
+    segments: list[tuple[int, str]]
+
+
+class DecodedFunction(TypedDict):
+    address: int
+    extent: int
+    frame: int | None
+    aliases: list[tuple[str, int, int, int]]
+    symbols: list[tuple[str, int, int, int, int]]
+    mapping: list[tuple[str, int, int]]
+
+
+class DecodedFixture(TypedDict):
+    functions: list[DecodedFunction]
+    records: list[DecodedInstruction]
+    segments: list[tuple[int, str]]
+    readonly: NotRequired[list[tuple[int, str]]]
+
+
+def _fixture_pair(value: object) -> tuple[int, str]:
+    pair = array_items(value, "fixture byte range")
+    if len(pair) != 2:
+        raise AssertionError("fixture byte range arity")
+    return integer_value(pair[0], "fixture byte address"), string_value(pair[1], "fixture bytes")
+
+
+def _loader_fixture(value: object) -> LoaderFixture:
+    item = object_fields(value, "loader fixture")
+    parents = []
+    for raw_parent in array_items(item["parents"], "loader parents"):
+        parent = object_fields(raw_parent, "loader parent")
+        parent["mapping"] = [
+            _fixture_interval(v) for v in array_items(parent["mapping"], "parent mapping")
+        ]
+        parent["prologue"] = [
+            _fixture_interval(v) for v in array_items(parent["prologue"], "parent prologue")
+        ]
+        receivers = []
+        for raw in array_items(parent["receivers"], "parent receivers"):
+            row = array_items(raw, "parent receiver")
+            if len(row) != 4:
+                raise AssertionError("parent receiver arity")
+            receivers.append(
+                (
+                    string_value(row[0], "receiver kind"),
+                    integer_value(row[1], "receiver low"),
+                    integer_value(row[2], "receiver high"),
+                    string_value(row[3], "receiver register"),
+                )
+            )
+        parent["receivers"] = receivers
+        parents.append(parent)
+    item["parents"] = parents
+    item["segments"] = [_fixture_pair(v) for v in array_items(item["segments"], "loader segments")]
+    return _checked_fixture(item, LoaderFixture)
+
+
+def decoded_fixture(value: object) -> DecodedFixture:
+    item = object_fields(value, "decoded fixture")
+    functions = []
+    for raw in array_items(item["functions"], "decoded functions"):
+        function = object_fields(raw, "decoded function")
+        aliases = []
+        for raw_alias in array_items(function["aliases"], "function aliases"):
+            alias = array_items(raw_alias, "function alias")
+            if len(alias) != 4:
+                raise AssertionError("function alias arity")
+            aliases.append(
+                (
+                    string_value(alias[0], "alias name"),
+                    integer_value(alias[1], "alias address"),
+                    integer_value(alias[2], "alias extent"),
+                    integer_value(alias[3], "alias section"),
+                )
+            )
+        function["aliases"] = aliases
+        function["symbols"] = [
+            _fixture_symbol(v) for v in array_items(function["symbols"], "function symbols")
+        ]
+        function["mapping"] = [
+            _fixture_mapping(v) for v in array_items(function["mapping"], "function mapping")
+        ]
+        functions.append(function)
+    item["functions"] = functions
+    item["segments"] = [_fixture_pair(v) for v in array_items(item["segments"], "decoded segments")]
+    if "readonly" in item:
+        item["readonly"] = [
+            _fixture_pair(v) for v in array_items(item["readonly"], "decoded readonly")
+        ]
+    return _checked_fixture(item, DecodedFixture)
+
+
+def _logger_descriptor(value: object) -> LoggerObject:
+    if not _matches_fixture(value, LoggerObject):
+        raise AssertionError("fixture logger descriptor shape")
+    return cast(LoggerObject, value)
+
+
+def _fixture_integers(value: object, count: int) -> tuple[int, ...]:
+    values = array_items(value, "fixture integer tuple")
+    if len(values) != count:
+        raise AssertionError("fixture integer tuple arity")
+    return tuple(integer_value(v, "fixture integer") for v in values)
+
+
+def _fixture_function(value: object) -> tuple[int, int, int]:
+    values = _fixture_integers(value, 3)
+    return values[0], values[1], values[2]
+
+
+def _fixture_mapping(value: object) -> tuple[str, int, int]:
+    values = array_items(value, "fixture mapping")
+    if len(values) != 3:
+        raise AssertionError("fixture mapping arity")
+    return (
+        string_value(values[0], "fixture mapping name"),
+        integer_value(values[1], "fixture mapping address"),
+        integer_value(values[2], "fixture mapping section"),
+    )
+
+
+def _fixture_symbol(value: object) -> tuple[str, int, int, int, int]:
+    values = array_items(value, "fixture symbol")
+    if len(values) != 5:
+        raise AssertionError("fixture symbol arity")
+    return (
+        string_value(values[0], "fixture symbol name"),
+        integer_value(values[1], "fixture symbol value"),
+        integer_value(values[2], "fixture symbol size"),
+        integer_value(values[3], "fixture symbol info"),
+        integer_value(values[4], "fixture symbol section"),
+    )
+
+
+def _image_delta(value: object) -> FixtureDelta:
+    record = object_fields(value, "image fixture")
+    record["segments"] = [
+        _fixture_interval(v) for v in array_items(record["segments"], "fixture segments")
+    ]
+    record["symbol_entries"] = [
+        _fixture_symbol(v) for v in array_items(record["symbol_entries"], "fixture symbols")
+    ]
+    record["functions"] = {
+        k: _fixture_function(v)
+        for k, v in object_fields(record["functions"], "fixture functions").items()
+    }
+    if "mapping_symbols" in record:
+        record["mapping_symbols"] = [
+            _fixture_mapping(v) for v in array_items(record["mapping_symbols"], "fixture mappings")
+        ]
+    return _checked_fixture(record, FixtureDelta)
+
+
+def _entry_fixture(value: object) -> EntryFixture:
+    return _checked_fixture(_image_delta(value), EntryFixture)
+
 
 VALIDATION = "_RNvXsk_NtCshxbT6mSCLYQ_16dashboard_config8validateNtB5_15ValidationErrorNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt"
 WIDGET = "_RNvXsc_NtCshxbT6mSCLYQ_16dashboard_config5modelNtB5_6WidgetNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt"
@@ -17,10 +771,22 @@ U8 = "_RNvXs1g_NtCs123_4core3fmtRhNtB6_5Debug3fmtCs456_14dashboard_core"
 
 
 class CompleteFormatBridges(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0, fixture_file="config-format.json", mode=None):
+    def fixture(
+        self: unittest.TestCase,
+        code_shift: int = 0,
+        data_shift: int = 0,
+        fixture_file: str = "config-format.json",
+        mode: str | None = None,
+    ) -> tuple[DiagnosticFixture, dict[int, list[Instruction]], list[FormatFixture]]:
         # Literal reviewed raw input bodies; expected grammars live only in the
         # production consumer. No firmware is built/executed by this fixture.
-        fixture = json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text())
+        fixture = [
+            _format_fixture(v)
+            for v in array_items(
+                json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text()),
+                "format fixtures",
+            )
+        ]
         if mode:
             fixture = [f for f in fixture if f.get("mode") == mode]
         functions = {}
@@ -42,6 +808,8 @@ class CompleteFormatBridges(unittest.TestCase):
             }
             for line in f["lines"]:
                 match = re.match(r"([0-9a-f]+):\s+((?:(?:[0-9a-f]{4})\s+)+)(\S+)\s*(.*)", line)
+                if match is None:
+                    raise AssertionError("malformed fixture disassembly line")
                 address = int(match[1], 16)
                 raw = b"".join(int(x, 16).to_bytes(2, "little") for x in match[2].split())
                 operands = match[4].split("@", 1)[0].strip()
@@ -78,8 +846,10 @@ class CompleteFormatBridges(unittest.TestCase):
                         "<6I", *words[:3], *(w + code_shift for w in words[3:])
                     )
                 elif p.get("targets"):
-                    words = struct.unpack("<4I", object_bytes)
-                    object_bytes = struct.pack("<4I", *words[:3], words[3] + code_shift)
+                    callback_words = struct.unpack("<4I", object_bytes)
+                    object_bytes = struct.pack(
+                        "<4I", *callback_words[:3], callback_words[3] + code_shift
+                    )
                 segments.append((p["address"] + data_shift, object_bytes))
                 for target in p.get("targets", []):
                     for a in target["aliases"]:
@@ -101,12 +871,12 @@ class CompleteFormatBridges(unittest.TestCase):
         ro = min(p["address"] + data_shift for f in fixture for p in f["address_producers"])
         hi = max(a + len(b) for a, b in segments)
         data = bytearray(hi - lo)
-        for a, b in segments:
-            data[a - lo : a - lo + len(b)] = b
+        for address, content in segments:
+            data[address - lo : address - lo + len(content)] = content
         mappings = [("$t", lo, 0)]
         for f in fixture:
             mappings.extend(("$" + kind, a + code_shift, 0) for a, b, kind in f.get("mapping", []))
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(data),
             sections=[
                 (0, 1, 6, lo, 0, ro - lo, 0, 0, 2, 0),
@@ -115,9 +885,9 @@ class CompleteFormatBridges(unittest.TestCase):
             functions=functions,
             mapping_symbols=mappings,
         )
-        return config_stack.DiagnosticObjects(elf, sizes), records, fixture
+        return diagnostic_fixture(elf, sizes), records, fixture
 
-    def test_independent_code_and_data_relocation_crosses_movw_half_boundary(self):
+    def test_independent_code_and_data_relocation_crosses_movw_half_boundary(self) -> None:
         for code_shift, data_shift in ((0x100, 0x18000), (0x3400, 0x21000)):
             objects, records, fixture = self.fixture(code_shift, data_shift)
             for f in fixture:
@@ -129,7 +899,7 @@ class CompleteFormatBridges(unittest.TestCase):
                     tuple(p["address"] + data_shift for p in f["address_producers"]),
                 )
 
-    def test_readonly_delimiters_and_pad_typed_callbacks_reject_wrong_valid_objects(self):
+    def test_readonly_delimiters_and_pad_typed_callbacks_reject_wrong_valid_objects(self) -> None:
         for change in ("delimiter", "slot", "header", "callback", "frame", "alias"):
             objects, records, fixture = self.fixture()
             f = fixture[1]
@@ -154,19 +924,19 @@ class CompleteFormatBridges(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(AssertionError):
                 config_stack.format_bridge(objects, f["aliases"][0]["name"], records[f["address"]])
 
-    def test_unused_external_literal_bytes_do_not_define_bridge_identity(self):
+    def test_unused_external_literal_bytes_do_not_define_bridge_identity(self) -> None:
         objects, records, fixture = self.fixture()
         f = fixture[1]
         # Append a separate unused external literal, outside every carried
         # table and consumed delimiter; no whole-section hash is required.
         section = list(objects.elf.sections[1])
         section[5] += 1
-        objects.elf.sections[1] = tuple(section)
+        objects.elf.sections[1] = section_fields(section)
         objects.elf.data += b"x"
         result = config_stack.format_bridge(objects, f["aliases"][0]["name"], records[f["address"]])
         self.assertEqual(result["pretty_sites"], (0xA0, 0xD2, 0xE4, 0xEE, 0x116))
 
-    def test_complete_current_bridges_inventory_all_transfer_sites(self):
+    def test_complete_current_bridges_inventory_all_transfer_sites(self) -> None:
         objects, records, fixture = self.fixture()
         for f in fixture:
             result = config_stack.format_bridge(
@@ -180,7 +950,7 @@ class CompleteFormatBridges(unittest.TestCase):
         self.assertEqual(field["raw_callbacks"], (0x84, 0xEE))
         self.assertEqual(field["ordinary_sites"], (0xD2, 0xE4))
 
-    def test_bridge_operand_changes_unknown_transfer_and_partial_coverage_reject(self):
+    def test_bridge_operand_changes_unknown_transfer_and_partial_coverage_reject(self) -> None:
         objects, records, fixture = self.fixture()
         for ordinal, offset, mnemonic, operands in [
             (0, 0x54, "str", "r1, [sp, #0xc]"),
@@ -206,7 +976,7 @@ class CompleteFormatBridges(unittest.TestCase):
 class ValidationBuilder(unittest.TestCase):
     fixture = CompleteFormatBridges.fixture
 
-    def test_complete_five_source_fields_and_reference_cell_all_modes(self):
+    def test_complete_five_source_fields_and_reference_cell_all_modes(self) -> None:
         for mode in ("speed2", "sizes", "sizez"):
             objects, records, fixture = self.fixture(
                 fixture_file="config-validation.json", mode=mode
@@ -227,7 +997,7 @@ class ValidationBuilder(unittest.TestCase):
             )
             self.assertEqual(result["channel_reference_cell"], 0x34)
 
-    def test_builder_labels_typed_callbacks_and_pool_relocate_independently(self):
+    def test_builder_labels_typed_callbacks_and_pool_relocate_independently(self) -> None:
         for mode in ("speed2", "sizes", "sizez"):
             objects, records, fixture = self.fixture(0x800, 0x21000, "config-validation.json", mode)
             f = fixture[0]
@@ -236,7 +1006,7 @@ class ValidationBuilder(unittest.TestCase):
             )
             self.assertEqual(len(result["callbacks"]), 5)
 
-    def test_same_layout_reference_callback_and_pool_pointer_substitution_reject(self):
+    def test_same_layout_reference_callback_and_pool_pointer_substitution_reject(self) -> None:
         for mode in ("speed2", "sizez"):
             objects, records, fixture = self.fixture(
                 fixture_file="config-validation.json", mode=mode
@@ -263,7 +1033,7 @@ class ValidationBuilder(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack.validation_builder(objects, f["aliases"][0]["name"], records[f["address"]])
 
-    def test_builder_swapped_cells_changed_origin_and_popped_owner_reject(self):
+    def test_builder_swapped_cells_changed_origin_and_popped_owner_reject(self) -> None:
         for mode, offset, mnemonic, operands in [
             ("speed2", 0x38, "adds", "r3, r0, #0x8"),
             ("speed2", 0x62, "strd", "r1, r5, [sp, #16]"),
@@ -287,7 +1057,7 @@ class ValidationBuilder(unittest.TestCase):
 class NumericSupport(unittest.TestCase):
     fixture = CompleteFormatBridges.fixture
 
-    def test_complete_numeric_bodies_all_modes_retain_default_and_excluded_edges(self):
+    def test_complete_numeric_bodies_all_modes_retain_default_and_excluded_edges(self) -> None:
         import config_numeric
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -299,7 +1069,7 @@ class NumericSupport(unittest.TestCase):
                 self.assertEqual(proof["frame"], f["frame"])
                 self.assertEqual(proof["requires_options"], (0x60000020, 0, 0))
 
-    def test_decimal_width_buffer_prefix_and_callback_operand_mutations_reject(self):
+    def test_decimal_width_buffer_prefix_and_callback_operand_mutations_reject(self) -> None:
         import config_numeric
 
         objects, records, fixture = self.fixture(fixture_file="config-numeric.json", mode="sizes")
@@ -318,7 +1088,7 @@ class NumericSupport(unittest.TestCase):
             with self.subTest(role=role), self.assertRaises(AssertionError):
                 config_numeric.numeric_format(objects, f["aliases"][0]["name"], rows)
 
-    def test_numeric_table_endpoint_and_mapped_tbb_changes_reject(self):
+    def test_numeric_table_endpoint_and_mapped_tbb_changes_reject(self) -> None:
         import config_numeric
 
         for mutation in ("decimal_endpoint", "tbb_entry"):
@@ -349,7 +1119,7 @@ class NumericSupport(unittest.TestCase):
                     objects, f["aliases"][0]["name"], records[f["address"]]
                 )
 
-    def test_numeric_code_data_and_targets_relocate_without_erasing_receiver_context(self):
+    def test_numeric_code_data_and_targets_relocate_without_erasing_receiver_context(self) -> None:
         import config_numeric
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -367,19 +1137,25 @@ class NumericSupport(unittest.TestCase):
 
 class ControlBodies(unittest.TestCase):
     def fixture(
-        self,
-        mode,
-        code_shift=0,
-        data_shift=0,
-        fixture_file="config-control.json",
-        fixture_data=None,
-    ):
+        self: unittest.TestCase,
+        mode: str,
+        code_shift: int = 0,
+        data_shift: int = 0,
+        fixture_file: str = "config-control.json",
+        fixture_data: list[ControlFixture] | None = None,
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], list[ControlFixture]]:
         spec = [
             v
             for v in (
                 fixture_data
                 if fixture_data is not None
-                else json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text())
+                else [
+                    _control_fixture(v)
+                    for v in array_items(
+                        json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text()),
+                        "control fixtures",
+                    )
+                ]
             )
             if v["mode"] == mode
         ]
@@ -483,7 +1259,7 @@ class ControlBodies(unittest.TestCase):
         segments = []
         functions = {}
         sizes = {}
-        mappings = []
+        mappings: list[tuple[str, int, int]] = []
         records = {}
         for item in spec:
             f = item["function"]
@@ -501,19 +1277,19 @@ class ControlBodies(unittest.TestCase):
                 )
         for item in spec:
             segments.extend((a, bytes.fromhex(b)) for a, b in item["objects"])
-            for f in item["extra_functions"]:
-                for alias in f["aliases"]:
+            for extra in item["extra_functions"]:
+                for alias in extra["aliases"]:
                     functions[alias["name"]] = (alias["address"], alias["size"], 0)
-                sizes[f["address"]] = f["frame"]
-                if not any(a <= f["address"] < a + len(b) for a, b in segments):
-                    segments.append((f["address"], bytes(f["extent"])))
+                sizes[extra["address"]] = extra["frame"]
+                if not any(a <= extra["address"] < a + len(b) for a, b in segments):
+                    segments.append((extra["address"], bytes(extra["extent"])))
         lo = min(a for a, b in segments)
         ro = min(a for item in spec for a, b in item["objects"])
         hi = max(a + len(b) for a, b in segments)
         data = bytearray(hi - lo)
         for a, b in segments:
             data[a - lo : a - lo + len(b)] = b
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(data),
             functions=functions,
             mapping_symbols=mappings,
@@ -522,9 +1298,9 @@ class ControlBodies(unittest.TestCase):
                 (0, 1, 2, ro, ro - lo, hi - ro, 0, 0, 4, 0),
             ],
         )
-        return config_stack.DiagnosticObjects(elf, sizes), records, spec
+        return diagnostic_fixture(elf, sizes), records, spec
 
-    def test_complete_control_body_shapes_and_all_seven_source_cases(self):
+    def test_complete_control_body_shapes_and_all_seven_source_cases(self) -> None:
         import config_control
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -542,7 +1318,7 @@ class ControlBodies(unittest.TestCase):
 
     def test_control_reference_cells_shared_predecessors_result_and_outline_abi_mutations_reject(
         self,
-    ):
+    ) -> None:
         import config_control
 
         for mode, offset, mnemonic, operands in [
@@ -564,7 +1340,7 @@ class ControlBodies(unittest.TestCase):
             with self.subTest(mode=mode, offset=offset), self.assertRaises(AssertionError):
                 config_control.control_body(objects, f["aliases"][0]["name"], records)
 
-    def test_control_complete_objects_and_cases_relocate_independently(self):
+    def test_control_complete_objects_and_cases_relocate_independently(self) -> None:
         import config_control
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -577,7 +1353,7 @@ class ControlBodies(unittest.TestCase):
                 )
                 self.assertEqual(proof["function"], f["address"])
 
-    def test_control_readonly_tables_tbb_pool_and_zero_frame_tails_reject(self):
+    def test_control_readonly_tables_tbb_pool_and_zero_frame_tails_reject(self) -> None:
         import config_control
 
         for mode, fault in [
@@ -633,10 +1409,12 @@ class ControlBodies(unittest.TestCase):
 
 
 class PayloadBodies(unittest.TestCase):
-    def fixture(self, mode, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, mode: str, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], list[ControlFixture]]:
         return ControlBodies.fixture(self, mode, code_shift, data_shift, "config-payload.json")
 
-    def test_all_current_payload_clones_require_their_exact_raw_receiver_and_shape(self):
+    def test_all_current_payload_clones_require_their_exact_raw_receiver_and_shape(self) -> None:
         import config_payload
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -652,7 +1430,7 @@ class PayloadBodies(unittest.TestCase):
                 self.assertEqual(proof["shape"], item["shape"])
                 self.assertTrue(proof["requires_value_source_and_live_sink"])
 
-    def test_option_niche_reference_cells_struct2_and_outline_abi_mutations_reject(self):
+    def test_option_niche_reference_cells_struct2_and_outline_abi_mutations_reject(self) -> None:
         import config_payload
 
         for mode, role, offset, mnemonic, operands in [
@@ -705,7 +1483,7 @@ class PayloadBodies(unittest.TestCase):
             with self.subTest(mode=mode, role=role), self.assertRaises(AssertionError):
                 config_payload.payload_body(objects, f["aliases"][0]["name"], records, outline)
 
-    def test_payload_code_pools_tables_and_callbacks_relocate_independently(self):
+    def test_payload_code_pools_tables_and_callbacks_relocate_independently(self) -> None:
         import config_payload
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -720,7 +1498,9 @@ class PayloadBodies(unittest.TestCase):
                 )
                 self.assertEqual(proof["shape"], item["shape"])
 
-    def test_payload_exact_enum_tables_same_layout_reference_callbacks_and_context_reject(self):
+    def test_payload_exact_enum_tables_same_layout_reference_callbacks_and_context_reject(
+        self,
+    ) -> None:
         import config_payload
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -797,12 +1577,16 @@ class PayloadBodies(unittest.TestCase):
 
 
 class RootAdapters(unittest.TestCase):
-    def fixture(self, mode, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, mode: str, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], list[ControlFixture]]:
         return ControlBodies.fixture(
             self, mode, code_shift, data_shift, "config-root-adapters.json"
         )
 
-    def test_all_raw_arguments_adapters_preserve_terminal_record_and_location_interfaces(self):
+    def test_all_raw_arguments_adapters_preserve_terminal_record_and_location_interfaces(
+        self,
+    ) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -820,7 +1604,7 @@ class RootAdapters(unittest.TestCase):
 
     def test_root_adapter_raw_records_incoming_location_and_zero_frame_effect_mutations_reject(
         self,
-    ):
+    ) -> None:
         import config_roots
 
         for mode, part, offset, mnemonic, operands in [
@@ -840,7 +1624,7 @@ class RootAdapters(unittest.TestCase):
             with self.subTest(mode=mode, part=part), self.assertRaises(AssertionError):
                 config_roots.root_adapter(objects, f["aliases"][0]["name"], records, outline)
 
-    def test_root_adapter_code_pool_objects_and_callbacks_relocate_independently(self):
+    def test_root_adapter_code_pool_objects_and_callbacks_relocate_independently(self) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -855,7 +1639,7 @@ class RootAdapters(unittest.TestCase):
                 )
                 self.assertEqual(proof["function"], f["address"])
 
-    def test_root_adapter_actual_template_callback_metadata_and_pool_objects_reject(self):
+    def test_root_adapter_actual_template_callback_metadata_and_pool_objects_reject(self) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -896,8 +1680,18 @@ class RootAdapters(unittest.TestCase):
 
 
 class RootWindows(unittest.TestCase):
-    def fixture(self, mode, code_shift=0, data_shift=0):
-        spec = json.loads((Path(__file__).parent / "fixtures/config-root-windows.json").read_text())
+    def fixture(
+        self: unittest.TestCase, mode: str, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], list[ControlFixture]]:
+        spec = [
+            _control_fixture(v)
+            for v in array_items(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-root-windows.json").read_text()
+                ),
+                "root window fixtures",
+            )
+        ]
         # Multiple windows share a caller. Each copied backing body must carry
         # every relocated pool producer, not just its own selected window.
         for item in spec:
@@ -916,7 +1710,7 @@ class RootWindows(unittest.TestCase):
             }
             item["function"]["literals"] = list(literals.values())
             rows = {
-                p["address"]: dict(p) for peer in peers for p in peer["function"]["instructions"]
+                p["address"]: p.copy() for peer in peers for p in peer["function"]["instructions"]
             }
             item["function"]["instructions"] = [rows[a] for a in sorted(rows)]
         objects, records, spec = ControlBodies.fixture(
@@ -928,7 +1722,7 @@ class RootWindows(unittest.TestCase):
                 item["site"] += code_shift
         return objects, records, spec
 
-    def test_all_terminal_windows_bind_current_caller_source_and_concrete_objects(self):
+    def test_all_terminal_windows_bind_current_caller_source_and_concrete_objects(self) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -944,7 +1738,7 @@ class RootWindows(unittest.TestCase):
                 )
                 self.assertTrue(proof["requires_upstream_typed_value_and_all_ingress"])
 
-    def test_terminal_code_pool_data_filename_and_callback_relocations_remain_typed(self):
+    def test_terminal_code_pool_data_filename_and_callback_relocations_remain_typed(self) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -957,7 +1751,7 @@ class RootWindows(unittest.TestCase):
                 )
                 self.assertEqual(proof["window"], item["window"])
 
-    def test_terminal_pc_pool_requires_its_declared_caller_data_mapping(self):
+    def test_terminal_pc_pool_requires_its_declared_caller_data_mapping(self) -> None:
         import config_roots
 
         objects, records, spec = self.fixture("sizez")
@@ -970,7 +1764,7 @@ class RootWindows(unittest.TestCase):
                 objects, item["function"]["aliases"][0]["name"], records, item["site"]
             )
 
-    def test_terminal_caller_extent_alias_and_current_code_bytes_are_required(self):
+    def test_terminal_caller_extent_alias_and_current_code_bytes_are_required(self) -> None:
         import config_roots
 
         for fault in ("extent", "alias", "bytes", "missing"):
@@ -991,7 +1785,7 @@ class RootWindows(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_roots.root_window(objects, name, records, item["site"])
 
-    def test_terminal_copy_pointer_length_and_live_object_producers_cannot_be_skipped(self):
+    def test_terminal_copy_pointer_length_and_live_object_producers_cannot_be_skipped(self) -> None:
         import config_roots
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -1038,17 +1832,20 @@ class RootWindows(unittest.TestCase):
 
 class LoggerObjects(unittest.TestCase):
     def fixture(
-        self,
-        mode,
-        code_shift=0,
-        data_shift=0,
-        ram_shift=0,
-        fixture_file="config-logger-objects.json",
-    ):
+        self: unittest.TestCase,
+        mode: str,
+        code_shift: int = 0,
+        data_shift: int = 0,
+        ram_shift: int = 0,
+        fixture_file: str = "config-logger-objects.json",
+    ) -> tuple[DiagnosticFixture, EntryFixture]:
         item = next(
-            v
-            for v in json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text())
-            if v["mode"] == mode
+            _entry_fixture(v)
+            for v in array_items(
+                json.loads((Path(__file__).parent / "fixtures" / fixture_file).read_text()),
+                "image fixtures",
+            )
+            if object_fields(v, "fixture")["mode"] == mode
         )
         sections = [list(v) for v in item["sections"]]
         data = bytearray()
@@ -1093,42 +1890,46 @@ class LoggerObjects(unittest.TestCase):
                     )
                     struct.pack_into("<I", data, offset + at, old + shifts[owner])
             obj["value"] += shifts[index]
-        for row in item["symbol_entries"]:
-            row[1] += shifts[row[4]]
-        for row in item["functions"].values():
-            row[0] += shifts[row[2]]
+        item["symbol_entries"] = [
+            (name, address + shifts[index], extent, info, index)
+            for name, address, extent, info, index in item["symbol_entries"]
+        ]
+        item["functions"] = {
+            name: (address + shifts[index], extent, index)
+            for name, (address, extent, index) in item["functions"].items()
+        }
         item["sizes"] = {str(int(a) + code_shift): v for a, v in item["sizes"].items()}
         for s, shift in zip(sections, shifts):
             s[3] += shift
-        sections = [tuple(v) for v in sections]
-        elf = SimpleNamespace(
+        image_sections = [section_fields(v) for v in sections]
+        elf = ImageFixture(
             data=bytes(data),
-            sections=sections,
-            named={n: sections[i] for n, i in item["named"].items()},
-            symbol_entries=[tuple(v) for v in item["symbol_entries"]],
-            functions={n: tuple(v) for n, v in item["functions"].items()},
+            sections=image_sections,
+            named={n: image_sections[i] for n, i in item["named"].items()},
+            symbol_entries=list(item["symbol_entries"]),
+            functions=dict(item["functions"]),
         )
-        return config_stack.DiagnosticObjects(
-            elf, {int(a): n for a, n in item["sizes"].items()}
-        ), item
+        return diagnostic_fixture(elf, {int(a): n for a, n in item["sizes"].items()}), item
 
-    def test_current_logger_objects_preserve_split_field_ordinals_and_writable_name(self):
+    def test_current_logger_objects_preserve_split_field_ordinals_and_writable_name(self) -> None:
         import config_logger
 
         for mode in ("speed2", "sizes", "sizez"):
             objects, item = self.fixture(mode)
             for obj in item["objects"]:
-                config_logger.logger_object(objects, obj["value"], obj["type"])
+                config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_logger_code_readonly_ram_and_split_state_relocations_are_independent(self):
+    def test_logger_code_readonly_ram_and_split_state_relocations_are_independent(self) -> None:
         import config_logger
 
         for mode in ("speed2", "sizes", "sizez"):
             objects, item = self.fixture(mode, 0x1800, 0x21000, 0x4000)
             for obj in item["objects"]:
-                config_logger.logger_object(objects, obj["value"], obj["type"])
+                config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_split_state_anchor_cannot_be_mislabelled_as_encoder_or_merge_field_ordinals(self):
+    def test_split_state_anchor_cannot_be_mislabelled_as_encoder_or_merge_field_ordinals(
+        self,
+    ) -> None:
         import config_logger
 
         for fault in ("anchor", "field", "duplicate", "section", "size"):
@@ -1140,22 +1941,22 @@ class LoggerObjects(unittest.TestCase):
                 if fault == "anchor"
                 else next(i for i, v in enumerate(entries) if "RTT_ENCODER.2" in v[0])
             )
-            row = list(entries[at])
+            row = MutableSymbol(entries[at])
             if fault == "anchor":
                 row[0] = row[0].replace("DISPLAY_PENDING", "RTT_ENCODER")
             elif fault == "field":
                 row[0] = row[0].replace("RTT_ENCODER.2", "RTT_ENCODER.3")
             elif fault == "duplicate":
-                entries.append(tuple(row))
+                entries.append(row.as_tuple())
             elif fault == "section":
                 row[4] = 0
             else:
                 row[2] = 2
-            entries[at] = tuple(row)
+            entries[at] = row.as_tuple()
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
-                config_logger.logger_object(objects, obj["value"], obj["type"])
+                config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_rtt_header_pointer_size_signature_and_typed_writable_name_reject(self):
+    def test_rtt_header_pointer_size_signature_and_typed_writable_name_reject(self) -> None:
         import config_logger
 
         for fault in (
@@ -1188,36 +1989,38 @@ class LoggerObjects(unittest.TestCase):
                     for i, v in enumerate(objects.elf.symbol_entries)
                     if ("4NAME" if fault == "name_section" else "6BUFFER") in v[0]
                 )
-                row = list(objects.elf.symbol_entries[ordinal])
+                row = MutableSymbol(objects.elf.symbol_entries[ordinal])
                 row[4 if fault == "name_section" else 2] = 0 if fault == "name_section" else 1023
-                objects.elf.symbol_entries[ordinal] = tuple(row)
+                objects.elf.symbol_entries[ordinal] = row.as_tuple()
             objects.elf.data = bytes(data)
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
-                config_logger.logger_object(objects, address, obj["type"])
+                config_logger.logger_object(objects, address, _logger_descriptor(obj["type"]))
 
-    def test_rtt_buffer_extent_cannot_wrap_the_32_bit_address_space(self):
+    def test_rtt_buffer_extent_cannot_wrap_the_32_bit_address_space(self) -> None:
         import config_logger
 
         objects, item = self.fixture("sizez")
         obj = next(v for v in item["objects"] if v["type"]["kind"] == "rtt_header")
         elf = objects.elf
         index = next(i for i, v in enumerate(elf.symbol_entries) if "6BUFFER" in v[0])
-        entry = list(elf.symbol_entries[index])
+        entry = MutableSymbol(elf.symbol_entries[index])
         entry[1] = 0xFFFFFF00
-        elf.symbol_entries[index] = tuple(entry)
+        elf.symbol_entries[index] = entry.as_tuple()
         section = list(elf.sections[entry[4]])
         section[3] = entry[1]
         section[5] = 1024
-        elf.sections[entry[4]] = tuple(section)
-        elf.named[".uninit"] = tuple(section)
+        elf.sections[entry[4]] = section_fields(section)
+        elf.named[".uninit"] = section_fields(section)
         data = bytearray(elf.data)
-        section = elf.named[".data"]
-        struct.pack_into("<I", data, section[4] + obj["value"] - section[3] + 28, entry[1])
+        data_section = elf.named[".data"]
+        struct.pack_into(
+            "<I", data, data_section[4] + obj["value"] - data_section[3] + 28, entry[1]
+        )
         elf.data = bytes(data)
         with self.assertRaises(AssertionError):
-            config_logger.logger_object(objects, obj["value"], obj["type"])
+            config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_distinct_logger_state_objects_cannot_alias_one_physical_byte(self):
+    def test_distinct_logger_state_objects_cannot_alias_one_physical_byte(self) -> None:
         import config_logger
 
         for role in (config_logger.LOCK_OWNER, config_logger.ENCODER + "1"):
@@ -1233,13 +2036,15 @@ class LoggerObjects(unittest.TestCase):
                 for i, v in enumerate(objects.elf.symbol_entries)
                 if re.sub(r"Cs[A-Za-z0-9]+_", "Cs_", v[0]) == role
             )
-            entry = list(objects.elf.symbol_entries[index])
+            entry = MutableSymbol(objects.elf.symbol_entries[index])
             entry[1] = encoder["value"]
-            objects.elf.symbol_entries[index] = tuple(entry)
+            objects.elf.symbol_entries[index] = entry.as_tuple()
             with self.subTest(role=role), self.assertRaises(AssertionError):
-                config_logger.logger_object(objects, encoder["value"], moved["type"])
+                config_logger.logger_object(
+                    objects, encoder["value"], _logger_descriptor(moved["type"])
+                )
 
-    def test_logger_object_rejects_partial_allocated_section_overlap(self):
+    def test_logger_object_rejects_partial_allocated_section_overlap(self) -> None:
         import config_logger
 
         for delta in (-32, 128, 1000):
@@ -1248,9 +2053,9 @@ class LoggerObjects(unittest.TestCase):
             address = obj["resolved"]["buffer"]["address"]
             objects.elf.sections.append((0, 8, 3, address + delta, 0, 64, 0, 0, 1, 0))
             with self.subTest(delta=delta), self.assertRaises(AssertionError):
-                config_logger.logger_object(objects, obj["value"], obj["type"])
+                config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_allocated_section_adjacency_remains_valid(self):
+    def test_allocated_section_adjacency_remains_valid(self) -> None:
         import config_logger
 
         for delta in (-64, 1024):
@@ -1258,9 +2063,9 @@ class LoggerObjects(unittest.TestCase):
             obj = next(v for v in item["objects"] if v["type"]["kind"] == "rtt_header")
             address = obj["resolved"]["buffer"]["address"]
             objects.elf.sections.append((0, 8, 3, address + delta, 0, 64, 0, 0, 1, 0))
-            config_logger.logger_object(objects, obj["value"], obj["type"])
+            config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
-    def test_logger_owning_section_extent_cannot_wrap_even_if_object_fits(self):
+    def test_logger_owning_section_extent_cannot_wrap_even_if_object_fits(self) -> None:
         import config_logger
 
         objects, item = self.fixture("sizez")
@@ -1270,10 +2075,10 @@ class LoggerObjects(unittest.TestCase):
         )
         section = list(objects.elf.sections[index])
         section[5] = 0xFFFFFFFF
-        objects.elf.sections[index] = tuple(section)
-        objects.elf.named[".uninit"] = tuple(section)
+        objects.elf.sections[index] = section_fields(section)
+        objects.elf.named[".uninit"] = section_fields(section)
         with self.assertRaises(AssertionError):
-            config_logger.logger_object(objects, obj["value"], obj["type"])
+            config_logger.logger_object(objects, obj["value"], _logger_descriptor(obj["type"]))
 
 
 class LoggerBodies(unittest.TestCase):
@@ -1283,9 +2088,11 @@ class LoggerBodies(unittest.TestCase):
         "OUTLINED_FUNCTION_229": "@outline:logger_write_restore",
     }
 
-    def fixture(self, mode):
+    def fixture(
+        self: unittest.TestCase, mode: str
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], EntryFixture]:
         objects, item = LoggerObjects.fixture(self, mode, fixture_file="config-logger-bodies.json")
-        objects.elf.mapping_symbols = [tuple(v) for v in item["mapping_symbols"]]
+        objects.elf.mapping_symbols = list(item["mapping_symbols"])
         records = {}
         for row in item["records"]:
             op = row["text"].split(None, 1)
@@ -1295,7 +2102,7 @@ class LoggerBodies(unittest.TestCase):
             )
         return objects, records, item
 
-    def test_complete_logger_and_builtin_bodies_bind_every_current_instruction(self):
+    def test_complete_logger_and_builtin_bodies_bind_every_current_instruction(self) -> None:
         import config_logger
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -1308,7 +2115,9 @@ class LoggerBodies(unittest.TestCase):
                 )
                 self.assertTrue(proof["requires_runtime_ownership_entry_and_guard_closure"])
 
-    def test_timestamp_alias_contract_cannot_hide_wrong_size_binding_duplicate_or_section(self):
+    def test_timestamp_alias_contract_cannot_hide_wrong_size_binding_duplicate_or_section(
+        self,
+    ) -> None:
         import config_logger
 
         for fault in ("size", "binding", "duplicate", "elsewhere", "section", "alias"):
@@ -1317,26 +2126,26 @@ class LoggerBodies(unittest.TestCase):
             ordinal = next(
                 i for i, v in enumerate(objects.elf.symbol_entries) if v[0] == "_defmt_timestamp"
             )
-            entry = list(objects.elf.symbol_entries[ordinal])
+            entry = MutableSymbol(objects.elf.symbol_entries[ordinal])
             if fault == "size":
                 entry[2] = 6
             elif fault == "binding":
                 entry[3] = 2
             elif fault == "duplicate":
-                objects.elf.symbol_entries.append(tuple(entry))
+                objects.elf.symbol_entries.append(entry.as_tuple())
             elif fault == "elsewhere":
-                other = list(entry)
+                other = entry.copy()
                 other[1] += 0x100
-                objects.elf.symbol_entries.append(tuple(other))
+                objects.elf.symbol_entries.append(other.as_tuple())
             elif fault == "section":
                 entry[4] = 0
             else:
                 entry[0] = "unreviewed_timestamp_alias"
-            objects.elf.symbol_entries[ordinal] = tuple(entry)
+            objects.elf.symbol_entries[ordinal] = entry.as_tuple()
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_logger.logger_body(objects, "__defmt_default_timestamp", records)
 
-    def test_builtin_frame_fallback_requires_exact_body_extent_and_matching_metadata(self):
+    def test_builtin_frame_fallback_requires_exact_body_extent_and_matching_metadata(self) -> None:
         import config_logger
 
         for fault in ("extent", "frame", "instruction", "metadata_duplicate"):
@@ -1352,17 +2161,17 @@ class LoggerBodies(unittest.TestCase):
             elif fault == "frame":
                 objects.sizes[start] = instance["own_frame"] - 8
             elif fault == "metadata_duplicate":
-                entry = list(next(v for v in objects.elf.symbol_entries if v[0] == name))
+                entry = MutableSymbol(next(v for v in objects.elf.symbol_entries if v[0] == name))
                 entry[1] += 0x100
                 entry[2] = 0
-                objects.elf.symbol_entries.append(tuple(entry))
+                objects.elf.symbol_entries.append(entry.as_tuple())
             else:
                 row = records[start]
                 records[start] = Instruction(start, row.raw, "push", "{r7, lr}")
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_logger.logger_body(objects, name, records)
 
-    def test_fixed_pc_scalar_mask_and_parent_owned_outline_effects_cannot_change(self):
+    def test_fixed_pc_scalar_mask_and_parent_owned_outline_effects_cannot_change(self) -> None:
         import config_logger
 
         for fault in ("scalar_mask", "outline_byte_cell", "outline_restore"):
@@ -1408,9 +2217,11 @@ class LoggerBodies(unittest.TestCase):
 
 
 class EntryBodies(unittest.TestCase):
-    def fixture(self, mode):
+    def fixture(
+        self, mode: str
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], EntryFixture]:
         objects, item = LoggerObjects.fixture(self, mode, fixture_file="config-entry-bodies.json")
-        objects.elf.mapping_symbols = [tuple(v) for v in item["mapping_symbols"]]
+        objects.elf.mapping_symbols = list(item["mapping_symbols"])
         records = {}
         for row in item["records"]:
             op = row["text"].split(None, 1)
@@ -1420,7 +2231,9 @@ class EntryBodies(unittest.TestCase):
             )
         return objects, records, item
 
-    def coherent_initializer_mix(self, phase):
+    def coherent_initializer_mix(
+        self, phase: str
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction]]:
         import config_entry
 
         objects, records, item = self.fixture("speed2")
@@ -1430,7 +2243,7 @@ class EntryBodies(unittest.TestCase):
         self.assertEqual(old["role"], new["role"])
         self.assertEqual((old["frame"], new["frame"]), (8, 8))
         donor = config_entry.entry_body(other, new["name"], other_records)
-        contract = config_entry.ENTRY_GRAMMARS[donor["shape"]]
+        contract = ENTRY_GRAMMARS[donor["shape"]]
         blob = bytearray(other.read_only(new["entry"], new["extent"]))
         # Only the Dashboard donor has a PC pool. Rebind its exact Config
         # object to this ELF; preserve every instruction and its relative pool.
@@ -1439,7 +2252,8 @@ class EntryBodies(unittest.TestCase):
                 continue
             ordinal = int(value[7:])
             descriptor = contract["objects"][ordinal]
-            self.assertEqual(descriptor["kind"], "entry_static")
+            if descriptor["kind"] != "entry_static":
+                self.fail("initializer fixture requires a static object")
             self.assertEqual(width, 4)
             self.assertEqual(struct.unpack_from("<I", blob, offset)[0], donor["objects"][ordinal])
             target = next(
@@ -1482,7 +2296,7 @@ class EntryBodies(unittest.TestCase):
         )
         return objects, records
 
-    def test_coherent_approved_boot_and_dashboard_initializer_abi_mixes_reject(self):
+    def test_coherent_approved_boot_and_dashboard_initializer_abi_mixes_reject(self) -> None:
         import config_entry
 
         for phase in ("boot_initializer", "dashboard_initializer"):
@@ -1490,7 +2304,7 @@ class EntryBodies(unittest.TestCase):
             with self.subTest(phase=phase), self.assertRaises(AssertionError):
                 config_entry.boot_entry(objects, records)
 
-    def test_complete_boot_bodies_bind_all_queue_callback_and_retirement_instructions(self):
+    def test_complete_boot_bodies_bind_all_queue_callback_and_retirement_instructions(self) -> None:
         import config_entry
 
         count = 0
@@ -1510,7 +2324,7 @@ class EntryBodies(unittest.TestCase):
                 count += 1
         self.assertEqual(count, 25)
 
-    def test_entry_callback_pool_field_and_queue_instructions_cannot_change(self):
+    def test_entry_callback_pool_field_and_queue_instructions_cannot_change(self) -> None:
         import config_entry
 
         for fault in ("callback_field", "retained_next", "completion", "claim"):
@@ -1567,7 +2381,7 @@ class EntryBodies(unittest.TestCase):
                     instance["role"] if instance["role"].startswith("@outline:") else None,
                 )
 
-    def test_task_storage_is_complete_zero_initialized_disjoint_and_typed(self):
+    def test_task_storage_is_complete_zero_initialized_disjoint_and_typed(self) -> None:
         import config_entry
 
         for fault in ("size", "binding", "section", "duplicate", "alias", "config_taken"):
@@ -1578,7 +2392,7 @@ class EntryBodies(unittest.TestCase):
                 for i, v in enumerate(objects.elf.symbol_entries)
                 if config_entry.static_role(v[0]) == role
             )
-            entry = list(objects.elf.symbol_entries[ordinal])
+            entry = MutableSymbol(objects.elf.symbol_entries[ordinal])
             if fault == "size":
                 entry[2] -= 1
             elif fault == "binding":
@@ -1586,7 +2400,7 @@ class EntryBodies(unittest.TestCase):
             elif fault == "section":
                 entry[4] = 0
             elif fault == "duplicate":
-                objects.elf.symbol_entries.append(tuple(entry))
+                objects.elf.symbol_entries.append(entry.as_tuple())
             elif fault == "alias":
                 objects.elf.symbol_entries.append(
                     ("other_allocated_object", entry[1] + 24, 4, 1, entry[4])
@@ -1596,18 +2410,20 @@ class EntryBodies(unittest.TestCase):
                 data = bytearray(objects.elf.data)
                 data[section[4] + entry[1] - section[3] + 14600] = 1
                 objects.elf.data = bytes(data)
-            objects.elf.symbol_entries[ordinal] = tuple(entry)
+            objects.elf.symbol_entries[ordinal] = entry.as_tuple()
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_entry.entry_object(objects, entry[1], dict(kind="entry_static", role=role))
 
-    def test_producer_selected_callback_cannot_be_another_approved_task_or_an_interior(self):
+    def test_producer_selected_callback_cannot_be_another_approved_task_or_an_interior(
+        self,
+    ) -> None:
         import config_entry
 
         for fault in ("different_task", "interior", "non_thumb", "wrong_frame"):
             objects, records, item = self.fixture("sizez")
             descriptors = [
                 v
-                for g in config_entry.ENTRY_GRAMMARS.values()
+                for g in ENTRY_GRAMMARS.values()
                 for v in g["objects"]
                 if v["kind"] == "entry_callback"
             ]
@@ -1637,7 +2453,9 @@ class EntryBodies(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_entry.entry_object(objects, address, descriptor)
 
-    def test_contextual_entry_binds_one_first_batch_callback_and_retains_actual_ancestors(self):
+    def test_contextual_entry_binds_one_first_batch_callback_and_retains_actual_ancestors(
+        self,
+    ) -> None:
         import config_entry
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -1650,7 +2468,9 @@ class EntryBodies(unittest.TestCase):
             self.assertNotEqual(proof["callback_edge"]["target"], proof["later_dashboard_callback"])
             self.assertTrue(proof["requires_configuration_and_diagnostic_memory_closure"])
 
-    def test_contextual_entry_cannot_ignore_duplicate_phase_or_changed_dequeue_callback(self):
+    def test_contextual_entry_cannot_ignore_duplicate_phase_or_changed_dequeue_callback(
+        self,
+    ) -> None:
         import config_entry
 
         for fault in ("duplicate_phase", "changed_callback_load", "changed_queue_head"):
@@ -1661,10 +2481,10 @@ class EntryBodies(unittest.TestCase):
                     for v in objects.elf.symbol_entries
                     if config_stack.canonical_symbol(v[0]) == "_RNvCs_5pico218___cortex_m_rt_main"
                 )
-                other = list(raw)
+                other = MutableSymbol(raw)
                 other[1] += 0x200
                 other[2] = 0
-                objects.elf.symbol_entries.append(tuple(other))
+                objects.elf.symbol_entries.append(other.as_tuple())
             else:
                 instance = next(
                     v
@@ -1692,7 +2512,7 @@ class EntryBodies(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_entry.boot_entry(objects, records)
 
-    def test_initialize_once_boundary_must_be_complete_before_its_loader_edge_is_used(self):
+    def test_initialize_once_boundary_must_be_complete_before_its_loader_edge_is_used(self) -> None:
         import config_entry
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -1710,7 +2530,7 @@ class EntryBodies(unittest.TestCase):
                 context["phases"]["configuration_initialize"]["function"], proof["function"]
             )
 
-    def test_initialize_once_atomic_tag_and_clrex_child_cannot_be_skipped_or_changed(self):
+    def test_initialize_once_atomic_tag_and_clrex_child_cannot_be_skipped_or_changed(self) -> None:
         import config_entry
 
         for fault in ("atomic_acquire", "atomic_store", "tagged_length", "clrex_child"):
@@ -1755,9 +2575,11 @@ class EntryBodies(unittest.TestCase):
 
 
 class IssuerRegions(unittest.TestCase):
-    def fixture(self, mode):
+    def fixture(
+        self: unittest.TestCase, mode: str
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], EntryFixture]:
         objects, item = LoggerObjects.fixture(self, mode, fixture_file="config-issuer-regions.json")
-        objects.elf.mapping_symbols = [tuple(v) for v in item["mapping_symbols"]]
+        objects.elf.mapping_symbols = list(item["mapping_symbols"])
         records = {}
         for row in item["records"]:
             op = row["text"].split(None, 1)
@@ -1767,7 +2589,9 @@ class IssuerRegions(unittest.TestCase):
             )
         return objects, records, item
 
-    def test_issuer_regions_bind_every_retry_lane_and_independently_typed_failure_suffix(self):
+    def test_issuer_regions_bind_every_retry_lane_and_independently_typed_failure_suffix(
+        self,
+    ) -> None:
         import config_upstream
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -1782,7 +2606,7 @@ class IssuerRegions(unittest.TestCase):
             self.assertEqual([v["tag_value"] for v in proof["state_alternatives"]], [0, 2])
             self.assertTrue(proof["requires_parent_phase_all_ingress_and_coverage"])
 
-    def test_issuer_previous_value_status_retry_and_static_identity_cannot_change(self):
+    def test_issuer_previous_value_status_retry_and_static_identity_cannot_change(self) -> None:
         import config_upstream
 
         for fault in ("status", "previous_lane", "retry", "static_initial", "failure_target"):
@@ -1826,7 +2650,9 @@ class IssuerRegions(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_upstream.issuer_region(objects, item["issuer"]["name"], records)
 
-    def test_semantic_record_foreign_direct_ingress_cannot_skip_static_or_cas_producers(self):
+    def test_semantic_record_foreign_direct_ingress_cannot_skip_static_or_cas_producers(
+        self,
+    ) -> None:
         import config_upstream
 
         objects, records, item = self.fixture("speed2")
@@ -1840,7 +2666,7 @@ class IssuerRegions(unittest.TestCase):
 
 
 class OrdinaryHelperBodies(unittest.TestCase):
-    def test_child_threshold_save_and_nonreturn_adapter_changes_reject(self):
+    def test_child_threshold_save_and_nonreturn_adapter_changes_reject(self) -> None:
         import config_helpers
 
         cases = (
@@ -1882,7 +2708,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
                 (instance["address"], "range", "source-bound error edge"),
             )
 
-    def test_new_child_inventories_relocate_with_their_nonreturn_adapter(self):
+    def test_new_child_inventories_relocate_with_their_nonreturn_adapter(self) -> None:
         import config_helpers
 
         objects, records, item = self.fixture(0x2800, 0x19000)
@@ -1902,7 +2728,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
             )
             self.assertEqual(proof["function"], instance["address"])
 
-    def test_four_new_child_bodies_keep_f32_policy_and_pending_restore_requirements(self):
+    def test_four_new_child_bodies_keep_f32_policy_and_pending_restore_requirements(self) -> None:
         import config_helpers
 
         objects, records, item = self.fixture()
@@ -1929,7 +2755,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
                         proof["requires_parent_outline_abi"], "@outline:ordinary_restore_r11_low20"
                     )
 
-    def test_ordinary_identity_cannot_be_supplied_as_outline_override(self):
+    def test_ordinary_identity_cannot_be_supplied_as_outline_override(self) -> None:
         import config_helpers
 
         for consumer in (config_helpers.helper_body, config_helpers.helper_coverage):
@@ -1946,9 +2772,9 @@ class OrdinaryHelperBodies(unittest.TestCase):
                 config_helpers.helper_body(objects, anonymous, records)
             with self.subTest(consumer=consumer.__name__), self.assertRaises(AssertionError):
                 if consumer is config_helpers.helper_body:
-                    consumer(objects, anonymous, records, instance["typed_role"])
+                    config_helpers.helper_body(objects, anonymous, records, instance["typed_role"])
                 else:
-                    consumer(
+                    config_helpers.helper_coverage(
                         objects,
                         anonymous,
                         records,
@@ -1956,16 +2782,17 @@ class OrdinaryHelperBodies(unittest.TestCase):
                         instance["typed_role"],
                     )
 
-    def test_invalid_outline_override_values_do_not_mean_no_override(self):
+    def test_invalid_outline_override_values_do_not_mean_no_override(self) -> None:
         import config_helpers
 
-        for invalid in ("", 0, False, [], {}, 1):
+        invalid_values: tuple[object, ...] = ("", 0, False, [], {}, 1)
+        for invalid in invalid_values:
             objects, records, item = self.fixture()
             instance = next(v for v in item["instances"] if v["role"] == "serialize_u8")
             with self.subTest(value=invalid), self.assertRaises(AssertionError):
                 config_helpers.helper_body(objects, instance["name"], records, invalid)
 
-    def test_bound_helper_frames_keep_exact_scratch_and_save_cells(self):
+    def test_bound_helper_frames_keep_exact_scratch_and_save_cells(self) -> None:
         import config_helpers
         from config_regions import Storage, require_writes
 
@@ -2004,7 +2831,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
                         facts["scratch"], ((view, 0, view.extent + 1),), facts["protected"]
                     )
 
-    def test_helper_frame_cannot_overlap_ancestor_or_invent_outline_storage(self):
+    def test_helper_frame_cannot_overlap_ancestor_or_invent_outline_storage(self) -> None:
         import config_helpers
         from config_regions import Storage
 
@@ -2029,7 +2856,9 @@ class OrdinaryHelperBodies(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_helpers.helper_frame(bound, frame, ())
 
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], EntryFixture]:
         objects, item = LoggerObjects.fixture(
             self, "sizez", code_shift, data_shift, fixture_file="config-small-helpers.json"
         )
@@ -2049,9 +2878,9 @@ class OrdinaryHelperBodies(unittest.TestCase):
             )
         objects.elf.data = bytes(data)
         records = {}
-        for row in item["records"]:
-            operation = row["text"].split(None, 1)
-            at = row["address"] + code_shift
+        for fixture_row in item["records"]:
+            operation = fixture_row["text"].split(None, 1)
+            at = fixture_row["address"] + code_shift
             operands = operation[1] if len(operation) > 1 else ""
             if config_stack.transfer_family(operation[0].removesuffix(".w")) in (
                 "b",
@@ -2062,7 +2891,9 @@ class OrdinaryHelperBodies(unittest.TestCase):
                 operands = re.sub(
                     r"0x([0-9a-f]+)", lambda m: hex(int(m[1], 16) + code_shift), operands
                 )
-            records[at] = Instruction(at, bytes.fromhex(row["bytes"]), operation[0], operands)
+            records[at] = Instruction(
+                at, bytes.fromhex(fixture_row["bytes"]), operation[0], operands
+            )
         data = bytearray(objects.elf.data)
         for pair in item.get("mov_objects", ()):
             shift = (
@@ -2091,7 +2922,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
         objects.elf.data = bytes(data)
         return objects, records, item
 
-    def test_all_complete_helpers_and_parent_owned_outlines_bind_exact_bodies(self):
+    def test_all_complete_helpers_and_parent_owned_outlines_bind_exact_bodies(self) -> None:
         import config_helpers
 
         objects, records, item = self.fixture()
@@ -2105,7 +2936,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
             )
             self.assertTrue(proof["requires_source_inputs_owned_effects_and_child_closure"])
 
-    def test_code_child_roles_and_source_location_objects_relocate_independently(self):
+    def test_code_child_roles_and_source_location_objects_relocate_independently(self) -> None:
         import config_helpers
 
         objects, records, item = self.fixture(0x2800, 0x19000)
@@ -2115,7 +2946,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
             proof = config_helpers.helper_body(objects, instance["name"], records, outline)
             self.assertEqual(proof["function"], instance["address"])
 
-    def test_selector_loop_store_flags_and_save_restoration_mutations_reject(self):
+    def test_selector_loop_store_flags_and_save_restoration_mutations_reject(self) -> None:
         import config_helpers
 
         cases = (
@@ -2138,7 +2969,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
             with self.subTest(role=role), self.assertRaises(AssertionError):
                 config_helpers.helper_body(objects, instance["name"], records, outline)
 
-    def test_location_roles_and_current_child_frames_cannot_be_swapped(self):
+    def test_location_roles_and_current_child_frames_cannot_be_swapped(self) -> None:
         import config_helpers
 
         for fault in ("location", "frame"):
@@ -2176,7 +3007,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_helpers.helper_body(objects, instance["name"], records)
 
-    def test_complete_helper_coverage_includes_post_return_padding_and_typed_pool(self):
+    def test_complete_helper_coverage_includes_post_return_padding_and_typed_pool(self) -> None:
         import config_helpers
 
         objects, records, item = self.fixture()
@@ -2196,7 +3027,7 @@ class OrdinaryHelperBodies(unittest.TestCase):
 
 
 class OrdinaryIndexEffects(unittest.TestCase):
-    def fixture(self, wrapper=False):
+    def fixture(self, wrapper: bool = False) -> IndexArgs:
         import config_helpers
         from config_regions import Storage, borrow, Argument
 
@@ -2240,20 +3071,24 @@ class OrdinaryIndexEffects(unittest.TestCase):
         )
         return objects, records, proof, buffer, frame, (saved,), location, argument
 
-    def test_inclusive_prefix_normal_and_failure_preserve_the_original_endpoint(self):
+    def test_inclusive_prefix_normal_and_failure_preserve_the_original_endpoint(self) -> None:
         import config_helpers
 
         values = self.fixture()
         proof = config_helpers.index_prefix(*values, location_role="postcard_serialize_u16")
         outcomes = {v["endpoint"]: v for v in proof["outcomes"]}
-        self.assertEqual([(i, outcomes[i]["prefix"].extent) for i in (0, 2)], [(0, 1), (2, 3)])
+        prefixes = {i: v["prefix"] for i, v in outcomes.items() if _index_success(v)}
+        diagnostics = {
+            i: v["diagnostic_arguments"] for i, v in outcomes.items() if _index_failure(v)
+        }
+        self.assertEqual([(i, prefixes[i].extent) for i in (0, 2)], [(0, 1), (2, 3)])
         for i in (3, 0xFFFFFFFF):
-            self.assertEqual(outcomes[i]["diagnostic_arguments"], (0, i, 3, values[6]))
+            self.assertEqual(diagnostics[i], (0, i, 3, values[6]))
             self.assertNotIn("prefix", outcomes[i])
         self.assertEqual(proof["payload_writes"], ())
         self.assertTrue(proof["requires_machine_arguments_child_graph_and_source_lifetime"])
 
-    def test_array_restores_own_storage_before_range_but_retains_both_metadata_frames(self):
+    def test_array_restores_own_storage_before_range_but_retains_both_metadata_frames(self) -> None:
         import config_helpers
 
         values = self.fixture(True)
@@ -2261,44 +3096,71 @@ class OrdinaryIndexEffects(unittest.TestCase):
         self.assertEqual(proof["conservative_frame_metadata"], (8, 16))
         self.assertTrue(proof["restored_tail_storage"])
         outcomes = {v["endpoint"]: v for v in proof["outcomes"]}
-        self.assertEqual((outcomes[0]["prefix"].extent, outcomes[4]["prefix"].extent), (1, 5))
-        self.assertEqual(outcomes[5]["diagnostic_arguments"], (0, 5, 5, values[6]))
+        prefixes = {i: v["prefix"] for i, v in outcomes.items() if _index_success(v)}
+        diagnostics = {
+            i: v["diagnostic_arguments"] for i, v in outcomes.items() if _index_failure(v)
+        }
+        self.assertEqual((prefixes[0].extent, prefixes[4].extent), (1, 5))
+        self.assertEqual(diagnostics[5], (0, 5, 5, values[6]))
 
-    def test_index_borrow_cannot_grant_protected_or_readonly_memory_or_foreign_location(self):
+    def test_index_borrow_cannot_grant_protected_or_readonly_memory_or_foreign_location(
+        self,
+    ) -> None:
         import config_helpers
         from config_regions import Storage, borrow, Argument
 
-        values = list(self.fixture())
+        values = self.fixture()
         for fault in ("protected", "ancestor", "readonly", "extent", "domain", "location"):
-            current = list(values)
+            current: IndexCallArgs = values
             role = "postcard_serialize_u16"
             if fault == "protected":
-                current[3] = borrow(
-                    Storage("stack:call", "alias", -16, 3, 1, "active", True),
-                    0,
-                    3,
-                    "active",
-                    writable=True,
+                current = (
+                    *current[:3],
+                    borrow(
+                        Storage("stack:call", "alias", -16, 3, 1, "active", True),
+                        0,
+                        3,
+                        "active",
+                        writable=True,
+                    ),
+                    *current[4:],
                 )
             if fault == "ancestor":
-                current[5] = iter(
-                    values[5] + (Storage("stack:call", "ancestor_alias", 4, 3, 1, "active", False),)
+                current = (
+                    *current[:5],
+                    iter(
+                        values[5]
+                        + (Storage("stack:call", "ancestor_alias", 4, 3, 1, "active", False),)
+                    ),
+                    *current[6:],
                 )
             if fault == "readonly":
-                current[3] = borrow(values[3].storage, 4, 3, "active-varint")
+                current = (
+                    *current[:3],
+                    borrow(values[3].storage, 4, 3, "active-varint"),
+                    *current[4:],
+                )
             if fault == "extent":
-                current[3] = borrow(values[3].storage, 4, 4, "active-varint", writable=True)
+                current = (
+                    *current[:3],
+                    borrow(values[3].storage, 4, 4, "active-varint", writable=True),
+                    *current[4:],
+                )
             if fault == "domain":
-                current[7] = Argument("u32", None, 0, 32, frozenset((0,)))
+                current = (
+                    *current[:7],
+                    Argument("u32", None, 0, 32, frozenset((0,))),
+                    *current[8:],
+                )
             if fault == "location":
                 role = "postcard_varint_usize"
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_helpers.index_prefix(*current, location_role=role)
 
-    def test_array_effects_do_not_inherit_an_unmatched_child_body(self):
+    def test_array_effects_do_not_inherit_an_unmatched_child_body(self) -> None:
         import config_helpers
 
-        values = list(self.fixture(True))
+        values = self.fixture(True)
         objects, records = values[:2]
         child = next(
             n
@@ -2313,7 +3175,7 @@ class OrdinaryIndexEffects(unittest.TestCase):
 
 
 class OrdinaryDecodeEffects(unittest.TestCase):
-    def fixture(self, semantic, raw, cursor=0):
+    def fixture(self: unittest.TestCase, semantic: str, raw: bytes, cursor: int = 0) -> DecodeArgs:
         import config_decode_effects
         import config_helpers
         from config_regions import Storage, borrow
@@ -2341,7 +3203,9 @@ class OrdinaryDecodeEffects(unittest.TestCase):
         )
         return objects, records, proof, state, frame, ()
 
-    def run_effect(self, semantic, raw, cursor=0, **kwargs):
+    def run_effect(
+        self, semantic: str, raw: bytes, cursor: int = 0, **kwargs: Unpack[DecoderArguments]
+    ) -> DecodeEffect:
         import config_decode_effects
 
         args = self.fixture(semantic, raw, cursor)
@@ -2352,7 +3216,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
             kwargs.setdefault("output", borrow(output, 0, 8, "decode", writable=True))
         return config_decode_effects.decode_effect(*args, **kwargs)
 
-    def test_slice_empty_and_byte_have_distinct_reads_writes_and_registers(self):
+    def test_slice_empty_and_byte_have_distinct_reads_writes_and_registers(self) -> None:
         empty = self.run_effect("slice_pop", b"\xff", 1)
         self.assertEqual(
             (empty["registers"], empty["state"].cursor, empty["input_reads"], empty["writes"]),
@@ -2366,7 +3230,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
         )
         self.assertEqual(success["input_reads"], ((0x1007000C, 1),))
 
-    def test_u16_errors_retain_consumed_prefix_and_never_read_a_fourth_byte(self):
+    def test_u16_errors_retain_consumed_prefix_and_never_read_a_fourth_byte(self) -> None:
         cases = (
             (b"\x00", 0, 1),
             (b"\x80\x00", 0, 2),
@@ -2385,7 +3249,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                 self.assertEqual(result["value"], value)
                 self.assertEqual(len(result["input_reads"]), consumed)
 
-    def test_u32_result_only_initializes_its_actual_tag_and_payload_fields(self):
+    def test_u32_result_only_initializes_its_actual_tag_and_payload_fields(self) -> None:
         for raw, value, error, consumed in (
             (b"\xff\xff\xff\xff\x0f", 0xFFFFFFFF, None, 5),
             (b"\x80\x00", 0, None, 2),
@@ -2412,7 +3276,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                     [(4, 4), (0, 1)] if error is None else [(1, 1), (0, 1)],
                 )
 
-    def test_decoder_ordering_alias_and_child_mutations_reject(self):
+    def test_decoder_ordering_alias_and_child_mutations_reject(self) -> None:
         import config_decode_effects
         from config_regions import Storage, borrow
 
@@ -2444,7 +3308,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                     objects, records, proof, state, frame, protected
                 )
 
-    def test_empty_varints_keep_cursor_and_never_initialize_success_values(self):
+    def test_empty_varints_keep_cursor_and_never_initialize_success_values(self) -> None:
         for semantic in ("deserialize_u16", "take_varint_u32"):
             result = self.run_effect(semantic, b"\x80", 1)
             self.assertEqual(
@@ -2455,7 +3319,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                 any(view == result["state"].header for view, off, data in result["writes"])
             )
 
-    def test_header_result_alignment_mutability_and_full_aliases_reject(self):
+    def test_header_result_alignment_mutability_and_full_aliases_reject(self) -> None:
         import config_decode_effects
         from config_regions import Storage, borrow
 
@@ -2467,7 +3331,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
             "readonly_result",
             "misaligned_result",
         ):
-            args = list(self.fixture("take_varint_u32", b"\x01"))
+            args = self.fixture("take_varint_u32", b"\x01")
             state, frame = args[3:5]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 if "header" in fault and fault != "result_end_header":
@@ -2480,8 +3344,14 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                         frame.phase,
                         fault != "readonly_header",
                     )
-                    args[3] = config_decode_effects.DecoderState(
-                        borrow(owner, 0, 8, frame.phase, writable=owner.writable), state.payload, 0
+                    args = (
+                        *args[:3],
+                        config_decode_effects.DecoderState(
+                            borrow(owner, 0, 8, frame.phase, writable=owner.writable),
+                            state.payload,
+                            0,
+                        ),
+                        *args[4:],
                     )
                 start = (
                     frame.start
@@ -2504,7 +3374,7 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                 output = borrow(owner, 0, 8, frame.phase, writable=owner.writable)
                 config_decode_effects.decode_effect(*args, output=output)
 
-    def test_f32_keeps_all_bits_and_policy_with_unaligned_input_and_partial_errors(self):
+    def test_f32_keeps_all_bits_and_policy_with_unaligned_input_and_partial_errors(self) -> None:
         import config_decode_effects
         import config_platform
         from config_regions import Storage, borrow
@@ -2572,25 +3442,28 @@ class OrdinaryDecodeEffects(unittest.TestCase):
 
 
 class OrdinarySequenceEffects(unittest.TestCase):
-    def fixture(self, semantic, raw, count, cursor=0):
+    def fixture(
+        self: unittest.TestCase, semantic: str, raw: bytes, count: int, cursor: int = 0
+    ) -> SequenceArgs:
         import config_decode_effects
         from config_regions import Storage, borrow
 
-        args = list(OrdinaryDecodeEffects.fixture(self, semantic, raw, cursor))
-        state = args[3]
+        objects, rows, proof, state, frame, protected = OrdinaryDecodeEffects.fixture(
+            self, semantic, raw, cursor
+        )
         owner = Storage("stack:decode", "Q", 160, 8, 4, "decode", True)
-        args[3] = config_decode_effects.SequenceState(
+        sequence = config_decode_effects.SequenceState(
             borrow(owner, 0, 8, "decode", writable=True), state, count
         )
-        return args
+        return objects, rows, proof, sequence, frame, protected
 
-    def run_effect(self, semantic, raw, count, cursor=0):
+    def run_effect(self, semantic: str, raw: bytes, count: int, cursor: int = 0) -> SequenceEffect:
         import config_decode_effects
         import config_platform
         from config_regions import Storage, borrow
 
         args = self.fixture(semantic, raw, count, cursor)
-        kwargs = {}
+        kwargs: DecoderArguments = {}
         if semantic == "seq_f32":
             objects, records, proof, state, frame, protected = args
             owner = Storage(frame.space, "RO8", 184, 8, 4, frame.phase, True)
@@ -2608,7 +3481,7 @@ class OrdinarySequenceEffects(unittest.TestCase):
             )
         return config_decode_effects.sequence_effect(*args, **kwargs)
 
-    def test_zero_count_has_no_child_or_cursor_write_and_uses_each_none_abi(self):
+    def test_zero_count_has_no_child_or_cursor_write_and_uses_each_none_abi(self) -> None:
         for semantic, registers in (
             ("seq_u8", {"r0": 0}),
             ("seq_u16", {"r0": 0}),
@@ -2634,7 +3507,7 @@ class OrdinarySequenceEffects(unittest.TestCase):
             if semantic == "seq_f32":
                 self.assertEqual(result["initialized_result_fields"], ((0, 4),))
 
-    def test_positive_count_decrements_before_empty_input_error_without_rollback(self):
+    def test_positive_count_decrements_before_empty_input_error_without_rollback(self) -> None:
         for semantic, registers in (
             ("seq_u8", {"r0": 0x402}),
             ("seq_u16", {"r0": 0x40002}),
@@ -2654,7 +3527,7 @@ class OrdinarySequenceEffects(unittest.TestCase):
             (0, 1, {"r0": 0x40002}),
         )
 
-    def test_some_and_bad_bool_keep_distinct_register_layouts(self):
+    def test_some_and_bad_bool_keep_distinct_register_layouts(self) -> None:
         for semantic, raw, registers in (
             ("seq_u8", b"\xff", {"r0": 0xFF01}),
             ("seq_u16", b"\xff\xff\x03", {"r0": 0xFFFF0001}),
@@ -2666,7 +3539,7 @@ class OrdinarySequenceEffects(unittest.TestCase):
             self.assertEqual(result["registers"], registers)
             self.assertEqual((result["state"].count, result["state"].decoder.cursor), (0, len(raw)))
 
-    def test_f32_only_reads_initialized_child_value_and_preserves_conditional_policy(self):
+    def test_f32_only_reads_initialized_child_value_and_preserves_conditional_policy(self) -> None:
         for raw, tag, fields, cursor in (
             (bytes.fromhex("0000803f"), 1, ((0, 4), (4, 4)), 4),
             (b"\x01\x02", 2, ((0, 4), (4, 1)), 0),
@@ -2683,7 +3556,7 @@ class OrdinarySequenceEffects(unittest.TestCase):
             self.assertEqual(result["platform_policy"], result["children"][0]["platform_policy"])
             self.assertEqual(result["state"].count, 0)
 
-    def test_q_alias_saved_protection_and_wrong_count_domains_reject(self):
+    def test_q_alias_saved_protection_and_wrong_count_domains_reject(self) -> None:
         import config_decode_effects
         from config_regions import Storage, borrow
 
@@ -2692,20 +3565,28 @@ class OrdinarySequenceEffects(unittest.TestCase):
             state, frame = args[3:5]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 if fault in ("negative", "bool_count"):
-                    args[3] = config_decode_effects.SequenceState(
-                        state.header, state.decoder, -1 if fault == "negative" else True
+                    args = (
+                        *args[:3],
+                        config_decode_effects.SequenceState(
+                            state.header, state.decoder, -1 if fault == "negative" else True
+                        ),
+                        *args[4:],
                     )
                 elif fault == "ancestor":
-                    args[5] = (
-                        Storage(
-                            frame.space,
-                            "saved_r11",
-                            state.header.start + 4,
-                            4,
-                            4,
-                            frame.phase,
-                            False,
+                    args = (
+                        *args[:5],
+                        (
+                            Storage(
+                                frame.space,
+                                "saved_r11",
+                                state.header.start + 4,
+                                4,
+                                4,
+                                frame.phase,
+                                False,
+                            ),
                         ),
+                        *args[6:],
                     )
                 else:
                     owner = Storage(
@@ -2717,26 +3598,34 @@ class OrdinarySequenceEffects(unittest.TestCase):
                         frame.phase,
                         True,
                     )
-                    args[3] = config_decode_effects.SequenceState(
-                        borrow(owner, 0, 8, frame.phase, writable=True), state.decoder, 1
+                    args = (
+                        *args[:3],
+                        config_decode_effects.SequenceState(
+                            borrow(owner, 0, 8, frame.phase, writable=True), state.decoder, 1
+                        ),
+                        *args[4:],
                     )
                 config_decode_effects.sequence_effect(*args)
 
-    def test_entire_live_D_header_must_survive_parent_and_child_prologue(self):
+    def test_entire_live_D_header_must_survive_parent_and_child_prologue(self) -> None:
         import config_decode_effects
         from config_regions import Storage, borrow
 
         for semantic, start in (("slice_pop", -20), ("deserialize_u16", -44)):
-            args = list(OrdinaryDecodeEffects.fixture(self, semantic, b"\x01"))
+            args = OrdinaryDecodeEffects.fixture(self, semantic, b"\x01")
             state, frame = args[3:5]
             owner = Storage(frame.space, "D-end-alias", start, 8, 4, frame.phase, True)
-            args[3] = config_decode_effects.DecoderState(
-                borrow(owner, 0, 8, frame.phase, writable=True), state.payload, 0
+            args = (
+                *args[:3],
+                config_decode_effects.DecoderState(
+                    borrow(owner, 0, 8, frame.phase, writable=True), state.payload, 0
+                ),
+                *args[4:],
             )
             with self.subTest(semantic=semantic), self.assertRaises(AssertionError):
                 config_decode_effects.decode_effect(*args)
 
-    def test_f32_external_Q_D_and_RO8_cannot_borrow_pushed_scratch_even_on_none(self):
+    def test_f32_external_Q_D_and_RO8_cannot_borrow_pushed_scratch_even_on_none(self) -> None:
         import config_decode_effects
         import config_platform
         from config_regions import Storage, borrow
@@ -2760,12 +3649,20 @@ class OrdinarySequenceEffects(unittest.TestCase):
             out_owner = Storage(frame.space, "RO8", 184, 8, 4, frame.phase, True)
             output = borrow(out_owner, 0, 8, frame.phase, writable=True)
             if fault == "Q":
-                args[3] = config_decode_effects.SequenceState(view, state.decoder, 0)
+                args = (
+                    *args[:3],
+                    config_decode_effects.SequenceState(view, state.decoder, 0),
+                    *args[4:],
+                )
             elif fault == "D":
-                args[3] = config_decode_effects.SequenceState(
-                    state.header,
-                    config_decode_effects.DecoderState(view, state.decoder.payload, 0),
-                    0,
+                args = (
+                    *args[:3],
+                    config_decode_effects.SequenceState(
+                        state.header,
+                        config_decode_effects.DecoderState(view, state.decoder.payload, 0),
+                        0,
+                    ),
+                    *args[4:],
                 )
             else:
                 output = view
@@ -2774,7 +3671,9 @@ class OrdinarySequenceEffects(unittest.TestCase):
 
 
 class OrdinaryCompareEffects(unittest.TestCase):
-    def fixture(self, raw=b"abc", source=b"ab", cursor=0):
+    def fixture(
+        self: unittest.TestCase, raw: bytes = b"abc", source: bytes = b"ab", cursor: int = 0
+    ) -> CompareArgs:
         import config_compare_effects
         from config_regions import Storage, borrow
 
@@ -2803,7 +3702,7 @@ class OrdinaryCompareEffects(unittest.TestCase):
         compare = config_compare_effects.CompareState(state.header, state.payload, state.cursor)
         return objects, records, proof, compare, encoded, frame, protected
 
-    def test_equal_prefix_advances_but_mismatch_or_insufficient_length_does_not(self):
+    def test_equal_prefix_advances_but_mismatch_or_insufficient_length_does_not(self) -> None:
         import config_compare_effects
 
         for raw, source, cursor, status, writes in (
@@ -2821,7 +3720,7 @@ class OrdinaryCompareEffects(unittest.TestCase):
                 () if len(raw) < len(source) else ((0x1007000C, len(source)), (176, len(source))),
             )
 
-    def test_empty_extension_keeps_valid_slice_and_writes_unchanged_header(self):
+    def test_empty_extension_keeps_valid_slice_and_writes_unchanged_header(self) -> None:
         import config_compare_effects
 
         result = config_compare_effects.compare_effect(*self.fixture(b"a", b"", 1))
@@ -2832,22 +3731,26 @@ class OrdinaryCompareEffects(unittest.TestCase):
         self.assertEqual(result["writes"][0][2], struct.pack("<II", 0x1007000D, 0))
         self.assertEqual(result["conservative_activation_frames"], (24, 32))
 
-    def test_relative_stack_zero_is_a_valid_source_coordinate_not_a_null_pointer(self):
+    def test_relative_stack_zero_is_a_valid_source_coordinate_not_a_null_pointer(self) -> None:
         import config_compare_effects
         from config_regions import Storage, borrow
 
-        args = list(self.fixture())
+        args = self.fixture()
         frame = args[5]
         owner = Storage(frame.space, "relative-source", 0, 2, 4, frame.phase, True)
-        args[4] = config_compare_effects.SourceBytes(borrow(owner, 0, 2, frame.phase), b"ab")
+        args = (
+            *args[:4],
+            config_compare_effects.SourceBytes(borrow(owner, 0, 2, frame.phase), b"ab"),
+            *args[5:],
+        )
         self.assertEqual(config_compare_effects.compare_effect(*args)["registers"], {"r0": 255})
 
-    def test_full_C_header_and_source_bytes_survive_own_and_memcmp_frames(self):
+    def test_full_C_header_and_source_bytes_survive_own_and_memcmp_frames(self) -> None:
         import config_compare_effects
         from config_regions import Storage, borrow
 
         for fault in ("C_end_save", "C_source_alias", "source_memcmp_save", "C_memcmp_save"):
-            args = list(self.fixture())
+            args = self.fixture()
             state, source, frame = args[3:6]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 if fault.startswith("C_"):
@@ -2859,37 +3762,49 @@ class OrdinaryCompareEffects(unittest.TestCase):
                         else source.view.start
                     )
                     owner = Storage(frame.space, "C-alias", start, 8, 4, frame.phase, True)
-                    args[3] = config_compare_effects.CompareState(
-                        borrow(owner, 0, 8, frame.phase, writable=True), state.payload, 0
+                    args = (
+                        *args[:3],
+                        config_compare_effects.CompareState(
+                            borrow(owner, 0, 8, frame.phase, writable=True), state.payload, 0
+                        ),
+                        *args[4:],
                     )
                 else:
                     owner = Storage(frame.space, "source-alias", -56, 2, 4, frame.phase, True)
-                    args[4] = config_compare_effects.SourceBytes(
-                        borrow(owner, 0, 2, frame.phase), b"ab"
+                    args = (
+                        *args[:4],
+                        config_compare_effects.SourceBytes(borrow(owner, 0, 2, frame.phase), b"ab"),
+                        *args[5:],
                     )
                 config_compare_effects.compare_effect(*args)
 
-    def test_memcmp_body_and_bound_readonly_source_identity_are_required(self):
+    def test_memcmp_body_and_bound_readonly_source_identity_are_required(self) -> None:
         import config_compare_effects
         from config_regions import borrow
 
         for fault in ("memcmp", "source_bytes"):
-            args = list(self.fixture())
+            args = self.fixture()
             objects, records = args[:2]
             if fault == "memcmp":
                 start = objects.elf.functions["memcmp"][0] & ~1
                 row = records[start]
                 records[start] = Instruction(start, row.raw, "bx", "lr")
             else:
-                args[4] = config_compare_effects.SourceBytes(
-                    borrow(args[3].payload.storage, 12, 2, args[3].payload.storage.phase), b"zz"
+                args = (
+                    *args[:4],
+                    config_compare_effects.SourceBytes(
+                        borrow(args[3].payload.storage, 12, 2, args[3].payload.storage.phase), b"zz"
+                    ),
+                    *args[5:],
                 )
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_compare_effects.compare_effect(*args)
 
 
 class OrdinarySerializeEffects(unittest.TestCase):
-    def fixture(self, semantic, raw, kind, bits, value):
+    def fixture(
+        self: unittest.TestCase, semantic: str, raw: bytes, kind: str, bits: int, value: int
+    ) -> SerializeArgs:
         import config_helpers
         from config_regions import Argument, Storage
 
@@ -2918,7 +3833,7 @@ class OrdinarySerializeEffects(unittest.TestCase):
         argument = Argument(kind, None, 0, bits, frozenset((value,)))
         return objects, records, proof, state, argument, frame, protected
 
-    def test_scalar_varint_and_hard_float_bytes_have_exact_distinct_status_ABIs(self):
+    def test_scalar_varint_and_hard_float_bytes_have_exact_distinct_status_ABIs(self) -> None:
         import config_serialize_effects
 
         cases = (
@@ -2942,7 +3857,7 @@ class OrdinarySerializeEffects(unittest.TestCase):
                 ]
             )
 
-    def test_compare_error_never_advances_current_C_for_one_scalar(self):
+    def test_compare_error_never_advances_current_C_for_one_scalar(self) -> None:
         import config_serialize_effects
 
         result = config_serialize_effects.serialize_effect(
@@ -2950,7 +3865,7 @@ class OrdinarySerializeEffects(unittest.TestCase):
         )
         self.assertEqual((result["registers"], result["state"].cursor), ({"r0": 2}, 0))
 
-    def test_u16_group_boundaries_and_nonminimal_decoded_zero_stay_canonical(self):
+    def test_u16_group_boundaries_and_nonminimal_decoded_zero_stay_canonical(self) -> None:
         import config_serialize_effects
 
         for number, raw in (
@@ -2969,15 +3884,18 @@ class OrdinarySerializeEffects(unittest.TestCase):
         decoded = config_decode_effects.decode_effect(
             *OrdinaryDecodeEffects.fixture(self, "deserialize_u16", b"\x80\x00")
         )
+        decoded_value = decoded["value"]
+        if decoded_value is None:
+            self.fail("valid nonminimal zero must decode before canonical serialization")
         result = config_serialize_effects.serialize_effect(
-            *self.fixture("serialize_u16", b"\x80\x00", "u16", 16, decoded["value"])
+            *self.fixture("serialize_u16", b"\x80\x00", "u16", 16, decoded_value)
         )
         self.assertEqual(
             (decoded["value"], decoded["state"].cursor, result["error"], result["state"].cursor),
             (0, 2, 2, 0),
         )
 
-    def test_specialized_u32_and_scalar_or_hard_float_argument_domains_reject(self):
+    def test_specialized_u32_and_scalar_or_hard_float_argument_domains_reject(self) -> None:
         import config_serialize_effects
         from config_regions import Argument
 
@@ -2990,12 +3908,12 @@ class OrdinarySerializeEffects(unittest.TestCase):
                 config_serialize_effects.serialize_effect(
                     *self.fixture(semantic, b"\x00", kind, bits, value)
                 )
-        args = list(self.fixture("serialize_u8", b"\x00", "u8", 8, 0))
-        args[4] = Argument("u8", None, 0, 8, frozenset((0, 1)))
+        args = self.fixture("serialize_u8", b"\x00", "u8", 8, 0)
+        args = (*args[:4], Argument("u8", None, 0, 8, frozenset((0, 1))), *args[5:])
         with self.assertRaises(AssertionError):
             config_serialize_effects.serialize_effect(*args)
 
-    def test_string_prefix_success_remains_consumed_when_body_mismatches(self):
+    def test_string_prefix_success_remains_consumed_when_body_mismatches(self) -> None:
         import config_serialize_effects
         import config_helpers
         import config_compare_effects
@@ -3042,7 +3960,9 @@ class OrdinarySerializeEffects(unittest.TestCase):
 
 
 class OrdinaryHeaderConstructors(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, str, Storage, Storage]:
         from config_regions import Storage
 
         objects, item = LoggerObjects.fixture(
@@ -3075,7 +3995,7 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
         child = Storage(frame.space, "ConfigSeed", -1608, 1608, 8, frame.phase, True)
         return objects, records, root, visitor, frame, child
 
-    def test_current_D_words_and_child_Q_count_bind_source_payload_and_actual_owner(self):
+    def test_current_D_words_and_child_Q_count_bind_source_payload_and_actual_owner(self) -> None:
         import config_headers
 
         objects, records, root, visitor, frame, child = self.fixture()
@@ -3106,7 +4026,7 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
         self.assertTrue(boot["checksum_failure_requires_fault_mapping_and_default_successor"])
         self.assertTrue(boot["requires_parent_entry_all_ingress_source_effects_and_coverage"])
 
-    def test_code_and_EAV_relocations_do_not_change_constructor_meaning(self):
+    def test_code_and_EAV_relocations_do_not_change_constructor_meaning(self) -> None:
         import config_headers
 
         objects, records, root, visitor, frame, child = self.fixture(0x2800, 0x19000)
@@ -3116,7 +4036,7 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
         )
         self.assertEqual(nested["sequence_state"].decoder.payload.start, 0x10032B2A + 0x19000)
 
-    def test_actual_root_call_constructs_its_child_frame_and_same_D_pointer(self):
+    def test_actual_root_call_constructs_its_child_frame_and_same_D_pointer(self) -> None:
         import config_headers
 
         objects, records, root, visitor, frame, child = self.fixture()
@@ -3131,14 +4051,14 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_headers.root_visitor_headers(objects, root, records, frame, ())
 
-    def test_changed_valid_envelope_bytes_rebind_crc_without_hash_allowlist(self):
+    def test_changed_valid_envelope_bytes_rebind_crc_without_hash_allowlist(self) -> None:
         import config_headers
         import zlib
 
         objects, records, root, visitor, frame, child = self.fixture()
         data = bytearray(objects.elf.data)
 
-        def offset(address):
+        def offset(address: int) -> int:
             section = next(
                 s for s in objects.elf.sections if s[2] & 2 and s[3] <= address < s[3] + s[5]
             )
@@ -3155,7 +4075,7 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
         self.assertEqual(result["decoder_state"].payload.extent, 1145)
         self.assertTrue(result["requires_parent_entry_all_ingress_source_effects_and_coverage"])
 
-    def test_changed_EAV_crc_pool_or_frame_cannot_materialize_valid_D(self):
+    def test_changed_EAV_crc_pool_or_frame_cannot_materialize_valid_D(self) -> None:
         import config_headers
         from config_regions import Storage
 
@@ -3177,7 +4097,7 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_headers.root_decoder_header(objects, root, records, frame, ())
 
-    def test_D_end_register_Q_field_count_or_layout_mutations_reject(self):
+    def test_D_end_register_Q_field_count_or_layout_mutations_reject(self) -> None:
         import config_headers
 
         for fault in ("D_end", "Q_count", "Q_offset", "Q_pointer"):
@@ -3207,7 +4127,9 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
 
 
 class OrdinaryFirstFieldBridge(unittest.TestCase):
-    def fixture(self):
+    def fixture(
+        self: unittest.TestCase,
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, str, Storage, Storage]:
         objects, records, root, visitor, frame, child = OrdinaryHeaderConstructors.fixture(self)
         donor, other, item = OrdinaryHelperBodies.fixture(self)
         data = bytearray(objects.elf.data)
@@ -3225,7 +4147,7 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
         records.update(other)
         return objects, records, root, visitor, frame, child
 
-    def test_actual_first_next_return_updates_same_D_Q_and_exact_wrapper_ABI(self):
+    def test_actual_first_next_return_updates_same_D_Q_and_exact_wrapper_ABI(self) -> None:
         import config_headers
 
         objects, records, root, visitor, frame, child = self.fixture()
@@ -3238,7 +4160,7 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
         self.assertEqual((returned["state"].count, returned["state"].decoder.cursor), (12, 1))
         self.assertEqual(result["state_coordinate"], "after_first_next_return")
 
-    def test_none_and_error_keep_outer_result_distinct_from_inner_sequence(self):
+    def test_none_and_error_keep_outer_result_distinct_from_inner_sequence(self) -> None:
         import config_headers
         from dataclasses import replace
         from config_regions import Storage
@@ -3246,6 +4168,8 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
         objects, records, root, visitor, frame, child = self.fixture()
         before = config_headers.root_visitor_headers(objects, root, records, frame, ())
         sequence = before["visitor"]["sequence_state"]
+        if not isinstance(sequence, SequenceState):
+            self.fail("fixture concrete visitor sequence missing")
         name = next(
             n
             for n in objects.elf.functions
@@ -3287,7 +4211,7 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
             (5, {"r0": 0x501}, 0, 3),
         )
 
-    def test_changed_wrapper_tag_mask_or_nested_decoder_body_rejects(self):
+    def test_changed_wrapper_tag_mask_or_nested_decoder_body_rejects(self) -> None:
         import config_headers
 
         for fault in ("tag_mask", "decoder"):
@@ -3305,7 +4229,9 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
 
 
 class OrdinaryScalarFields(unittest.TestCase):
-    def fixture(self):
+    def fixture(
+        self: unittest.TestCase,
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, str, Storage, Storage]:
         objects, records, root, visitor, frame, child = OrdinaryFirstFieldBridge.fixture(self)
         donor, item = LoggerObjects.fixture(self, "sizez", fixture_file="config-entry-bodies.json")
         import config_entry
@@ -3326,7 +4252,7 @@ class OrdinaryScalarFields(unittest.TestCase):
         objects.elf.symbol_entries.append(entry)
         return objects, records, root, visitor, frame, child
 
-    def test_two_source_ordered_fields_remain_partial_and_unpublished(self):
+    def test_two_source_ordered_fields_remain_partial_and_unpublished(self) -> None:
         import config_headers
 
         objects, records, root, visitor, frame, child = self.fixture()
@@ -3343,7 +4269,9 @@ class OrdinaryScalarFields(unittest.TestCase):
         )
         self.assertNotIn("validated_config", result)
 
-    def test_store_width_field_offset_source_register_and_call_argument_mutations_reject(self):
+    def test_store_width_field_offset_source_register_and_call_argument_mutations_reject(
+        self,
+    ) -> None:
         import config_headers
 
         for site, mnemonic, operands in (
@@ -3358,7 +4286,7 @@ class OrdinaryScalarFields(unittest.TestCase):
             with self.subTest(site=site), self.assertRaises(AssertionError):
                 config_headers.root_u16_fields(objects, root, records, frame, ())
 
-    def test_named_destination_not_arbitrary_writable_memory_or_aliased_stack(self):
+    def test_named_destination_not_arbitrary_writable_memory_or_aliased_stack(self) -> None:
         import config_headers
         import config_entry
 
@@ -3375,13 +4303,18 @@ class OrdinaryScalarFields(unittest.TestCase):
                 data[section[4] + entry[1] - section[3] + 14600] = 1
                 objects.elf.data = bytes(data)
             else:
-                altered = list(entry)
-                altered[0 if fault == "identity" else 2] = "other" if fault == "identity" else 14600
-                objects.elf.symbol_entries[objects.elf.symbol_entries.index(entry)] = tuple(altered)
+                altered = MutableSymbol(entry)
+                if fault == "identity":
+                    altered[0] = "other"
+                else:
+                    altered[2] = 14600
+                objects.elf.symbol_entries[objects.elf.symbol_entries.index(entry)] = (
+                    altered.as_tuple()
+                )
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_headers.root_u16_fields(objects, root, records, frame, ())
 
-    def test_each_decode_error_stops_before_store_or_next_field_without_publishing(self):
+    def test_each_decode_error_stops_before_store_or_next_field_without_publishing(self) -> None:
         import config_headers
         import zlib
 
@@ -3389,7 +4322,7 @@ class OrdinaryScalarFields(unittest.TestCase):
             objects, records, root, visitor, frame, child = self.fixture()
             data = bytearray(objects.elf.data)
 
-            def position(address):
+            def position(address: int) -> int:
                 section = next(
                     s for s in objects.elf.sections if s[2] & 2 and s[3] <= address < s[3] + s[5]
                 )
@@ -3419,29 +4352,32 @@ class OrdinaryScalarFields(unittest.TestCase):
 
 
 class AbstractPrimitiveInterfaces(unittest.TestCase):
-    def decoder(self, semantic, raw=b"\x00\x01\x02"):
+    def decoder(self, semantic: str, raw: bytes = b"\x00\x01\x02") -> AbstractDecodeArgs:
         import config_abstract
 
-        args = list(OrdinaryDecodeEffects.fixture(self, semantic, raw))
-        args[3] = config_abstract.DecoderInterface(
-            args[3].header, args[3].payload, config_abstract.Span(0, len(raw))
+        objects, rows, proof, state, frame, protected = OrdinaryDecodeEffects.fixture(
+            self, semantic, raw
         )
-        return args
+        decoder = config_abstract.DecoderInterface(
+            state.header, state.payload, config_abstract.Span(0, len(raw))
+        )
+        return objects, rows, proof, decoder, frame, protected
 
-    def sequence(self, semantic, raw=b"\x00\x01\x02"):
+    def sequence(self, semantic: str, raw: bytes = b"\x00\x01\x02") -> AbstractSequenceArgs:
         import config_abstract
 
-        args = list(OrdinarySequenceEffects.fixture(self, semantic, raw, 2))
-        source = args[3]
+        objects, rows, proof, source, frame, protected = OrdinarySequenceEffects.fixture(
+            self, semantic, raw, 2
+        )
         decoder = config_abstract.DecoderInterface(
             source.decoder.header, source.decoder.payload, config_abstract.Span(0, len(raw))
         )
-        args[3] = config_abstract.SequenceInterface(
+        sequence = config_abstract.SequenceInterface(
             source.header, decoder, config_abstract.Span(0, 2)
         )
-        return args
+        return objects, rows, proof, sequence, frame, protected
 
-    def test_unknown_scalars_union_all_guarded_outcomes_without_reading_value_bytes(self):
+    def test_unknown_scalars_union_all_guarded_outcomes_without_reading_value_bytes(self) -> None:
         import config_abstract
 
         signatures = []
@@ -3459,7 +4395,7 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
             )
         self.assertEqual(signatures[0], signatures[1])
 
-    def test_sequence_retains_none_some_and_both_bool_errors_as_paired_alternatives(self):
+    def test_sequence_retains_none_some_and_both_bool_errors_as_paired_alternatives(self) -> None:
         import config_abstract
 
         result = config_abstract.sequence_interface(*self.sequence("seq_bool"))
@@ -3477,7 +4413,9 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
                 self.assertEqual(outcome["value_domain"], (0, 1))
         self.assertEqual(result["conservative_activation_frames"], (8, 16))
 
-    def test_remaining_fixed_primitive_families_keep_unknown_widths_and_result_initialization(self):
+    def test_remaining_fixed_primitive_families_keep_unknown_widths_and_result_initialization(
+        self,
+    ) -> None:
         import config_abstract
         from config_regions import Storage, borrow
 
@@ -3503,13 +4441,14 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
             ("seq_u8", (0, 255), (8, 16)),
             ("seq_u16", (0, 65535), (8, 24, 16)),
         ):
-            result = config_abstract.sequence_interface(*self.sequence(semantic))
+            sequence_result = config_abstract.sequence_interface(*self.sequence(semantic))
             self.assertEqual(
-                next(o["value_domain"] for o in result["outcomes"] if o["kind"] == "some"), domain
+                next(o["value_domain"] for o in sequence_result["outcomes"] if o["kind"] == "some"),
+                domain,
             )
-            self.assertEqual(result["conservative_activation_frames"], frames)
+            self.assertEqual(sequence_result["conservative_activation_frames"], frames)
 
-    def test_f32_union_preserves_policy_on_none_error_and_success_without_alignment4(self):
+    def test_f32_union_preserves_policy_on_none_error_and_success_without_alignment4(self) -> None:
         import config_abstract
         import config_platform
         from config_regions import Storage, borrow
@@ -3546,7 +4485,7 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_abstract.sequence_interface(*args, output=output, platform_policy=policy)
 
-    def test_grouped_effects_protect_full_headers_outputs_and_save_cells(self):
+    def test_grouped_effects_protect_full_headers_outputs_and_save_cells(self) -> None:
         import config_abstract
         from config_regions import Storage, borrow
 
@@ -3563,14 +4502,26 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
                 True,
             )
             if source == "D_end":
-                args[3] = config_abstract.DecoderInterface(
-                    borrow(owner, 0, 8, frame.phase, writable=True), state.payload, state.cursor
+                if not isinstance(state, config_abstract.DecoderInterface):
+                    self.fail("decoder fixture state changed")
+                args = (
+                    *args[:3],
+                    config_abstract.DecoderInterface(
+                        borrow(owner, 0, 8, frame.phase, writable=True), state.payload, state.cursor
+                    ),
+                    *args[4:],
                 )
             else:
-                args[3] = config_abstract.SequenceInterface(
-                    borrow(owner, 0, 8, frame.phase, writable=True),
-                    state.decoder,
-                    config_abstract.Span(0, 0),
+                if not isinstance(state, config_abstract.SequenceInterface):
+                    self.fail("sequence fixture state changed")
+                args = (
+                    *args[:3],
+                    config_abstract.SequenceInterface(
+                        borrow(owner, 0, 8, frame.phase, writable=True),
+                        state.decoder,
+                        config_abstract.Span(0, 0),
+                    ),
+                    *args[4:],
                 )
             with self.subTest(source=source), self.assertRaises(AssertionError):
                 (
@@ -3579,7 +4530,7 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
                     else config_abstract.sequence_interface
                 )(*args)
 
-    def test_current_child_mutation_and_invalid_domains_reject(self):
+    def test_current_child_mutation_and_invalid_domains_reject(self) -> None:
         import config_abstract
 
         for lower, upper in ((-1, 2), (0, True), (3, 2)):
@@ -3591,13 +4542,13 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_abstract.decoder_interface(*args)
 
-    def test_exact_helper_does_not_silently_accept_abstract_state(self):
+    def test_exact_helper_does_not_silently_accept_abstract_state(self) -> None:
         import config_decode_effects
 
         with self.assertRaises(AssertionError):
             config_decode_effects.decode_effect(*self.decoder("slice_pop"))
 
-    def test_narrow_cursor_and_count_endpoints_keep_exact_paired_exit_spans(self):
+    def test_narrow_cursor_and_count_endpoints_keep_exact_paired_exit_spans(self) -> None:
         import config_abstract
         import config_platform
         from dataclasses import replace
@@ -3619,8 +4570,12 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
         )
         for semantic, lower, upper, expected in cases:
             args = self.decoder(semantic, bytes(8))
-            args[3] = replace(args[3], cursor=config_abstract.Span(lower, upper))
-            kwargs = {}
+            args = (
+                *args[:3],
+                replace(args[3], cursor=config_abstract.Span(lower, upper)),
+                *args[4:],
+            )
+            kwargs: DecoderArguments = {}
             if semantic in ("take_varint_u32", "deserialize_seed_f32"):
                 frame = args[4]
                 kwargs["output"] = borrow(
@@ -3650,27 +4605,35 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
                 )
                 self.assertTrue(all(o["state"].cursor == o["cursor"] for o in result["outcomes"]))
         for count, kind, after in ((0, "none", 0), (0xFFFFFFFF, "error4", 0xFFFFFFFE)):
-            args = self.sequence("seq_u16", bytes(8))
-            args[3] = replace(
-                args[3],
-                count=config_abstract.Span(count, count),
-                decoder=replace(args[3].decoder, cursor=config_abstract.Span(8, 8)),
+            sequence_args = self.sequence("seq_u16", bytes(8))
+            sequence_args = (
+                *sequence_args[:3],
+                replace(
+                    sequence_args[3],
+                    count=config_abstract.Span(count, count),
+                    decoder=replace(sequence_args[3].decoder, cursor=config_abstract.Span(8, 8)),
+                ),
+                *sequence_args[4:],
             )
-            result = config_abstract.sequence_interface(*args)
+            sequence_result = config_abstract.sequence_interface(*sequence_args)
             self.assertEqual(
-                [(o["kind"], o["count"], o["cursor"]) for o in result["outcomes"]],
+                [(o["kind"], o["count"], o["cursor"]) for o in sequence_result["outcomes"]],
                 [(kind, config_abstract.Span(after, after), config_abstract.Span(8, 8))],
             )
             self.assertTrue(
                 all(
                     o["state"].count == o["count"] and o["state"].decoder.cursor == o["cursor"]
-                    for o in result["outcomes"]
+                    for o in sequence_result["outcomes"]
                 )
             )
 
 
 class ConstructionInterfaces(unittest.TestCase):
-    def fixture(self, semantic="vec_extend14", shift=0):
+    def fixture(
+        self, semantic: str = "vec_extend14", shift: int = 0
+    ) -> tuple[
+        DiagnosticFixture, dict[int, Instruction], EntryFixture, FixtureInstance, Storage | None
+    ]:
         from config_regions import Storage
 
         objects, item = LoggerObjects.fixture(
@@ -3701,7 +4664,12 @@ class ConstructionInterfaces(unittest.TestCase):
         )
         return objects, records, item, instance, frame
 
-    def arguments(self, capacity=14, length=(0, 0), source_length=(0, 8)):
+    def arguments(
+        self,
+        capacity: int = 14,
+        length: tuple[int, int] = (0, 0),
+        source_length: tuple[int, int] = (0, 8),
+    ) -> tuple[VecInterface, InitializedPrefix]:
         from config_abstract import Span
         from config_abstract_compare import InitializedPrefix
         from config_construction import VecInterface
@@ -3721,7 +4689,7 @@ class ConstructionInterfaces(unittest.TestCase):
         )
         return state, source
 
-    def test_all_construction_bodies_and_parent_outlines_have_complete_coverage(self):
+    def test_all_construction_bodies_and_parent_outlines_have_complete_coverage(self) -> None:
         import config_helpers
 
         for shift in (0, 0x2800):
@@ -3745,7 +4713,7 @@ class ConstructionInterfaces(unittest.TestCase):
                 if outline:
                     self.assertEqual(proof["requires_parent_outline_abi"], outline)
 
-    def test_unknown_append_unions_keep_prefix_count_capacity_and_no_write_error(self):
+    def test_unknown_append_unions_keep_prefix_count_capacity_and_no_write_error(self) -> None:
         import config_construction
         import config_helpers
         from config_abstract import Span
@@ -3753,6 +4721,8 @@ class ConstructionInterfaces(unittest.TestCase):
         for capacity in (14, 20, 24):
             args = self.fixture("vec_extend" + str(capacity))
             objects, records, item, instance, frame = args
+            if frame is None:
+                self.fail("construction fixture needs a framed body")
             proof = config_helpers.helper_coverage(
                 objects,
                 instance["name"],
@@ -3774,12 +4744,14 @@ class ConstructionInterfaces(unittest.TestCase):
                 result["requires_actual_stage_receiver_transport_and_complete_parent_graph"]
             )
 
-    def test_capacity_error_and_zero_append_do_not_initialize_slack(self):
+    def test_capacity_error_and_zero_append_do_not_initialize_slack(self) -> None:
         import config_construction
         import config_helpers
         from config_abstract import Span
 
         objects, records, item, instance, frame = self.fixture()
+        if frame is None:
+            self.fail("construction fixture needs a framed body")
         proof = config_helpers.helper_coverage(
             objects, instance["name"], records, (instance["address"], "extend", "source owner")
         )
@@ -3795,13 +4767,15 @@ class ConstructionInterfaces(unittest.TestCase):
             self.assertTrue(all(not o["possible_writes"] for o in result["outcomes"]))
             self.assertTrue(all(o["length"] == Span(*length) for o in result["outcomes"]))
 
-    def test_header_full_owner_source_and_deeper_save_aliases_reject(self):
+    def test_header_full_owner_source_and_deeper_save_aliases_reject(self) -> None:
         import config_construction
         import config_helpers
         from dataclasses import replace
         from config_regions import Storage, borrow
 
         objects, records, item, instance, frame = self.fixture()
+        if frame is None:
+            self.fail("construction fixture needs a framed body")
         proof = config_helpers.helper_coverage(
             objects, instance["name"], records, (instance["address"], "extend", "alias negatives")
         )
@@ -3824,12 +4798,14 @@ class ConstructionInterfaces(unittest.TestCase):
                 objects, records, proof, state, source, frame, protected
             )
 
-    def test_try_from_keeps_tag_only_error_and_separate_opaque_success_transport(self):
+    def test_try_from_keeps_tag_only_error_and_separate_opaque_success_transport(self) -> None:
         import config_construction
         import config_helpers
         from config_regions import Storage, borrow
 
         objects, records, item, instance, frame = self.fixture("string_try14")
+        if frame is None:
+            self.fail("construction fixture needs a framed body")
         _, source = self.arguments(source_length=(0, 24))
         proof = config_helpers.helper_coverage(
             objects,
@@ -3856,13 +4832,17 @@ class ConstructionInterfaces(unittest.TestCase):
         self.assertNotIn("initialized_prefix", result["outcomes"][1])
         self.assertTrue(result["requires_source_valid_str"])
 
-    def test_try_result_and_source_must_survive_local_scratch_and_every_child_prologue(self):
+    def test_try_result_and_source_must_survive_local_scratch_and_every_child_prologue(
+        self,
+    ) -> None:
         import config_construction
         import config_helpers
         from dataclasses import replace
         from config_regions import Storage, borrow
 
         objects, records, item, instance, frame = self.fixture("string_try14")
+        if frame is None:
+            self.fail("construction fixture needs a framed body")
         _, source = self.arguments()
         proof = config_helpers.helper_coverage(
             objects, instance["name"], records, (instance["address"], "try_from", "protected cells")
@@ -3891,7 +4871,7 @@ class ConstructionInterfaces(unittest.TestCase):
                 (),
             )
 
-    def test_changed_capacity_outgoing_cell_copy_count_and_restore_register_reject(self):
+    def test_changed_capacity_outgoing_cell_copy_count_and_restore_register_reject(self) -> None:
         import config_helpers
 
         for semantic, offset, operand in (
@@ -3911,7 +4891,7 @@ class ConstructionInterfaces(unittest.TestCase):
             with self.subTest(semantic=semantic), self.assertRaises(AssertionError):
                 config_helpers.helper_body(objects, instance["name"], records, outline)
 
-    def test_construction_fact_constructors_reject_unbound_capacity_or_length(self):
+    def test_construction_fact_constructors_reject_unbound_capacity_or_length(self) -> None:
         from config_abstract import Span
         from dataclasses import replace
 
@@ -3924,7 +4904,7 @@ class ConstructionInterfaces(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 replace(state, **change)
 
-    def test_wrapper_capacity_sum_overflow_and_stale_inventory_reject(self):
+    def test_wrapper_capacity_sum_overflow_and_stale_inventory_reject(self) -> None:
         import config_construction
         import config_helpers
         from config_abstract import Span
@@ -3932,6 +4912,8 @@ class ConstructionInterfaces(unittest.TestCase):
         from config_regions import Storage, borrow
 
         objects, records, item, instance, frame = self.fixture()
+        if frame is None:
+            self.fail("construction fixture needs a framed body")
         proof = config_helpers.helper_coverage(
             objects, instance["name"], records, (instance["address"], "extend", "bounded sum")
         )
@@ -3948,11 +4930,12 @@ class ConstructionInterfaces(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "sum may wrap"):
             config_construction.extend_interface(objects, records, proof, state, source, frame, ())
         state, source = self.arguments()
-        stale = dict(proof, ordinary_edges=())
+        stale = proof.copy()
+        stale["ordinary_edges"] = ()
         with self.assertRaises(AssertionError):
             config_construction.extend_interface(objects, records, stale, state, source, frame, ())
 
-    def test_anonymous_constructor_cannot_borrow_ordinary_identity(self):
+    def test_anonymous_constructor_cannot_borrow_ordinary_identity(self) -> None:
         import config_helpers
 
         objects, records, item, instance, frame = self.fixture("string_try14")
@@ -3968,7 +4951,7 @@ class ConstructionInterfaces(unittest.TestCase):
 
 
 class DefaultPreparationInterfaces(unittest.TestCase):
-    def test_payload_borrow_keeps_protected_enclosing_suffix_and_rejects_crossing(self):
+    def test_payload_borrow_keeps_protected_enclosing_suffix_and_rejects_crossing(self) -> None:
         from config_default import default_preparation
         from config_regions import Storage, borrow, require_writes
 
@@ -4004,7 +4987,9 @@ class DefaultPreparationInterfaces(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         require_writes((wide,), ((wide, offset - 1, 2),), (guard,))
 
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, Storage]:
         from dataclasses import replace
 
         objects, records, root, visitor, frame, child = OrdinaryHeaderConstructors.fixture(
@@ -4024,7 +5009,7 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             b = dest[4] + at - dest[3]
             data[b : b + extent] = donor.elf.data[a : a + extent]
 
-        def position(address):
+        def position(address: int) -> int:
             section = next(
                 s
                 for s in objects.elf.sections
@@ -4071,7 +5056,9 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             records[at] = Instruction(at, bytes.fromhex(row["bytes"]), op[0], operand)
         return objects, records, root, replace(frame, phase="default_refill")
 
-    def test_view_child_and_widget_handoff_keep_distinct_fault_result_and_retired_epochs(self):
+    def test_view_child_and_widget_handoff_keep_distinct_fault_result_and_retired_epochs(
+        self,
+    ) -> None:
         import config_default
 
         for code, data in ((0, 0), (0x2800, 0x19000)):
@@ -4108,7 +5095,7 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             )
             self.assertNotIn("validated_config", result)
 
-    def test_result_pointer_tag_view_offset_and_channel_pair_mutations_reject(self):
+    def test_result_pointer_tag_view_offset_and_channel_pair_mutations_reject(self) -> None:
         import config_default
 
         for site, operand in (
@@ -4124,7 +5111,7 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             with self.subTest(site=site), self.assertRaises(AssertionError):
                 config_default.default_preparation(objects, root, records, frame, ())
 
-    def test_view_literal_channel_array_and_static_identity_are_actual_data(self):
+    def test_view_literal_channel_array_and_static_identity_are_actual_data(self) -> None:
         import config_default
         import config_entry
 
@@ -4151,7 +5138,7 @@ class DefaultPreparationInterfaces(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_default.default_preparation(objects, root, records, frame, ())
 
-    def test_interior_ingress_and_changed_capacity_diagnostic_reject(self):
+    def test_interior_ingress_and_changed_capacity_diagnostic_reject(self) -> None:
         import config_default
 
         objects, records, root, frame = self.fixture()
@@ -4167,7 +5154,7 @@ class DefaultPreparationInterfaces(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_default.default_preparation(objects, root, records, frame, ())
 
-    def test_live_carrier_or_saved_cell_cannot_alias_result_and_local_copies(self):
+    def test_live_carrier_or_saved_cell_cannot_alias_result_and_local_copies(self) -> None:
         import config_default
         from config_regions import Storage
 
@@ -4177,7 +5164,9 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             with self.subTest(start=start), self.assertRaises(AssertionError):
                 config_default.default_preparation(objects, root, records, frame, (guard,))
 
-    def test_unrelated_float_bits_stay_unknown_but_parent_ingress_cannot_bypass_the_group(self):
+    def test_unrelated_float_bits_stay_unknown_but_parent_ingress_cannot_bypass_the_group(
+        self,
+    ) -> None:
         import config_default
 
         objects, records, root, frame = self.fixture()
@@ -4206,7 +5195,9 @@ class DefaultPreparationInterfaces(unittest.TestCase):
 
 
 class RefillChildInterfaces(unittest.TestCase):
-    def fixture(self, mode, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, mode: str, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], EntryFixture]:
         objects, item = LoggerObjects.fixture(
             self, mode, code_shift, data_shift, fixture_file="config-refill-children.json"
         )
@@ -4215,17 +5206,17 @@ class RefillChildInterfaces(unittest.TestCase):
         ]
         records = {}
         data = bytearray(objects.elf.data)
-        for row in item["records"]:
-            op = row["text"].split(None, 1)
-            at = row["address"] + code_shift
+        for fixture_row in item["records"]:
+            op = fixture_row["text"].split(None, 1)
+            at = fixture_row["address"] + code_shift
             operand = op[1] if len(op) > 1 else ""
             if config_stack.transfer_family(op[0].removesuffix(".w")) in ("b", "bl", "cbz", "cbnz"):
                 operand = re.sub(
                     r"0x([0-9a-f]+)", lambda m: hex(int(m[1], 16) + code_shift), operand
                 )
-            records[at] = Instruction(at, bytes.fromhex(row["bytes"]), op[0], operand)
+            records[at] = Instruction(at, bytes.fromhex(fixture_row["bytes"]), op[0], operand)
 
-        def place(at, raw):
+        def place(at: int, raw: bytes) -> None:
             section = next(
                 s
                 for s in objects.elf.sections
@@ -4259,7 +5250,9 @@ class RefillChildInterfaces(unittest.TestCase):
         objects.elf.data = bytes(data)
         return objects, records, item
 
-    def args(self, mode, shape):
+    def args(
+        self, mode: str, shape: str
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], RefillCoverageRecord, Storage, View]:
         import config_refill_children
         from config_regions import Storage, borrow
 
@@ -4282,7 +5275,9 @@ class RefillChildInterfaces(unittest.TestCase):
         )
         return objects, records, proof, frame, output
 
-    def test_six_complete_families_preserve_tables_lr_pools_padding_and_outline_context(self):
+    def test_six_complete_families_preserve_tables_lr_pools_padding_and_outline_context(
+        self,
+    ) -> None:
         import config_refill_children
 
         for mode in ("sizes", "sizez"):
@@ -4302,7 +5297,9 @@ class RefillChildInterfaces(unittest.TestCase):
                     if outline:
                         self.assertEqual(proof["requires_parent_frame_and_abi"], instance["shape"])
 
-    def test_definition_union_keeps_all_source_variants_paired_strings_and_inactive_payloads(self):
+    def test_definition_union_keeps_all_source_variants_paired_strings_and_inactive_payloads(
+        self,
+    ) -> None:
         import config_refill_children
         from config_regions import Argument
 
@@ -4334,7 +5331,7 @@ class RefillChildInterfaces(unittest.TestCase):
                 result["requires_actual_typed_origin_receiver_transport_and_parent_graph"]
             )
 
-    def test_enum_kind_domain_and_full_output_save_aliases_reject(self):
+    def test_enum_kind_domain_and_full_output_save_aliases_reject(self) -> None:
         import config_refill_children
         from config_regions import Argument, borrow
         from dataclasses import replace
@@ -4366,7 +5363,7 @@ class RefillChildInterfaces(unittest.TestCase):
                 objects, records, proof, arg, output, replace(frame, start=-56), ()
             )
 
-    def test_period_pairs_source_channel_with_typed_readonly_table(self):
+    def test_period_pairs_source_channel_with_typed_readonly_table(self) -> None:
         import config_refill_children
         from config_regions import Argument
 
@@ -4386,7 +5383,7 @@ class RefillChildInterfaces(unittest.TestCase):
 
     def test_advanced_output_bands_and_readout_alternatives_keep_full_copy_chain_and_store_obligation(
         self,
-    ):
+    ) -> None:
         import config_refill_children
         from config_regions import Argument
 
@@ -4419,7 +5416,9 @@ class RefillChildInterfaces(unittest.TestCase):
             result["target_access_requirements"][0]["status"], "unresolved_object_store_policy"
         )
 
-    def test_advanced_bool_domain_and_child_copy_or_parent_spill_context_cannot_change(self):
+    def test_advanced_bool_domain_and_child_copy_or_parent_spill_context_cannot_change(
+        self,
+    ) -> None:
         import config_refill_children
         from config_regions import Argument
 
@@ -4463,7 +5462,7 @@ class RefillChildInterfaces(unittest.TestCase):
                 (),
             )
 
-    def test_advanced_output_and_live_parent_guard_survive_deeper_builtin_frames(self):
+    def test_advanced_output_and_live_parent_guard_survive_deeper_builtin_frames(self) -> None:
         import config_refill_children
         from dataclasses import replace
         from config_regions import Argument, Storage, borrow
@@ -4472,7 +5471,7 @@ class RefillChildInterfaces(unittest.TestCase):
         afr = Argument("bool", None, 0, 8, frozenset((0,)))
         for fault in ("output", "guard"):
             objects, records, proof, frame, output = self.args("sizez", "advanced_for_channel_z")
-            protected = ()
+            protected: tuple[Storage, ...] = ()
             if fault == "output":
                 output = borrow(
                     replace(output.storage, start=frame.start - 64),
@@ -4498,7 +5497,7 @@ class RefillChildInterfaces(unittest.TestCase):
                     objects, records, proof, channel, afr, output, frame, protected
                 )
 
-    def test_catalog_table_source_bytes_and_lr_destination_remain_typed(self):
+    def test_catalog_table_source_bytes_and_lr_destination_remain_typed(self) -> None:
         import config_refill_children
 
         for fault in ("table", "source", "lr"):
@@ -4529,11 +5528,11 @@ class RefillChildInterfaces(unittest.TestCase):
 
         objects, records, item = self.fixture("sizez")
         instance = next(v for v in item["instances"] if v["shape"] == "catalog_definition_z")
-        wrong = dict(config_refill_children.CATALOG_DISPATCH["catalog_definition_z"])
+        wrong = CATALOG_DISPATCH["catalog_definition_z"].copy()
         wrong["target_offsets"] = list(wrong["target_offsets"])
         wrong["target_offsets"][0] = wrong["target_offsets"][1]
         with (
-            patch.dict(config_refill_children.CATALOG_DISPATCH, {"catalog_definition_z": wrong}),
+            patch.dict(CATALOG_DISPATCH, {"catalog_definition_z": wrong}),
             self.assertRaises(AssertionError),
         ):
             config_refill_children.child_coverage(
@@ -4545,7 +5544,7 @@ class RefillChildInterfaces(unittest.TestCase):
 
     def test_readonly_source_ownership_rejects_partial_alias_and_overflow_and_preserves_adjacency(
         self,
-    ):
+    ) -> None:
         import config_refill_children
         from config_refill_contracts import REFILL_GRAMMARS
 
@@ -4563,11 +5562,11 @@ class RefillChildInterfaces(unittest.TestCase):
             section = list(old)
             if fault == "overflow":
                 section[5] = 0xFFFFFFFF
-                objects.elf.sections[objects.elf.sections.index(old)] = tuple(section)
+                objects.elf.sections[objects.elf.sections.index(old)] = section_fields(section)
             else:
                 section[3] = address + (descriptor["extent"] if fault == "adjacent" else 2)
                 section[5] = 1
-                objects.elf.sections.append(tuple(section))
+                objects.elf.sections.append(section_fields(section))
             if fault == "adjacent":
                 config_refill_children._object(objects, address, descriptor)
             else:
@@ -4576,32 +5575,34 @@ class RefillChildInterfaces(unittest.TestCase):
 
 
 class AbstractCanonicalInterfaces(unittest.TestCase):
-    def compare(self):
+    def compare(self) -> AbstractCompareArgs:
         import config_abstract
         import config_abstract_compare
 
-        args = list(OrdinaryCompareEffects.fixture(self, b"abcdef", b"abc"))
-        state = args[3]
-        source = args[4]
-        args[3] = config_abstract_compare.CompareInterface(
+        objects, rows, proof, state, source, frame, protected = OrdinaryCompareEffects.fixture(
+            self, b"abcdef", b"abc"
+        )
+        compare = config_abstract_compare.CompareInterface(
             state.header, state.payload, config_abstract.Span(0, state.payload.extent)
         )
-        args[4] = config_abstract_compare.InitializedPrefix(source.view, config_abstract.Span(0, 3))
-        return args
+        initialized = config_abstract_compare.InitializedPrefix(
+            source.view, config_abstract.Span(0, 3)
+        )
+        return objects, rows, proof, compare, initialized, frame, protected
 
-    def serialize(self, semantic):
+    def serialize(self, semantic: str) -> AbstractSerializeArgs:
         import config_abstract
         import config_abstract_compare
 
-        source = OrdinarySerializeEffects.fixture(self, semantic, b"abcdef", "u8", 8, 0)
-        args = list(source[:4] + source[5:])
-        state = args[3]
-        args[3] = config_abstract_compare.CompareInterface(
+        objects, rows, proof, state, argument, frame, protected = OrdinarySerializeEffects.fixture(
+            self, semantic, b"abcdef", "u8", 8, 0
+        )
+        compare = config_abstract_compare.CompareInterface(
             state.header, state.payload, config_abstract.Span(0, state.payload.extent)
         )
-        return args
+        return objects, rows, proof, compare, frame, protected
 
-    def test_unknown_compare_bytes_retain_match_mismatch_and_short_guarded_exits(self):
+    def test_unknown_compare_bytes_retain_match_mismatch_and_short_guarded_exits(self) -> None:
         import config_abstract_compare
 
         args = self.compare()
@@ -4613,7 +5614,7 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
         )
         self.assertFalse(any("data" in o for o in result["outcomes"]))
 
-    def test_scalar_families_keep_all_prefix_lengths_without_executing_values(self):
+    def test_scalar_families_keep_all_prefix_lengths_without_executing_values(self) -> None:
         import config_abstract
         import config_abstract_compare
 
@@ -4629,11 +5630,14 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
                 kind, config_abstract.Span(0, (1 << bits) - 1)
             )
             result = config_abstract_compare.serialize_interface(*args[:4], value, *args[4:])
-            self.assertEqual(result["encoded_length"].upper, maximum)
+            length = result["encoded_length"]
+            if length is None:
+                self.fail("scalar serialization must expose its encoded length")
+            self.assertEqual(length.upper, maximum)
             self.assertEqual({o["kind"] for o in result["outcomes"]}, {"success", "error2"})
             self.assertNotIn("encoded", result)
 
-    def test_specialized_u32_and_wrong_width_cannot_borrow_an_abstract_type_name(self):
+    def test_specialized_u32_and_wrong_width_cannot_borrow_an_abstract_type_name(self) -> None:
         import config_abstract
         import config_abstract_compare
 
@@ -4643,7 +5647,7 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 config_abstract_compare.serialize_interface(*args[:4], value, *args[4:])
 
-    def test_string_prefix_and_body_failures_keep_paired_partial_progress(self):
+    def test_string_prefix_and_body_failures_keep_paired_partial_progress(self) -> None:
         import config_abstract
         import config_abstract_compare
         from config_regions import Storage, borrow
@@ -4662,7 +5666,7 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
         self.assertGreaterEqual(body["state"].cursor.lower, 1)
         self.assertEqual(result["conservative_activation_frames"], (24, 24, 24, 32))
 
-    def test_source_and_header_must_survive_helper_and_memcmp_prologues(self):
+    def test_source_and_header_must_survive_helper_and_memcmp_prologues(self) -> None:
         import config_abstract
         import config_abstract_compare
         from config_regions import Storage, borrow
@@ -4672,20 +5676,28 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
             state, source, frame = args[3:6]
             if fault == "C_end":
                 owner = Storage(frame.space, "bad-C", frame.start - 4, 8, 4, frame.phase, True)
-                args[3] = config_abstract_compare.CompareInterface(
-                    borrow(owner, 0, 8, frame.phase, writable=True), state.payload, state.cursor
+                args = (
+                    *args[:3],
+                    config_abstract_compare.CompareInterface(
+                        borrow(owner, 0, 8, frame.phase, writable=True), state.payload, state.cursor
+                    ),
+                    *args[4:],
                 )
             else:
                 owner = Storage(
                     frame.space, "bad-source", frame.start - 32, 3, 1, frame.phase, True
                 )
-                args[4] = config_abstract_compare.InitializedPrefix(
-                    borrow(owner, 0, 3, frame.phase), config_abstract.Span(0, 3)
+                args = (
+                    *args[:4],
+                    config_abstract_compare.InitializedPrefix(
+                        borrow(owner, 0, 3, frame.phase), config_abstract.Span(0, 3)
+                    ),
+                    *args[5:],
                 )
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_abstract_compare.compare_interface(*args)
 
-    def test_declared_policy_survives_nested_prefix_and_body_and_cannot_become_stale(self):
+    def test_declared_policy_survives_nested_prefix_and_body_and_cannot_become_stale(self) -> None:
         import config_abstract
         import config_abstract_compare
         import config_platform
@@ -4705,7 +5717,7 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
             ),
             contradictory_effects=(),
         )
-        args[3] = replace(state, platform_policy=policy)
+        args = (*args[:3], replace(state, platform_policy=policy), *args[4:])
         source = config_abstract_compare.InitializedPrefix(
             borrow(
                 Storage(frame.space, "string", 176, 20, 1, frame.phase, True), 0, 20, frame.phase
@@ -4722,16 +5734,16 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
 
 
 class ConditionalStackPolicy(unittest.TestCase):
-    def fixture(self):
+    def fixture(self: unittest.TestCase) -> tuple[DiagnosticFixture, View, dict[str, object]]:
         from config_regions import Storage, borrow
 
         base = 0x10000000
         raw = bytes(12) + bytes(range(32))
-        elf = SimpleNamespace(data=raw, sections=[(0, 1, 2, base, 0, len(raw), 0, 0, 1, 0)])
-        objects = config_stack.DiagnosticObjects(elf, {})
+        elf = ImageFixture(data=raw, sections=[(0, 1, 2, base, 0, len(raw), 0, 0, 1, 0)])
+        objects = diagnostic_fixture(elf, {})
         owner = Storage("address", "embedded_eav", base, len(raw), 1, "boot_configuration", False)
         view = borrow(owner, 12, 32, "boot_configuration")
-        context = dict(
+        context: dict[str, object] = dict(
             target="thumbv8m.main-none-eabihf",
             core=0,
             security="secure",
@@ -4739,7 +5751,7 @@ class ConditionalStackPolicy(unittest.TestCase):
         )
         return objects, view, context
 
-    def test_reviewed_policy_is_external_and_accepts_all_four_cursor_residues(self):
+    def test_reviewed_policy_is_external_and_accepts_all_four_cursor_residues(self) -> None:
         import config_platform
 
         objects, view, context = self.fixture()
@@ -4754,7 +5766,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 policy.for_f32_load(cursor)
 
-    def test_absent_unresolved_mismatched_or_contradictory_policy_rejects(self):
+    def test_absent_unresolved_mismatched_or_contradictory_policy_rejects(self) -> None:
         import config_platform
 
         objects, view, context = self.fixture()
@@ -4779,7 +5791,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             ("input_role", "arbitrary_input"),
             ("boot_context", "debugger_pc_sp"),
         ):
-            record = expected.to_record()
+            record: dict[str, object] = dict(expected.to_record())
             record[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
                 config_platform.read_policy(record, expected)
@@ -4798,6 +5810,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             config_platform.reviewed_eav_policy(
                 objects, view, context, contradictory_effects=("secure_ccr_unalign_trp_enabled",)
             )
+        effects: object
         for effects in (None, [], ("unknown_register_effect",)):
             with self.subTest(effects=effects), self.assertRaises(AssertionError):
                 config_platform.reviewed_eav_policy(
@@ -4806,7 +5819,7 @@ class ConditionalStackPolicy(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_platform.reviewed_eav_policy(objects, view, None, contradictory_effects=())
 
-    def test_policy_cannot_hide_writable_or_partial_input_ownership(self):
+    def test_policy_cannot_hide_writable_or_partial_input_ownership(self) -> None:
         import config_platform
         from config_regions import Storage, borrow
 
@@ -4815,7 +5828,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             if fault == "section":
                 section = list(objects.elf.sections[0])
                 section[2] |= 1
-                objects.elf.sections[0] = tuple(section)
+                objects.elf.sections[0] = section_fields(section)
             else:
                 owner = Storage(
                     "address",
@@ -4838,7 +5851,9 @@ class ConditionalStackPolicy(unittest.TestCase):
                     objects, view, context, contradictory_effects=()
                 )
 
-    def test_policy_propagates_nested_and_serialized_results_without_qualifying_hardware(self):
+    def test_policy_propagates_nested_and_serialized_results_without_qualifying_hardware(
+        self,
+    ) -> None:
         import config_platform
         from test_validation_policy import MemoryQualification, supplied_stack_record
 
@@ -4855,7 +5870,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             elf,
             source,
         )
-        encoded = json.loads(json.dumps(result))
+        encoded: object = json.loads(json.dumps(result))
         read = config_platform.read_stack_result(
             encoded, policy, 65536, source_context=source, elf=elf
         )
@@ -4867,11 +5882,14 @@ class ConditionalStackPolicy(unittest.TestCase):
             config_platform.read_stack_result(
                 encoded, policy, 65536.0, source_context=source, elf=elf
             )
+        child: object
         for child in (None, {}):
             with self.assertRaises(AssertionError):
                 config_platform.compose_policy(policy, (policy, child))
 
-    def test_consumer_rejects_lost_qualifiers_or_changed_identity_and_keeps_budget_gate(self):
+    def test_consumer_rejects_lost_qualifiers_or_changed_identity_and_keeps_budget_gate(
+        self,
+    ) -> None:
         import config_platform
         from test_validation_policy import MemoryQualification, supplied_stack_record
         from dataclasses import replace
@@ -4879,10 +5897,10 @@ class ConditionalStackPolicy(unittest.TestCase):
         elf, eav, base = MemoryQualification().fixture()
         source = elf.fixture_source_context
         policy = config_platform.current_image_policy(base["policies"][0], elf, eav)
-        bounds = dict(boot=4096, constructor=12000, runtime=13000, dashboard=18000)
+        bounds = StackBounds(boot=4096, constructor=12000, runtime=13000, dashboard=18000)
         result = supplied_stack_record(bounds, 65536, policy, elf, source)
         for fault in ("status", "platform_policy", "hardware_qualified", "policies", "headroom"):
-            record = json.loads(json.dumps(result))
+            record = object_fields(json.loads(json.dumps(result)), "stack fixture")
             if fault == "status":
                 record[fault] = "PASS"
             elif fault == "hardware_qualified":
@@ -4890,7 +5908,7 @@ class ConditionalStackPolicy(unittest.TestCase):
             elif fault == "policies":
                 record[fault] = []
             elif fault == "headroom":
-                record[fault] += 8
+                record[fault] = integer_value(record[fault], "headroom") + 8
             else:
                 record.pop(fault)
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
@@ -4907,7 +5925,7 @@ class ConditionalStackPolicy(unittest.TestCase):
 
 
 class OwnedPlatformDependencies(unittest.TestCase):
-    def fixture(self, role="advanced_default_fields"):
+    def fixture(self: unittest.TestCase, role: str = "advanced_default_fields") -> OwnedAccess:
         from config_regions import Storage, borrow
         import config_owned_access
 
@@ -4931,7 +5949,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
             role, anchor, anchor + offset, "default", owner, frame, register, (saved, fault)
         )
 
-    def test_owned_records_keep_symbolic_stack_and_concrete_private_slot_distinct(self):
+    def test_owned_records_keep_symbolic_stack_and_concrete_private_slot_distinct(self) -> None:
         import config_owned_access
 
         for role in ("advanced_default_fields", "configuration_versions"):
@@ -4944,12 +5962,16 @@ class OwnedPlatformDependencies(unittest.TestCase):
             self.assertEqual((record["direction"], record["width"]), ("write", 4))
             self.assertEqual(record["source_phase"], "default_refill")
             self.assertEqual(
-                record["site"] - record["anchor"], 84 if role == "advanced_default_fields" else 28
+                integer_value(record["site"], "site") - integer_value(record["anchor"], "anchor"),
+                84 if role == "advanced_default_fields" else 28,
             )
-            self.assertEqual(record["owner"]["storage"]["space"], value.owner.storage.space)
+            self.assertEqual(
+                _fixture_object(_fixture_object(record["owner"])["storage"])["space"],
+                value.owner.storage.space,
+            )
             self.assertNotIn("runtime_sp", record)
 
-    def test_owned_record_rejects_changed_role_operation_receiver_phase_and_guard(self):
+    def test_owned_record_rejects_changed_role_operation_receiver_phase_and_guard(self) -> None:
         import config_owned_access
         from copy import deepcopy
 
@@ -4980,31 +6002,43 @@ class OwnedPlatformDependencies(unittest.TestCase):
                 elif fault == "direction":
                     changed["direction"] = "read"
                 elif fault == "site":
-                    changed["site"] += 2
+                    changed["site"] = integer_value(changed["site"], "site") + 2
                 elif fault == "phase":
-                    changed["owner"]["storage"]["phase"] = "retired_label"
+                    _fixture_object(_fixture_object(changed["owner"])["storage"])["phase"] = (
+                        "retired_label"
+                    )
                 elif fault == "receiver":
                     changed["receiver_register"] = "r0"
                 elif fault == "short":
-                    changed["owner"]["extent"] -= 1
+                    _fixture_object(changed["owner"])["extent"] = (
+                        integer_value(_fixture_object(changed["owner"])["extent"], "extent") - 1
+                    )
                 elif fault == "readonly":
-                    changed["owner"]["writable"] = False
+                    _fixture_object(changed["owner"])["writable"] = False
                 elif fault == "guard":
-                    changed["protected"][1].update(
-                        space=changed["owner"]["storage"]["space"],
-                        start=changed["owner"]["storage"]["start"] + changed["owner"]["offset"],
+                    _fixture_object(_fixture_array(changed["protected"])[1]).update(
+                        space=_fixture_object(_fixture_object(changed["owner"])["storage"])[
+                            "space"
+                        ],
+                        start=integer_value(
+                            _fixture_object(_fixture_object(changed["owner"])["storage"])["start"],
+                            "start",
+                        )
+                        + integer_value(_fixture_object(changed["owner"])["offset"], "offset"),
                         extent=4,
                     )
                 elif fault == "saves":
-                    changed["protected"].pop(0)
+                    _fixture_array(changed["protected"]).pop(0)
                 elif fault == "unknown_owner":
-                    changed["owner"]["storage"]["identity"] = "arbitrary raw output"
+                    _fixture_object(_fixture_object(changed["owner"])["storage"])["identity"] = (
+                        "arbitrary raw output"
+                    )
                 else:
                     changed["approved"] = True
                 with self.subTest(role=role, fault=fault), self.assertRaises(AssertionError):
                     config_owned_access.read_owned_access(changed)
 
-    def test_policy_retains_exact_expected_dependency_tuple_and_rejects_loss(self):
+    def test_policy_retains_exact_expected_dependency_tuple_and_rejects_loss(self) -> None:
         import config_platform
         from dataclasses import replace
         from copy import deepcopy
@@ -5040,23 +6074,26 @@ class OwnedPlatformDependencies(unittest.TestCase):
         )
         self.assertEqual(config_platform.compose_policy(policy, (policy, policy)), policy)
         for fault in ("missing", "empty", "duplicate", "extra", "v1", "phase", "width", "family"):
-            changed = deepcopy(record)
+            changed = deepcopy(dict(record))
+            dependencies_copy = _checked_fixture(
+                changed["owned_dependencies"], list[dict[str, object]]
+            )
             if fault == "missing":
                 changed.pop("owned_dependencies")
             elif fault == "empty":
                 changed["owned_dependencies"] = []
             elif fault == "duplicate":
-                changed["owned_dependencies"].append(deepcopy(changed["owned_dependencies"][0]))
+                dependencies_copy.append(deepcopy(dependencies_copy[0]))
             elif fault == "extra":
-                changed["owned_dependencies"].append(
-                    dict(changed["owned_dependencies"][0], activation="unrelated")
-                )
+                dependencies_copy.append(dict(dependencies_copy[0], activation="unrelated"))
             elif fault == "v1":
                 changed["schema"] = 1
             elif fault == "phase":
-                changed["owned_dependencies"][0]["owner"]["storage"]["phase"] = "retired"
+                _fixture_object(_fixture_object(dependencies_copy[0]["owner"])["storage"])[
+                    "phase"
+                ] = "retired"
             elif fault == "width":
-                changed["owned_dependencies"][0]["width"] = 8
+                dependencies_copy[0]["width"] = 8
             else:
                 changed["owned_family"] = "readonly_eav"
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
@@ -5079,7 +6116,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
                     objects, view, context, contradictory_effects=(), owned_dependencies=(supplied,)
                 )
 
-    def test_current_owned_sites_bind_typed_functions_bytes_and_relocations(self):
+    def test_current_owned_sites_bind_typed_functions_bytes_and_relocations(self) -> None:
         import config_owned_access
         import config_default
         from dataclasses import replace
@@ -5141,7 +6178,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
                     config_owned_access.current_owned_access(current, value)
                 current.elf.data = raw
 
-    def test_widget_roles_keep_all_eight_owner_index_and_receiver_pairs(self):
+    def test_widget_roles_keep_all_eight_owner_index_and_receiver_pairs(self) -> None:
         import config_owned_access
         from config_regions import borrow
         from dataclasses import replace
@@ -5161,49 +6198,59 @@ class OwnedPlatformDependencies(unittest.TestCase):
             )
             record = value.to_record()
             self.assertEqual(config_owned_access.read_owned_access(record), value)
-            self.assertEqual(record["receiver_start"] + 0x952, value.owner.start + 182)
+            self.assertEqual(
+                integer_value(record["receiver_start"], "receiver start") + 0x952,
+                value.owner.start + 182,
+            )
             for fault in ("index", "offset", "short", "phase", "receiver", "float_receiver"):
-                changed = json.loads(json.dumps(record))
+                changed = _fixture_object(json.loads(json.dumps(record)))
                 if fault == "index":
                     changed["loop_index"] = (i + 1) % 8
                 elif fault == "offset":
-                    changed["owner"]["offset"] += 4
+                    _fixture_object(changed["owner"])["offset"] = (
+                        integer_value(_fixture_object(changed["owner"])["offset"], "offset") + 4
+                    )
                 elif fault == "short":
-                    changed["owner"]["extent"] = 219
+                    _fixture_object(changed["owner"])["extent"] = 219
                 elif fault == "phase":
-                    changed["owner"]["storage"]["phase"] = "published"
+                    _fixture_object(_fixture_object(changed["owner"])["storage"])["phase"] = (
+                        "published"
+                    )
                 elif fault == "receiver":
-                    changed["receiver_start"] += 220
+                    changed["receiver_start"] = (
+                        integer_value(changed["receiver_start"], "receiver start") + 220
+                    )
                 else:
-                    changed["receiver_start"] = float(changed["receiver_start"])
+                    changed["receiver_start"] = float(
+                        integer_value(changed["receiver_start"], "receiver start")
+                    )
                 with self.subTest(i=i, fault=fault), self.assertRaises(AssertionError):
                     config_owned_access.read_owned_access(changed)
             for invalid in (-1, 8, True, None):
                 with self.subTest(index=invalid), self.assertRaises(AssertionError):
                     replace(value, loop_index=invalid)
 
-    def test_direct_policy_and_stack_readers_reject_numeric_and_boolean_aliases(self):
+    def test_direct_policy_and_stack_readers_reject_numeric_and_boolean_aliases(self) -> None:
         import config_platform
-        from test_validation_policy import MemoryQualification
-        from copy import deepcopy
+        from test_validation_policy import MemoryQualification, mutable_policy
 
         elf, eav, stack = MemoryQualification.owned_fixture(MemoryQualification())
         expected = config_platform.current_image_policy(stack["policies"][0], elf, eav)
         for fault in ("width", "owner_mutability", "frame_mutability", "loop_index"):
             for reader in ("policy", "stack"):
-                changed = deepcopy(stack)
-                entry = changed["policies"][0]["owned_dependencies"][0]
+                changed, policy, dependency_records = mutable_policy(stack)
+                entry = dependency_records[0]
                 if fault == "width":
                     entry["width"] = 4.0
                 elif fault == "owner_mutability":
-                    entry["owner"]["writable"] = 1
+                    _fixture_object(entry["owner"])["writable"] = 1
                 elif fault == "frame_mutability":
-                    entry["frame"]["writable"] = 1
+                    _fixture_object(entry["frame"])["writable"] = 1
                 else:
-                    changed["policies"][0]["owned_dependencies"][2]["loop_index"] = 0.0
+                    dependency_records[2]["loop_index"] = 0.0
                 with self.subTest(fault=fault, reader=reader), self.assertRaises(AssertionError):
                     if reader == "policy":
-                        config_platform.read_policy(changed["policies"][0], expected)
+                        config_platform.read_policy(policy, expected)
                     else:
                         config_platform.read_stack_result(
                             changed,
@@ -5215,7 +6262,9 @@ class OwnedPlatformDependencies(unittest.TestCase):
 
 
 class DefaultWidgetLoop(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, Storage]:
         objects, records, root, frame = DefaultPreparationInterfaces.fixture(
             self, code_shift, data_shift
         )
@@ -5273,7 +6322,7 @@ class DefaultWidgetLoop(unittest.TestCase):
             records[at] = Instruction(at, bytes.fromhex(row["bytes"]), op[0], operand)
         return objects, records, root, frame
 
-    def test_paired_widget_phase_keeps_eight_indices_epochs_and_failure_edges(self):
+    def test_paired_widget_phase_keeps_eight_indices_epochs_and_failure_edges(self) -> None:
         import config_default_widget
 
         for code, data in ((0, 0), (0x2800, 0x19000)):
@@ -5325,7 +6374,7 @@ class DefaultWidgetLoop(unittest.TestCase):
                 result["requires_actual_incoming_exclusive_slot_fault_SP_and_whole_parent_graph"]
             )
 
-    def test_loop_guard_stride_receiver_copy_and_selector_operands_cannot_drift(self):
+    def test_loop_guard_stride_receiver_copy_and_selector_operands_cannot_drift(self) -> None:
         import config_default_widget
 
         for offset, operand in (
@@ -5344,7 +6393,7 @@ class DefaultWidgetLoop(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 config_default_widget.widget_loop(objects, root, records, frame, ())
 
-    def test_foreign_entry_data_ingress_and_published_phase_are_not_prepared_state(self):
+    def test_foreign_entry_data_ingress_and_published_phase_are_not_prepared_state(self) -> None:
         import config_default_widget
         from dataclasses import replace
 
@@ -5360,7 +6409,9 @@ class DefaultWidgetLoop(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_default_widget.widget_loop(objects, root, records, frame, ())
 
-    def test_paired_label_and_limit_tables_reject_while_numeric_payload_stays_abstract(self):
+    def test_paired_label_and_limit_tables_reject_while_numeric_payload_stays_abstract(
+        self,
+    ) -> None:
         import config_default_widget
 
         for fault in ("labels", "length", "limit", "numeric"):
@@ -5390,7 +6441,7 @@ class DefaultWidgetLoop(unittest.TestCase):
                 with self.subTest(fault=fault), self.assertRaises(AssertionError):
                     config_default_widget.widget_loop(objects, root, records, frame, ())
 
-    def test_shared_copy_preserves_live_output_and_parent_guards_across_restored_tail(self):
+    def test_shared_copy_preserves_live_output_and_parent_guards_across_restored_tail(self) -> None:
         from config_refill_children import opaque_copy_interface
         from config_regions import Storage, borrow
         from dataclasses import replace
@@ -5411,7 +6462,8 @@ class DefaultWidgetLoop(unittest.TestCase):
             "foreign_source",
             "unaligned_SP",
         ):
-            src, dest, active, protected = source, output, frame, ()
+            protected: tuple[Storage, ...] = ()
+            src, dest, active = source, output, frame
             if fault == "deep_guard":
                 protected = (guard,)
             elif fault == "overlap":
@@ -5436,7 +6488,9 @@ class DefaultWidgetLoop(unittest.TestCase):
 
 
 class DefaultSourceTerminal(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, Storage]:
         objects, records, root, frame = DefaultWidgetLoop.fixture(self, code_shift, data_shift)
         donor, child_records, item = RefillChildInterfaces.fixture(
             self, "sizez", code_shift, data_shift
@@ -5458,8 +6512,13 @@ class DefaultSourceTerminal(unittest.TestCase):
         objects.elf.symbol_entries = list(
             dict.fromkeys(objects.elf.symbol_entries + donor.elf.symbol_entries)
         )
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures/config-default-sources.json").read_text()
+        extra = _checked_fixture(
+            _image_delta(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-default-sources.json").read_text()
+                )
+            ),
+            SourceDelta,
         )
         for index, original, encoded in extra["segments"]:
             section = objects.elf.sections[index]
@@ -5471,10 +6530,9 @@ class DefaultSourceTerminal(unittest.TestCase):
         )
         objects.sizes.update({int(a) + code_shift: v for a, v in extra["sizes"].items()})
         for entry in extra["symbol_entries"]:
-            entry = list(entry)
-            entry[1] += code_shift
-            if tuple(entry) not in objects.elf.symbol_entries:
-                objects.elf.symbol_entries.append(tuple(entry))
+            moved = (entry[0], entry[1] + code_shift, *entry[2:])
+            if moved not in objects.elf.symbol_entries:
+                objects.elf.symbol_entries.append(moved)
         for original in extra["pointer_cells"]:
             section = next(
                 v
@@ -5500,7 +6558,7 @@ class DefaultSourceTerminal(unittest.TestCase):
         objects.elf.data = bytes(raw)
         return objects, records, root, frame
 
-    def test_source_array_pairs_reset_and_terminal_validator_handoff(self):
+    def test_source_array_pairs_reset_and_terminal_validator_handoff(self) -> None:
         import config_default_sources
 
         for code, data in ((0, 0), (0x2800, 0x19000)):
@@ -5539,7 +6597,7 @@ class DefaultSourceTerminal(unittest.TestCase):
             self.assertEqual(result["history_count"], 8)
             self.assertEqual(result["led_padding"], (1, 5, 9, 11, 15, 19, 25))
 
-    def test_source_reset_stride_copy_history_and_receiver_operands_are_closed(self):
+    def test_source_reset_stride_copy_history_and_receiver_operands_are_closed(self) -> None:
         import config_default_sources
 
         for offset, operand in (
@@ -5558,7 +6616,7 @@ class DefaultSourceTerminal(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 config_default_sources.source_terminal(objects, root, records, frame, ())
 
-    def test_source_ids_channel_controls_and_led_selectors_stay_typed(self):
+    def test_source_ids_channel_controls_and_led_selectors_stay_typed(self) -> None:
         import config_default_sources
 
         for fault, address in (
@@ -5587,7 +6645,7 @@ class DefaultSourceTerminal(unittest.TestCase):
                 with self.subTest(fault=fault), self.assertRaises(AssertionError):
                     config_default_sources.source_terminal(objects, root, records, frame, ())
 
-    def test_foreign_source_entry_or_interior_cannot_borrow_widget_handoff(self):
+    def test_foreign_source_entry_or_interior_cannot_borrow_widget_handoff(self) -> None:
         import config_default_sources
 
         for offset in (0, 18):
@@ -5597,7 +6655,7 @@ class DefaultSourceTerminal(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 config_default_sources.source_terminal(objects, root, records, frame, ())
 
-    def test_two_aligned_LED_object_does_not_satisfy_the_word_LDM_consumer(self):
+    def test_two_aligned_LED_object_does_not_satisfy_the_word_LDM_consumer(self) -> None:
         import config_default_sources
 
         objects, records, root, frame = self.fixture()
@@ -5610,7 +6668,7 @@ class DefaultSourceTerminal(unittest.TestCase):
         self.assertGreaterEqual(offset, 0)
         new = section[3] + offset + ((2 - section[3] - offset) % 4)
 
-        def index(address):
+        def index(address: int) -> int:
             owner = next(
                 v for v in objects.elf.sections if v[2] & 2 and v[3] <= address < v[3] + v[5]
             )
@@ -5626,31 +6684,33 @@ class DefaultSourceTerminal(unittest.TestCase):
 
 
 class BoundedMixedSourceWindows(unittest.TestCase):
-    def fixture(self):
+    def fixture(
+        self,
+    ) -> tuple[DiagnosticFixture, str, dict[int, Instruction], BodyContract[object], int]:
         base = 0x10001000
         raw = bytes.fromhex("01e0aabbccdd7047")
         name = "source_parent"
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=raw,
             sections=[(0, 1, 6, base, 0, 8, 0, 0, 2, 0)],
             functions={name: (base | 1, 8, 0)},
             mapping_symbols=[("$t", base, 0), ("$d", base + 2, 0), ("$t.1", base + 6, 0)],
         )
-        objects = config_stack.DiagnosticObjects(elf, {base: 8})
+        objects = diagnostic_fixture(elf, {base: 8})
         records = {
             base: Instruction(base, raw[:2], "b", hex(base + 6)),
             base + 6: Instruction(base + 6, raw[6:], "bx", "lr"),
         }
-        contract = dict(
+        contract = BodyContract[object](
             extent=8,
-            mapping=[[0, 2, "t"], [2, 6, "d"], [6, 8, "t"]],
+            mapping=[(0, 2, "t"), (2, 6, "d"), (6, 8, "t")],
             instructions=[(0, 2, "b @self+6"), (6, 2, "bx lr")],
             objects=[],
             data=[(2, 4, "aabbccdd")],
         )
         return objects, name, records, contract, base
 
-    def test_explicit_bounded_partition_covers_exact_current_code_and_data(self):
+    def test_explicit_bounded_partition_covers_exact_current_code_and_data(self) -> None:
         from config_finite import _literal_body
 
         objects, name, records, contract, base = self.fixture()
@@ -5659,7 +6719,7 @@ class BoundedMixedSourceWindows(unittest.TestCase):
         )
         self.assertEqual((proof["function"], proof["extent"]), (base, 8))
 
-    def test_old_terminal_windows_do_not_inherit_mixed_permission_or_uncovered_data(self):
+    def test_old_terminal_windows_do_not_inherit_mixed_permission_or_uncovered_data(self) -> None:
         from config_finite import _literal_body
         from copy import deepcopy
 
@@ -5669,11 +6729,13 @@ class BoundedMixedSourceWindows(unittest.TestCase):
             if fault == "terminal":
                 contract.pop("mapping")
             elif fault == "partition":
-                contract["mapping"][1][1] = 4
+                mapping = list(contract["mapping"])
+                mapping[1] = (mapping[1][0], 4, mapping[1][2])
+                contract["mapping"] = mapping
             elif fault == "missing_data":
                 contract["data"] = []
             elif fault == "overlap_data":
-                contract["data"].append((2, 4, "aabbccdd"))
+                contract["data"] = [*contract["data"], (2, 4, "aabbccdd")]
             else:
                 records[base + 2] = Instruction(base + 2, bytes.fromhex("aabb"), "nop", "")
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
@@ -5691,7 +6753,7 @@ class BoundedMixedSourceWindows(unittest.TestCase):
 
 
 class OrdinaryContexts(unittest.TestCase):
-    def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
+    def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self) -> None:
         from config_regions import Storage, require_disjoint
 
         saved = Storage("stack:boot", "saved_r8", 284, 4, 4, "validation", False)
@@ -5707,7 +6769,7 @@ class OrdinaryContexts(unittest.TestCase):
                     require_disjoint(container((saved, other)))
             require_disjoint(container((saved, adjacent)))
 
-    def test_one_shot_protection_remains_live_for_every_declared_write(self):
+    def test_one_shot_protection_remains_live_for_every_declared_write(self) -> None:
         from config_regions import Storage, borrow, require_writes
 
         saved = Storage("stack:boot", "saved_r8", 284, 4, 4, "validation", False)
@@ -5721,7 +6783,7 @@ class OrdinaryContexts(unittest.TestCase):
                 ):
                     require_writes((view,), iter(writes), container((saved,)))
 
-    def test_one_shot_available_views_are_reused_for_all_writes(self):
+    def test_one_shot_available_views_are_reused_for_all_writes(self) -> None:
         from config_regions import Storage, borrow, require_writes
 
         owner = Storage("stack:boot", "output", 280, 12, 2, "validation", True)
@@ -5732,7 +6794,7 @@ class OrdinaryContexts(unittest.TestCase):
                 container((view,)), iter(((view, 0, 4), (view, 8, 4))), container((saved,))
             )
 
-    def test_checked_borrows_and_helper_writes_keep_exact_parent_ownership(self):
+    def test_checked_borrows_and_helper_writes_keep_exact_parent_ownership(self) -> None:
         from config_regions import Storage, borrow, require_writes
 
         local = Storage("stack:boot", "scratch", 0, 184, 4, "validation", True)
@@ -5745,7 +6807,9 @@ class OrdinaryContexts(unittest.TestCase):
         with self.assertRaises(AssertionError):
             borrow(local, 0, 4, "publication")
 
-    def test_helper_output_cannot_alias_protected_carrier_even_with_another_owner_name(self):
+    def test_helper_output_cannot_alias_protected_carrier_even_with_another_owner_name(
+        self,
+    ) -> None:
         from config_regions import Storage, borrow, require_writes, require_disjoint
 
         saved = Storage("stack:boot", "saved_r8", 284, 4, 4, "validation", False)
@@ -5758,7 +6822,7 @@ class OrdinaryContexts(unittest.TestCase):
         adjacent = Storage("stack:boot", "output", 288, 12, 2, "validation", True)
         require_disjoint((saved, adjacent))
 
-    def test_call_interfaces_preserve_receiver_levels_objects_and_source_domains(self):
+    def test_call_interfaces_preserve_receiver_levels_objects_and_source_domains(self) -> None:
         from config_regions import Storage, borrow, Argument, require_arguments
 
         pool = Storage("address", "boot_pool", 0x20000000, 48, 4, "entry", True)
@@ -5777,7 +6841,9 @@ class OrdinaryContexts(unittest.TestCase):
         with self.assertRaises(AssertionError):
             require_arguments({"r1": wide}, {"r1": small})
 
-    def test_join_requires_each_predecessor_to_supply_the_same_owned_pointer_and_length(self):
+    def test_join_requires_each_predecessor_to_supply_the_same_owned_pointer_and_length(
+        self,
+    ) -> None:
         from config_regions import Storage, borrow, Argument, require_join
 
         label_a = Storage("address", "label_a", 0x10000000, 9, 1, "defaults", False)
@@ -5790,7 +6856,7 @@ class OrdinaryContexts(unittest.TestCase):
         with self.assertRaises(AssertionError):
             require_join(({"r11": a, "r4": n3}, {"r11": b, "r4": n9}), {"r11": a, "r4": n9})
 
-    def test_readonly_borrow_of_mutable_owner_does_not_grant_a_helper_write(self):
+    def test_readonly_borrow_of_mutable_owner_does_not_grant_a_helper_write(self) -> None:
         from config_regions import Storage, borrow, require_writes, Argument, require_arguments
 
         owner = Storage("stack:caller", "Config", 0, 32, 4, "validated", True)
@@ -5805,7 +6871,7 @@ class OrdinaryContexts(unittest.TestCase):
 
     def test_context_ranges_and_domains_reject_wrap_empty_values_and_foreign_coordinate_spaces(
         self,
-    ):
+    ) -> None:
         from config_regions import Storage, borrow, Argument, require_join
 
         for start, extent in ((0xFFFFFFF0, 32), (-1, 4), (0, 0)):
@@ -5825,7 +6891,7 @@ class OrdinaryContexts(unittest.TestCase):
 
 
 class OrdinaryCoverage(unittest.TestCase):
-    def test_unsupported_multiple_load_pc_cannot_have_ordinary_fallthrough(self):
+    def test_unsupported_multiple_load_pc_cannot_have_ordinary_fallthrough(self) -> None:
         from dataclasses import replace
         from config_regions import Transfer, audit_coverage
 
@@ -5854,7 +6920,7 @@ class OrdinaryCoverage(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaises(AssertionError):
                 audit_coverage(objects, name, records, context, (region,))
 
-    def test_pc_relative_reads_and_reviewed_stack_returns_keep_their_classification(self):
+    def test_pc_relative_reads_and_reviewed_stack_returns_keep_their_classification(self) -> None:
         from config_regions import _control
 
         for operation, operands, expected in (
@@ -5866,20 +6932,22 @@ class OrdinaryCoverage(unittest.TestCase):
             with self.subTest(operation=operation):
                 self.assertEqual(_control(Instruction(0, b"\0\0", operation, operands)), expected)
 
-    def fixture(self, data=b""):
+    def fixture(
+        self, data: bytes = b""
+    ) -> tuple[DiagnosticFixture, str, dict[int, Instruction], tuple[int, str, str], Region]:
         from config_regions import Region, Transfer
 
         base = 0x10000000
         name = "_RNvCs123_4test5frame"
         raw = bytes.fromhex("80b56f4680bd") + data
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=raw,
             sections=[(0, 1, 6, base, 0, len(raw), 0, 0, 2, 0)],
             functions={name: (base | 1, len(raw), 0)},
             symbol_entries=[(name, base | 1, len(raw), 18, 0)],
             mapping_symbols=[("$t", base, 0)] + ([("$d", base + 6, 0)] if data else []),
         )
-        objects = config_stack.DiagnosticObjects(elf, {base: 8})
+        objects = diagnostic_fixture(elf, {base: 8})
         records = {
             base: Instruction(base, raw[:2], "push", "{r7, lr}"),
             base + 2: Instruction(base + 2, raw[2:4], "mov", "r7, sp"),
@@ -5897,7 +6965,9 @@ class OrdinaryCoverage(unittest.TestCase):
         )
         return objects, name, records, context, region
 
-    def test_complete_current_code_and_return_coverage_has_no_source_or_effect_exemption(self):
+    def test_complete_current_code_and_return_coverage_has_no_source_or_effect_exemption(
+        self,
+    ) -> None:
         from config_regions import audit_coverage
 
         objects, name, records, context, region = self.fixture()
@@ -5905,7 +6975,7 @@ class OrdinaryCoverage(unittest.TestCase):
         self.assertEqual((proof["code_bytes"], proof["data_bytes"], proof["frame"]), (6, 0, 8))
         self.assertTrue(proof["requires_authored_semantics_source_and_child_effects"])
 
-    def test_uncovered_overlap_wrong_context_and_missing_return_are_rejected(self):
+    def test_uncovered_overlap_wrong_context_and_missing_return_are_rejected(self) -> None:
         from dataclasses import replace
         from config_regions import audit_coverage
 
@@ -5920,7 +6990,9 @@ class OrdinaryCoverage(unittest.TestCase):
             with self.subTest(regions=regions), self.assertRaises(AssertionError):
                 audit_coverage(objects, name, records, context, regions)
 
-    def test_implicit_pc_write_or_unbound_register_transfer_cannot_hide_in_covered_bytes(self):
+    def test_implicit_pc_write_or_unbound_register_transfer_cannot_hide_in_covered_bytes(
+        self,
+    ) -> None:
         from config_regions import audit_coverage
 
         for raw, mnemonic, operands in (
@@ -5936,7 +7008,7 @@ class OrdinaryCoverage(unittest.TestCase):
             with self.subTest(operation=mnemonic), self.assertRaises(AssertionError):
                 audit_coverage(objects, name, records, context, (region,))
 
-    def test_cross_region_fallthrough_needs_its_exact_continuation(self):
+    def test_cross_region_fallthrough_needs_its_exact_continuation(self) -> None:
         from dataclasses import replace
         from config_regions import audit_coverage, Transfer
 
@@ -5959,7 +7031,7 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             audit_coverage(objects, name, records, context, (bad, last))
 
-    def test_mapped_data_requires_complete_current_bytes_and_cannot_be_code(self):
+    def test_mapped_data_requires_complete_current_bytes_and_cannot_be_code(self) -> None:
         from dataclasses import replace
         from config_regions import audit_coverage, Region
 
@@ -5978,7 +7050,7 @@ class OrdinaryCoverage(unittest.TestCase):
             with self.subTest(data=bad), self.assertRaises(AssertionError):
                 audit_coverage(objects, name, records, context, (region, bad))
 
-    def test_a_matched_issuer_region_does_not_cover_the_rest_of_its_loader(self):
+    def test_a_matched_issuer_region_does_not_cover_the_rest_of_its_loader(self) -> None:
         from config_regions import Region, audit_coverage
         import config_upstream
 
@@ -5993,7 +7065,7 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             audit_coverage(objects, name, records, context, (region,))
 
-    def test_conditional_external_tail_must_keep_its_untaken_fallthrough(self):
+    def test_conditional_external_tail_must_keep_its_untaken_fallthrough(self) -> None:
         from dataclasses import replace
         from config_regions import Transfer, audit_coverage
 
@@ -6038,7 +7110,7 @@ class OrdinaryCoverage(unittest.TestCase):
                     1,
                 )
 
-    def test_unconditional_bound_register_branch_has_no_fallthrough(self):
+    def test_unconditional_bound_register_branch_has_no_fallthrough(self) -> None:
         from dataclasses import replace
         from config_regions import Transfer, audit_coverage
 
@@ -6064,7 +7136,7 @@ class OrdinaryCoverage(unittest.TestCase):
             0,
         )
 
-    def test_all_data_mapping_cannot_serve_as_a_thumb_function_entry(self):
+    def test_all_data_mapping_cannot_serve_as_a_thumb_function_entry(self) -> None:
         from config_regions import Region, audit_coverage
 
         objects, name, records, context, region = self.fixture()
@@ -6074,7 +7146,7 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             audit_coverage(objects, name, {}, context, (data,))
 
-    def test_foreign_direct_transfer_cannot_enter_a_function_region_interior(self):
+    def test_foreign_direct_transfer_cannot_enter_a_function_region_interior(self) -> None:
         from config_regions import audit_coverage
 
         objects, name, records, context, region = self.fixture()
@@ -6083,7 +7155,7 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             audit_coverage(objects, name, records, context, (region,))
 
-    def test_exact_post_return_nop_padding_requires_no_incoming_or_fallthrough_edge(self):
+    def test_exact_post_return_nop_padding_requires_no_incoming_or_fallthrough_edge(self) -> None:
         from dataclasses import replace
         from config_regions import audit_coverage, Region, Transfer
 
@@ -6129,7 +7201,7 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):
             audit_coverage(objects, name, records, context, (region, padding))
 
-    def test_post_return_padding_can_precede_completely_owned_literal_data(self):
+    def test_post_return_padding_can_precede_completely_owned_literal_data(self) -> None:
         from config_regions import Region, audit_coverage
 
         objects, name, records, context, region = self.fixture()
@@ -6151,14 +7223,16 @@ class OrdinaryCoverage(unittest.TestCase):
 
 
 class RootLocations(unittest.TestCase):
-    def fixture(self, path, line=61, column=63):
+    def fixture(self, path: str, line: int = 61, column: int = 63) -> tuple[DiagnosticFixture, int]:
         value = path.encode("utf-8")
         base = 0x10000000
         blob = struct.pack("<4I", base + 16, len(value), line, column) + value
-        elf = SimpleNamespace(data=blob, sections=[(0, 1, 2, base, 0, len(blob), 0, 0, 4, 0)])
-        return config_stack.DiagnosticObjects(elf, {}), base
+        elf = ImageFixture(data=blob, sections=[(0, 1, 2, base, 0, len(blob), 0, 0, 4, 0)])
+        return diagnostic_fixture(elf, {}), base
 
-    def test_location_source_role_line_column_accept_actual_host_prefixes_and_separator_forms(self):
+    def test_location_source_role_line_column_accept_actual_host_prefixes_and_separator_forms(
+        self,
+    ) -> None:
         import config_roots
 
         for path in (
@@ -6173,7 +7247,7 @@ class RootLocations(unittest.TestCase):
             self.assertEqual(proof["filename_bytes"], path.encode("utf-8"))
             self.assertEqual((proof["line"], proof["column"]), (61, 63))
 
-    def test_location_wrong_role_line_column_suffix_storage_or_nonpath_bytes_reject(self):
+    def test_location_wrong_role_line_column_suffix_storage_or_nonpath_bytes_reject(self) -> None:
         import config_roots
 
         for fault in (
@@ -6205,7 +7279,7 @@ class RootLocations(unittest.TestCase):
             if fault == "writable":
                 section = list(objects.elf.sections[0])
                 section[2] |= 1
-                objects.elf.sections[0] = tuple(section)
+                objects.elf.sections[0] = section_fields(section)
             if fault == "unaligned":
                 address += 1
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
@@ -6214,11 +7288,73 @@ class RootLocations(unittest.TestCase):
                 )
 
 
+class PanicInstruction(TypedDict):
+    offset: int
+    operation: str
+    bytes_hex: str
+
+
+class PanicFunction(TypedDict):
+    shape: str
+    address: int
+    aliases: list[str]
+    extent: int
+    frame: int
+    mapping: list[tuple[int, int, str]]
+    body_hex: str
+    instructions: list[PanicInstruction]
+
+
+class PanicExtra(TypedDict):
+    address: str
+    raw_roles: list[str]
+    extent: int
+    frame: int
+
+
+class PanicSlot(TypedDict):
+    address: str
+
+
+class PanicObject(TypedDict):
+    kind: str
+    value: str
+    address: NotRequired[str]
+    raw_role: NotRequired[str]
+    raw_symbol: NotRequired[str]
+    bytes_hex: NotRequired[str]
+    layout_words: NotRequired[list[int]]
+    slots: NotRequired[dict[str, PanicSlot]]
+
+
+class PanicFixture(TypedDict):
+    mode: str
+    functions: list[PanicFunction]
+    extra_functions: list[PanicExtra]
+    objects: dict[str, PanicObject]
+
+
+def _panic_fixtures(value: object) -> list[PanicFixture]:
+    records = array_items(value, "panic fixtures")
+    for raw_record in records:
+        record = _fixture_object(raw_record)
+        for raw_function in _fixture_array(record["functions"]):
+            function = _fixture_object(raw_function)
+            function["mapping"] = [
+                _fixture_interval(v) for v in _fixture_array(function["mapping"])
+            ]
+    return _checked_fixture(records, list[PanicFixture])
+
+
 class PanicBodies(unittest.TestCase):
-    def fixture(self, mode, code_shift=0, data_shift=0, guard_shift=0):
+    def fixture(
+        self, mode: str, code_shift: int = 0, data_shift: int = 0, guard_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], PanicFixture]:
         spec = next(
             r
-            for r in json.loads((Path(__file__).parent / "fixtures/config-panic.json").read_text())
+            for r in _panic_fixtures(
+                json.loads((Path(__file__).parent / "fixtures/config-panic.json").read_text())
+            )
             if r["mode"] == mode
         )
         if code_shift or data_shift or guard_shift:
@@ -6301,12 +7437,12 @@ class PanicBodies(unittest.TestCase):
                         struct.pack_into("<I", body, offset, relocation.get(old, old))
                 f["body_hex"] = body.hex()
                 f["address"] += code_shift
-            for f in spec["extra_functions"]:
-                f["address"] = hex(int(f["address"], 16) + code_shift)
+            for extra in spec["extra_functions"]:
+                extra["address"] = hex(int(extra["address"], 16) + code_shift)
         segments = []
         functions = {}
         sizes = {}
-        mappings = []
+        mappings: list[tuple[str, int, int]] = []
         records = {}
         for f in spec["functions"]:
             start = f["address"]
@@ -6324,13 +7460,13 @@ class PanicBodies(unittest.TestCase):
                     parts[0],
                     parts[1] if len(parts) > 1 else "",
                 )
-        for f in spec["extra_functions"]:
-            start = int(f["address"], 16)
-            for name in f["raw_roles"]:
-                functions[name] = (start | 1, f["extent"], 0)
-            sizes[start] = f["frame"]
+        for extra in spec["extra_functions"]:
+            start = int(extra["address"], 16)
+            for name in extra["raw_roles"]:
+                functions[name] = (start | 1, extra["extent"], 0)
+            sizes[start] = extra["frame"]
             if not any(a <= start < a + len(b) for a, b in segments):
-                segments.append((start, bytes(f["extent"])))
+                segments.append((start, bytes(extra["extent"])))
         symbols = []
         guard = None
         for key, obj in spec["objects"].items():
@@ -6367,7 +7503,9 @@ class PanicBodies(unittest.TestCase):
             blob[a - code_lo : a - code_lo + len(b)] = b
         meta = (0, 1, 0x200000, 0, len(blob), 64, 0, 0, 1, 0)
         blob += bytes(64)
-        elf = SimpleNamespace(
+        if guard is None:
+            raise AssertionError("panic fixture must provide its guard")
+        elf = ImageFixture(
             data=bytes(blob),
             functions=functions,
             mapping_symbols=mappings,
@@ -6380,9 +7518,9 @@ class PanicBodies(unittest.TestCase):
             ],
             named={".defmt": meta},
         )
-        return config_stack.DiagnosticObjects(elf, sizes), records, spec
+        return diagnostic_fixture(elf, sizes), records, spec
 
-    def test_complete_panic_shapes_objects_and_guarded_reentry_all_modes(self):
+    def test_complete_panic_shapes_objects_and_guarded_reentry_all_modes(self) -> None:
         import config_panic
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -6393,7 +7531,7 @@ class PanicBodies(unittest.TestCase):
                 if f["shape"].startswith("handler"):
                     self.assertEqual(proof["guarded_reentry_frames"], (32, 32))
 
-    def test_independent_panic_code_readonly_guard_relocation_preserves_ids(self):
+    def test_independent_panic_code_readonly_guard_relocation_preserves_ids(self) -> None:
         import config_panic
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -6404,7 +7542,7 @@ class PanicBodies(unittest.TestCase):
                 if f["shape"].startswith("handler"):
                     self.assertEqual(proof["objects"]["header_id"], 14 if mode != "sizes" else 15)
 
-    def test_guard_order_callback_cells_and_restoring_epilogue_mutations_reject(self):
+    def test_guard_order_callback_cells_and_restoring_epilogue_mutations_reject(self) -> None:
         import config_panic
 
         for shape, offset, mnemonic, operands in [
@@ -6423,7 +7561,9 @@ class PanicBodies(unittest.TestCase):
             with self.subTest(shape=shape, offset=offset), self.assertRaises(AssertionError):
                 config_panic.panic_body(objects, f["aliases"][0], records)
 
-    def test_panic_tables_literals_terminal_address_and_current_callback_metadata_reject(self):
+    def test_panic_tables_literals_terminal_address_and_current_callback_metadata_reject(
+        self,
+    ) -> None:
         import config_panic
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -6445,7 +7585,7 @@ class PanicBodies(unittest.TestCase):
                     if fault.startswith("table_") or fault == "callback_frame"
                     else ("outer_template" if fault == "template" else "prefix")
                 )
-                obj = spec["objects"].get(key)
+                obj = spec["objects"][key]
                 if fault == "guard_alias":
                     objects.elf.symbol_entries.append(objects.elf.symbol_entries[0])
                 elif fault == "shcsr":
@@ -6486,7 +7626,7 @@ class PanicBodies(unittest.TestCase):
                     with self.subTest(mode=mode, fault=fault), self.assertRaises(AssertionError):
                         config_panic.panic_body(objects, f["aliases"][0], records)
 
-    def test_sizez_literal_pool_binding_and_full_body_coverage_reject(self):
+    def test_sizez_literal_pool_binding_and_full_body_coverage_reject(self) -> None:
         import config_panic
 
         for fault in ("pool", "mapping", "partial", "raw", "epilogue_frame"):
@@ -6517,7 +7657,7 @@ class PanicBodies(unittest.TestCase):
 
 
 class DiagnosticRoots(unittest.TestCase):
-    def test_returned_widget_view_and_unknown_debug_roots_reject(self):
+    def test_returned_widget_view_and_unknown_debug_roots_reject(self) -> None:
         self.assertEqual(error_root_role(VALIDATION), "validation_error")
         for symbol in [
             WIDGET,
@@ -6528,7 +7668,7 @@ class DiagnosticRoots(unittest.TestCase):
             with self.subTest(symbol=symbol), self.assertRaises(AssertionError):
                 error_root_role(symbol)
 
-    def test_role_does_not_depend_on_crate_disambiguator_or_clone_address(self):
+    def test_role_does_not_depend_on_crate_disambiguator_or_clone_address(self) -> None:
         moved = (
             VALIDATION.replace("CshxbT6mSCLYQ_", "Cs12345_").replace("Cs6m2Zc6X1WBq_", "Cs98765_")
             + ".169"
@@ -6537,20 +7677,23 @@ class DiagnosticRoots(unittest.TestCase):
 
 
 class TypedDiagnosticObjects(unittest.TestCase):
-    def fixture(self, shift=0):
+    def fixture(
+        self: unittest.TestCase, shift: int = 0
+    ) -> tuple[ImageFixture, int, dict[int, int]]:
         data = bytearray(128)
         base = 0x10000000 + shift
         struct.pack_into("<4I", data, 0, 0, 12, 2, base + 97)
         data[32:38] = b"\xc0\x02: \xc0\x00"
         data[48:69] = b"built-in widget count"
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(data),
             sections=[(0, 1, 2, base, 0, 96, 0, 0, 4, 0), (0, 1, 6, base + 96, 96, 32, 0, 0, 2, 0)],
             functions={VALIDATION: (base + 97, 8, 1)},
         )
-        return elf, base, {base + 96: 72}
+        sizes = {base + 96: 72}
+        return diagnostic_fixture(elf, sizes).elf, base, sizes
 
-    def test_typed_debug_vtable_and_default_arguments_relocate_by_role(self):
+    def test_typed_debug_vtable_and_default_arguments_relocate_by_role(self) -> None:
         for shift in (0, 0x1200):
             elf, base, sizes = self.fixture(shift)
             objects = config_stack.DiagnosticObjects(elf, sizes)
@@ -6560,7 +7703,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
                 objects.tagged_literal(base + 48, 43, "widget_count"), b"built-in widget count"
             )
 
-    def test_typed_object_wrong_role_layout_pointer_and_metadata_reject(self):
+    def test_typed_object_wrong_role_layout_pointer_and_metadata_reject(self) -> None:
         for mutation in (
             "role",
             "wrong_approved_role",
@@ -6617,7 +7760,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 config_stack.DiagnosticObjects(elf, sizes).debug_vtable(base, "validation_error")
 
-    def test_default_template_pretty_wrong_arity_and_tagged_length_reject(self):
+    def test_default_template_pretty_wrong_arity_and_tagged_length_reject(self) -> None:
         for mutation in ("pretty", "arity", "literal_length", "not_tagged", "wrong_literal"):
             elf, base, sizes = self.fixture()
             data = bytearray(elf.data)
@@ -6643,7 +7786,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
                         "widget_count",
                     )
 
-    def test_callback_extent_must_belong_to_its_declared_existing_code_section(self):
+    def test_callback_extent_must_belong_to_its_declared_existing_code_section(self) -> None:
         elf, base, sizes = self.fixture()
         # A different valid RO/EXEC section has the same flags, but does not own
         # this callback. The original section still backs the address and bytes.
@@ -6653,7 +7796,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack.DiagnosticObjects(elf, sizes).debug_vtable(base, "validation_error")
 
-    def test_payload_vtable_keeps_reference_type_origin_after_relocation(self):
+    def test_payload_vtable_keeps_reference_type_origin_after_relocation(self) -> None:
         for shift in (0, 0x1400):
             elf, base, sizes = self.fixture(shift)
             data = bytearray(elf.data)
@@ -6667,7 +7810,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
                 objects.debug_vtable(base, "control_error_ref")
             self.assertEqual(objects.debug_vtable(base, "u8_ref"), base + 96)
 
-    def test_reference_and_value_payload_layouts_cannot_substitute(self):
+    def test_reference_and_value_payload_layouts_cannot_substitute(self) -> None:
         elf, base, sizes = self.fixture()
         data = bytearray(elf.data)
         field = (
@@ -6685,25 +7828,25 @@ class TypedDiagnosticObjects(unittest.TestCase):
 
 
 class PanicSymbolObjects(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> tuple[DiagnosticFixture, str, str]:
         guard = "_RNvNvNtCs123_11panic_probe3imp5panic8PANICKED.0"
         identifier = '{"package":"panic-probe","tag":"defmt_error","data":"{}","disambiguator":"3281125884690968605","crate_name":"panic_probe"}'
         bss = (0, 8, 3, 0x20000000, 0, 32, 0, 0, 1, 0)
         metadata = (0, 1, 0x200000, 0, 0, 32, 0, 0, 1, 0)
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(32),
             sections=[bss, metadata],
             named={".defmt": metadata},
             symbol_entries=[(guard, 0x20000007, 1, 1, 0), (identifier, 14, 1, 17, 1)],
         )
-        return config_stack.DiagnosticObjects(elf, {}), guard, identifier
+        return diagnostic_fixture(elf, {}), guard, identifier
 
-    def test_guard_and_interned_symbol_ids_have_distinct_typed_storage(self):
+    def test_guard_and_interned_symbol_ids_have_distinct_typed_storage(self) -> None:
         objects, _, _ = self.fixture()
         self.assertEqual(objects.panic_guard(0x20000007), 0x20000007)
         self.assertEqual(objects.defmt_id(14, "header_id"), 14)
 
-    def test_defmt_pre_end_object_ids_reject_reserved_domain_with_coherent_metadata(self):
+    def test_defmt_pre_end_object_ids_reject_reserved_domain_with_coherent_metadata(self) -> None:
         for role in ("header_id", "display_encoding_id", "usize_encoding_id"):
             for value in (0, 65533, 65534, 65535):
                 objects, _, _ = self.fixture()
@@ -6716,7 +7859,7 @@ class PanicSymbolObjects(unittest.TestCase):
                 with self.subTest(role=role, value=value), self.assertRaises(AssertionError):
                     objects.defmt_id(value, role)
 
-    def test_defmt_pre_end_object_id_boundaries_accept(self):
+    def test_defmt_pre_end_object_id_boundaries_accept(self) -> None:
         for role in ("header_id", "display_encoding_id", "usize_encoding_id"):
             for value in (1, 65532):
                 objects, _, _ = self.fixture()
@@ -6729,7 +7872,7 @@ class PanicSymbolObjects(unittest.TestCase):
                 with self.subTest(role=role, value=value):
                     self.assertEqual(objects.defmt_id(value, role), value)
 
-    def test_guard_size_type_section_identity_and_duplicate_reject(self):
+    def test_guard_size_type_section_identity_and_duplicate_reject(self) -> None:
         for mutation in (
             "size",
             "type",
@@ -6743,7 +7886,7 @@ class PanicSymbolObjects(unittest.TestCase):
             "identical_duplicate",
         ):
             objects, guard, _ = self.fixture()
-            entry = list(objects.elf.symbol_entries[0])
+            entry = MutableSymbol(objects.elf.symbol_entries[0])
             if mutation == "size":
                 entry[2] = 2
             if mutation == "type":
@@ -6759,20 +7902,20 @@ class PanicSymbolObjects(unittest.TestCase):
             if mutation == "outside_section":
                 section = list(objects.elf.sections[0])
                 section[5] = 7
-                objects.elf.sections[0] = tuple(section)
+                objects.elf.sections[0] = section_fields(section)
             if mutation == "readonly":
                 section = list(objects.elf.sections[0])
                 section[2] = 2
-                objects.elf.sections[0] = tuple(section)
-            objects.elf.symbol_entries[0] = tuple(entry)
+                objects.elf.sections[0] = section_fields(section)
+            objects.elf.symbol_entries[0] = entry.as_tuple()
             if mutation == "duplicate":
                 objects.elf.symbol_entries.append((guard, 0x20000008, 1, 1, 0))
             if mutation == "identical_duplicate":
-                objects.elf.symbol_entries.append(tuple(entry))
+                objects.elf.symbol_entries.append(entry.as_tuple())
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 objects.panic_guard(0x20000007)
 
-    def test_interned_id_size_type_section_value_json_and_duplicate_reject(self):
+    def test_interned_id_size_type_section_value_json_and_duplicate_reject(self) -> None:
         for mutation in (
             "size",
             "type",
@@ -6787,7 +7930,7 @@ class PanicSymbolObjects(unittest.TestCase):
             "identical_duplicate",
         ):
             objects, _, identifier = self.fixture()
-            entry = list(objects.elf.symbol_entries[1])
+            entry = MutableSymbol(objects.elf.symbol_entries[1])
             if mutation == "size":
                 entry[2] = 2
             if mutation == "type":
@@ -6805,15 +7948,15 @@ class PanicSymbolObjects(unittest.TestCase):
             if mutation == "allocated":
                 section = list(objects.elf.sections[1])
                 section[2] |= 2
-                objects.elf.sections[1] = tuple(section)
-                objects.elf.named[".defmt"] = tuple(section)
+                objects.elf.sections[1] = section_fields(section)
+                objects.elf.named[".defmt"] = section_fields(section)
             if mutation == "truncated":
                 objects.elf.data = b""
-            objects.elf.symbol_entries[1] = tuple(entry)
+            objects.elf.symbol_entries[1] = entry.as_tuple()
             if mutation == "duplicate":
                 objects.elf.symbol_entries.append((identifier, 15, 1, 17, 1))
             if mutation == "identical_duplicate":
-                objects.elf.symbol_entries.append(tuple(entry))
+                objects.elf.symbol_entries.append(entry.as_tuple())
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 objects.defmt_id(14, "header_id")
 
@@ -6821,7 +7964,7 @@ class PanicSymbolObjects(unittest.TestCase):
 class BoundaryProducers(unittest.TestCase):
     fixture = TypedDiagnosticObjects.fixture
 
-    def block(self):
+    def block(self) -> list[Instruction]:
         return [
             Instruction(0x10000060, b"\x00\x23", "movs", "r3, #0x0"),
             Instruction(0x10000062, b"\x04\x4a", "ldr", "r2, [pc, #0x10]"),
@@ -6830,7 +7973,7 @@ class BoundaryProducers(unittest.TestCase):
             Instruction(0x10000068, b"\x00\xf0\x0a\xf8", "bl", "0x10000080 <advisory>"),
         ]
 
-    def test_current_pc_literal_or_movw_movt_identity_is_bound_to_consumer(self):
+    def test_current_pc_literal_or_movw_movt_identity_is_bound_to_consumer(self) -> None:
         elf, base, sizes = self.fixture()
         data = bytearray(elf.data)
         struct.pack_into("<I", data, 0x74, base)
@@ -6850,7 +7993,9 @@ class BoundaryProducers(unittest.TestCase):
         )
         self.assertEqual((value, sites), (0x10031234, (0x10000064, 0x10000060)))
 
-    def test_intervening_overwrite_branch_unknown_definition_and_unused_literal_fail_binding(self):
+    def test_intervening_overwrite_branch_unknown_definition_and_unused_literal_fail_binding(
+        self,
+    ) -> None:
         for mnemonic, operands in [
             ("movs", "r3, #0x0"),
             ("eors", "r3, r0"),
@@ -6875,7 +8020,7 @@ class BoundaryProducers(unittest.TestCase):
                 )
                 config_stack.DiagnosticObjects(elf, sizes).debug_vtable(value, "validation_error")
 
-    def test_branch_ingress_cannot_bypass_the_selected_producer(self):
+    def test_branch_ingress_cannot_bypass_the_selected_producer(self) -> None:
         elf, base, sizes = self.fixture()
         data = bytearray(elf.data)
         struct.pack_into("<I", data, 0x74, base)
@@ -6887,7 +8032,7 @@ class BoundaryProducers(unittest.TestCase):
             )
             config_stack.DiagnosticObjects(elf, sizes).debug_vtable(value, "validation_error")
 
-    def test_postindexed_store_base_writeback_clobbers_current_argument(self):
+    def test_postindexed_store_base_writeback_clobbers_current_argument(self) -> None:
         for mnemonic in ("str", "strd"):
             elf, base, sizes = self.fixture()
             data = bytearray(elf.data)
@@ -6905,7 +8050,7 @@ class BoundaryProducers(unittest.TestCase):
                 )
                 config_stack.DiagnosticObjects(elf, sizes).debug_vtable(value, "validation_error")
 
-    def test_implicit_pc_ingress_outside_producer_slice_rejects(self):
+    def test_implicit_pc_ingress_outside_producer_slice_rejects(self) -> None:
         for mnemonic, operands in [
             ("mov", "pc, r4"),
             ("ldr", "pc, [r4]"),
@@ -6922,7 +8067,7 @@ class BoundaryProducers(unittest.TestCase):
                 )
                 config_stack.DiagnosticObjects(elf, sizes).debug_vtable(value, "validation_error")
 
-    def test_caller_abi_return_forms_do_not_create_ingress(self):
+    def test_caller_abi_return_forms_do_not_create_ingress(self) -> None:
         for mnemonic, operands in [("bx", "lr"), ("pop", "{r4, pc}"), ("ldmia", "sp!, {r4, pc}")]:
             elf, base, sizes = self.fixture()
             data = bytearray(elf.data)
@@ -6934,7 +8079,9 @@ class BoundaryProducers(unittest.TestCase):
             )
             self.assertEqual(value, base)
 
-    def test_pc_relative_tbb_interval_disjoint_from_producer_is_only_ingress_exclusion(self):
+    def test_pc_relative_tbb_interval_disjoint_from_producer_is_only_ingress_exclusion(
+        self,
+    ) -> None:
         elf, base, sizes = self.fixture()
         data = bytearray(elf.data)
         struct.pack_into("<I", data, 0x74, base)
@@ -6949,7 +8096,7 @@ class BoundaryProducers(unittest.TestCase):
             )
             self.assertEqual(value, base)
 
-    def test_overlapping_unbounded_or_wrapping_table_ingress_rejects(self):
+    def test_overlapping_unbounded_or_wrapping_table_ingress_rejects(self) -> None:
         for address, mnemonic, operands, raw in [
             (0x10000000, "tbb", "[pc, r0]", bytes.fromhex("dfe800f0")),
             (0xFFFFFE00, "tbb", "[pc, r0]", bytes.fromhex("dfe800f0")),
@@ -6970,7 +8117,7 @@ class BoundaryProducers(unittest.TestCase):
                     block, 0x10000068, "r3", config_stack.DiagnosticObjects(elf, sizes)
                 )
 
-    def test_conditional_and_security_transfers_outside_slice_reject(self):
+    def test_conditional_and_security_transfers_outside_slice_reject(self) -> None:
         # Spellings independently confirmed with selected LLVM on a decoded-only
         # IT/BX/BLX/BXNS/BLXNS/SVC fixture; these remain semantic-record tests.
         for mnemonic, operands, raw in [
@@ -6992,7 +8139,9 @@ class BoundaryProducers(unittest.TestCase):
 
 
 class EnumDispatch(unittest.TestCase):
-    def fixture(self, shift=0, control=False):
+    def fixture(
+        self, shift: int = 0, control: bool = False
+    ) -> tuple[ImageFixture, int, str, list[Instruction]]:
         base = 0x10000000 + shift
         name = "_RNvXsd_NtCs123_16dashboard_config8validateNtB5_5FieldNtNtCs456_4core3fmt5Debug3fmt"
         prefix = [
@@ -7031,24 +8180,22 @@ class EnumDispatch(unittest.TestCase):
         data = code + table + bytes.fromhex("00bf") * count
         records = []
         address = base
-        for raw, mnemonic, operands in prefix:
-            raw = bytes.fromhex(raw)
+        for encoded, mnemonic, operands in prefix:
+            raw = bytes.fromhex(encoded)
             records.append(Instruction(address, raw, mnemonic, operands))
             address += len(raw)
         records += [
             Instruction(base + tail + 2 * i, bytes.fromhex("00bf"), "nop", "") for i in range(count)
         ]
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=data,
             sections=[(0, 1, 6, base, 0, len(data), 0, 0, 2, 0)],
             functions={name: (base | 1, len(data), 0)},
             mapping_symbols=[("$t", base, 0), ("$d", base + len(code), 0), ("$t", base + tail, 0)],
         )
-        # The complete byte-checked producer body, not an arbitrary table blob.
-        elf.function_bytes = lambda selected: elf.data
         return elf, base, name, records
 
-    def test_typed_field_dispatch_relocates_all_58_current_entries(self):
+    def test_typed_field_dispatch_relocates_all_58_current_entries(self) -> None:
         for shift in (0, 0x2000):
             elf, base, name, records = self.fixture(shift)
             dispatch = config_stack.enum_dispatch(
@@ -7057,7 +8204,7 @@ class EnumDispatch(unittest.TestCase):
             self.assertEqual(dispatch["role"], "field")
             self.assertEqual(dispatch["entries"], tuple(base + 134 + 2 * i for i in range(58)))
 
-    def test_control_dispatch_has_seven_cases_and_no_eighth_padding_case(self):
+    def test_control_dispatch_has_seven_cases_and_no_eighth_padding_case(self) -> None:
         elf, base, name, records = self.fixture(control=True)
         dispatch = config_stack.enum_dispatch(
             config_stack.DiagnosticObjects(elf, {base: 64}), name, records
@@ -7071,14 +8218,14 @@ class EnumDispatch(unittest.TestCase):
                 config_stack.DiagnosticObjects(elf, {base: 64}), name, records
             )
 
-    def test_valid_dispatch_alone_cannot_admit_unproved_case_bodies(self):
+    def test_valid_dispatch_alone_cannot_admit_unproved_case_bodies(self) -> None:
         elf, base, name, records = self.fixture()
         with self.assertRaises(AssertionError):
             config_stack.field_case_bindings(
                 config_stack.DiagnosticObjects(elf, {base: 16}), name, records
             )
 
-    def test_wrong_tag_transform_unbacked_data_and_nonentry_destinations_reject(self):
+    def test_wrong_tag_transform_unbacked_data_and_nonentry_destinations_reject(self) -> None:
         for fault in (
             "transform",
             "data_target",
@@ -7111,7 +8258,7 @@ class EnumDispatch(unittest.TestCase):
 
 
 class FieldSuffix(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> tuple[DiagnosticFixture, int, dict[int, Instruction]]:
         elf, base, sizes = TypedDiagnosticObjects.fixture(self)
         data = bytearray(elf.data)
         data[32:40] = b"Controls"
@@ -7143,9 +8290,10 @@ class FieldSuffix(unittest.TestCase):
             base + 0x200 + 4 * i: Instruction(base + 0x200 + 4 * i, bytes(4), m, o)
             for i, (m, o) in enumerate(specs)
         }
-        return config_stack.DiagnosticObjects(elf, sizes), base, records
+        # TypedDiagnosticObjects supplied this exact mutable namespace schema.
+        return cast(DiagnosticFixture, config_stack.DiagnosticObjects(elf, sizes)), base, records
 
-    def test_current_typed_controls_predecessor_binds_its_own_reference_and_vtable(self):
+    def test_current_typed_controls_predecessor_binds_its_own_reference_and_vtable(self) -> None:
         objects, base, records = self.fixture()
         binding, visited = config_stack._field_case(objects, records, base + 0x200, "Controls")
         self.assertEqual(
@@ -7154,7 +8302,9 @@ class FieldSuffix(unittest.TestCase):
         )
         self.assertEqual(visited, set(records))
 
-    def test_shared_suffix_cannot_borrow_valid_u8_object_or_skip_its_reference_producers(self):
+    def test_shared_suffix_cannot_borrow_valid_u8_object_or_skip_its_reference_producers(
+        self,
+    ) -> None:
         for fault in ("wrong_type", "ingress", "writeback", "wrong_field_offset", "overwrite"):
             objects, base, records = self.fixture()
             entry = base + 0x200
@@ -7176,7 +8326,7 @@ class FieldSuffix(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_stack._field_case(objects, records, entry, "Controls")
 
-    def test_unit_suffix_retains_live_sink_origin_and_exact_name(self):
+    def test_unit_suffix_retains_live_sink_origin_and_exact_name(self) -> None:
         objects, base, _ = self.fixture()
         data = bytearray(objects.elf.data)
         data[32:39] = b"Version"
@@ -7214,7 +8364,7 @@ class FieldSuffix(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_stack._field_case(objects, changed, base + 0x200, "Version")
 
-    def test_materialization_cannot_ignore_implicit_pc_or_stack_pointer_writes(self):
+    def test_materialization_cannot_ignore_implicit_pc_or_stack_pointer_writes(self) -> None:
         for mnemonic, operands in [("mov", "pc, r1"), ("mov", "sp, r1"), ("add", "pc, r3, #0x0")]:
             objects, base, records = self.fixture()
             entry = base + 0x200
@@ -7230,7 +8380,9 @@ class FieldSuffix(unittest.TestCase):
             ):
                 config_stack._field_case(objects, records, entry, "Controls")
 
-    def test_tuple_bridge_identity_includes_code_ownership_and_consistent_thumb_aliases(self):
+    def test_tuple_bridge_identity_includes_code_ownership_and_consistent_thumb_aliases(
+        self,
+    ) -> None:
         for fault in ("data_section", "arm", "alias"):
             objects, base, records = self.fixture()
             name = next(n for n in objects.elf.functions if "debug_tuple_field1_finish" in n)
@@ -7244,7 +8396,9 @@ class FieldSuffix(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 config_stack._field_case(objects, records, base + 0x200, "Controls")
 
-    def outline_fixture(self):
+    def outline_fixture(
+        self,
+    ) -> tuple[DiagnosticFixture, int, dict[int, Instruction], dict[int, list[Instruction]]]:
         objects, base, _ = self.fixture()
         elf = objects.elf
         elf.functions["OUTLINED_FUNCTION_123"] = (base + 121, 8, 1)
@@ -7278,7 +8432,7 @@ class FieldSuffix(unittest.TestCase):
         ]
         return objects, base, records, {base + 120: outline}
 
-    def test_changed_incoming_sp_cannot_reuse_old_tuple_argument_cells(self):
+    def test_changed_incoming_sp_cannot_reuse_old_tuple_argument_cells(self) -> None:
         objects, base, records = self.fixture()
         entry = base + 0x200
         specs = [(i.mnemonic, i.operands) for i in records.values()]
@@ -7290,7 +8444,7 @@ class FieldSuffix(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack._field_case(objects, records, entry, "Controls")
 
-    def test_popped_register_cannot_retain_live_sink_callback_identity(self):
+    def test_popped_register_cannot_retain_live_sink_callback_identity(self) -> None:
         objects, base, _ = self.fixture()
         data = bytearray(objects.elf.data)
         data[32:39] = b"Version"
@@ -7313,7 +8467,7 @@ class FieldSuffix(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack._field_case(objects, records, base + 0x200, "Version")
 
-    def test_zero_frame_outline_transports_current_vtable_without_ordinal_authority(self):
+    def test_zero_frame_outline_transports_current_vtable_without_ordinal_authority(self) -> None:
         objects, base, records, outlines = self.outline_fixture()
         binding, _ = config_stack._field_case(objects, records, base + 0x200, "Controls", outlines)
         self.assertEqual(binding["callback"], base + 96)
@@ -7323,7 +8477,7 @@ class FieldSuffix(unittest.TestCase):
         binding, _ = config_stack._field_case(objects, records, base + 0x200, "Controls", outlines)
         self.assertEqual(binding["callback"], base + 96)
 
-    def test_sizez_scratch_pop_returns_without_restoring_stale_argument_registers(self):
+    def test_sizez_scratch_pop_returns_without_restoring_stale_argument_registers(self) -> None:
         objects, base, records, outlines = self.outline_fixture()
         entry = base + 0x200
         specs = [(i.mnemonic, i.operands) for i in records.values()]
@@ -7337,7 +8491,7 @@ class FieldSuffix(unittest.TestCase):
         )
         self.assertEqual(binding["callback"], base + 96)
 
-    def test_outline_cannot_use_argument_cells_after_call_phase_sp_moves(self):
+    def test_outline_cannot_use_argument_cells_after_call_phase_sp_moves(self) -> None:
         objects, base, records, outlines = self.outline_fixture()
         entry = base + 0x200
         specs = [(i.mnemonic, i.operands) for i in records.values()]
@@ -7350,7 +8504,9 @@ class FieldSuffix(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack._field_case(objects, records, entry, "Controls", outlines)
 
-    def sink_outline_fixture(self):
+    def sink_outline_fixture(
+        self,
+    ) -> tuple[DiagnosticFixture, int, list[tuple[str, str]], dict[int, list[Instruction]]]:
         objects, base, _, outlines = self.outline_fixture()
         data = bytearray(objects.elf.data)
         data[32:39] = b"Version"
@@ -7373,7 +8529,7 @@ class FieldSuffix(unittest.TestCase):
         ]
         return objects, base, specs, outlines
 
-    def test_sink_tail_requires_observed_restore_instead_of_only_balanced_sp(self):
+    def test_sink_tail_requires_observed_restore_instead_of_only_balanced_sp(self) -> None:
         for tail in ("r3", "lr"):
             objects, base, specs, outlines = self.sink_outline_fixture()
             specs += [("add", "sp, #0x10"), ("bx", tail)]
@@ -7384,7 +8540,7 @@ class FieldSuffix(unittest.TestCase):
             with self.subTest(tail=tail), self.assertRaises(AssertionError):
                 config_stack._field_case(objects, records, base + 0x200, "Version", outlines)
 
-    def test_real_outline_bl_overwrites_lr_even_when_later_epilogue_restores_it(self):
+    def test_real_outline_bl_overwrites_lr_even_when_later_epilogue_restores_it(self) -> None:
         objects, base, specs, outlines = self.sink_outline_fixture()
         specs.insert(5, ("mov", "r3, lr"))
         specs += [("add", "sp, #0x8"), ("pop", "{r7, lr}"), ("bx", "r3")]
@@ -7395,7 +8551,7 @@ class FieldSuffix(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack._field_case(objects, records, base + 0x200, "Version", outlines)
 
-    def test_outline_nonzero_frame_wrong_slot_missing_bytes_and_unknown_body_reject(self):
+    def test_outline_nonzero_frame_wrong_slot_missing_bytes_and_unknown_body_reject(self) -> None:
         for fault in ("frame", "slot", "missing", "body"):
             objects, base, records, outlines = self.outline_fixture()
             if fault == "frame":
@@ -7419,15 +8575,30 @@ class FieldSuffix(unittest.TestCase):
                 config_stack._field_case(objects, records, base + 0x200, "Controls", outlines)
 
 
+class ContinuationFixture(FixtureDelta):
+    records: list[FixtureInstruction]
+    pointers: list[tuple[int, int, str]]
+
+
+def _continuation_fixture(value: object) -> ContinuationFixture:
+    item = _fixture_object(_image_delta(value))
+    item["pointers"] = [_fixture_interval(v) for v in _fixture_array(item["pointers"])]
+    return _checked_fixture(item, ContinuationFixture)
+
+
 class LoaderContinuation(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(
+        self: unittest.TestCase, code_shift: int = 0, data_shift: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], str, Storage]:
         objects, records, root, frame = DefaultSourceTerminal.fixture(self, code_shift, data_shift)
-        item = json.loads(
-            (Path(__file__).parent / "fixtures/config-loader-continuation.json").read_text()
+        item = _continuation_fixture(
+            json.loads(
+                (Path(__file__).parent / "fixtures/config-loader-continuation.json").read_text()
+            )
         )
         data = bytearray(objects.elf.data)
 
-        def index(address):
+        def index(address: int) -> int:
             s = next(s for s in objects.elf.sections if s[2] & 2 and s[3] <= address < s[3] + s[5])
             return s[4] + address - s[3]
 
@@ -7477,7 +8648,7 @@ class LoaderContinuation(unittest.TestCase):
             )
         return objects, records, root, frame
 
-    def test_continuation_binds_distinct_result_epochs_and_paired_publication(self):
+    def test_continuation_binds_distinct_result_epochs_and_paired_publication(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -7511,7 +8682,7 @@ class LoaderContinuation(unittest.TestCase):
             self.assertTrue(result["requires_complete_validator_typed_fault_and_boot_graph"])
             self.assertEqual(len(result["target_access_requirements"]), 10)
 
-    def test_continuation_operand_epochs_fault_reconstruction_and_return_are_closed(self):
+    def test_continuation_operand_epochs_fault_reconstruction_and_return_are_closed(self) -> None:
         import config_loader_continuation
 
         for address, operand in (
@@ -7529,7 +8700,7 @@ class LoaderContinuation(unittest.TestCase):
             with self.subTest(address=hex(address)), self.assertRaises(AssertionError):
                 config_loader_continuation.loader_continuation(objects, root, records, frame, ())
 
-    def test_foreign_continuation_ingress_does_not_borrow_another_phase(self):
+    def test_foreign_continuation_ingress_does_not_borrow_another_phase(self) -> None:
         import config_loader_continuation
 
         for address in (0x100203E6, 0x100203F0, 0x10020424, 0x1002045C, 0x10020E58):
@@ -7538,7 +8709,7 @@ class LoaderContinuation(unittest.TestCase):
             with self.subTest(address=hex(address)), self.assertRaises(AssertionError):
                 config_loader_continuation.loader_continuation(objects, root, records, frame, ())
 
-    def test_issuer_expect_start_and_interior_require_actual_zero_predecessor(self):
+    def test_issuer_expect_start_and_interior_require_actual_zero_predecessor(self) -> None:
         import config_loader_continuation
 
         for site in (0x10060000, 0x1001FEEE):
@@ -7559,18 +8730,33 @@ class LoaderContinuation(unittest.TestCase):
                     )
 
 
+class ValidatorSite(TypedDict):
+    site: int
+    encoding: str
+    offset: int
+    outlined: bool
+
+
+class ValidatorInstance(TypedDict):
+    mode: str
+    role: str
+    sites: list[ValidatorSite]
+
+
+def _validator_instances() -> list[ValidatorInstance]:
+    record = object_fields(
+        json.loads((Path(__file__).parent / "fixtures/config-validator-accesses.json").read_text()),
+        "validator fixture",
+    )
+    return _checked_fixture(record["instances"], list[ValidatorInstance])
+
+
 class ValidatorPlatformFamilies(unittest.TestCase):
-    def fixture(self, role, mode):
+    def fixture(self, role: str, mode: str) -> ValidatorFamily:
         from config_validator_access import ValidatorContext, ValidatorFamily
         from config_regions import Storage, borrow
 
-        item = next(
-            v
-            for v in json.loads(
-                (Path(__file__).parent / "fixtures/config-validator-accesses.json").read_text()
-            )["instances"]
-            if (v["role"], v["mode"]) == (role, mode)
-        )
+        item = next(v for v in _validator_instances() if (v["role"], v["mode"]) == (role, mode))
         child, caller, outputs = {
             "speed2": (296, 1288, (156, 996)),
             "sizes": (288, 696, (100, 408)),
@@ -7617,7 +8803,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             tuple(contexts),
         )
 
-    def test_v4_all25_roles_keep_both_epochs_and_strict_roundtrip(self):
+    def test_v4_all25_roles_keep_both_epochs_and_strict_roundtrip(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -7626,9 +8812,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         )
         from config_validator_access import read_validator_family
 
-        items = json.loads(
-            (Path(__file__).parent / "fixtures/config-validator-accesses.json").read_text()
-        )["instances"]
+        items = _validator_instances()
         self.assertEqual(sum(len(i["sites"]) for i in items), 25)
         for item in items:
             value = self.fixture(item["role"], item["mode"])
@@ -7637,10 +8821,10 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             self.assertEqual(
                 tuple(c.phase for c in value.contexts), ("default_validation", "decoded_validation")
             )
-            self.assertEqual(len(record["contexts"]), 2)
+            self.assertEqual(len(_fixture_array(record["contexts"])), 2)
             self.assertNotIn("runtime_sp", record)
 
-    def test_page_and_widget_footprints_stay_paired_without_instance_expansion(self):
+    def test_page_and_widget_footprints_stay_paired_without_instance_expansion(self) -> None:
         for mode in ("speed2", "sizes", "sizez"):
             pages = self.fixture("control_buttons", mode)
             base = {"speed2": 0x2000064C, "sizes": 0x20000388, "sizez": 0x2000031C}[mode]
@@ -7664,7 +8848,9 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 ):
                     widgets.footprints("decoded_validation", index, count)
 
-    def test_validator_reader_rejects_role_width_numeric_alias_epoch_and_owner_substitution(self):
+    def test_validator_reader_rejects_role_width_numeric_alias_epoch_and_owner_substitution(
+        self,
+    ) -> None:
         from config_validator_access import read_validator_family
         from copy import deepcopy
 
@@ -7692,25 +8878,40 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             elif fault == "direction":
                 bad["direction"] = "read"
             elif fault == "epoch":
-                bad["contexts"][1] = deepcopy(bad["contexts"][0])
+                _fixture_array(bad["contexts"])[1] = deepcopy(_fixture_array(bad["contexts"])[0])
             elif fault == "first_for_result":
-                bad["contexts"][0]["result"]["storage"] = deepcopy(bad["contexts"][0]["frame"])
+                _fixture_object(_fixture_object(_fixture_array(bad["contexts"])[0])["result"])[
+                    "storage"
+                ] = deepcopy(_fixture_object(_fixture_array(bad["contexts"])[0])["frame"])
             elif fault == "frame":
-                bad["contexts"][0]["frame"]["extent"] = 288
+                _fixture_object(_fixture_object(_fixture_array(bad["contexts"])[0])["frame"])[
+                    "extent"
+                ] = 288
             elif fault == "protected":
-                bad["contexts"][0]["protected"] = []
+                _fixture_object(_fixture_array(bad["contexts"])[0])["protected"] = []
             elif fault == "cross_config":
-                bad["contexts"][1]["config"]["storage"]["start"] += 4
+                storage = _fixture_object(
+                    _fixture_object(_fixture_object(_fixture_array(bad["contexts"])[1])["config"])[
+                        "storage"
+                    ]
+                )
+                storage["start"] = integer_value(storage["start"], "fixture storage start") + 4
             elif fault == "cross_caller":
-                c = bad["contexts"][1]
-                for v in (c["caller"], c["frame"], c["result"]["storage"], *c["protected"]):
-                    v["start"] += 8
+                c = _fixture_array(bad["contexts"])[1]
+                for v in (
+                    _fixture_object(c)["caller"],
+                    _fixture_object(c)["frame"],
+                    _fixture_object(_fixture_object(c)["result"])["storage"],
+                    *_fixture_array(_fixture_object(c)["protected"]),
+                ):
+                    storage = _fixture_object(v)
+                    storage["start"] = integer_value(storage["start"], "fixture storage start") + 8
             else:
                 bad["approved"] = True
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 read_validator_family(bad)
 
-    def dependencies(self, mode, include_led=True):
+    def dependencies(self, mode: str, include_led: bool = True) -> tuple[Dependency, ...]:
         roles = {
             "speed2": (
                 "first_reads",
@@ -7723,7 +8924,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             "sizes": ("first_word", "control_buttons", "widget_placement"),
             "sizez": ("first_word", "control_buttons", "widget_placement"),
         }
-        values = tuple(self.fixture(role, mode) for role in roles[mode])
+        values: tuple[Dependency, ...] = tuple(self.fixture(role, mode) for role in roles[mode])
         led = LedPlatformFamilies.dependencies(LedPlatformFamilies(), mode) if include_led else ()
         if mode != "sizez":
             return values + led
@@ -7761,7 +8962,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             return TailPolicyV8.augment(SourcePolicyV7.augment(values))
         return values
 
-    def artifact(self, mode):
+    def artifact(self, mode: str) -> DiagnosticFixture:
         # Deliberately metadata/site-only synthetic ELF; unfilled body bytes
         # grant no validator grammar, source, ownership or graph acceptance.
         from config_entry import CONFIG
@@ -7769,13 +8970,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
 
         parent = {"speed2": 0x10036830, "sizes": 0x100277DC, "sizez": 0x1001EA20}[mode]
         base = {"speed2": 0x2000064C, "sizes": 0x20000388, "sizez": 0x2000031C}[mode]
-        items = [
-            v
-            for v in json.loads(
-                (Path(__file__).parent / "fixtures/config-validator-accesses.json").read_text()
-            )["instances"]
-            if v["mode"] == mode
-        ]
+        items = [v for v in _validator_instances() if v["mode"] == mode]
         end = max([parent + LAYOUTS[mode][6]] + [v["site"] + 8 for r in items for v in r["sites"]])
         raw = bytearray(end - parent)
         for r in items:
@@ -7792,7 +8987,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             sizes[outline] = 0
         text = (0, 1, 6, parent, 0, len(raw), 0, 0, 2, 0)
         data = (0, 1, 7, base, len(raw), 14604, 0, 0, 4, 0)
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(raw) + bytes(14604),
             sections=[text, data],
             functions=functions,
@@ -7823,10 +9018,10 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             from config_widget_access import _ADVANCED
 
             merged = bytearray(elf.data[: len(merged)])
-            for family in DecodedWidgetAccess.dependencies():
-                for at, raw, field, width, direction, source in family.sites:
-                    encoded = bytes.fromhex(raw)
-                    merged[at - start : at - start + len(encoded)] = encoded
+            for widget_family in DecodedWidgetAccess.dependencies():
+                for at, widget_encoding, field, width, direction, source in widget_family.sites:
+                    widget_bytes = bytes.fromhex(widget_encoding)
+                    merged[at - start : at - start + len(widget_bytes)] = widget_bytes
             elf.data = bytes(merged) + bytes(14604)
             elf.functions[_ADVANCED] = (0x1001C271, 104, 0)
             sizes[0x1001C270] = 72
@@ -7836,22 +9031,34 @@ class ValidatorPlatformFamilies(unittest.TestCase):
 
             dependencies = self.dependencies(mode)
             sources = dependencies[20:24]
-            source_start = sources[0].parent
+            first_source = sources[0]
+            if not isinstance(first_source, SourceFamily):
+                raise AssertionError("fixture source dependency order")
+            source_start = first_source.parent
             enlarged = bytearray(start + len(merged) - source_start)
             enlarged[start - source_start :] = merged
-            for family in sources:
-                for at, raw, field, width, direction, source in family.sites:
-                    enlarged[at - source_start : at - source_start + 4] = bytes.fromhex(raw)
+            for source_family in sources:
+                if not isinstance(source_family, SourceFamily):
+                    raise AssertionError("fixture source dependency family")
+                for at, source_encoding, field, width, direction, source in source_family.sites:
+                    enlarged[at - source_start : at - source_start + 4] = bytes.fromhex(
+                        source_encoding
+                    )
             start = source_start
             merged = enlarged
             # These six sites and Screen metadata are requirements only;
             # synthetic unused body bytes never establish a reached use.
             from config_tail_contracts import ROLES as TAIL_ROLES
 
-            for family in dependencies[24:]:
-                for at, raw, field, width, direction, source in family.sites:
-                    merged[at - start : at - start + 4] = bytes.fromhex(raw)
-            screen = dependencies[24].parent
+            for tail_family in dependencies[24:]:
+                if not isinstance(tail_family, TailFamily):
+                    raise AssertionError("fixture tail dependency family")
+                for at, tail_encoding, field, width, direction, source in tail_family.sites:
+                    merged[at - start : at - start + 4] = bytes.fromhex(tail_encoding)
+            first_tail = dependencies[24]
+            if not isinstance(first_tail, TailFamily):
+                raise AssertionError("fixture tail dependency order")
+            screen = first_tail.parent
             elf.functions[TAIL_ROLES["ScreenBindings"]] = (screen | 1, 312, 0)
             sizes[screen] = 64
             text = (0, 1, 6, start, 0, len(merged), 0, 0, 2, 0)
@@ -7862,9 +9069,11 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             elf.mapping_symbols = [("$t", start, 0)]
             elf.functions[CHANNEL_SOURCE] = (source_start | 1, 754, 0)
             sizes[source_start] = 72
-        return config_stack.DiagnosticObjects(elf, sizes)
+        return diagnostic_fixture(elf, sizes)
 
-    def test_v8_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
+    def test_v8_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(
+        self,
+    ) -> None:
         import config_platform
 
         self.assertEqual(
@@ -7890,25 +9099,33 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 policy,
             )
             for fault in ("old", "lost", "duplicate", "injected", "hardware", "width_float"):
-                bad = deepcopy(policy.to_record())
+                bad = deepcopy(dict(policy.to_record()))
                 if fault == "old":
                     bad.update(schema=3, scope="h2-rp2350-secure-owned-access-v4")
                 elif fault == "lost":
-                    bad["owned_dependencies"].pop()
+                    _fixture_array(bad["owned_dependencies"]).pop()
                 elif fault == "duplicate":
-                    bad["owned_dependencies"][-1] = deepcopy(bad["owned_dependencies"][-2])
+                    _fixture_array(bad["owned_dependencies"])[-1] = deepcopy(
+                        _fixture_array(bad["owned_dependencies"])[-2]
+                    )
                 elif fault == "injected":
-                    bad["owned_dependencies"].append(deepcopy(bad["owned_dependencies"][-1]))
+                    _fixture_array(bad["owned_dependencies"]).append(
+                        deepcopy(_fixture_array(bad["owned_dependencies"])[-1])
+                    )
                 elif fault == "hardware":
                     bad["hardware_qualified"] = True
                 elif mode == "sizez":
-                    bad["owned_dependencies"][-1]["sites"][0]["width"] = 4.0
+                    _fixture_object(
+                        _fixture_array(
+                            _fixture_object(_fixture_array(bad["owned_dependencies"])[-1])["sites"]
+                        )[0]
+                    )["width"] = 4.0
                 else:
-                    bad["owned_dependencies"][-1]["width"] = 2.0
+                    _fixture_object(_fixture_array(bad["owned_dependencies"])[-1])["width"] = 2.0
                 with self.subTest(mode=mode, fault=fault), self.assertRaises(AssertionError):
                     config_platform.read_policy(bad, policy)
 
-    def test_current_artifact_rebinds_all25_sites_and_exact_zero_growth_outline(self):
+    def test_current_artifact_rebinds_all25_sites_and_exact_zero_growth_outline(self) -> None:
         import config_validator_access
 
         self.assertTrue(
@@ -7938,12 +9155,12 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 value = self.fixture("first_word", mode)
                 old = objects.elf.data
                 bad = bytearray(old)
-                bad[0x10029084 - objects.elf.sections[0][3]] ^= 1
+                bad[268603524 - objects.elf.sections[0][3]] ^= 1
                 objects.elf.data = bytes(bad)
                 with self.assertRaises(AssertionError):
                     config_validator_access.current_validator_family(objects, value)
 
-    def test_validator_sites_relocate_with_parent_metadata_and_mapping(self):
+    def test_validator_sites_relocate_with_parent_metadata_and_mapping(self) -> None:
         from config_validator_access import current_validator_family, ValidatorFamily
         from dataclasses import replace
 
@@ -7952,7 +9169,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             delta = 0x1000
             text = list(objects.elf.sections[0])
             text[3] += delta
-            objects.elf.sections[0] = tuple(text)
+            objects.elf.sections[0] = section_fields(text)
             objects.elf.functions = {
                 n: (a + delta, size, section)
                 for n, (a, size, section) in objects.elf.functions.items()
@@ -7973,7 +9190,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     current_validator_family(objects, old)
 
-    def test_validator_current_metadata_and_typed_record_cannot_be_substituted(self):
+    def test_validator_current_metadata_and_typed_record_cannot_be_substituted(self) -> None:
         from config_validator_access import current_validator_family, read_validator_family
         from copy import deepcopy
 
@@ -8017,29 +9234,42 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         ):
             bad = deepcopy(record)
             if fault == "bool_site":
-                bad["sites"][0]["site"] = True
+                _fixture_object(_fixture_array(bad["sites"])[0])["site"] = True
             elif fault == "float_offset":
-                bad["sites"][0]["offset"] = 1.0
+                _fixture_object(_fixture_array(bad["sites"])[0])["offset"] = 1.0
             elif fault == "float_capture":
-                bad["transport"]["capture_offset"] = 96.0
+                _fixture_object(bad["transport"])["capture_offset"] = 96.0
             elif fault == "bool_writable":
-                bad["contexts"][0]["config"]["storage"]["writable"] = 1
+                _fixture_object(
+                    _fixture_object(_fixture_object(_fixture_array(bad["contexts"])[0])["config"])[
+                        "storage"
+                    ]
+                )["writable"] = 1
             elif fault == "unknown_operation":
                 bad["operation"] = "ordinary_multiple_STRD"
             elif fault == "missing_transport":
-                bad["transport"].pop("output")
+                _fixture_object(bad["transport"]).pop("output")
             else:
-                c = bad["contexts"][0]
-                guard = deepcopy(c["protected"][0])
-                guard.update(start=c["frame"]["start"] + 169, extent=2, alignment=1)
-                c["protected"].append(guard)
+                c = _fixture_array(bad["contexts"])[0]
+                guard = deepcopy(
+                    _fixture_object(_fixture_array(_fixture_object(c)["protected"])[0])
+                )
+                guard.update(
+                    start=integer_value(
+                        _fixture_object(_fixture_object(c)["frame"])["start"], "frame start"
+                    )
+                    + 169,
+                    extent=2,
+                    alignment=1,
+                )
+                _fixture_array(_fixture_object(c)["protected"]).append(guard)
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 read_validator_family(bad)
 
-    def test_exact_wire_bound_is_preserved_at_actual_stack_result_boundary(self):
+    def test_exact_wire_bound_is_preserved_at_actual_stack_result_boundary(self) -> None:
         import config_platform
 
-        def size(value):
+        def size(value: object) -> int:
             return len((json.dumps(value, sort_keys=True) + "\n").encode())
 
         _, _, small = self.image_fixture("sizes", 1)
@@ -8051,7 +9281,9 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 near, policy, near["headroom"], source_context=elf.fixture_source_context, elf=elf
             )
 
-    def image_fixture(self, mode, padding=0):
+    def image_fixture(
+        self, mode: str, padding: int = 0
+    ) -> tuple[QualifiedImageFixture, bytes, StackRecord]:
         # Supplied stage facts only. The image/capture consumers are real; the
         # missing complete source/validator/graph producer is never inferred.
         from test_validation_policy import MemoryQualification, supplied_stack_record
@@ -8075,7 +9307,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         elf.data += prototype.elf.data[: code[5]]
         section = list(code)
         section[4] = offset
-        elf.sections.append(tuple(section))
+        elf.sections.append(section_fields(section))
         elf.functions.update({n: (v[0], v[1], index) for n, v in prototype.elf.functions.items()})
         elf.mapping_symbols = [("$t", elf.sections[1][3], 1), ("$t", code[3], index)]
         metadata = bytearray()
@@ -8087,7 +9319,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 metadata.append(byte | (128 if size else 0))
                 if not size:
                     break
-        elf.section_bytes = lambda name: bytes(metadata) if name == ".stack_sizes" else b""
+        elf.section_data[".stack_sizes"] = bytes(metadata)
         validators = []
         for value in self.dependencies(mode):
             if not isinstance(value, ValidatorFamily):
@@ -8123,34 +9355,43 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         for value in self.dependencies(mode):
             if not isinstance(value, LedFamily):
                 continue
-            contexts = []
-            for c in value.contexts:
-                config = replace(c.config, storage=replace(c.config.storage, start=0x20000000))
-                owner = (
-                    replace(c.owner, storage=config.storage)
-                    if c.owner.storage.space == "address"
-                    else c.owner
+            led_contexts = []
+            for led_context in value.contexts:
+                config = replace(
+                    led_context.config,
+                    storage=replace(led_context.config.storage, start=0x20000000),
                 )
-                contexts.append(replace(c, config=config, owner=owner))
-            leds.append(replace(value, contexts=tuple(contexts)))
+                owner = (
+                    replace(led_context.owner, storage=config.storage)
+                    if led_context.owner.storage.space == "address"
+                    else led_context.owner
+                )
+                led_contexts.append(replace(led_context, config=config, owner=owner))
+            leds.append(replace(value, contexts=tuple(led_contexts)))
         widgets = []
         for value in self.dependencies(mode):
             if not isinstance(value, WidgetFamily):
                 continue
-            c = value.context
-            delta = 0x20000000 - c.config.start
-            config = replace(c.config, storage=replace(c.config.storage, start=0x20000000))
+            widget_context = value.context
+            delta = 0x20000000 - widget_context.config.start
+            config = replace(
+                widget_context.config,
+                storage=replace(widget_context.config.storage, start=0x20000000),
+            )
             owner = (
-                replace(c.owner, storage=config.storage)
-                if c.owner.storage.space == "address"
-                else c.owner
+                replace(widget_context.owner, storage=config.storage)
+                if widget_context.owner.storage.space == "address"
+                else widget_context.owner
             )
             guards = tuple(
                 replace(v, start=v.start + delta) if v.space == "address" else v
-                for v in c.protected
+                for v in widget_context.protected
             )
             widgets.append(
-                replace(value, context=replace(c, config=config, owner=owner, protected=guards))
+                replace(
+                    value,
+                    context=replace(widget_context, config=config, owner=owner, protected=guards),
+                )
             )
         legacy = (
             tuple(read_owned_access(v) for v in old["policies"][0]["owned_dependencies"])
@@ -8167,26 +9408,42 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 else v
                 for v in legacy
             )
-        sources_and_tails = []
+        sources_and_tails: list[SourceFamily | TailFamily] = []
         for value in self.dependencies(mode):
-            if not isinstance(value, (SourceFamily, TailFamily)):
-                continue
-            c = value.context
-            delta = 0x20000000 - c.config.start
-            config = replace(c.config, storage=replace(c.config.storage, start=0x20000000))
-            guards = tuple(
-                replace(v, start=v.start + delta) if v.space == "address" else v
-                for v in c.protected
-            )
-            sources_and_tails.append(
-                replace(value, context=replace(c, config=config, protected=guards))
-            )
+            if isinstance(value, SourceFamily):
+                source_context = value.context
+                delta = 0x20000000 - source_context.config.start
+                config = replace(
+                    source_context.config,
+                    storage=replace(source_context.config.storage, start=0x20000000),
+                )
+                guards = tuple(
+                    replace(v, start=v.start + delta) if v.space == "address" else v
+                    for v in source_context.protected
+                )
+                sources_and_tails.append(
+                    replace(value, context=replace(source_context, config=config, protected=guards))
+                )
+            elif isinstance(value, TailFamily):
+                tail_context = value.context
+                delta = 0x20000000 - tail_context.config.start
+                config = replace(
+                    tail_context.config,
+                    storage=replace(tail_context.config.storage, start=0x20000000),
+                )
+                guards = tuple(
+                    replace(v, start=v.start + delta) if v.space == "address" else v
+                    for v in tail_context.protected
+                )
+                sources_and_tails.append(
+                    replace(value, context=replace(tail_context, config=config, protected=guards))
+                )
         if mode == "sizez":
             # Reuse the supplied physical loader geometry of the conditional
             # families; this is still not a complete actual graph producer.
             shift = 0x20070648
 
-            def physical_legacy(value):
+            def physical_legacy(value: OwnedAccess) -> OwnedAccess:
                 frame = replace(value.frame, start=value.frame.start + shift)
                 owner = (
                     replace(value.owner, storage=frame)
@@ -8222,7 +9479,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         )
         return elf, eav, stack
 
-    def test_actual_image_and_capture_readers_preserve_v8_with_supplied_stage_facts(self):
+    def test_actual_image_and_capture_readers_preserve_v8_with_supplied_stage_facts(self) -> None:
         import check_memory_layout
         import capture_target_bench as capture
         from test_target_capture import CaptureMemoryQualification
@@ -8261,24 +9518,26 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 patch.object(capture, "ElfImage", return_value=elf),
             ):
                 destination = Path(directory)
-                source, source_path, record = CaptureMemoryQualification.bound_context(
-                    destination, elf, record
+                source, source_path, capture_record = CaptureMemoryQualification.bound_context(
+                    destination, elf, dict(record)
                 )
                 frozen = destination / "pico2.elf"
                 frozen.write_bytes(elf.data)
                 path = destination / "memory-layout.json"
-                path.write_text(json.dumps(record, sort_keys=True) + "\n")
+                path.write_text(json.dumps(capture_record, sort_keys=True) + "\n")
                 self.assertEqual(
                     capture.read_memory_gate(path, frozen, eav, source, gate="experimental-full")[
                         "record"
                     ],
-                    record,
+                    capture_record,
                 )
                 path.unlink()
                 supplied = destination / "supplied-stage-record.json"
-                supplied.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+                supplied.write_text(
+                    json.dumps(capture_record, sort_keys=True) + "\n", encoding="utf-8"
+                )
 
-                def writer(argv, **kwargs):
+                def writer(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
                     self.assertEqual(argv.count("--result-json"), 1)
                     self.assertEqual(
                         Path(argv[argv.index("--source-context") + 1]), source_path.resolve()
@@ -8287,6 +9546,9 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     self.assertEqual(Path(output), path.resolve())
                     # Supplied stage output uses a real file/child; no linked
                     # producer or source/ownership completion is inferred.
+                    checked = kwargs["check"]
+                    if not isinstance(checked, bool):
+                        raise AssertionError("fixture subprocess check flag")
                     return real_run(
                         [
                             sys.executable,
@@ -8295,7 +9557,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                             output,
                             str(supplied),
                         ],
-                        check=kwargs["check"],
+                        check=checked,
                         timeout=10,
                     )
 
@@ -8304,7 +9566,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                         capture.run_memory_gate(
                             frozen, destination, eav, source, source_path, gate="experimental-full"
                         )["record"],
-                        record,
+                        capture_record,
                     )
                 for fault in (
                     "lost",
@@ -8315,32 +9577,46 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     "width_float",
                     "nonreturn_intermediate",
                 ):
-                    bad = deepcopy(record)
-                    policy = bad["stack"]["policies"][0]
+                    bad = deepcopy(capture_record)
+                    policy = _fixture_array(_fixture_object(bad["stack"])["policies"])[0]
                     if fault == "lost":
-                        policy["owned_dependencies"].pop()
+                        _fixture_array(_fixture_object(policy)["owned_dependencies"]).pop()
                     elif fault == "duplicate":
-                        policy["owned_dependencies"].append(
-                            deepcopy(policy["owned_dependencies"][-1])
+                        _fixture_array(_fixture_object(policy)["owned_dependencies"]).append(
+                            deepcopy(
+                                _fixture_array(_fixture_object(policy)["owned_dependencies"])[-1]
+                            )
                         )
                     elif fault == "context":
-                        dependency = policy["owned_dependencies"][-1]
+                        dependency = _fixture_array(_fixture_object(policy)["owned_dependencies"])[
+                            -1
+                        ]
                         if mode == "sizez":
-                            dependency["context"]["frame"]["phase"] = "retired"
+                            _fixture_object(
+                                _fixture_object(_fixture_object(dependency)["context"])["frame"]
+                            )["phase"] = "retired"
                         else:
-                            dependency["contexts"][0]["epoch"] = "retired"
+                            _fixture_object(
+                                _fixture_array(_fixture_object(dependency)["contexts"])[0]
+                            )["epoch"] = "retired"
                     elif fault == "old":
-                        policy.update(schema=3, scope="h2-rp2350-secure-owned-access-v4")
+                        _fixture_object(policy).update(
+                            schema=3, scope="h2-rp2350-secure-owned-access-v4"
+                        )
                     elif fault == "hardware":
                         bad["hardware_qualified"] = True
                     elif fault == "width_float":
-                        dependency = policy["owned_dependencies"][-1]
+                        dependency = _fixture_array(_fixture_object(policy)["owned_dependencies"])[
+                            -1
+                        ]
                         if mode == "sizez":
-                            dependency["sites"][0]["width"] = 4.0
+                            _fixture_object(
+                                _fixture_array(_fixture_object(dependency)["sites"])[0]
+                            )["width"] = 4.0
                         else:
-                            dependency["width"] = 2.0
+                            _fixture_object(dependency)["width"] = 2.0
                     else:
-                        bad = bad["stack"]
+                        bad = _fixture_object(bad["stack"])
                     path.write_text(json.dumps(bad))
                     with (
                         self.subTest(mode=mode, fault=fault),
@@ -8350,13 +9626,13 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                             path, frozen, eav, source, gate="experimental-full"
                         )
 
-    def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self):
+    def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self) -> None:
         import check_memory_layout
         import capture_target_bench as capture
         from unittest.mock import patch
         import tempfile
 
-        def size(value):
+        def size(value: object) -> int:
             return len((json.dumps(value, sort_keys=True) + "\n").encode())
 
         _, _, small = self.image_fixture("sizes", 1)
@@ -8388,7 +9664,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             self.assertEqual(
                 capture.read_memory_gate(
                     path,
-                    "synthetic-validator.elf",
+                    Path("synthetic-validator.elf"),
                     eav,
                     elf.fixture_source_context,
                     gate="experimental-full",
@@ -8399,7 +9675,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             with self.assertRaises(ValueError):
                 capture.read_memory_gate(
                     path,
-                    "synthetic-validator.elf",
+                    Path("synthetic-validator.elf"),
                     eav,
                     elf.fixture_source_context,
                     gate="experimental-full",
@@ -8412,7 +9688,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 self.assertEqual(
                     capture.read_memory_gate(
                         path,
-                        "synthetic-validator.elf",
+                        Path("synthetic-validator.elf"),
                         eav,
                         initial.fixture_source_context,
                         gate="experimental-full",
@@ -8425,28 +9701,47 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "duplicate"):
                     capture.read_memory_gate(
                         path,
-                        "synthetic-validator.elf",
+                        Path("synthetic-validator.elf"),
                         eav,
                         initial.fixture_source_context,
                         gate="experimental-full",
                     )
 
 
+class ValidatorDelta(FixtureDelta):
+    records: list[DecodedInstruction]
+
+
+class ValidatorFixture(ValidatorDelta):
+    sections: list[list[int]]
+    named: dict[str, list[int]]
+    mapping_symbols: list[tuple[str, int, int]]
+    pointers: list[int]
+
+
+ValidatorFixtureArgs = tuple[DiagnosticFixture, str, dict[int, Instruction], ValidatorContext, int]
+
+
 class ValidatorResultBoundary(unittest.TestCase):
-    def fixture(self, phase="default_validation", shift=0):
+    def fixture(self, phase: str = "default_validation", shift: int = 0) -> ValidatorFixtureArgs:
         import re
 
-        item = json.loads(
-            (Path(__file__).parent / "fixtures/config-validator-result.json").read_text()
+        item = _checked_fixture(
+            _image_delta(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-validator-result.json").read_text()
+                )
+            ),
+            ValidatorFixture,
         )
 
-        def relocated(a):
+        def relocated(a: int) -> int:
             return a + shift if 0x10000000 <= a < 0x10200000 else a
 
-        def section(s):
+        def section(s: list[int]) -> Section:
             s = list(s)
             s[3] = relocated(s[3])
-            return tuple(s)
+            return section_fields(s)
 
         sections = list(map(section, item["sections"]))
         raw = bytearray(max(s[4] + s[5] for s in sections if s[2] & 2 and s[1] != 8))
@@ -8459,7 +9754,7 @@ class ValidatorResultBoundary(unittest.TestCase):
             at = s[4] + relocated(address) - s[3]
             value = struct.unpack_from("<I", raw, at)[0]
             struct.pack_into("<I", raw, at, relocated(value))
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(raw),
             sections=sections,
             named={n: section(s) for n, s in item["named"].items()},
@@ -8469,9 +9764,7 @@ class ValidatorResultBoundary(unittest.TestCase):
             ],
             mapping_symbols=[(n, relocated(a), ix) for n, a, ix in item["mapping_symbols"]],
         )
-        objects = config_stack.DiagnosticObjects(
-            elf, {relocated(int(a)): z for a, z in item["sizes"].items()}
-        )
+        objects = diagnostic_fixture(elf, {relocated(int(a)): z for a, z in item["sizes"].items()})
         rows = {}
         for row in item["records"]:
             a = relocated(row["address"])
@@ -8490,7 +9783,7 @@ class ValidatorResultBoundary(unittest.TestCase):
             (0x100203E2 if phase == "default_validation" else 0x10020E36) + shift,
         )
 
-    def test_result_boundary_has_no_untyped_output_or_implicit_return_pointer(self):
+    def test_result_boundary_has_no_untyped_output_or_implicit_return_pointer(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -8522,7 +9815,7 @@ class ValidatorResultBoundary(unittest.TestCase):
                 )
                 self.assertTrue(result["platform_requirements_unresolved"])
 
-    def test_wrong_call_epoch_carrier_spill_success_store_and_restore_reject(self):
+    def test_wrong_call_epoch_carrier_spill_success_store_and_restore_reject(self) -> None:
         from config_validator_result import validator_result_boundary
         from dataclasses import replace
 
@@ -8581,7 +9874,9 @@ class ValidatorResultBoundary(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 validator_result_boundary(objects, name, rows, context, call)
 
-    def test_coherent_register_slot_store_and_restore_mutants_do_not_use_stale_byte_rejection(self):
+    def test_coherent_register_slot_store_and_restore_mutants_do_not_use_stale_byte_rejection(
+        self,
+    ) -> None:
         from config_validator_result import validator_result_boundary
 
         cases = (
@@ -8612,7 +9907,9 @@ class ValidatorResultBoundary(unittest.TestCase):
             ):
                 validator_result_boundary(objects, name, rows, context, call)
 
-    def test_foreign_start_and_interior_ingress_cannot_borrow_output_or_nonreturn_suffix(self):
+    def test_foreign_start_and_interior_ingress_cannot_borrow_output_or_nonreturn_suffix(
+        self,
+    ) -> None:
         from config_validator_result import validator_result_boundary
 
         for source in (0x1001EA84, 0x10060000):
@@ -8636,13 +9933,13 @@ class ValidatorResultBoundary(unittest.TestCase):
                 ):
                     validator_result_boundary(objects, name, rows, context, call)
 
-    def test_hold_range_keeps_actual_u16_reference_alignment(self):
+    def test_hold_range_keeps_actual_u16_reference_alignment(self) -> None:
         from config_validator_result import validator_result_boundary
 
         objects, name, rows, context, call = self.fixture()
         data = bytearray(objects.elf.data)
 
-        def offset(address):
+        def offset(address: int) -> int:
             s = next(s for s in objects.elf.sections if s[2] & 2 and s[3] <= address < s[3] + s[5])
             return s[4] + address - s[3]
 
@@ -8657,7 +9954,7 @@ class ValidatorResultBoundary(unittest.TestCase):
         with self.assertRaises(AssertionError):
             validator_result_boundary(objects, name, rows, context, call)
 
-    def test_independent_even_range_and_consumed_PC_pool_relocation_accept(self):
+    def test_independent_even_range_and_consumed_PC_pool_relocation_accept(self) -> None:
         from config_validator_result import validator_result_boundary
         from llvm_stack import mapping_ranges
 
@@ -8667,7 +9964,7 @@ class ValidatorResultBoundary(unittest.TestCase):
                     objects, name, rows, context, call = self.fixture(phase, shift)
                     elf = objects.elf
 
-                    def offset(address):
+                    def offset(address: int) -> int:
                         s = next(
                             s for s in elf.sections if s[2] & 2 and s[3] <= address < s[3] + s[5]
                         )
@@ -8725,7 +10022,7 @@ class ValidatorResultBoundary(unittest.TestCase):
 
 
 class ValidatorLocalWrites(unittest.TestCase):
-    def test_fixed_local_envelope_preserves_unique_capture_and_result_pointer_spill(self):
+    def test_fixed_local_envelope_preserves_unique_capture_and_result_pointer_spill(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -8747,7 +10044,7 @@ class ValidatorLocalWrites(unittest.TestCase):
                 )
                 self.assertTrue(result["requires_all_child_SP_R7_and_pointer_effects"])
 
-    def test_local_base_map_rejects_load_outputs_aliasing_SP_or_second_R7(self):
+    def test_local_base_map_rejects_load_outputs_aliasing_SP_or_second_R7(self) -> None:
         from config_validator_writes import validator_local_writes
 
         for operation, operand in (("ldr.w", "sp, [sp, #0x4]"), ("ldrd", "r0, r7, [r7, #4]")):
@@ -8766,7 +10063,7 @@ class ValidatorLocalWrites(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaises(AssertionError):
                 validator_local_writes(objects, name, rows, context, call)
 
-    def test_coherent_stack_stores_cannot_overwrite_saves_capture_or_spill(self):
+    def test_coherent_stack_stores_cannot_overwrite_saves_capture_or_spill(self) -> None:
         from config_validator_writes import validator_local_writes
 
         for destination in (216, 60, 88):
@@ -8795,7 +10092,7 @@ class ValidatorLocalWrites(unittest.TestCase):
             ):
                 validator_local_writes(objects, name, rows, context, call)
 
-    def test_unknown_effect_alignment_and_base_writeback_are_not_opaque_arithmetic(self):
+    def test_unknown_effect_alignment_and_base_writeback_are_not_opaque_arithmetic(self) -> None:
         from config_validator_writes import validator_local_writes
 
         cases = (
@@ -8823,13 +10120,18 @@ class ValidatorLocalWrites(unittest.TestCase):
 
 
 class ValidatorPointerRegions(unittest.TestCase):
-    def fixture(self, phase="default_validation", shift=0):
+    def fixture(self, phase: str = "default_validation", shift: int = 0) -> ValidatorFixtureArgs:
         objects, name, rows, context, call = ValidatorResultBoundary().fixture(phase, shift)
-        item = json.loads(
-            (Path(__file__).parent / "fixtures/config-validator-pointers.json").read_text()
+        item = _checked_fixture(
+            _image_delta(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-validator-pointers.json").read_text()
+                )
+            ),
+            ValidatorDelta,
         )
 
-        def relocated(a):
+        def relocated(a: int) -> int:
             return a + shift if 0x10000000 <= a < 0x10200000 else a
 
         elf = objects.elf
@@ -8853,7 +10155,7 @@ class ValidatorPointerRegions(unittest.TestCase):
             rows[a] = Instruction(a, bytes.fromhex(row["bytes"]), row["mnemonic"], operand)
         return objects, name, rows, context, call
 
-    def test_current_source_regions_bind_distinct_pointer_owners_and_child_effects(self):
+    def test_current_source_regions_bind_distinct_pointer_owners_and_child_effects(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -8875,7 +10177,7 @@ class ValidatorPointerRegions(unittest.TestCase):
                 self.assertTrue(proof["requires_actual_source_typed_parent_entry_and_full_graph"])
                 self.assertTrue(proof["platform_requirements_unresolved"])
 
-    def test_semantic_foreign_CBZ_ingress_cannot_bypass_a_capture_outline(self):
+    def test_semantic_foreign_CBZ_ingress_cannot_bypass_a_capture_outline(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         objects, name, rows, context, call = self.fixture()
@@ -8884,7 +10186,7 @@ class ValidatorPointerRegions(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "foreign direct ingress"):
             validator_pointer_regions(objects, name, rows, context, call)
 
-    def test_capture_leaf_effects_invalidate_condition_predicates(self):
+    def test_capture_leaf_effects_invalidate_condition_predicates(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         for phase in ("default_validation", "decoded_validation"):
@@ -8902,7 +10204,7 @@ class ValidatorPointerRegions(unittest.TestCase):
                     with self.subTest(phase=phase, shift=shift, role=role):
                         self.assertIn("flags", proof["children"][role]["clobbers"])
 
-    def test_coherent_capture_load_cannot_borrow_the_Result_spill(self):
+    def test_coherent_capture_load_cannot_borrow_the_Result_spill(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         for address, operation, operand, encoded in (
@@ -8923,7 +10225,7 @@ class ValidatorPointerRegions(unittest.TestCase):
             ):
                 validator_pointer_regions(objects, name, rows, context, call)
 
-    def test_warning_literal_source_role_cannot_change_with_coherent_data(self):
+    def test_warning_literal_source_role_cannot_change_with_coherent_data(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         objects, name, rows, context, call = self.fixture()
@@ -8936,7 +10238,7 @@ class ValidatorPointerRegions(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "literal source role"):
             validator_pointer_regions(objects, name, rows, context, call)
 
-    def test_independent_warning_pool_placement_preserves_the_paired_scalar_role(self):
+    def test_independent_warning_pool_placement_preserves_the_paired_scalar_role(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         for phase in ("default_validation", "decoded_validation"):
@@ -8947,7 +10249,7 @@ class ValidatorPointerRegions(unittest.TestCase):
                 load = 0x1001F9FE + shift
                 old = 0x1001FD54 + shift
 
-                def offset(a):
+                def offset(a: int) -> int:
                     s = next(s for s in elf.sections if s[2] & 2 and s[3] <= a < s[3] + s[5])
                     return s[4] + a - s[3]
 
@@ -8966,7 +10268,7 @@ class ValidatorPointerRegions(unittest.TestCase):
                     proof["regions"]["widget_variants_and_root_warning"]["pools"],
                 )
 
-    def test_leaf_frame_and_outline_identity_changes_are_not_unknown_child_allowances(self):
+    def test_leaf_frame_and_outline_identity_changes_are_not_unknown_child_allowances(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         for at, frame in ((0x1001BDEC, 16), (0x1001C1F8, 8), (0x1002892E, 8), (0x10028B16, 8)):
@@ -8975,7 +10277,7 @@ class ValidatorPointerRegions(unittest.TestCase):
             with self.subTest(child=hex(at)), self.assertRaises(AssertionError):
                 validator_pointer_regions(objects, name, rows, context, call)
 
-    def test_other_semantic_foreign_branch_entries_and_shared_interiors_reject(self):
+    def test_other_semantic_foreign_branch_entries_and_shared_interiors_reject(self) -> None:
         from config_validator_pointers import validator_pointer_regions
 
         for operation in ("b", "bl", "cbnz"):
@@ -8989,7 +10291,7 @@ class ValidatorPointerRegions(unittest.TestCase):
                 ):
                     validator_pointer_regions(objects, name, rows, context, call)
 
-    def test_child_pushes_do_not_overwrite_another_supplied_live_allocation(self):
+    def test_child_pushes_do_not_overwrite_another_supplied_live_allocation(self) -> None:
         from dataclasses import replace
         from config_regions import Storage
         from config_validator_pointers import validator_pointer_regions
@@ -9012,7 +10314,14 @@ class ValidatorPointerRegions(unittest.TestCase):
 
 class ValidatorControls(unittest.TestCase):
     @staticmethod
-    def patch(objects, rows, address, encoded, operation=None, operand=None):
+    def patch(
+        objects: DiagnosticFixture,
+        rows: dict[int, Instruction],
+        address: int,
+        encoded: bytes,
+        operation: str | None = None,
+        operand: str | None = None,
+    ) -> None:
         s = next(
             s
             for s in objects.elf.sections
@@ -9023,16 +10332,24 @@ class ValidatorControls(unittest.TestCase):
         raw[at : at + len(encoded)] = encoded
         objects.elf.data = bytes(raw)
         if operation is not None:
+            if operand is None:
+                raise AssertionError("coherent instruction mutation requires operands")
             rows[address] = Instruction(address, encoded, operation, operand)
-        assert objects.read_only(address, len(encoded)) == encoded
+        if objects.read_only(address, len(encoded)) != encoded:
+            raise AssertionError("fixture bytes do not contain the coherent mutation")
 
-    def fixture(self, phase="default_validation", shift=0):
+    def fixture(self, phase: str = "default_validation", shift: int = 0) -> ValidatorFixtureArgs:
         objects, name, rows, context, call = ValidatorPointerRegions().fixture(phase, shift)
-        item = json.loads(
-            (Path(__file__).parent / "fixtures/config-validator-controls.json").read_text()
+        item = _checked_fixture(
+            _image_delta(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-validator-controls.json").read_text()
+                )
+            ),
+            ValidatorDelta,
         )
 
-        def relocated(a):
+        def relocated(a: int) -> int:
             return a + shift if 0x10000000 <= a < 0x10200000 else a
 
         elf = objects.elf
@@ -9061,7 +10378,7 @@ class ValidatorControls(unittest.TestCase):
             rows[a] = Instruction(a, bytes.fromhex(row["bytes"]), row["mnemonic"], operand)
         return objects, name, rows, context, call
 
-    def test_current_control_source_arguments_and_capture_effects_remain_paired(self):
+    def test_current_control_source_arguments_and_capture_effects_remain_paired(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -9099,7 +10416,7 @@ class ValidatorControls(unittest.TestCase):
                 self.assertTrue(proof["requires_actual_private_Config_source_and_loop_entry"])
                 self.assertTrue(proof["requires_whole_parent_control_coverage_and_platform_policy"])
 
-    def test_coherent_capture_arguments_and_first_stores_cannot_borrow_other_cells(self):
+    def test_coherent_capture_arguments_and_first_stores_cannot_borrow_other_cells(self) -> None:
         from config_validator_controls import validator_controls
 
         for address, encoded, operation, operand in (
@@ -9114,7 +10431,7 @@ class ValidatorControls(unittest.TestCase):
             ):
                 validator_controls(objects, name, rows, context, call)
 
-    def test_action_rotation_padding_and_ErrorCode_tables_remain_exact(self):
+    def test_action_rotation_padding_and_ErrorCode_tables_remain_exact(self) -> None:
         from config_validator_controls import validator_controls
 
         for address, encoded in (
@@ -9130,7 +10447,7 @@ class ValidatorControls(unittest.TestCase):
             ):
                 validator_controls(objects, name, rows, context, call)
 
-    def test_error_code_object_relocates_independently_of_the_caller_and_child(self):
+    def test_error_code_object_relocates_independently_of_the_caller_and_child(self) -> None:
         from config_validator_controls import validator_controls
 
         for phase in ("default_validation", "decoded_validation"):
@@ -9147,7 +10464,9 @@ class ValidatorControls(unittest.TestCase):
                 proof = validator_controls(objects, name, rows, context, call)
                 self.assertEqual(proof["children"]["control_error_capture"]["objects"][0], new)
 
-    def test_semantic_foreign_entries_cannot_bypass_controls_loop_or_capture_arguments(self):
+    def test_semantic_foreign_entries_cannot_bypass_controls_loop_or_capture_arguments(
+        self,
+    ) -> None:
         from config_validator_controls import validator_controls
 
         for operation in ("b", "bl", "cbz", "cbnz"):
@@ -9163,7 +10482,7 @@ class ValidatorControls(unittest.TestCase):
                 ):
                     validator_controls(objects, name, rows, context, call)
 
-    def test_child_frame_and_zero_outline_identity_are_closed(self):
+    def test_child_frame_and_zero_outline_identity_are_closed(self) -> None:
         from config_validator_controls import validator_controls, _child
 
         for address, frame in ((0x1000FEFC, 16), (0x1001BDB4, 8), (0x10028926, 8)):
@@ -9176,7 +10495,7 @@ class ValidatorControls(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "outline borrows ordinary"):
             _child(objects, ordinary, rows, "zero_to_bool", {})
 
-    def test_capture_effects_preserve_return_state_and_invalidate_predicates(self):
+    def test_capture_effects_preserve_return_state_and_invalidate_predicates(self) -> None:
         from config_validator_controls import validator_controls
 
         objects, name, rows, context, call = self.fixture()
@@ -9196,7 +10515,7 @@ class ValidatorControls(unittest.TestCase):
 
 class InitialConfiguration(unittest.TestCase):
     @staticmethod
-    def change(objects, address, offset, encoded):
+    def change(objects: DiagnosticFixture, address: int, offset: int, encoded: bytes) -> None:
         elf = objects.elf
         s = elf.named[".data"]
         raw = bytearray(elf.data)
@@ -9204,7 +10523,7 @@ class InitialConfiguration(unittest.TestCase):
         raw[at : at + len(encoded)] = encoded
         elf.data = bytes(raw)
 
-    def fixture(self, mode="sizez", ram_shift=0):
+    def fixture(self, mode: str = "sizez", ram_shift: int = 0) -> tuple[DiagnosticFixture, int]:
         objects, records, item = EntryBodies().fixture(mode)
         # Supplied section/segment fixture. The actual ELF headers are checked
         # separately; these records do not establish live-RAM initialization.
@@ -9213,7 +10532,9 @@ class InitialConfiguration(unittest.TestCase):
         elf = objects.elf
         if ram_shift:
             elf.sections = [
-                tuple(v + ram_shift if i == 3 and s[2] & 1 else v for i, v in enumerate(s))
+                section_fields(
+                    [v + ram_shift if i == 3 and s[2] & 1 else v for i, v in enumerate(s)]
+                )
                 for s in elf.sections
             ]
             elf.named = {name: elf.sections[item["named"][name]] for name in elf.named}
@@ -9226,7 +10547,7 @@ class InitialConfiguration(unittest.TestCase):
         address = next(a for n, a, z, t, ix in elf.symbol_entries if static_role(n) == CONFIG)
         return objects, address
 
-    def test_exact_masked_load_image_is_not_an_acquired_live_Config(self):
+    def test_exact_masked_load_image_is_not_an_acquired_live_Config(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -9252,7 +10573,7 @@ class InitialConfiguration(unittest.TestCase):
                 self.assertTrue(proof["must_not_reuse_after_any_decode_or_refill_write"])
                 self.assertNotIn("acquired_owner", proof)
 
-    def test_each_active_byte_rejects_a_different_even_if_type_valid_initial_value(self):
+    def test_each_active_byte_rejects_a_different_even_if_type_valid_initial_value(self) -> None:
         from config_initial import initial_configuration, _partition
 
         objects, address = self.fixture()
@@ -9286,7 +10607,9 @@ class InitialConfiguration(unittest.TestCase):
             ):
                 initial_configuration(objects)
 
-    def test_all_named_opaque_bytes_can_change_without_creating_live_elements_or_ownership(self):
+    def test_all_named_opaque_bytes_can_change_without_creating_live_elements_or_ownership(
+        self,
+    ) -> None:
         from config_initial import initial_configuration
         from config_initial_contract import OPAQUE
 
@@ -9302,7 +10625,7 @@ class InitialConfiguration(unittest.TestCase):
             self.assertTrue(after["must_not_reuse_after_any_decode_or_refill_write"])
             self.assertEqual(after["phase"], "initial_load_image_only")
 
-    def test_typed_owner_metadata_and_declared_backing_cannot_be_aliased_or_truncated(self):
+    def test_typed_owner_metadata_and_declared_backing_cannot_be_aliased_or_truncated(self) -> None:
         from config_initial import initial_configuration
         from config_entry import CONFIG, static_role
 
@@ -9319,9 +10642,9 @@ class InitialConfiguration(unittest.TestCase):
             objects, address = self.fixture()
             elf = objects.elf
             ix = next(i for i, v in enumerate(elf.symbol_entries) if static_role(v[0]) == CONFIG)
-            entry = list(elf.symbol_entries[ix])
+            entry = MutableSymbol(elf.symbol_entries[ix])
             if fault == "duplicate":
-                elf.symbol_entries.append(tuple(entry))
+                elf.symbol_entries.append(entry.as_tuple())
             elif fault == "alias":
                 elf.symbol_entries.append(("other_object", address + 10, 4, 1, entry[4]))
             elif fault == "size":
@@ -9337,13 +10660,13 @@ class InitialConfiguration(unittest.TestCase):
             else:
                 s = list(elf.sections[entry[4]])
                 s[5] = 0xFFFFFFFF
-                elf.sections[entry[4]] = tuple(s)
-                elf.named[".data"] = tuple(s)
-            elf.symbol_entries[ix] = tuple(entry)
+                elf.sections[entry[4]] = section_fields(s)
+                elf.named[".data"] = section_fields(s)
+            elf.symbol_entries[ix] = entry.as_tuple()
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 initial_configuration(objects)
 
-    def test_load_backing_is_unique_complete_current_and_strictly_numeric(self):
+    def test_load_backing_is_unique_complete_current_and_strictly_numeric(self) -> None:
         from config_initial import initial_configuration
 
         for fault in (
@@ -9363,7 +10686,7 @@ class InitialConfiguration(unittest.TestCase):
             if fault == "absent":
                 elf.segments = []
             elif fault == "duplicate":
-                elf.segments.append(tuple(segment))
+                elf.segments.append(segment_fields(segment))
             elif fault == "partial":
                 elf.segments.append((1, 0, address + 5, 0x10000000, 1, 1, 7, 1))
             elif fault == "offset":
@@ -9379,11 +10702,11 @@ class InitialConfiguration(unittest.TestCase):
             else:
                 segment[7] = True
             if fault not in ("absent", "duplicate", "partial"):
-                elf.segments = [tuple(segment)]
+                elf.segments = [segment_fields(segment)]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 initial_configuration(objects)
 
-    def test_prewrite_image_record_cannot_make_a_later_active_mutation_match(self):
+    def test_prewrite_image_record_cannot_make_a_later_active_mutation_match(self) -> None:
         from config_initial import initial_configuration
 
         objects, address = self.fixture()
@@ -9395,7 +10718,7 @@ class InitialConfiguration(unittest.TestCase):
         self.assertTrue(proof["requires_first_batch_caller_specialized_loader_and_alias_closure"])
         self.assertTrue(proof["requires_complete_validated_outcome_before_publication"])
 
-    def test_fixed_partition_cannot_omit_overlap_or_inject_an_active_group(self):
+    def test_fixed_partition_cannot_omit_overlap_or_inject_an_active_group(self) -> None:
         import config_initial
         from unittest.mock import patch
 
@@ -9421,13 +10744,17 @@ class InitialConfiguration(unittest.TestCase):
 
 
 class ConfigurationEntryBoundary(unittest.TestCase):
-    def fixture(self, mode="sizez"):
+    def fixture(
+        self, mode: str = "sizez"
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], EntryFixture]:
         objects, rows, item = EntryBodies().fixture(mode)
         s = objects.elf.named[".data"]
         objects.elf.segments = [(1, s[4], s[3], 0x10080000, s[5], s[5], 7, 8)]
         return objects, rows, item
 
-    def relocated(self, mode, delta):
+    def relocated(
+        self, mode: str, delta: int
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], EntryFixture]:
         from config_entry import boot_entry
         from config_entry_contracts import ENTRY_GRAMMARS
 
@@ -9436,7 +10763,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
         proof = boot_entry(objects, rows)
         raw = bytearray(elf.data)
 
-        def put(address, encoded):
+        def put(address: int, encoded: bytes) -> None:
             s = next(
                 s
                 for s in elf.sections
@@ -9445,7 +10772,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             offset = s[4] + address - s[3]
             raw[offset : offset + len(encoded)] = encoded
 
-        def mov_imm(operation, register, value):
+        def mov_imm(operation: str, register: str, value: int) -> bytes:
             first = (
                 (0xF240 if operation == "movw" else 0xF2C0)
                 | ((value >> 12) & 15)
@@ -9475,16 +10802,16 @@ class ConfigurationEntryBoundary(unittest.TestCase):
                 rows[address] = Instruction(
                     address, encoded, row.mnemonic, register + ", #" + hex(value)
                 )
-            for offset, width, value in contract["data"]:
-                if value.startswith("@object") and int(value[7:]) in static:
+            for offset, width, literal in contract["data"]:
+                if literal.startswith("@object") and int(literal[7:]) in static:
                     put(
                         body["function"] + offset,
-                        struct.pack("<I", body["objects"][int(value[7:])] + delta),
+                        struct.pack("<I", body["objects"][int(literal[7:])] + delta),
                     )
         elf.data = bytes(raw)
         writable = {i for i, s in enumerate(elf.sections) if s[2] & 1}
         elf.sections = [
-            tuple(v + delta if i == 3 and ix in writable else v for i, v in enumerate(s))
+            section_fields([v + delta if i == 3 and ix in writable else v for i, v in enumerate(s)])
             for ix, s in enumerate(elf.sections)
         ]
         elf.named = {name: elf.sections[item["named"][name]] for name in elf.named}
@@ -9496,7 +10823,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
         elf.segments = [(1, s[4], s[3], 0x10080000, s[5], s[5], 7, 8)]
         return objects, rows, item
 
-    def test_actual_once_first_batch_and_loader_tail_keep_ownership_unresolved(self):
+    def test_actual_once_first_batch_and_loader_tail_keep_ownership_unresolved(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -9527,7 +10854,9 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             )
             self.assertNotIn("acquired_owner", proof)
 
-    def test_independent_Config_and_task_storage_relocation_updates_every_selected_reference(self):
+    def test_independent_Config_and_task_storage_relocation_updates_every_selected_reference(
+        self,
+    ) -> None:
         from config_owner_entry import configuration_entry_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -9539,7 +10868,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             self.assertEqual(proof["loader"]["incoming_r0"], proof["initial"]["address"] + 14600)
             self.assertEqual(proof["phase"], "once_loader_boundary_pending_startup")
 
-    def test_semantic_foreign_direct_entry_cannot_bypass_once_load_retry_or_restore(self):
+    def test_semantic_foreign_direct_entry_cannot_bypass_once_load_retry_or_restore(self) -> None:
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
 
@@ -9559,7 +10888,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
                 ):
                     configuration_entry_boundary(objects, rows)
 
-    def test_direct_ingress_rejects_malformed_target_positions_and_suffixes(self):
+    def test_direct_ingress_rejects_malformed_target_positions_and_suffixes(self) -> None:
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
 
@@ -9614,7 +10943,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             ):
                 configuration_entry_boundary(objects, rows)
 
-    def test_complete_direct_operands_keep_optional_annotations_and_conditional_forms(self):
+    def test_complete_direct_operands_keep_optional_annotations_and_conditional_forms(self) -> None:
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
 
@@ -9642,7 +10971,9 @@ class ConfigurationEntryBoundary(unittest.TestCase):
                 ):
                     configuration_entry_boundary(objects, rows)
 
-    def test_coherent_once_store_retry_and_normal_return_mutations_fail_complete_source_shape(self):
+    def test_coherent_once_store_retry_and_normal_return_mutations_fail_complete_source_shape(
+        self,
+    ) -> None:
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
 
@@ -9670,7 +11001,7 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 configuration_entry_boundary(objects, rows)
 
-    def test_wrong_loader_frame_and_stale_initial_taken_value_cannot_issue_a_boundary(self):
+    def test_wrong_loader_frame_and_stale_initial_taken_value_cannot_issue_a_boundary(self) -> None:
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
 
@@ -9693,15 +11024,32 @@ class ConfigurationEntryBoundary(unittest.TestCase):
             configuration_entry_boundary(objects, rows)
 
 
+class StartupFixture(FixtureDelta):
+    mode: str
+    header: str
+    named: dict[str, int]
+    mapping_symbols: list[tuple[str, int, int]]
+    records: list[DecodedInstruction]
+
+
+def _startup_fixtures(value: object) -> list[StartupFixture]:
+    return [
+        _checked_fixture(_image_delta(v), StartupFixture)
+        for v in array_items(value, "startup fixtures")
+    ]
+
+
 class StartupConfigurationCopy(unittest.TestCase):
-    def fixture(self, mode="sizez", delta=0):
+    def fixture(
+        self, mode: str = "sizez", delta: int = 0
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], EntryFixture]:
         base = ConfigurationEntryBoundary()
         objects, rows, item = base.relocated(mode, delta) if delta else base.fixture(mode)
         elf = objects.elf
         part = next(
             v
-            for v in json.loads(
-                (Path(__file__).parent / "fixtures/config-startup.json").read_text()
+            for v in _startup_fixtures(
+                json.loads((Path(__file__).parent / "fixtures/config-startup.json").read_text())
             )
             if v["mode"] == mode
         )
@@ -9710,7 +11058,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         prefix = bytes.fromhex(part["header"])
         elf.data = prefix + elf.data
         elf.sections = [
-            tuple(v + 52 if i == 4 else v for i, v in enumerate(s)) for s in elf.sections
+            section_fields([v + 52 if i == 4 else v for i, v in enumerate(s)]) for s in elf.sections
         ]
         elf.named = {name: elf.sections[item["named"][name]] for name in elf.named}
         elf.named.update({name: elf.sections[index] for name, index in part["named"].items()})
@@ -9720,7 +11068,7 @@ class StartupConfigurationCopy(unittest.TestCase):
             at = s[4] + address - s[3]
             raw[at : at + len(bytes.fromhex(encoded))] = bytes.fromhex(encoded)
         elf.data = bytes(raw)
-        elf.functions.update({n: tuple(v) for n, v in part["functions"].items()})
+        elf.functions.update(part["functions"])
         writable = {i for i, s in enumerate(elf.sections) if s[2] & 1}
         symbols = [
             (n, a + (delta if ix in writable else 0), z, t, ix)
@@ -9728,7 +11076,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         ]
         elf.symbol_entries.extend(v for v in symbols if v not in elf.symbol_entries)
         elf.mapping_symbols.extend(
-            tuple(v) for v in part["mapping_symbols"] if tuple(v) not in elf.mapping_symbols
+            v for v in part["mapping_symbols"] if v not in elf.mapping_symbols
         )
         objects.sizes.update({int(a): v for a, v in part["sizes"].items()})
         for v in part["records"]:
@@ -9761,7 +11109,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         return objects, rows, item
 
     @staticmethod
-    def put(objects, address, encoded):
+    def put(objects: "DiagnosticFixture", address: int, encoded: bytes | bytearray) -> None:
         elf = objects.elf
         sections = [
             s
@@ -9776,7 +11124,9 @@ class StartupConfigurationCopy(unittest.TestCase):
         data[at : at + len(encoded)] = encoded
         elf.data = bytes(data)
 
-    def move_source(self, objects, rows, delta):
+    def move_source(
+        self, objects: "DiagnosticFixture", rows: dict[int, Instruction], delta: int
+    ) -> None:
         elf = objects.elf
         old = next(a for n, a, z, t, ix in elf.symbol_entries if n == "__sidata")
         new = old + delta
@@ -9784,9 +11134,11 @@ class StartupConfigurationCopy(unittest.TestCase):
             (n, new if n == "__sidata" else a, z, t, ix) for n, a, z, t, ix in elf.symbol_entries
         ]
         elf.segments = [
-            tuple(
-                v + delta if i == 3 and s[2] == elf.named[".data"][3] else v
-                for i, v in enumerate(s)
+            segment_fields(
+                [
+                    v + delta if i == 3 and s[2] == elf.named[".data"][3] else v
+                    for i, v in enumerate(s)
+                ]
             )
             for s in elf.segments
         ]
@@ -9797,7 +11149,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         self.put(objects, slot, struct.pack("<I", new))
 
     @staticmethod
-    def branch_link(at, target):
+    def branch_link(at: int, target: int) -> bytes:
         offset = target - at - 4
         if offset % 2 or not -(1 << 24) <= offset < (1 << 24):
             raise AssertionError("test BL range")
@@ -9811,7 +11163,9 @@ class StartupConfigurationCopy(unittest.TestCase):
             0xD000 | ((1 ^ i1 ^ s) << 13) | ((1 ^ i2 ^ s) << 11) | ((value >> 1) & 2047),
         )
 
-    def move_hook(self, objects, rows, address=0x10071000):
+    def move_hook(
+        self, objects: "DiagnosticFixture", rows: dict[int, Instruction], address: int = 0x10071000
+    ) -> None:
         elf = objects.elf
         old, extent, index = elf.functions["__pre_init"]
         old &= ~1
@@ -9824,8 +11178,8 @@ class StartupConfigurationCopy(unittest.TestCase):
                 continue
             operand = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
             if row.mnemonic.startswith(("b", "cb")) and row.mnemonic != "bx":
-                prefix, comma, target = operand.rpartition(", ")
-                target = int(target if comma else operand, 16)
+                prefix, comma, encoded_target = operand.rpartition(", ")
+                target = int(encoded_target if comma else operand, 16)
                 self.assertTrue(old <= target < old + extent)
                 operand = (prefix + ", " if comma else "") + hex(target + address - old)
             newrows[address + at - old] = Instruction(
@@ -9855,7 +11209,9 @@ class StartupConfigurationCopy(unittest.TestCase):
         self.put(objects, reset, encoded)
         rows[reset] = Instruction(reset, encoded, "bl", hex(address))
 
-    def move_Reset(self, objects, rows, address=0x10070000):
+    def move_Reset(
+        self, objects: "DiagnosticFixture", rows: dict[int, Instruction], address: int = 0x10070000
+    ) -> None:
         # Independent complete code + external-pool placement. The new section
         # is a synthetic coherent namespace; no new linked/decoded ELF claim.
         elf = objects.elf
@@ -9918,7 +11274,9 @@ class StartupConfigurationCopy(unittest.TestCase):
         struct.pack_into("<I", data, 24, address | 1)
         elf.data = bytes(data)
 
-    def test_independent_Reset_external_pool_and_data_LMA_relocations_preserve_the_bridge(self):
+    def test_independent_Reset_external_pool_and_data_LMA_relocations_preserve_the_bridge(
+        self,
+    ) -> None:
         from config_startup import startup_configuration_copy
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -9939,7 +11297,9 @@ class StartupConfigurationCopy(unittest.TestCase):
                 if move in ("source", "both", "all"):
                     self.assertGreaterEqual(proof["copy"]["source"][0], 0x10100000)
 
-    def test_copy_literals_and_complete_Reset_instructions_cannot_be_skipped_or_retargeted(self):
+    def test_copy_literals_and_complete_Reset_instructions_cannot_be_skipped_or_retargeted(
+        self,
+    ) -> None:
         from config_startup import startup_configuration_copy
 
         for fault in (
@@ -9975,7 +11335,7 @@ class StartupConfigurationCopy(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 startup_configuration_copy(objects, rows)
 
-    def test_mapping_load_vector_and_saved_stack_boundaries_are_not_caller_assertions(self):
+    def test_mapping_load_vector_and_saved_stack_boundaries_are_not_caller_assertions(self) -> None:
         from config_startup import startup_configuration_copy
 
         for fault in (
@@ -10012,7 +11372,7 @@ class StartupConfigurationCopy(unittest.TestCase):
                     segment[1] += 4
                 else:
                     segment[3] = 0xFFFFFFF0
-                elf.segments[ix] = tuple(segment)
+                elf.segments[ix] = segment_fields(segment)
             elif fault == "vector":
                 self.put(objects, elf.named[".vector_table"][3] + 4, struct.pack("<I", 0x10000143))
             elif fault == "header":
@@ -10031,7 +11391,7 @@ class StartupConfigurationCopy(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 startup_configuration_copy(objects, rows)
 
-    def test_complete_hook_frame_restore_and_fixed_MMIO_literals_remain_exact(self):
+    def test_complete_hook_frame_restore_and_fixed_MMIO_literals_remain_exact(self) -> None:
         from config_startup import startup_configuration_copy
 
         for fault in ("hook_frame", "hook_restore", "hook_pool", "Reset_bool_frame"):
@@ -10052,7 +11412,7 @@ class StartupConfigurationCopy(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 startup_configuration_copy(objects, rows)
 
-    def test_whole_data_destination_cannot_gain_a_second_virtual_load_outside_Config(self):
+    def test_whole_data_destination_cannot_gain_a_second_virtual_load_outside_Config(self) -> None:
         from config_startup import startup_configuration_copy
 
         objects, rows, item = self.fixture()
@@ -10067,7 +11427,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         ):
             startup_configuration_copy(objects, rows)
 
-    def test_main_target_and_live_initial_active_bytes_are_rechecked_by_composition(self):
+    def test_main_target_and_live_initial_active_bytes_are_rechecked_by_composition(self) -> None:
         from config_startup import startup_configuration_copy
         from config_initial import initial_configuration
 
@@ -10092,7 +11452,7 @@ class StartupConfigurationCopy(unittest.TestCase):
         self.assertEqual(proof["phase"], "machine_copy_at_main_pending_application_owner")
         self.assertNotIn("acquired_owner", proof)
 
-    def test_foreign_semantic_direct_entries_cannot_skip_machine_copy_or_hook(self):
+    def test_foreign_semantic_direct_entries_cannot_skip_machine_copy_or_hook(self) -> None:
         from config_startup import startup_configuration_copy
 
         for phase in ("Reset", "__pre_init", "main"):
@@ -10116,7 +11476,9 @@ class StartupConfigurationCopy(unittest.TestCase):
                 ):
                     startup_configuration_copy(objects, rows)
 
-    def test_current_copy_to_main_composes_the_same_once_Config_without_source_theorem(self):
+    def test_current_copy_to_main_composes_the_same_once_Config_without_source_theorem(
+        self,
+    ) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -10145,7 +11507,7 @@ class StartupConfigurationCopy(unittest.TestCase):
 
 
 class LedPlatformFamilies(unittest.TestCase):
-    def fixture(self, role, mode):
+    def fixture(self, role: str, mode: str) -> LedFamily:
         from config_led_access import LedContext, LedFamily, SITE_SHAPES
         from config_regions import Storage, borrow
 
@@ -10180,7 +11542,10 @@ class LedPlatformFamilies(unittest.TestCase):
                 if mode == "sizez"
                 else None
             )
+            protected: tuple[Storage, ...]
             if mode == "sizez":
+                if visitor is None:
+                    raise AssertionError("sizez fixture requires its visitor")
                 frame = (
                     Storage(loader.space, "LED pattern", -1656, 48, 8, phase, True)
                     if role == "result_words"
@@ -10218,7 +11583,7 @@ class LedPlatformFamilies(unittest.TestCase):
         )
         return LedFamily(role, mode, parent, sites, tuple(contexts))
 
-    def dependencies(self, mode):
+    def dependencies(self, mode: str) -> tuple[LedFamily, ...]:
         roles = (
             ("result_words", "pattern_words", "normal_config_words")
             if mode == "sizez"
@@ -10226,7 +11591,7 @@ class LedPlatformFamilies(unittest.TestCase):
         )
         return tuple(self.fixture(role, mode) for role in roles)
 
-    def test_all12_LED_sites_keep_exact_modes_owners_epochs_and_strict_roundtrip(self):
+    def test_all12_LED_sites_keep_exact_modes_owners_epochs_and_strict_roundtrip(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -10254,7 +11619,7 @@ class LedPlatformFamilies(unittest.TestCase):
                     self.assertTrue(value.footprints(context.epoch))
         self.assertEqual(total, 12)
 
-    def test_LED_reader_rejects_wrong_mode_width_output_epoch_and_padding_aliases(self):
+    def test_LED_reader_rejects_wrong_mode_width_output_epoch_and_padding_aliases(self) -> None:
         from config_led_access import read_led_family
         from copy import deepcopy
 
@@ -10283,44 +11648,58 @@ class LedPlatformFamilies(unittest.TestCase):
                 "unknown",
             ):
                 bad = deepcopy(record)
-                c = bad["contexts"][0]
+                c = _fixture_array(bad["contexts"])[0]
                 if fault == "width_float":
                     bad["width"] = 4.0
                 elif fault == "site_bool":
-                    bad["sites"][0]["site"] = True
+                    _fixture_object(_fixture_array(bad["sites"])[0])["site"] = True
                 elif fault == "offset_float":
-                    bad["sites"][0]["offset"] = float(bad["sites"][0]["offset"])
+                    _fixture_object(_fixture_array(bad["sites"])[0])["offset"] = float(
+                        integer_value(
+                            _fixture_object(_fixture_array(bad["sites"])[0])["offset"], "offset"
+                        )
+                    )
                 elif fault == "direction":
                     bad["direction"] = "write" if role == "pattern_words" else "read"
                 elif fault == "mode":
                     bad["mode"] = "sizes" if mode == "sizez" else "sizez"
                 elif fault == "duplicate":
-                    bad["sites"][-1] = deepcopy(bad["sites"][0])
+                    _fixture_array(bad["sites"])[-1] = deepcopy(_fixture_array(bad["sites"])[0])
                 elif fault == "lost_epoch":
-                    bad["contexts"].pop()
+                    _fixture_array(bad["contexts"]).pop()
                 elif fault == "owner":
-                    c["owner"]["offset"] += 10 if role == "normal_config_words" else 4
+                    owner_record = _fixture_object(_fixture_object(c)["owner"])
+                    owner_record["offset"] = integer_value(
+                        owner_record["offset"], "owner offset"
+                    ) + (10 if role == "normal_config_words" else 4)
                 elif fault == "frame":
-                    c["frame"]["extent"] += 8
+                    frame_record = _fixture_object(_fixture_object(c)["frame"])
+                    frame_record["extent"] = (
+                        integer_value(frame_record["extent"], "frame extent") + 8
+                    )
                 elif fault == "save":
-                    c["protected"].pop()
+                    _fixture_array(_fixture_object(c)["protected"]).pop()
                 elif fault == "protected_overlap":
-                    owner = c["owner"]
-                    s = owner["storage"]
-                    c["protected"].append(
+                    owner = _fixture_object(c)["owner"]
+                    s = _fixture_object(owner)["storage"]
+                    _fixture_array(_fixture_object(c)["protected"]).append(
                         dict(
-                            s,
+                            _fixture_object(s),
                             identity="overlap",
-                            start=s["start"] + owner["offset"] + 2,
+                            start=integer_value(_fixture_object(s)["start"], "start")
+                            + integer_value(_fixture_object(owner)["offset"], "offset")
+                            + 2,
                             extent=4,
                             alignment=1,
                             writable=False,
                         )
                     )
                 elif fault == "writable_bool":
-                    c["owner"]["writable"] = int(c["owner"]["writable"])
+                    owner_record = _fixture_object(_fixture_object(c)["owner"])
+                    writable = _checked_fixture(owner_record["writable"], bool)
+                    owner_record["writable"] = int(writable)
                 elif fault == "padding":
-                    bad["opaque_payload_padding"][0] = 5.0
+                    _fixture_array(bad["opaque_payload_padding"])[0] = 5.0
                 elif fault == "error":
                     bad["source_outcome"] = "anything_except_error_tag"
                 else:
@@ -10331,7 +11710,7 @@ class LedPlatformFamilies(unittest.TestCase):
                 ):
                     read_led_family(bad)
 
-    def test_LED_source_fields_and_reused_result_epochs_cannot_form_cross_products(self):
+    def test_LED_source_fields_and_reused_result_epochs_cannot_form_cross_products(self) -> None:
         from dataclasses import replace
 
         for role in ("result_words", "pattern_words", "normal_config_words"):
@@ -10378,7 +11757,7 @@ class LedPlatformFamilies(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 replace(value, contexts=(replace(c, owner=replace(c.owner, extent=12)),))
 
-    def artifact(self, mode):
+    def artifact(self, mode: str) -> DiagnosticFixture:
         # Metadata and consumed-site bytes only; no complete LED producer body.
         from config_led_access import _PARENTS
         from config_entry import CONFIG
@@ -10398,7 +11777,7 @@ class LedPlatformFamilies(unittest.TestCase):
         base = values[0].contexts[0].config.start
         text = (0, 1, 6, start, 0, len(data), 0, 0, 2, 0)
         slot = (0, 1, 7, base, len(data), 14604, 0, 0, 4, 0)
-        elf = SimpleNamespace(
+        elf = ImageFixture(
             data=bytes(data) + bytes(14604),
             sections=[text, slot],
             functions=functions,
@@ -10406,9 +11785,9 @@ class LedPlatformFamilies(unittest.TestCase):
             named={".data": slot},
             mapping_symbols=[("$t", start, 0)],
         )
-        return config_stack.DiagnosticObjects(elf, sizes)
+        return diagnostic_fixture(elf, sizes)
 
-    def test_current_LED_consumer_rebinds_all12_sites_and_rejects_metadata_or_bytes(self):
+    def test_current_LED_consumer_rebinds_all12_sites_and_rejects_metadata_or_bytes(self) -> None:
         from config_led_access import current_led_family
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -10446,7 +11825,7 @@ class LedPlatformFamilies(unittest.TestCase):
                 with self.subTest(mode=mode, fault=fault), self.assertRaises(AssertionError):
                     current_led_family(objects, value)
 
-    def test_v5_configuration_policy_cannot_drop_new_LED_families(self):
+    def test_v5_configuration_policy_cannot_drop_new_LED_families(self) -> None:
         import config_platform
 
         objects, view, context = ConditionalStackPolicy.fixture(self)
@@ -10459,7 +11838,7 @@ class LedPlatformFamilies(unittest.TestCase):
                     objects, view, context, contradictory_effects=(), owned_dependencies=legacy
                 )
 
-    def test_LED_code_and_owner_relocations_keep_sites_and_lifetimes_paired(self):
+    def test_LED_code_and_owner_relocations_keep_sites_and_lifetimes_paired(self) -> None:
         from config_led_access import current_led_family
         from dataclasses import replace
 
@@ -10473,8 +11852,8 @@ class LedPlatformFamilies(unittest.TestCase):
                 data = list(elf.sections[1])
                 code[3] += code_delta
                 data[3] += owner_delta
-                elf.sections = [tuple(code), tuple(data)]
-                elf.named = {".data": tuple(data)}
+                elf.sections = [section_fields(code), section_fields(data)]
+                elf.named = {".data": section_fields(data)}
                 elf.functions = {
                     n: (a + code_delta, z, ix) for n, (a, z, ix) in elf.functions.items()
                 }
@@ -10507,7 +11886,7 @@ class LedPlatformFamilies(unittest.TestCase):
                         with self.assertRaises(AssertionError):
                             current_led_family(objects, old)
 
-    def test_v5_LED_dependencies_cannot_mix_same_width_owners_or_visitor_lineage(self):
+    def test_v5_LED_dependencies_cannot_mix_same_width_owners_or_visitor_lineage(self) -> None:
         import config_platform
         from config_led_access import LedFamily
         from dataclasses import replace
@@ -10526,7 +11905,7 @@ class LedPlatformFamilies(unittest.TestCase):
                         contradictory_effects=(),
                         owned_dependencies=dependencies,
                     )
-                    bad = policy.to_record()
+                    bad: dict[str, object] = dict(policy.to_record())
                     bad.update(
                         schema=3,
                         scope="h2-rp2350-secure-owned-access-v4",
@@ -10543,6 +11922,8 @@ class LedPlatformFamilies(unittest.TestCase):
                     and (v.role == "pattern_words" if fault in ("visitor", "parent") else True)
                 )
                 family = values[index]
+                if not isinstance(family, LedFamily):
+                    raise AssertionError("fixture LED dependency")
                 contexts = []
                 for c in family.contexts:
                     if fault == "Config":
@@ -10586,10 +11967,12 @@ class LedPlatformFamilies(unittest.TestCase):
 
 
 class PreclaimConfigurationPreservation(unittest.TestCase):
-    def fixture(self, mode="sizez", delta=0):
+    def fixture(
+        self, mode: str = "sizez", delta: int = 0
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], EntryFixture]:
         return StartupConfigurationCopy().fixture(mode, delta)
 
-    def test_same_Reset_application_and_claim_intervals_in_all_compatible_modes(self):
+    def test_same_Reset_application_and_claim_intervals_in_all_compatible_modes(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
 
         for mode, footprint, attempts, count in (
@@ -10630,7 +12013,7 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
                 self.assertTrue(all(len(v["edges"]) == 1 for v in proof["pending_diagnostics"]))
                 self.assertEqual(proof["claim"]["required_before_taken"], 0)
 
-    def test_full_preclaim_stack_rejects_partial_allocations_below_the_old_hook_frame(self):
+    def test_full_preclaim_stack_rejects_partial_allocations_below_the_old_hook_frame(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
         from config_startup import startup_configuration_copy
 
@@ -10647,7 +12030,7 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
                 ):
                     preclaim_configuration_preservation(objects, rows)
 
-    def test_stack_cannot_overlap_a_LOAD_memory_interval_without_a_section(self):
+    def test_stack_cannot_overlap_a_LOAD_memory_interval_without_a_section(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -10659,7 +12042,9 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaisesRegex(AssertionError, "preclaim stack"):
                 preclaim_configuration_preservation(objects, rows)
 
-    def test_independent_Restore_Reset_and_LMA_relocation_do_not_supply_a_stack_address(self):
+    def test_independent_Restore_Reset_and_LMA_relocation_do_not_supply_a_stack_address(
+        self,
+    ) -> None:
         from config_preclaim import preclaim_configuration_preservation
 
         helper = StartupConfigurationCopy()
@@ -10672,7 +12057,7 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
             self.assertEqual(proof["startup"]["reset"]["function"], 0x10070000)
             self.assertEqual(proof["executor"], (proof["startup"]["copy"]["initial_sp"] - 24, 8))
 
-    def test_external_direct_ingress_cannot_bypass_task_or_executor_construction(self):
+    def test_external_direct_ingress_cannot_bypass_task_or_executor_construction(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
         from config_startup import startup_configuration_copy
 
@@ -10707,7 +12092,9 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
                         ):
                             preclaim_configuration_preservation(objects, candidate)
 
-    def test_initializer_and_same_task_callback_effects_cannot_change_under_matching_roles(self):
+    def test_initializer_and_same_task_callback_effects_cannot_change_under_matching_roles(
+        self,
+    ) -> None:
         from config_preclaim import preclaim_configuration_preservation
         from config_startup import startup_configuration_copy
 
@@ -10729,7 +12116,7 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
                 with self.subTest(mode=mode, phase=phase), self.assertRaises(AssertionError):
                     preclaim_configuration_preservation(objects, rows)
 
-    def test_coherent_operand_mutations_reject_changed_register_and_queue_provenance(self):
+    def test_coherent_operand_mutations_reject_changed_register_and_queue_provenance(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
         from config_startup import startup_configuration_copy
         from dataclasses import replace
@@ -10762,7 +12149,7 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
                 with self.subTest(mode=mode, phase=phase), self.assertRaises(AssertionError):
                     preclaim_configuration_preservation(objects, rows)
 
-    def test_full_typed_pool_backing_and_initial_claim_are_still_required(self):
+    def test_full_typed_pool_backing_and_initial_claim_are_still_required(self) -> None:
         from config_preclaim import preclaim_configuration_preservation
         from config_entry import BOOT_POOL, static_role
         from config_initial import initial_configuration
@@ -10788,13 +12175,13 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
 
 
 class FirstBootSourceContract(unittest.TestCase):
-    def sources(self):
+    def sources(self) -> dict[str, bytes]:
         # Source-only supplied fixtures. Acceptance here does not establish
         # any relationship to an ELF or a compiler-consumed input set.
         root = Path(__file__).resolve().parents[1] / "pico2" / "src"
         return {name: (root / name).read_bytes() for name in ("main.rs", "view_config.rs")}
 
-    def test_exact_current_private_module_and_synchronous_boot_contract(self):
+    def test_exact_current_private_module_and_synchronous_boot_contract(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         proof = first_boot_source_contract(self.sources())
@@ -10805,7 +12192,7 @@ class FirstBootSourceContract(unittest.TestCase):
         self.assertTrue(proof["requires_actual_machine_and_first_batch_composition"])
         self.assertNotIn("acquired_owner", proof)
 
-    def test_private_module_cannot_add_an_escape_or_mutable_return(self):
+    def test_private_module_cannot_add_an_escape_or_mutable_return(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         for old, new in (
@@ -10834,7 +12221,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(AssertionError):
                 first_boot_source_contract(documents)
 
-    def test_boot_body_cannot_escape_spawn_poll_or_reorder_before_initialize(self):
+    def test_boot_body_cannot_escape_spawn_poll_or_reorder_before_initialize(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         original = "let configuration = view_config::initialize();"
@@ -10852,7 +12239,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(AssertionError):
                 first_boot_source_contract(documents)
 
-    def test_alternate_or_redirected_source_declarations_are_not_ignored(self):
+    def test_alternate_or_redirected_source_declarations_are_not_ignored(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         for old, new in (
@@ -10873,7 +12260,7 @@ class FirstBootSourceContract(unittest.TestCase):
         with self.assertRaises(AssertionError):
             first_boot_source_contract(documents)
 
-    def test_nested_declarations_cannot_borrow_top_level_source_identity(self):
+    def test_nested_declarations_cannot_borrow_top_level_source_identity(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         for target in ("module", "boot_main", "executor_import"):
@@ -10903,7 +12290,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(AssertionError):
                 first_boot_source_contract(documents)
 
-    def test_comments_whitespace_and_literal_contents_have_distinct_semantics(self):
+    def test_comments_whitespace_and_literal_contents_have_distinct_semantics(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         documents = self.sources()
@@ -10931,7 +12318,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(value=tuple(value)), self.assertRaises(AssertionError):
                 first_boot_source_contract(value)
 
-    def test_raw_string_cannot_supply_private_external_module_identity(self):
+    def test_raw_string_cannot_supply_private_external_module_identity(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         documents = self.sources()
@@ -10947,7 +12334,7 @@ class FirstBootSourceContract(unittest.TestCase):
         with self.assertRaises(AssertionError):
             first_boot_source_contract(documents)
 
-    def test_literal_contents_cannot_supply_executor_import_or_boot_main(self):
+    def test_literal_contents_cannot_supply_executor_import_or_boot_main(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         for target in ("import", "main"):
@@ -10971,7 +12358,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(AssertionError):
                 first_boot_source_contract(documents)
 
-    def test_unsupported_raw_families_and_malformed_literals_fail_before_matching(self):
+    def test_unsupported_raw_families_and_malformed_literals_fail_before_matching(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         literals = [
@@ -10996,7 +12383,7 @@ class FirstBootSourceContract(unittest.TestCase):
             with self.subTest(literal=literal[:45]), self.assertRaises(AssertionError):
                 first_boot_source_contract(documents)
 
-    def test_cooked_literals_comments_and_legitimate_lifetimes_stay_atomic(self):
+    def test_cooked_literals_comments_and_legitimate_lifetimes_stay_atomic(self) -> None:
         from config_boot_source import first_boot_source_contract
 
         documents = self.sources()
@@ -11013,7 +12400,7 @@ class FirstBootSourceContract(unittest.TestCase):
 
 
 class BuildSourceContextInput(unittest.TestCase):
-    def context(self):
+    def context(self) -> SourceContext:
         from config_build_source import make_source_context
 
         sources = FirstBootSourceContract().sources()
@@ -11022,12 +12409,12 @@ class BuildSourceContextInput(unittest.TestCase):
             b"ELF fixture", "fixture-attempt", b'{"optimization":"z"}', before
         )
 
-    def test_strict_roundtrip_binds_exact_ELF_attempt_options_and_source_bytes(self):
+    def test_strict_roundtrip_binds_exact_ELF_attempt_options_and_source_bytes(self) -> None:
         from config_build_source import parse_source_context, validate_source_context
 
         value = self.context()
         raw = value.to_bytes()
-        elf = SimpleNamespace(data=b"ELF fixture")
+        elf = ImageFixture(data=b"ELF fixture")
         checked = parse_source_context(raw, elf, "fixture-attempt", b'{"optimization":"z"}')
         self.assertEqual(checked, value)
         self.assertEqual(
@@ -11040,14 +12427,14 @@ class BuildSourceContextInput(unittest.TestCase):
             ("fixture-attempt", b'{"optimization":"z"}', b"other ELF"),
         ):
             with self.subTest(attempt=attempt, options=options), self.assertRaises(AssertionError):
-                parse_source_context(raw, SimpleNamespace(data=blob), attempt, options)
+                parse_source_context(raw, ImageFixture(data=blob), attempt, options)
 
-    def test_missing_extra_duplicate_and_wrong_type_or_hash_records_reject(self):
+    def test_missing_extra_duplicate_and_wrong_type_or_hash_records_reject(self) -> None:
         from config_build_source import parse_source_context
 
         value = self.context()
         record = value.to_record()
-        elf = SimpleNamespace(data=b"ELF fixture")
+        elf = ImageFixture(data=b"ELF fixture")
         for change in (
             "schema_bool",
             "extra",
@@ -11063,7 +12450,9 @@ class BuildSourceContextInput(unittest.TestCase):
             "kind",
             "attempt",
         ):
-            bad = json.loads(json.dumps(record))
+            bad = object_fields(json.loads(json.dumps(record)), "source fixture")
+            options = _fixture_object(bad["build_options"])
+            sources = _checked_fixture(bad["sources"], list[dict[str, object]])
             if change == "schema_bool":
                 bad["schema"] = True
             elif change == "extra":
@@ -11073,19 +12462,19 @@ class BuildSourceContextInput(unittest.TestCase):
             elif change == "elf":
                 bad["elf_sha256"] = "0" * 64
             elif change == "options_hash":
-                bad["build_options"]["sha256"] = "0" * 64
+                options["sha256"] = "0" * 64
             elif change == "source_hash":
-                bad["sources"][0]["sha256"] = "0" * 64
+                sources[0]["sha256"] = "0" * 64
             elif change == "source_length":
-                bad["sources"][0]["length"] += 1
+                sources[0]["length"] = integer_value(sources[0]["length"], "source length") + 1
             elif change == "source_float":
-                bad["sources"][0]["length"] = float(bad["sources"][0]["length"])
+                sources[0]["length"] = float(integer_value(sources[0]["length"], "source length"))
             elif change == "extra_source":
-                bad["sources"].append(dict(bad["sources"][0], path="other.rs"))
+                sources.append(dict(sources[0], path="other.rs"))
             elif change == "duplicate_source":
-                bad["sources"][1] = bad["sources"][0]
+                sources[1] = sources[0]
             elif change == "source_type":
-                bad["sources"][0]["utf8"] = []
+                sources[0]["utf8"] = []
             elif change == "kind":
                 bad["kind"] = "proved_source_owner"
             else:
@@ -11102,7 +12491,7 @@ class BuildSourceContextInput(unittest.TestCase):
         with self.assertRaises(AssertionError):
             parse_source_context(None, elf)
 
-    def test_exact_source_and_serialized_input_caps_are_independent_of_memory_results(self):
+    def test_exact_source_and_serialized_input_caps_are_independent_of_memory_results(self) -> None:
         from config_build_source import make_source_context, parse_source_context
 
         before = {
@@ -11111,7 +12500,7 @@ class BuildSourceContextInput(unittest.TestCase):
         }
         value = make_source_context(b"ELF fixture", "fixture", b"{}", before)
         raw = value.to_bytes()
-        elf = SimpleNamespace(data=b"ELF fixture")
+        elf = ImageFixture(data=b"ELF fixture")
         self.assertEqual(len(parse_source_context(raw, elf).documents()["main.rs"]), 65536)
         padded = raw + b" " * (262144 - len(raw))
         self.assertEqual(parse_source_context(padded, elf), value)
@@ -11124,11 +12513,11 @@ class BuildSourceContextInput(unittest.TestCase):
         with self.assertRaises(AssertionError):
             make_source_context(b"ELF fixture", "fixture", b"{}", before)
 
-    def test_source_semantics_are_recomputed_not_supplied_by_the_context(self):
+    def test_source_semantics_are_recomputed_not_supplied_by_the_context(self) -> None:
         from config_build_source import inspect_source_context, make_source_context
 
         value = self.context()
-        elf = SimpleNamespace(data=b"ELF fixture")
+        elf = ImageFixture(data=b"ELF fixture")
         self.assertEqual(
             inspect_source_context(value, elf)["kind"], "first_boot_source_semantics_only"
         )
@@ -11142,12 +12531,12 @@ class BuildSourceContextInput(unittest.TestCase):
         with self.assertRaises(AssertionError):
             inspect_source_context(None, elf)
 
-    def test_exclusive_sidecar_read_has_no_implicit_checkout_or_adjacent_fallback(self):
+    def test_exclusive_sidecar_read_has_no_implicit_checkout_or_adjacent_fallback(self) -> None:
         import tempfile
         from config_build_source import write_source_context, load_source_context
 
         value = self.context()
-        elf = SimpleNamespace(data=b"ELF fixture")
+        elf = ImageFixture(data=b"ELF fixture")
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "sources.json"
             with self.assertRaises(FileNotFoundError):
@@ -11161,7 +12550,9 @@ class BuildSourceContextInput(unittest.TestCase):
 
 
 class FirstBootHistory(unittest.TestCase):
-    def fixture(self, mode="sizez", delta=0):
+    def fixture(
+        self, mode: str = "sizez", delta: int = 0
+    ) -> tuple["DiagnosticFixture", dict[int, Instruction], SourceContext]:
         from config_build_source import make_source_context, SOURCE_PATHS
 
         objects, rows, item = PreclaimConfigurationPreservation().fixture(mode, delta)
@@ -11174,7 +12565,9 @@ class FirstBootHistory(unittest.TestCase):
         )
         return objects, rows, context
 
-    def test_same_rooted_invocation_closes_ordinary_diagnostics_but_not_loader_or_owner(self):
+    def test_same_rooted_invocation_closes_ordinary_diagnostics_but_not_loader_or_owner(
+        self,
+    ) -> None:
         from config_boot_history import first_boot_history
 
         for mode, attempts in (("speed2", 4), ("sizes", 1), ("sizez", 1)):
@@ -11205,7 +12598,9 @@ class FirstBootHistory(unittest.TestCase):
                 self.assertNotIn("acquired_owner", proof)
                 self.assertTrue(proof["requires_complete_same_B_loader_effects"])
 
-    def test_source_bytes_and_exact_ELF_pairing_are_required_not_source_or_owner_flags(self):
+    def test_source_bytes_and_exact_ELF_pairing_are_required_not_source_or_owner_flags(
+        self,
+    ) -> None:
         from config_boot_history import first_boot_history
         from config_build_source import make_source_context, SOURCE_PATHS
 
@@ -11224,7 +12619,9 @@ class FirstBootHistory(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "different current ELF"):
             first_boot_history(objects, rows, context)
 
-    def test_return_addresses_are_bound_to_selected_calls_and_once_restores_before_tail(self):
+    def test_return_addresses_are_bound_to_selected_calls_and_once_restores_before_tail(
+        self,
+    ) -> None:
         from config_boot_history import first_boot_history
 
         for mode, count in (("speed2", 2), ("sizes", 2), ("sizez", 5)):
@@ -11256,7 +12653,7 @@ class FirstBootHistory(unittest.TestCase):
             )
             self.assertTrue(proof["nonreturn_prefix"]["Reset_UDF_not_reached_by_selected_prefix"])
 
-    def test_all_publication_attempts_and_callback_or_guard_semantic_changes_reject(self):
+    def test_all_publication_attempts_and_callback_or_guard_semantic_changes_reject(self) -> None:
         from config_boot_history import first_boot_history
         from config_preclaim import preclaim_configuration_preservation
         from dataclasses import replace
@@ -11279,7 +12676,9 @@ class FirstBootHistory(unittest.TestCase):
                 with self.subTest(mode=mode, site=hex(site)), self.assertRaises(AssertionError):
                     first_boot_history(objects, changed, context)
 
-    def test_outside_shared_calls_get_contextual_exclusion_not_global_caller_permission(self):
+    def test_outside_shared_calls_get_contextual_exclusion_not_global_caller_permission(
+        self,
+    ) -> None:
         from config_boot_history import first_boot_history
         from config_preclaim import preclaim_configuration_preservation
 
@@ -11296,7 +12695,7 @@ class FirstBootHistory(unittest.TestCase):
         self.assertEqual(proof["callback_expiry"], "before next shared dequeue")
         self.assertTrue(proof["later_invocations_require_separate_context"])
 
-    def test_unconsumed_address_data_does_not_create_or_authorize_a_callback(self):
+    def test_unconsumed_address_data_does_not_create_or_authorize_a_callback(self) -> None:
         from config_boot_history import first_boot_history
         from config_build_source import make_source_context
 
@@ -11309,7 +12708,9 @@ class FirstBootHistory(unittest.TestCase):
         self.assertEqual(proof["callback_binding"]["scope"], "same first detached Boot node only")
         self.assertFalse(proof["callback_binding"]["global_whitelist"])
 
-    def test_exception_and_input_qualifications_remain_explicit_without_new_assumption(self):
+    def test_exception_and_input_qualifications_remain_explicit_without_new_assumption(
+        self,
+    ) -> None:
         from config_boot_history import first_boot_history
 
         objects, rows, context = self.fixture()
@@ -11321,7 +12722,7 @@ class FirstBootHistory(unittest.TestCase):
         self.assertEqual(len(proof["external_qualifications"]), 3)
         self.assertIn("conditional, not measured", proof["external_qualifications"][1])
 
-    def test_guard_family_cannot_exit_without_a_correlated_successful_exclusive(self):
+    def test_guard_family_cannot_exit_without_a_correlated_successful_exclusive(self) -> None:
         from copy import deepcopy
         from config_boot_history import first_boot_history, _family
 
@@ -11334,7 +12735,8 @@ class FirstBootHistory(unittest.TestCase):
         changed = []
         for item in inventory:
             if item["phase"] == "run" and item["site"] == body["function"] + 34:
-                item = dict(item, successors=(body["function"] + 36, body["function"] + 36))
+                item = item.copy()
+                item["successors"] = (body["function"] + 36, body["function"] + 36)
             changed.append(item)
         with self.assertRaisesRegex(AssertionError, "exit lacks exclusive success"):
             _family(
@@ -11353,7 +12755,7 @@ class FirstBootHistory(unittest.TestCase):
                 True,
             )
 
-    def test_each_selected_return_and_once_restore_keep_their_exact_PC_transport(self):
+    def test_each_selected_return_and_once_restore_keep_their_exact_PC_transport(self) -> None:
         from dataclasses import replace
         from config_boot_history import first_boot_history
 
@@ -11369,7 +12771,7 @@ class FirstBootHistory(unittest.TestCase):
                 with self.subTest(mode=mode, at=hex(at)), self.assertRaises(AssertionError):
                     first_boot_history(objects, changed, context)
 
-    def test_callback_load_and_initialized_completion_cannot_change_source(self):
+    def test_callback_load_and_initialized_completion_cannot_change_source(self) -> None:
         from dataclasses import replace
         from config_boot_history import first_boot_history
 
@@ -11389,7 +12791,9 @@ class FirstBootHistory(unittest.TestCase):
                 with self.subTest(mode=mode, at=hex(at)), self.assertRaises(AssertionError):
                     first_boot_history(objects, changed, context)
 
-    def test_internal_write_envelopes_cannot_corrupt_saved_LR_or_initialized_completion(self):
+    def test_internal_write_envelopes_cannot_corrupt_saved_LR_or_initialized_completion(
+        self,
+    ) -> None:
         from copy import deepcopy
         from config_boot_history import first_boot_history, _edges, _save_protection, _state_writers
 
@@ -11400,7 +12804,7 @@ class FirstBootHistory(unittest.TestCase):
         end = proof["protected_save_intervals"]["boot_poll"][1]
         for fault in ("saved_LR", "completion"):
             changed = deepcopy(p)
-            value = dict(
+            value: dict[str, object] = dict(
                 phase="configuration_initialize",
                 instruction=bodies["configuration_initialize"]["function"] + 12,
                 scope="before",
@@ -11408,7 +12812,7 @@ class FirstBootHistory(unittest.TestCase):
             )
             if fault == "completion":
                 value.update(interval=(p["task"][0] + 44, p["task"][0] + 45), phase="run")
-            changed["writes"] = changed["writes"] + (value,)
+            _fixture_object(changed)["writes"] = changed["writes"] + (value,)
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 if fault == "saved_LR":
                     _save_protection(changed, bodies)
@@ -11417,17 +12821,22 @@ class FirstBootHistory(unittest.TestCase):
 
 
 class SameBLoaderBoundary(unittest.TestCase):
-    def fixture(self, mode="sizez", delta=0):
+    def fixture(
+        self, mode: str = "sizez", delta: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture]:
         from config_build_source import make_source_context
 
         objects, rows, context = FirstBootHistory().fixture(mode, delta)
         elf = objects.elf
         item = next(
-            v
-            for v in json.loads(
-                (Path(__file__).parent / "fixtures/config-loader-boundary.json").read_text()
+            _loader_fixture(v)
+            for v in array_items(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-loader-boundary.json").read_text()
+                ),
+                "loader fixtures",
             )
-            if v["mode"] == mode
+            if object_fields(v, "loader fixture")["mode"] == mode
         )
         for parent in item["parents"]:
             a = parent["address"]
@@ -11474,7 +12883,14 @@ class SameBLoaderBoundary(unittest.TestCase):
         return objects, rows, context, item
 
     @staticmethod
-    def mov(objects, rows, at, operation, register, value):
+    def mov(
+        objects: DiagnosticFixture,
+        rows: dict[int, Instruction],
+        at: int,
+        operation: str,
+        register: str,
+        value: int,
+    ) -> None:
         rd = 14 if register == "lr" else int(register[1:])
         first = (
             (0xF240 if operation == "movw" else 0xF2C0)
@@ -11486,14 +12902,14 @@ class SameBLoaderBoundary(unittest.TestCase):
         rows[at] = Instruction(at, raw, operation, register + ", #" + hex(value))
 
     @staticmethod
-    def rebound(objects, context):
+    def rebound(objects: DiagnosticFixture, context: SourceContext) -> SourceContext:
         from config_build_source import make_source_context
 
         return make_source_context(
             objects.elf.data, context.attempt, context.build_options, dict(context.sources)
         )
 
-    def test_current_modes_derive_restored_SP_and_same_static_points_without_an_owner(self):
+    def test_current_modes_derive_restored_SP_and_same_static_points_without_an_owner(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode, frame, entry, count in (
@@ -11520,7 +12936,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                 self.assertNotIn("acquired_owner", proof)
                 self.assertFalse(proof["hardware_qualified"])
 
-    def test_new_root_frame_rejects_physical_section_LOAD_and_OBJECT_aliases(self):
+    def test_new_root_frame_rejects_physical_section_LOAD_and_OBJECT_aliases(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -11541,7 +12957,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                 with self.subTest(mode=mode, kind=kind), self.assertRaises(AssertionError):
                     first_boot_loader_boundary(objects, rows, context)
 
-    def test_actual_stack_bound_and_checked_metadata_extents_cannot_be_bypassed(self):
+    def test_actual_stack_bound_and_checked_metadata_extents_cannot_be_bypassed(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for kind in ("overflow_section", "overflow_LOAD", "overflow_OBJECT", "stack_bottom"):
@@ -11558,7 +12974,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                 old = elf.named[".uninit"]
                 index = elf.sections.index(old)
                 limit = 0x2007FF80
-                new = tuple(limit - old[3] if i == 5 else v for i, v in enumerate(old))
+                new = section_fields([limit - old[3] if i == 5 else v for i, v in enumerate(old)])
                 elf.sections[index] = new
                 elf.named[".uninit"] = new
                 elf.symbol_entries = [
@@ -11566,7 +12982,9 @@ class SameBLoaderBoundary(unittest.TestCase):
                     for n, a, z, t, i in elf.symbol_entries
                 ]
                 elf.segments = [
-                    tuple(new[5] if i == 5 else v for i, v in enumerate(s)) if s[2] == old[3] else s
+                    segment_fields([new[5] if i == 5 else v for i, v in enumerate(s)])
+                    if s[2] == old[3]
+                    else s
                     for s in elf.segments
                 ]
                 from config_boot_history import first_boot_history
@@ -11575,7 +12993,7 @@ class SameBLoaderBoundary(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 first_boot_loader_boundary(objects, rows, context)
 
-    def test_static_point_cannot_select_another_address_even_with_coherent_bytes(self):
+    def test_static_point_cannot_select_another_address_even_with_coherent_bytes(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -11604,7 +13022,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                     # mask a validator/visitor point with an earlier root one.
                     objects, rows, context, item = self.fixture(mode)
 
-    def test_root_prologue_frame_and_semantic_SP_changes_reject(self):
+    def test_root_prologue_frame_and_semantic_SP_changes_reject(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
         from dataclasses import replace
 
@@ -11620,7 +13038,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                 with self.subTest(mode=mode, kind=kind), self.assertRaises(AssertionError):
                     first_boot_loader_boundary(objects, rows, context)
 
-    def test_protected_shapes_keep_taken_padding_tasks_P_and_all_caller_cells(self):
+    def test_protected_shapes_keep_taken_padding_tasks_P_and_all_caller_cells(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -11653,7 +13071,9 @@ class SameBLoaderBoundary(unittest.TestCase):
             self.assertTrue(proof["requires_H8_consumed_input_closure"])
             self.assertTrue(proof["requires_M2_pre_init_source_reconciliation"])
 
-    def test_context_or_supplied_history_record_cannot_substitute_for_internal_recomputation(self):
+    def test_context_or_supplied_history_record_cannot_substitute_for_internal_recomputation(
+        self,
+    ) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         objects, rows, context, item = self.fixture()
@@ -11665,9 +13085,11 @@ class SameBLoaderBoundary(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 first_boot_loader_boundary(objects, rows, supplied)
         with self.assertRaises(TypeError):
-            first_boot_loader_boundary(objects, rows, context, history=dict(owner=True))
+            dynamic_call(
+                first_boot_loader_boundary, objects, rows, context, history=dict(owner=True)
+            )
 
-    def test_independent_root_code_and_PC_pool_relocation_still_bind_same_B(self):
+    def test_independent_root_code_and_PC_pool_relocation_still_bind_same_B(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
         from config_boot_history import first_boot_history
         from config_headers import ROOT
@@ -11726,7 +13148,7 @@ class SameBLoaderBoundary(unittest.TestCase):
         proof = first_boot_loader_boundary(objects, rows, self.rebound(objects, context))
         self.assertTrue(any(v.get("pool") == pool for v in proof["static_producers"]))
 
-    def test_physical_allocation_adjacency_is_valid_but_partial_overlap_is_not(self):
+    def test_physical_allocation_adjacency_is_valid_but_partial_overlap_is_not(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for offset in (-8, 0, 1):
@@ -11744,7 +13166,7 @@ class SameBLoaderBoundary(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "physical frame intersects"):
                     first_boot_loader_boundary(objects, rows, context)
 
-    def test_LOAD_file_bytes_cannot_exceed_the_declared_memory_extent(self):
+    def test_LOAD_file_bytes_cannot_exceed_the_declared_memory_extent(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         objects, rows, context, item = self.fixture()
@@ -11752,7 +13174,7 @@ class SameBLoaderBoundary(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "LOAD file/memory extent"):
             first_boot_loader_boundary(objects, rows, context)
 
-    def test_Reset_SP_relocation_with_fixed_B_code_and_task_shifts_loader_intervals(self):
+    def test_Reset_SP_relocation_with_fixed_B_code_and_task_shifts_loader_intervals(self) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -11784,16 +13206,33 @@ class SameBLoaderBoundary(unittest.TestCase):
                 before = old["loader_geometry"]
                 after = proof["loader_geometry"]
                 self.assertEqual(after["entry_SP"], before["entry_SP"] - shift)
-                for name in ("frame", "saves", "locals"):
-                    self.assertEqual(after[name], tuple(v - shift for v in before[name]))
-                for name in (
+                interval_keys: tuple[Literal["frame", "saves", "locals"], ...] = (
+                    "frame",
+                    "saves",
+                    "locals",
+                )
+                for interval_key in interval_keys:
+                    self.assertEqual(
+                        after[interval_key], tuple(v - shift for v in before[interval_key])
+                    )
+                scalar_keys: tuple[
+                    Literal[
+                        "function",
+                        "extent",
+                        "root_frame_bytes",
+                        "LR_value",
+                        "once_frame_retained_bytes",
+                    ],
+                    ...,
+                ] = (
                     "function",
                     "extent",
                     "root_frame_bytes",
                     "LR_value",
                     "once_frame_retained_bytes",
-                ):
-                    self.assertEqual(after[name], before[name])
+                )
+                for scalar_key in scalar_keys:
+                    self.assertEqual(after[scalar_key], before[scalar_key])
                 self.assertEqual(
                     proof["retained_save_constituents"],
                     tuple(
@@ -11832,7 +13271,9 @@ class SameBLoaderBoundary(unittest.TestCase):
                 self.assertNotIn("acquired_owner", proof)
                 self.assertFalse(proof["consuming_phase_closure"])
 
-    def test_Reset_SP_inconsistent_vector_or_symbol_rejects_with_current_source_context(self):
+    def test_Reset_SP_inconsistent_vector_or_symbol_rejects_with_current_source_context(
+        self,
+    ) -> None:
         from config_loader_boundary import first_boot_loader_boundary
 
         for mode in ("speed2", "sizes", "sizez"):
@@ -11857,8 +13298,20 @@ class SameBLoaderBoundary(unittest.TestCase):
                     first_boot_loader_boundary(objects, rows, self.rebound(objects, context))
 
 
+class SegmentFixture(TypedDict):
+    segments: list[tuple[int, int, str]]
+
+
+def _segment_fixture(value: object) -> SegmentFixture:
+    record = object_fields(value, "fixture segment envelope")
+    record["segments"] = [
+        _fixture_interval(v) for v in array_items(record["segments"], "fixture segments")
+    ]
+    return _checked_fixture(record, SegmentFixture)
+
+
 class ChecksumRefillHandoff(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext]:
         from llvm_stack import mapping_ranges
 
         objects, rows, context, item = SameBLoaderBoundary().fixture()
@@ -11876,16 +13329,18 @@ class ChecksumRefillHandoff(unittest.TestCase):
             "config-default-widget.json",
             "config-default-sources.json",
         ):
-            data = json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
-            selected = (
-                next(v for v in data if v["mode"] == "sizez") if isinstance(data, list) else data
+            data: object = json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
+            selected = _segment_fixture(
+                next(v for v in _fixture_array(data) if _fixture_object(v)["mode"] == "sizez")
+                if isinstance(data, list)
+                else data
             )
             for segment in selected["segments"]:
                 index, address, encoded = segment
                 section = donor.elf.sections[index]
-                n = len(bytes.fromhex(encoded))
+                byte_count = len(bytes.fromhex(encoded))
                 at = section[4] + address - section[3]
-                StartupConfigurationCopy.put(objects, address, donor.elf.data[at : at + n])
+                StartupConfigurationCopy.put(objects, address, donor.elf.data[at : at + byte_count])
         for n, (a, z, index) in donor.elf.functions.items():
             if not any((a & ~1) <= at < (a & ~1) + z for at in more):
                 continue
@@ -11897,8 +13352,13 @@ class ChecksumRefillHandoff(unittest.TestCase):
         # The handoff binds the future validator's receiver prefix only.
         # Retain existing complete Result fixture bytes as input evidence;
         # later Result/visitor effects are not invoked by this producer.
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures/config-validator-result.json").read_text()
+        extra = _checked_fixture(
+            _image_delta(
+                json.loads(
+                    (Path(__file__).parent / "fixtures/config-validator-result.json").read_text()
+                )
+            ),
+            ValidatorFixture,
         )
         for index, address, encoded in extra["segments"]:
             StartupConfigurationCopy.put(objects, address, bytes.fromhex(encoded))
@@ -11917,7 +13377,9 @@ class ChecksumRefillHandoff(unittest.TestCase):
         rows.update(more)
         return objects, rows, SameBLoaderBoundary.rebound(objects, context)
 
-    def test_public_checksum_alternative_reaches_complete_normal_refill_before_validator_only(self):
+    def test_public_checksum_alternative_reaches_complete_normal_refill_before_validator_only(
+        self,
+    ) -> None:
         from config_refill_handoff import checksum_refill_handoff
 
         objects, rows, context = self.fixture()
@@ -11963,7 +13425,7 @@ class ChecksumRefillHandoff(unittest.TestCase):
         self.assertGreater(len(proof["floating_carrier_preserving_child_bodies"]), 0)
         self.assertTrue(proof["target_access_requirements_unresolved"])
 
-    def test_premature_Source_exit_cannot_reuse_live_ID_staging_as_Result(self):
+    def test_premature_Source_exit_cannot_reuse_live_ID_staging_as_Result(self) -> None:
         from config_refill_handoff import checksum_refill_handoff
         from dataclasses import replace
 
@@ -12018,7 +13480,9 @@ class ChecksumRefillHandoff(unittest.TestCase):
             returned = checksum_refill_handoff(objects, changed, context)
         self.assertIsNone(returned)
 
-    def test_independent_Reset_S_and_Overview_object_pool_relocation_keep_B_code_fixed(self):
+    def test_independent_Reset_S_and_Overview_object_pool_relocation_keep_B_code_fixed(
+        self,
+    ) -> None:
         from config_refill_handoff import checksum_refill_handoff
 
         objects, rows, context = self.fixture()
@@ -12033,7 +13497,10 @@ class ChecksumRefillHandoff(unittest.TestCase):
         # PC pool word, without moving code/pools or unrelated readonly objects.
         at = 0x1001FF02 + 32
         row = rows[at]
-        displacement = int(re.search(r"#(0x[0-9a-f]+|[0-9]+)", row.operands)[1], 0)
+        match = re.search(r"#(0x[0-9a-f]+|[0-9]+)", row.operands)
+        if match is None:
+            raise AssertionError("fixture pool displacement")
+        displacement = int(match[1], 0)
         pool = ((at + 4) & ~3) + displacement
         old = struct.unpack("<I", objects.read_only(pool, 4))[0]
         section = elf.named[".rodata"]
@@ -12054,7 +13521,7 @@ class ChecksumRefillHandoff(unittest.TestCase):
         self.assertEqual(proof["child_stack_low"], P - 144)
         self.assertEqual(proof["before_validator"]["receiver_prefix"], (0x1001EA20, 22))
 
-    def test_foreign_checksum_fault_entry_and_wrong_child_output_reject(self):
+    def test_foreign_checksum_fault_entry_and_wrong_child_output_reject(self) -> None:
         from config_refill_handoff import checksum_refill_handoff
         from dataclasses import replace
 
@@ -12076,7 +13543,7 @@ class ChecksumRefillHandoff(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "foreign checksum-fault ingress"):
             checksum_refill_handoff(objects, rows, context)
 
-    def test_fault_loop_and_reset_semantic_changes_cannot_manufacture_a_handoff(self):
+    def test_fault_loop_and_reset_semantic_changes_cannot_manufacture_a_handoff(self) -> None:
         from config_refill_handoff import checksum_refill_handoff
         from dataclasses import replace
 
@@ -12093,7 +13560,7 @@ class ChecksumRefillHandoff(unittest.TestCase):
             with self.subTest(at=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_handoff(objects, changed, context)
 
-    def test_deeper_child_stack_cannot_alias_allocated_memory_below_root(self):
+    def test_deeper_child_stack_cannot_alias_allocated_memory_below_root(self) -> None:
         from config_refill_handoff import checksum_refill_handoff
         from config_loader_boundary import first_boot_loader_boundary
 
@@ -12105,8 +13572,21 @@ class ChecksumRefillHandoff(unittest.TestCase):
             checksum_refill_handoff(objects, rows, context)
 
 
+class TraversalFixture(FixtureDelta):
+    instructions: list[tuple[int, str, str, str]]
+
+
+def _traversal_fixture(value: object) -> TraversalFixture:
+    record = _fixture_object(_image_delta(value))
+    record["instructions"] = [
+        _checked_fixture(tuple(array_items(v, "instruction tuple")), tuple[int, str, str, str])
+        for v in _fixture_array(record["instructions"])
+    ]
+    return _checked_fixture(record, TraversalFixture)
+
+
 class ChecksumValidatorReturn(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext]:
         objects, rows, context = ChecksumRefillHandoff().fixture()
         donor, name, more, supplied, call = ValidatorControls().fixture()
         for filename in (
@@ -12114,7 +13594,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
             "config-validator-pointers.json",
             "config-validator-controls.json",
         ):
-            item = json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
+            item = _segment_fixture(
+                json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
+            )
             for index, address, encoded in item["segments"]:
                 section = donor.elf.sections[index]
                 count = len(bytes.fromhex(encoded))
@@ -12129,15 +13611,17 @@ class ChecksumValidatorReturn(unittest.TestCase):
             dict.fromkeys(objects.elf.mapping_symbols + donor.elf.mapping_symbols)
         )
         rows.update(more)
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures" / "config-validator-traversal.json").read_text()
+        extra = _traversal_fixture(
+            json.loads(
+                (Path(__file__).parent / "fixtures" / "config-validator-traversal.json").read_text()
+            )
         )
         for index, address, encoded in extra["segments"]:
             StartupConfigurationCopy.put(objects, address, bytes.fromhex(encoded))
-        objects.elf.functions.update({n: tuple(v) for n, v in extra["functions"].items()})
+        objects.elf.functions.update(extra["functions"])
         objects.sizes.update({int(a): n for a, n in extra["sizes"].items()})
         objects.elf.symbol_entries = list(
-            dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in extra["symbol_entries"]])
+            dict.fromkeys(objects.elf.symbol_entries + extra["symbol_entries"])
         )
         rows.update(
             {
@@ -12147,7 +13631,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
         )
         return objects, rows, SameBLoaderBoundary.rebound(objects, context)
 
-    def test_actual_checksum_refill_joins_complete_normal_Result_and_sole_restore_only(self):
+    def test_actual_checksum_refill_joins_complete_normal_Result_and_sole_restore_only(
+        self,
+    ) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -12172,7 +13658,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
         self.assertFalse(proof["hardware_qualified"])
         self.assertNotIn("acquired_owner", proof)
 
-    def test_channel_domain_invocation_reads_each_Widget_Channel_not_its_id(self):
+    def test_channel_domain_invocation_reads_each_Widget_Channel_not_its_id(self) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12193,7 +13679,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
             tuple((base + offset, 1) for offset in (661, 881, 1101, 1321, 1541, 1761, 1981, 2201)),
         )
 
-    def test_exported_summary_and_supplied_context_cannot_replace_internal_recomputation(self):
+    def test_exported_summary_and_supplied_context_cannot_replace_internal_recomputation(
+        self,
+    ) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12202,9 +13690,11 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 objects, rows, dict(mode="sizez", phase="default_validation", source_valid=True)
             )
         with self.assertRaises(TypeError):
-            checksum_refill_validator_return(objects, rows, context, dict(completed=True))
+            dynamic_call(
+                checksum_refill_validator_return, objects, rows, context, dict(completed=True)
+            )
 
-    def test_early_late_capture_and_Result_spill_records_still_need_actual_transports(self):
+    def test_early_late_capture_and_Result_spill_records_still_need_actual_transports(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12221,7 +13711,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_live_edges_to_occupancy_and_ColorRole_selector_cannot_lose_their_source_phase(self):
+    def test_live_edges_to_occupancy_and_ColorRole_selector_cannot_lose_their_source_phase(
+        self,
+    ) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12233,7 +13725,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_child_output_cannot_reach_validator_saves_or_retained_original_fault(self):
+    def test_child_output_cannot_reach_validator_saves_or_retained_original_fault(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12252,7 +13744,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_payload_tag_and_restore_must_preserve_paired_normal_return(self):
+    def test_payload_tag_and_restore_must_preserve_paired_normal_return(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12268,7 +13760,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_missing_normal_child_paired_source_loop_and_return_cannot_complete(self):
+    def test_missing_normal_child_paired_source_loop_and_return_cannot_complete(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12294,7 +13786,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(case=label), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_child_cannot_read_range_padding_or_return_an_inactive_band(self):
+    def test_child_cannot_read_range_padding_or_return_an_inactive_band(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12305,7 +13797,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_reachable_internal_padding_is_a_coherent_encoded_counterexample(self):
+    def test_reachable_internal_padding_is_a_coherent_encoded_counterexample(self) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12326,7 +13818,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 objects, rows, SameBLoaderBoundary.rebound(objects, context)
             )
 
-    def test_deeper_validator_child_is_physically_protected_after_before_call_accepts(self):
+    def test_deeper_validator_child_is_physically_protected_after_before_call_accepts(self) -> None:
         from config_refill_handoff import checksum_refill_handoff
         from config_validator_return import checksum_refill_validator_return
 
@@ -12340,7 +13832,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "physical frame intersects allocated section"):
             checksum_refill_validator_return(objects, rows, context)
 
-    def test_independent_Reset_stack_readonly_object_and_nested_body_relocations(self):
+    def test_independent_Reset_stack_readonly_object_and_nested_body_relocations(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from config_stack import canonical_symbol
         from dataclasses import replace
@@ -12441,7 +13933,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 self.assertEqual(proof["normal_child_low"], S - 544 - 320 - 72)
                 self.assertEqual(proof["normal_typed_call_count"], 27)
 
-    def test_public_result_has_no_internal_mutable_View_or_context_capability(self):
+    def test_public_result_has_no_internal_mutable_View_or_context_capability(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from config_regions import View, Storage
         from config_validator_access import ValidatorContext
@@ -12449,7 +13941,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
         objects, rows, context = self.fixture()
         proof = checksum_refill_validator_return(objects, rows, context)
 
-        def walk(value):
+        def walk(value: object) -> None:
             self.assertNotIsInstance(value, (View, Storage, ValidatorContext))
             if isinstance(value, dict):
                 for item in value.values():
@@ -12462,7 +13954,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
         self.assertFalse(proof["normal_return"]["architectural_LR_preservation_claimed"])
         self.assertFalse(proof["exception_absence_established"])
 
-    def test_guarded_activations_pair_nested_returns_and_stop_before_diagnostic_effects(self):
+    def test_guarded_activations_pair_nested_returns_and_stop_before_diagnostic_effects(
+        self,
+    ) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12493,7 +13987,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             self.assertIsNone(cut["return_token"])
             self.assertFalse(cut["machine_nonreturn_established"])
 
-    def test_disconnected_foreign_table_is_bound_but_cannot_be_activated_by_retarget(self):
+    def test_disconnected_foreign_table_is_bound_but_cannot_be_activated_by_retarget(self) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12517,7 +14011,8 @@ class ChecksumValidatorReturn(unittest.TestCase):
         proof = checksum_refill_validator_return(objects, rows, bound)
         outside = [v for v in proof["computed_exclusions"] if v["site"] == at]
         self.assertEqual(len(outside), 1)
-        self.assertEqual(outside[0]["status"], "outside_selected_guard_stopped_prefix")
+        if outside[0]["status"] != "outside_selected_guard_stopped_prefix":
+            self.fail("outside table must retain its unresolved foreign context")
         self.assertEqual(outside[0]["raw"], "dfe810f0")
         self.assertFalse(outside[0]["foreign_context_validated"])
         # Coherent Thumb2 BL retarget from an activated contrast caller.
@@ -12539,7 +14034,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 objects, rows, SameBLoaderBoundary.rebound(objects, context)
             )
 
-    def test_normal_child_PC_and_parent_owned_tail_changes_cannot_become_pending_cuts(self):
+    def test_normal_child_PC_and_parent_owned_tail_changes_cannot_become_pending_cuts(self) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12556,7 +14051,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 checksum_refill_validator_return(objects, changed, context)
 
-    def test_active_parent_table_bytes_cannot_change_the_source_valid_tuple(self):
+    def test_active_parent_table_bytes_cannot_change_the_source_valid_tuple(self) -> None:
         from config_validator_return import checksum_refill_validator_return
 
         objects, rows, context = self.fixture()
@@ -12570,12 +14065,14 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 objects, rows, SameBLoaderBoundary.rebound(objects, context)
             )
 
-    def test_control_table_and_parent_owned_restoring_tail_relocate_by_current_relationships(self):
+    def test_control_table_and_parent_owned_restoring_tail_relocate_by_current_relationships(
+        self,
+    ) -> None:
         from config_validator_return import checksum_refill_validator_return
         from config_stack import canonical_symbol
         from dataclasses import replace
 
-        def branch(site, target, link):
+        def branch(site: int, target: int, link: bool) -> bytes:
             value = (target - site - 4) & 0x1FFFFFF
             s = (value >> 24) & 1
             i1 = (value >> 23) & 1
@@ -12600,7 +14097,7 @@ class ChecksumValidatorReturn(unittest.TestCase):
                 ]
                 self.assertEqual(len(names), 1)
                 old = elf.functions[names[0]][0] & ~1
-                partitions = ((0, "$t"), (12, "$d"), (32, "$t"))
+                partitions: tuple[tuple[int, str], ...] = ((0, "$t"), (12, "$d"), (32, "$t"))
                 new = 0x10072000
             else:
                 parent = 0x1001C148 + 60 if kind == "text_restore" else 0x1001EB82
@@ -12660,13 +14157,16 @@ class ChecksumValidatorReturn(unittest.TestCase):
             with self.subTest(kind=kind):
                 if kind == "control_table":
                     table = [v for v in proof["computed_exclusions"] if v["site"] == new + 8]
-                    self.assertEqual(table[0]["status"], "selected_current_source_targets")
+                    if table[0]["status"] != "selected_current_source_targets":
+                        self.fail("activated table must retain selected current targets")
                     self.assertTrue(all(new <= v < new + n for v in table[0]["targets"]))
                 else:
                     self.assertTrue(all(v["transfer"] == "tail" for v in moved))
                     self.assertTrue(all(v["entry_SP"] < v["return_SP"] for v in moved))
 
-    def test_preserved_flags_from_an_isolated_child_seam_cannot_replace_its_return_cells(self):
+    def test_preserved_flags_from_an_isolated_child_seam_cannot_replace_its_return_cells(
+        self,
+    ) -> None:
         import config_validator_return as public
         from unittest.mock import patch
         from config_validator_children import _normal_body
@@ -12683,7 +14183,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
         changed[at] = replace(rows[at], mnemonic="bx", operands="lr")
         actual = public._normal_body
 
-        def supplied(objects, name, records, family):
+        def supplied(
+            objects: config_stack.DiagnosticObjects, name: str, records: InstructionMap, family: str
+        ) -> NormalBody:
             return original if family == "contrasts" else actual(objects, name, records, family)
 
         with (
@@ -12692,7 +14194,9 @@ class ChecksumValidatorReturn(unittest.TestCase):
         ):
             public.checksum_refill_validator_return(objects, changed, context)
 
-    def test_decoded_Result_epoch_and_forged_source_binding_cannot_enter_guarded_default(self):
+    def test_decoded_Result_epoch_and_forged_source_binding_cannot_enter_guarded_default(
+        self,
+    ) -> None:
         from config_validator_return import checksum_refill_validator_return
         from dataclasses import replace
 
@@ -12711,17 +14215,19 @@ class ChecksumValidatorReturn(unittest.TestCase):
 
 
 class ActualChecksumLoaderReturn(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext]:
         objects, rows, context = ChecksumValidatorReturn().fixture()
-        item = json.loads(
-            (Path(__file__).parent / "fixtures/config-loader-continuation.json").read_text()
+        item = _continuation_fixture(
+            json.loads(
+                (Path(__file__).parent / "fixtures/config-loader-continuation.json").read_text()
+            )
         )
         for index, address, encoded in item["segments"]:
             StartupConfigurationCopy.put(objects, address, bytes.fromhex(encoded))
-        objects.elf.functions.update({n: tuple(v) for n, v in item["functions"].items()})
+        objects.elf.functions.update(item["functions"])
         objects.sizes.update({int(a): n for a, n in item["sizes"].items()})
         objects.elf.symbol_entries = list(
-            dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in item["symbol_entries"]])
+            dict.fromkeys(objects.elf.symbol_entries + item["symbol_entries"])
         )
         for r in item["records"]:
             parts = r["text"].split(None, 1)
@@ -12731,12 +14237,14 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             )
         return objects, rows, SameBLoaderBoundary.rebound(objects, context)
 
-    def consume(self, objects, rows, context):
+    def consume(
+        self, objects: DiagnosticFixture, rows: dict[int, Instruction], context: object
+    ) -> LoaderDescription:
         from config_actual_loader_return import checksum_refill_loader_return
 
         return checksum_refill_loader_return(objects, rows, context)
 
-    def test_same_private_chain_pairs_Result_fault_issuer_and_protected_Boot_return(self):
+    def test_same_private_chain_pairs_Result_fault_issuer_and_protected_Boot_return(self) -> None:
         import importlib.util
 
         self.assertIsNotNone(
@@ -12766,7 +14274,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
         self.assertFalse(proof["hardware_qualified"])
         self.assertNotIn("acquired_owner", proof)
 
-    def test_guard_retirement_preserves_Config_cache_padding_taken_and_outer_padding(self):
+    def test_guard_retirement_preserves_Config_cache_padding_taken_and_outer_padding(self) -> None:
         proof = self.consume(*self.fixture())
         B = 0x2000031C
         self.assertIn((B, 14576), proof["protected_static_ranges"])
@@ -12787,7 +14295,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             for p, z in proof["protected_static_ranges"]:
                 self.assertFalse(a < p + z and p < a + n)
 
-    def test_Result_fault_and_stoich_transports_cannot_be_replaced_by_neighbor_cells(self):
+    def test_Result_fault_and_stoich_transports_cannot_be_replaced_by_neighbor_cells(self) -> None:
         from dataclasses import replace
 
         for at, operand in (
@@ -12802,7 +14310,9 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_coherent_stoich_load_image_and_record_change_rejects_the_actual_transport(self):
+    def test_coherent_stoich_load_image_and_record_change_rejects_the_actual_transport(
+        self,
+    ) -> None:
         from config_build_source import validate_source_context
 
         objects, rows, context = self.fixture()
@@ -12834,7 +14344,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
         self.assertEqual(original[offset : offset + 2], old.raw)
         self.assertNotEqual(original, objects.elf.data)
 
-    def test_issuer_compare_retry_overflow_and_publication_pair_are_current_operands(self):
+    def test_issuer_compare_retry_overflow_and_publication_pair_are_current_operands(self) -> None:
         from dataclasses import replace
 
         for at, operand in (
@@ -12849,7 +14359,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_diagnostic_cuts_and_foreign_suffix_ingress_never_issue_return_tokens(self):
+    def test_diagnostic_cuts_and_foreign_suffix_ingress_never_issue_return_tokens(self) -> None:
         from dataclasses import replace
 
         proof = self.consume(*self.fixture())
@@ -12869,7 +14379,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.consume(objects, rows, context)
 
-    def test_loader_restore_and_saved_PC_cannot_borrow_another_frame_or_return(self):
+    def test_loader_restore_and_saved_PC_cannot_borrow_another_frame_or_return(self) -> None:
         from dataclasses import replace
 
         for at, operation, operand in (
@@ -12883,7 +14393,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             with self.subTest(site=hex(at)), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_Reset_S_and_issuer_pool_relocations_are_independent_of_B_and_code(self):
+    def test_Reset_S_and_issuer_pool_relocations_are_independent_of_B_and_code(self) -> None:
         for kind in ("stack", "issuer_pool", "issuer_object", "restore_code"):
             objects, rows, context = self.fixture()
             S = 0x20080000
@@ -12920,10 +14430,10 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
 
                 old, new = 0x200127A0, 0x200127A4
                 s = objects.elf.named[".data"]
-                left = s[4] + old - s[3]
-                right = s[4] + new - s[3]
-                initial = objects.elf.data[left : left + 4]
-                other = objects.elf.data[right : right + 4]
+                left_offset = s[4] + old - s[3]
+                right_offset = s[4] + new - s[3]
+                initial = objects.elf.data[left_offset : left_offset + 4]
+                other = objects.elf.data[right_offset : right_offset + 4]
                 StartupConfigurationCopy.put(objects, old, other)
                 StartupConfigurationCopy.put(objects, new, initial)
                 objects.elf.symbol_entries = [
@@ -12965,7 +14475,9 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertEqual(proof["return"]["SP"], S - 88)
 
-    def test_issuer_wrong_object_and_cross_space_physical_alias_cannot_gain_write_permission(self):
+    def test_issuer_wrong_object_and_cross_space_physical_alias_cannot_gain_write_permission(
+        self,
+    ) -> None:
         from config_entry import ISSUER, static_role
 
         for kind in ("another_object", "stack_alias"):
@@ -12980,7 +14492,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_active_catalogue_target_and_cache_or_taken_suffix_writes_reject(self):
+    def test_active_catalogue_target_and_cache_or_taken_suffix_writes_reject(self) -> None:
         from dataclasses import replace
 
         for fault in ("table", "cache_padding", "taken_boundary"):
@@ -13002,7 +14514,7 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
 
     def test_independent_B_relocation_reaches_actual_continuation_and_rejects_one_stale_producer(
         self,
-    ):
+    ) -> None:
         from config_entry import ISSUER, static_role
 
         donor, more, unused = self.fixture()
@@ -13084,23 +14596,29 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
         # still selecting relocated B. This is a data/pointer negative.
         site = 0x1002045C
         match = re.search(r"#(0x[0-9a-f]+|[0-9]+)", rows[site].operands)
+        if match is None:
+            raise AssertionError("fixture publication receiver pool")
         slot = ((site + 4) & ~3) + int(match[1], 0)
         StartupConfigurationCopy.put(objects, slot, struct.pack("<I", item["config"]))
         with self.assertRaises(AssertionError):
             self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_supplied_owner_or_description_cannot_replace_same_invocation(self):
+    def test_supplied_owner_or_description_cannot_replace_same_invocation(self) -> None:
         objects, rows, context = self.fixture()
         with self.assertRaises(AssertionError):
             self.consume(objects, rows, dict(phase="returned", owner=True))
         from config_actual_loader_return import checksum_refill_loader_return
 
         with self.assertRaises(TypeError):
-            checksum_refill_loader_return(objects, rows, context, dict(completed=True))
+            dynamic_call(
+                checksum_refill_loader_return, objects, rows, context, dict(completed=True)
+            )
 
 
 class ActualDecodedU16Prefix(unittest.TestCase):
-    def fixture(self, delta=0):
+    def fixture(
+        self, delta: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture]:
         objects, rows, context, item = SameBLoaderBoundary().fixture("sizez", delta)
         elf = objects.elf
         donor, more, root, visitor, frame, child = OrdinaryFirstFieldBridge().fixture()
@@ -13113,7 +14631,12 @@ class ActualDecodedU16Prefix(unittest.TestCase):
                 slot = ((at + 4) & ~3) + int(m[1], 0)
                 pools[slot] = objects.read_only(slot, 4)
         for file in ("config-headers.json", "config-small-helpers.json"):
-            fixture = json.loads((Path(__file__).parent / "fixtures" / file).read_text())[0]
+            fixture = _entry_fixture(
+                array_items(
+                    json.loads((Path(__file__).parent / "fixtures" / file).read_text()),
+                    "image fixtures",
+                )[0]
+            )
             for index, at, encoded in fixture["segments"]:
                 StartupConfigurationCopy.put(objects, at, bytes.fromhex(encoded))
         for at, row in rows.items():
@@ -13130,12 +14653,14 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         return objects, rows, SameBLoaderBoundary.rebound(objects, context), item
 
     @staticmethod
-    def consume(objects, rows, context):
+    def consume(
+        objects: config_stack.DiagnosticObjects, rows: InstructionMap, context: object
+    ) -> PrefixDescription:
         from config_decoded_prefix import first_boot_decoded_u16_prefix
 
         return first_boot_decoded_u16_prefix(objects, rows, context)
 
-    def test_unknown_u16s_have_paired_prefix_counts_cursors_and_preserved_remainder(self):
+    def test_unknown_u16s_have_paired_prefix_counts_cursors_and_preserved_remainder(self) -> None:
         objects, rows, context, item = self.fixture()
         result = self.consume(objects, rows, context)
         self.assertEqual(
@@ -13165,7 +14690,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         self.assertEqual(result["nested_return_sites"][1]["destination"], 0x1001C686)
         self.assertEqual(result["deepest_child_SP"], 0x20080000 - 544 - 1608 - 8 - 8 - 24 - 16)
 
-    def test_source_context_and_same_B_producers_cannot_be_supplied_or_substituted(self):
+    def test_source_context_and_same_B_producers_cannot_be_supplied_or_substituted(self) -> None:
         objects, rows, context, item = self.fixture()
         for fake in (None, dict(owner=True, phase="decoded"), context.to_record()):
             with self.subTest(fake=type(fake).__name__), self.assertRaises(AssertionError):
@@ -13175,7 +14700,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_field_store_error_guard_and_nested_return_changes_reject(self):
+    def test_field_store_error_guard_and_nested_return_changes_reject(self) -> None:
         for at, operation, operands in (
             (0x1001C67E, "str", "r0, [r4, r1]"),
             (0x1001C686, "lsls", "r1, r0, #0x1e"),
@@ -13189,7 +14714,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
             with self.subTest(at=hex(at)), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_foreign_interior_computed_and_implicit_PC_cannot_enter_selected_prefix(self):
+    def test_foreign_interior_computed_and_implicit_PC_cannot_enter_selected_prefix(self) -> None:
         for operation, operands in (
             ("b", "0x1001c67e"),
             ("tbb", "[pc, r0]"),
@@ -13208,7 +14733,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_nested_physical_stack_and_protected_suffix_cannot_alias_an_object(self):
+    def test_nested_physical_stack_and_protected_suffix_cannot_alias_an_object(self) -> None:
         for address in (0x20080000 - 2200, 0x20080000 - 544 - 1608 - 52):
             objects, rows, context, item = self.fixture()
             index = next(i for i, s in enumerate(objects.elf.sections) if s[2] & 2)
@@ -13225,7 +14750,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         objects.elf.symbol_entries.append(("adjacent_below_child", low - 4, 4, 17, index))
         self.assertEqual(self.consume(objects, rows, context)["deepest_child_SP"], low)
 
-    def test_independent_B_and_Reset_SP_relocation_reaches_new_public_consumer(self):
+    def test_independent_B_and_Reset_SP_relocation_reaches_new_public_consumer(self) -> None:
         objects, rows, context, item = self.fixture(0x4000)
         B = item["config"] + 0x4000
         result = self.consume(objects, rows, context)
@@ -13245,7 +14770,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         self.assertEqual(moved["config"], result["config"])
         self.assertEqual(moved["possible_field_writes"], result["possible_field_writes"])
 
-    def test_independent_root_code_and_consumed_B_pool_relocation(self):
+    def test_independent_root_code_and_consumed_B_pool_relocation(self) -> None:
         from config_headers import ROOT
         from config_stack import canonical_symbol
 
@@ -13283,6 +14808,8 @@ class ActualDecodedU16Prefix(unittest.TestCase):
             family = config_stack.transfer_family(row.mnemonic.removesuffix(".w"))
             if family in ("b", "bl", "cbz", "cbnz"):
                 m = re.search(r"0x([0-9a-f]+)", op)
+                if m is None:
+                    raise AssertionError("fixture branch target missing")
                 target = int(m[1], 16)
                 if old <= target < old + extent:
                     target += new - old
@@ -13314,6 +14841,8 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         site = 0x1001C674
         row = rows[site]
         m = re.search(r"#(0x[0-9a-f]+|[0-9]+)", row.operands)
+        if m is None:
+            raise AssertionError("fixture literal pool missing")
         oldpool = ((site + 4) & ~3) + int(m[1], 0)
         pool = oldpool + 4
         immediate = pool - ((site + 4) & ~3)
@@ -13324,7 +14853,9 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         moved = self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
         self.assertEqual(moved["possible_field_writes"], result["possible_field_writes"])
 
-    def test_abstract_outer_adapter_keeps_none_error_and_unknown_success_ABIs_distinct(self):
+    def test_abstract_outer_adapter_keeps_none_error_and_unknown_success_ABIs_distinct(
+        self,
+    ) -> None:
         from dataclasses import replace
         from config_abstract import DecoderInterface, SequenceInterface, Span
         from config_headers import root_visitor_headers, _next_u16_interface, NEXT_U16
@@ -13365,7 +14896,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         self.assertEqual({v["error"] for v in result}, {None, 5})
         self.assertEqual(next(v["value_domain"] for v in result if v["error"] is None), (0, 65535))
 
-    def test_current_D_end_Q_pointer_count_and_initial_epoch_cannot_be_forged(self):
+    def test_current_D_end_Q_pointer_count_and_initial_epoch_cannot_be_forged(self) -> None:
         for at, operation, operands in (
             (0x1001FEDC, "strd", "r8, r1, [sp, #236]"),
             (0x1001C664, "movs", "r1, #0xc"),
@@ -13382,7 +14913,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "initial Config active constructor"):
             self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_changed_payload_and_CRC_do_not_choose_a_concrete_version(self):
+    def test_changed_payload_and_CRC_do_not_choose_a_concrete_version(self) -> None:
         import zlib
 
         for payload in (b"\0\0", b"\xff\xff\x03\xff\xff\x03"):
@@ -13403,7 +14934,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
             self.assertEqual(success["cursor"], (2, 6))
             self.assertFalse(result["CRC_success_observed_taken"])
 
-    def test_coherent_store_and_return_image_changes_reject_after_source_rebinding(self):
+    def test_coherent_store_and_return_image_changes_reject_after_source_rebinding(self) -> None:
         for at, raw, op, operands in (
             (0x1001C67E, bytes.fromhex("6050"), "str", "r0, [r4, r1]"),
             (0x1001BDB2, bytes.fromhex("10bd"), "pop", "{r4, pc}"),
@@ -13423,7 +14954,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
             ):
                 self.consume(objects, rows, bound)
 
-    def test_short_current_payload_exhaustion_pairs_error_count_and_completed_prefix(self):
+    def test_short_current_payload_exhaustion_pairs_error_count_and_completed_prefix(self) -> None:
         import zlib
 
         objects, rows, context, item = self.fixture()
@@ -13451,7 +14982,7 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         self.assertEqual([v["writes"] for v in exits], [(), ((item["config"] + 14570, 2),)])
         self.assertTrue(all(v["frontier"] == 0x1001C68A for v in exits))
 
-    def test_unselected_fallthrough_cannot_bypass_second_field_success_guard(self):
+    def test_unselected_fallthrough_cannot_bypass_second_field_success_guard(self) -> None:
         from config_build_source import validate_source_context
 
         site = 0x1001C698
@@ -13491,10 +15022,12 @@ class ActualDecodedU16Prefix(unittest.TestCase):
 
 
 class ActualDecodedViews(unittest.TestCase):
-    def fixture(self):
+    def fixture(
+        self,
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture]:
         objects, rows, context, item = ActualDecodedU16Prefix().fixture()
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures/config-decoded-views.json").read_text()
+        extra = decoded_fixture(
+            json.loads((Path(__file__).parent / "fixtures/config-decoded-views.json").read_text())
         )
         for at, raw in extra["segments"]:
             StartupConfigurationCopy.put(objects, at, bytes.fromhex(raw))
@@ -13502,11 +15035,11 @@ class ActualDecodedViews(unittest.TestCase):
             for name, address, extent, index in f["aliases"]:
                 objects.elf.functions[name] = (address, extent, index)
             objects.elf.symbol_entries = list(
-                dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in f["symbols"]])
+                dict.fromkeys(objects.elf.symbol_entries + f["symbols"])
             )
             if f["frame"] is not None:
                 objects.sizes[f["address"]] = f["frame"]
-            objects.elf.mapping_symbols.extend(tuple(v) for v in f["mapping"])
+            objects.elf.mapping_symbols.extend(f["mapping"])
         for row in extra["records"]:
             at = row["address"]
             rows[at] = Instruction(
@@ -13515,12 +15048,14 @@ class ActualDecodedViews(unittest.TestCase):
         return objects, rows, SameBLoaderBoundary.rebound(objects, context), item
 
     @staticmethod
-    def consume(objects, rows, context):
+    def consume(
+        objects: config_stack.DiagnosticObjects, rows: InstructionMap, context: object
+    ) -> ViewsDescription:
         from config_decoded_views import first_boot_decoded_views
 
         return first_boot_decoded_views(objects, rows, context)
 
-    def test_actual_group_keeps_prefix_errors_and_stops_Widget_ready(self):
+    def test_actual_group_keeps_prefix_errors_and_stops_Widget_ready(self) -> None:
         objects, rows, context, item = self.fixture()
         result = self.consume(objects, rows, context)
         self.assertEqual(
@@ -13539,7 +15074,7 @@ class ActualDecodedViews(unittest.TestCase):
         self.assertNotIn("acquired_owner", result)
         self.assertTrue(all(v["frontier"] == 0x1001C68C for v in result["group_errors"]))
 
-    def test_parent_publication_stride_and_outline_flags_mutations_reject(self):
+    def test_parent_publication_stride_and_outline_flags_mutations_reject(self) -> None:
         for at, operation, operands in (
             (0x1001C7D8, "str.w", "r9, [r4, #0xf8]"),
             (0x1001C7DC, "add.w", "r8, r8, #0x14"),
@@ -13552,7 +15087,7 @@ class ActualDecodedViews(unittest.TestCase):
             with self.subTest(at=hex(at)), self.assertRaises(AssertionError):
                 self.consume(objects, rows, context)
 
-    def test_public_summary_or_reinitialized_source_cannot_authorize_the_group(self):
+    def test_public_summary_or_reinitialized_source_cannot_authorize_the_group(self) -> None:
         objects, rows, context, item = self.fixture()
         for fake in (dict(phase="before_boot_view", complete=True), None, context.to_record()):
             with self.assertRaises(AssertionError):
@@ -13562,7 +15097,9 @@ class ActualDecodedViews(unittest.TestCase):
             self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
     @staticmethod
-    def move_function(objects, rows, role, new):
+    def move_function(
+        objects: DiagnosticFixture, rows: dict[int, Instruction], role: str, new: int
+    ) -> tuple[int, int]:
         elf = objects.elf
         names = [n for n in elf.functions if config_stack.canonical_symbol(n) == role]
         if len(names) != 1:
@@ -13597,6 +15134,10 @@ class ActualDecodedViews(unittest.TestCase):
             changed = moving
             if family in ("b", "bl", "cbz", "cbnz"):
                 m = re.search(r"0x([0-9a-f]+)", args)
+                if m is None:
+                    raise AssertionError("fixture branch target is missing")
+                if m is None:
+                    raise AssertionError("fixture branch target missing")
                 target = int(m[1], 16)
                 internal = old <= target < old + extent
                 if internal:
@@ -13618,7 +15159,7 @@ class ActualDecodedViews(unittest.TestCase):
                 StartupConfigurationCopy.put(objects, site, encoded)
         return old, new
 
-    def test_independent_UTF8_code_table_and_visitor_parent_relocation(self):
+    def test_independent_UTF8_code_table_and_visitor_parent_relocation(self) -> None:
         from config_utf8 import UTF8
         from config_headers import VISITOR
 
@@ -13644,7 +15185,7 @@ class ActualDecodedViews(unittest.TestCase):
             {at - 0x1001C654 for at, target, why in moved["control"]["outside_shared_contexts"]},
         )
 
-    def test_independent_B_and_stack_keep_exact_element_metadata_and_deepest_child(self):
+    def test_independent_B_and_stack_keep_exact_element_metadata_and_deepest_child(self) -> None:
         # Reuse actual initial/static relocation, then add this group's own
         # functions and bytes. No public boundary description supplies B.
         moved, more, bound, moveditem = ActualDecodedU16Prefix().fixture(0x4000)
@@ -13685,7 +15226,7 @@ class ActualDecodedViews(unittest.TestCase):
         )
         self.assertFalse(any(v["Config_writes"] for v in result["iterations"] if v["index"] == 8))
 
-    def test_all_error_epochs_counts_capacity_guards_and_publication_are_paired(self):
+    def test_all_error_epochs_counts_capacity_guards_and_publication_are_paired(self) -> None:
         objects, rows, context, item = self.fixture()
         result = self.consume(objects, rows, context)
         errors = result["group_errors"]
@@ -13736,7 +15277,7 @@ class ActualDecodedViews(unittest.TestCase):
         self.assertTrue(result["shared_error_suffix_pending"])
         self.assertTrue(result["full_visitor_return_pending"])
 
-    def test_coherent_foreign_shared_context_interior_and_fallthrough_reject(self):
+    def test_coherent_foreign_shared_context_interior_and_fallthrough_reject(self) -> None:
         from config_build_source import validate_source_context
 
         V = 0x1001C654
@@ -13774,7 +15315,7 @@ class ActualDecodedViews(unittest.TestCase):
         ):
             self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_coherent_group_store_and_child_return_mutations_reject_for_ABI(self):
+    def test_coherent_group_store_and_child_return_mutations_reject_for_ABI(self) -> None:
         for at, raw, operation, operands in (
             (0x1001C7D8, bytes.fromhex("c4f8f890"), "str.w", "r9, [r4, #0xf8]"),
             (0x10016CDC, bytes.fromhex("f0bc"), "pop", "{r4, r5, r6, r7}"),
@@ -13792,7 +15333,7 @@ class ActualDecodedViews(unittest.TestCase):
             ):
                 self.consume(objects, rows, SameBLoaderBoundary.rebound(objects, context))
 
-    def test_short_actual_payload_keeps_boot_and_View_exhaustion_paired(self):
+    def test_short_actual_payload_keeps_boot_and_View_exhaustion_paired(self) -> None:
         import zlib
 
         for n in (3, 4, 6):
@@ -13832,7 +15373,7 @@ class ActualDecodedViews(unittest.TestCase):
                     any(v["stage"] == "View id" and v["error"] == 4 for v in result["group_errors"])
                 )
 
-    def test_deeper_memcpy_stack_overlap_rejects_and_lower_adjacency_accepts(self):
+    def test_deeper_memcpy_stack_overlap_rejects_and_lower_adjacency_accepts(self) -> None:
         low = 0x20080000 - 544 - 1608 - 72
         for address, reject in ((low, True), (low + 4, True), (low - 4, False)):
             objects, rows, context, item = self.fixture()
@@ -13847,7 +15388,7 @@ class ActualDecodedViews(unittest.TestCase):
             else:
                 self.assertEqual(self.consume(objects, rows, context)["deepest_child_SP"], low)
 
-    def test_data_only_encoded_View_variants_preserve_abstract_union(self):
+    def test_data_only_encoded_View_variants_preserve_abstract_union(self) -> None:
         import zlib
 
         # Encoded inputs are diagnostic witnesses; the consumer never chooses
@@ -13873,7 +15414,7 @@ class ActualDecodedViews(unittest.TestCase):
             self.assertEqual({v["initialized_views"] for v in result["successes"]}, set(range(9)))
             self.assertTrue({8, 14} <= {v["error"] for v in result["group_errors"]})
 
-    def test_pending_tag_and_varint_current_targets_relocate_independently(self):
+    def test_pending_tag_and_varint_current_targets_relocate_independently(self) -> None:
         from config_helpers import HELPER_SEMANTIC_ROLES
 
         for role in (
@@ -13890,7 +15431,7 @@ class ActualDecodedViews(unittest.TestCase):
                 self.assertFalse(result["control"]["pending_contexts_confer_state"])
                 self.assertEqual(result["Widget_ready"]["frontier"], 0x1001C654 + 416)
 
-    def test_pending_relocated_tag_and_varint_wrong_targets_reject(self):
+    def test_pending_relocated_tag_and_varint_wrong_targets_reject(self) -> None:
         from config_helpers import HELPER_SEMANTIC_ROLES
 
         for role, offset in (
@@ -13913,7 +15454,9 @@ class ActualDecodedViews(unittest.TestCase):
 
 
 class SourceBoundUTF8(unittest.TestCase):
-    def fixture(self, raw=b"hello", residue=0):
+    def fixture(
+        self, raw: bytes = b"hello", residue: int = 0
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], UTF8Slice, View, Storage]:
         from config_abstract import Span
         from config_regions import Storage, borrow
         from config_utf8 import UTF8Slice
@@ -13940,12 +15483,20 @@ class SourceBoundUTF8(unittest.TestCase):
         )
 
     @staticmethod
-    def consume(objects, rows, source, output, frame):
+    def consume(
+        objects: config_stack.DiagnosticObjects,
+        rows: InstructionMap,
+        source: UTF8Slice,
+        output: View,
+        frame: Storage,
+    ) -> UTF8Result:
         from config_utf8 import from_utf8_interface
 
         return from_utf8_interface(objects, rows, source, output, frame, ())
 
-    def test_empty_and_unknown_nonempty_results_keep_source_pair_and_inactive_None_distinct(self):
+    def test_empty_and_unknown_nonempty_results_keep_source_pair_and_inactive_None_distinct(
+        self,
+    ) -> None:
         for raw in (
             b"",
             b"a",
@@ -13978,7 +15529,7 @@ class SourceBoundUTF8(unittest.TestCase):
                         result["write_footprint"], ((output.start + 4, 8), (output.start, 4))
                     )
 
-    def test_width_table_and_actual_word_read_or_return_mutations_reject(self):
+    def test_width_table_and_actual_word_read_or_return_mutations_reject(self) -> None:
         for site, operation, operands in (
             (0x10016B7C, "subs.w", "r12, r2, #0x6"),
             (0x10016BC4, "ldr", "r5, [r1, #0x4]"),
@@ -13994,7 +15545,7 @@ class SourceBoundUTF8(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "UTF8 width table"):
             self.consume(objects, rows, source, output, frame)
 
-    def test_misaligned_short_or_physically_aliased_output_rejects(self):
+    def test_misaligned_short_or_physically_aliased_output_rejects(self) -> None:
         from config_regions import borrow, Storage
 
         for kind in ("misaligned", "short", "frame_alias", "cross_space"):
@@ -14012,7 +15563,9 @@ class SourceBoundUTF8(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 self.consume(objects, rows, source, output, frame)
 
-    def edge_fixture(self, address, extent, offset, length):
+    def edge_fixture(
+        self, address: int, extent: int, offset: tuple[int, int], length: tuple[int, int]
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], Callable[[], UTF8Slice], View, Storage]:
         from config_abstract import Span
         from config_regions import Storage, borrow
         from config_utf8 import UTF8Slice
@@ -14020,7 +15573,7 @@ class SourceBoundUTF8(unittest.TestCase):
         objects, rows, source, output, frame = self.fixture(b"x" * extent)
         i = next(i for i, s in enumerate(objects.elf.sections) if s[3] == source.payload.start)
         section = objects.elf.sections[i]
-        objects.elf.sections[i] = section[:3] + (address,) + section[4:]
+        objects.elf.sections[i] = section_fields((*section[:3], address, *section[4:]))
         owner = Storage(
             "address", "edge immutable initialized bytes", address, extent, 1, frame.phase, False
         )
@@ -14032,7 +15585,7 @@ class SourceBoundUTF8(unittest.TestCase):
             frame,
         )
 
-    def test_unrepresentable_pointer_and_endpoint_reject_at_shared_adapter(self):
+    def test_unrepresentable_pointer_and_endpoint_reject_at_shared_adapter(self) -> None:
         cases = (
             (0xFFFFFFFF, 1, (1, 1), (0, 0)),
             (0xFFFFFFFF, 1, (0, 0), (1, 1)),
@@ -14048,7 +15601,7 @@ class SourceBoundUTF8(unittest.TestCase):
             ):
                 self.consume(objects, rows, source(), output, frame)
 
-    def test_adjacent_empty_and_dependent_upper_domains_remain_representable(self):
+    def test_adjacent_empty_and_dependent_upper_domains_remain_representable(self) -> None:
         for address, extent, offset, length in (
             (0xFFFFFFFE, 1, (1, 1), (0, 0)),
             (0xFFFFFFFF, 1, (0, 0), (0, 0)),
@@ -14071,7 +15624,7 @@ class SourceBoundUTF8(unittest.TestCase):
 
 class BoundedParentTargets(unittest.TestCase):
     @staticmethod
-    def conditional_branch(site, target, condition=3):
+    def conditional_branch(site: int, target: int, condition: int = 3) -> bytes:
         disp = target - site - 4
         if disp % 2 or not -(1 << 20) <= disp < (1 << 20):
             raise ValueError("Thumb conditional target")
@@ -14083,17 +15636,19 @@ class BoundedParentTargets(unittest.TestCase):
         )
 
     @staticmethod
-    def match(objects, rows, offset=4188):
+    def match(
+        objects: config_stack.DiagnosticObjects, rows: InstructionMap, offset: int = 4188
+    ) -> BodyRecord:
         from config_finite import _literal_body
         from config_headers import VISITOR
 
         name = next(n for n in objects.elf.functions if config_stack.canonical_symbol(n) == VISITOR)
         parent = objects.elf.functions[name][0] & ~1
 
-        def no_child(*args):
+        def no_child(*args: object) -> Never:
             raise AssertionError("unexpected parent-target child")
 
-        contract = dict(
+        contract: BodyContract[object] = dict(
             extent=4, instructions=((0, 4, "blo.w @parent+" + format(offset, "x")),), objects=[]
         )
         return _literal_body(
@@ -14108,12 +15663,12 @@ class BoundedParentTargets(unittest.TestCase):
             window=parent + 264,
         )
 
-    def test_same_parent_cross_window_target_binds_current_instruction(self):
+    def test_same_parent_cross_window_target_binds_current_instruction(self) -> None:
         objects, rows, context, item = ActualDecodedViews().fixture()
         self.assertEqual(self.match(objects, rows)["function"], 0x1001C75C)
         self.assertEqual(self.conditional_branch(0x1001C75C, 0x1001D6B0), bytes.fromhex("c0f0a887"))
 
-    def test_wrong_parent_offset_extent_data_or_instruction_interior_rejects(self):
+    def test_wrong_parent_offset_extent_data_or_instruction_interior_rejects(self) -> None:
         for target, expected in (
             (0x10016B74, 4188),
             (0x1001C654 + 4194, 4188),
@@ -14135,7 +15690,7 @@ class BoundedParentTargets(unittest.TestCase):
 
 class DecodedWidgetAccess(unittest.TestCase):
     @staticmethod
-    def fixture(role):
+    def fixture(role: str) -> WidgetFamily:
         from config_regions import Storage, borrow
         from config_widget_access import WidgetContext, WidgetFamily, SITE_SHAPES
 
@@ -14146,7 +15701,7 @@ class DecodedWidgetAccess(unittest.TestCase):
         config = Storage(
             "address", "private unpublished ConfigSlot", 0x2000031C, 14604, 4, phase, True
         )
-        guards = (
+        guards: tuple[Storage, ...] = (
             Storage(space, "loader saves", 352, 104, 4, phase, False),
             Storage(space, "visitor saves", -96, 96, 4, phase, False),
             Storage(
@@ -14173,11 +15728,14 @@ class DecodedWidgetAccess(unittest.TestCase):
         context = WidgetContext(
             loader, visitor, frame, borrow(config, 0, 14576, phase), owner, guards
         )
-        sites = tuple((parent + offset, *rest) for offset, *rest in SITE_SHAPES[role])
+        sites = tuple(
+            (parent + offset, raw, relative, width, direction, source)
+            for offset, raw, relative, width, direction, source in SITE_SHAPES[role]
+        )
         return WidgetFamily(role, "sizez", parent, sites, context, loop)
 
     @staticmethod
-    def dependencies():
+    def dependencies() -> tuple[WidgetFamily, ...]:
         return tuple(
             DecodedWidgetAccess.fixture(role)
             for role in (
@@ -14188,7 +15746,7 @@ class DecodedWidgetAccess(unittest.TestCase):
             )
         )
 
-    def test_closed_affine_accesses_preserve_last_widget_and_band_footprints(self):
+    def test_closed_affine_accesses_preserve_last_widget_and_band_footprints(self) -> None:
         from config_widget_access import read_widget_family
         import json
 
@@ -14220,7 +15778,7 @@ class DecodedWidgetAccess(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     value.footprints(value.loop[1] + 1)
 
-    def test_reader_rejects_cross_family_numeric_alias_and_owner_substitutions(self):
+    def test_reader_rejects_cross_family_numeric_alias_and_owner_substitutions(self) -> None:
         from copy import deepcopy
         from config_widget_access import read_widget_family
 
@@ -14240,34 +15798,41 @@ class DecodedWidgetAccess(unittest.TestCase):
             "role",
         ):
             changed = deepcopy(record)
+            sites = _fixture_array(changed["sites"])
+            first = _fixture_object(sites[0])
+            context = _fixture_object(changed["context"])
+            owner = _fixture_object(context["owner"])
+            protected = _fixture_array(context["protected"])
             if fault == "float_width":
-                changed["sites"][0]["width"] = 2.0
+                first["width"] = 2.0
             elif fault == "bool_offset":
-                changed["sites"][0]["offset"] = True
+                first["offset"] = True
             elif fault == "direction":
-                changed["sites"][0]["direction"] = "read"
+                first["direction"] = "read"
             elif fault == "source":
-                changed["sites"][0]["source_phase"] = "paired_graph_min_max"
+                first["source_phase"] = "paired_graph_min_max"
             elif fault == "owner":
-                changed["context"]["owner"]["offset"] += 4
+                owner["offset"] = integer_value(owner["offset"], "owner offset") + 4
             elif fault == "mode":
                 changed["mode"] = "sizes"
             elif fault == "loop":
                 changed["loop"] = [0, 64, 220]
             elif fault == "missing_save":
-                changed["context"]["protected"].pop(1)
+                protected.pop(1)
             elif fault == "metadata_guard":
-                changed["context"]["protected"][-1]["extent"] -= 1
+                _fixture_object(protected[-1])["extent"] = (
+                    integer_value(_fixture_object(protected[-1])["extent"], "guard extent") - 1
+                )
             elif fault == "partial_completion":
                 changed["physical_count_is_completed_prefix"] = True
             elif fault == "duplicate":
-                changed["sites"][-1] = deepcopy(changed["sites"][-2])
+                sites[-1] = deepcopy(sites[-2])
             else:
                 changed["role"] = "band_assembly"
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 read_widget_family(changed)
 
-    def test_current_image_reader_preserves_v8_and_rejects_stale_v7_qualification(self):
+    def test_current_image_reader_preserves_v8_and_rejects_stale_v7_qualification(self) -> None:
         # This exercises the existing real artifact reader. The supplied
         # producer fixture is deliberately readonly, with no Widget ownership
         # or complete-graph claim. V7 must not silently stand in for V8.
@@ -14275,7 +15840,7 @@ class DecodedWidgetAccess(unittest.TestCase):
         from config_platform import current_image_policy
 
         elf, eav, stack = MemoryQualification().fixture()
-        record = stack["policies"][0]
+        record = _fixture_object(stack["policies"][0])
         current = dict(record)
         record.update(
             schema=6,
@@ -14290,7 +15855,7 @@ class DecodedWidgetAccess(unittest.TestCase):
         self.assertEqual(result.status, "assumed_external")
         self.assertFalse(result.hardware_qualified)
 
-    def test_full_v8_set_cannot_omit_reorder_or_cross_pair_widget_families(self):
+    def test_full_v8_set_cannot_omit_reorder_or_cross_pair_widget_families(self) -> None:
         import config_platform
         from dataclasses import replace
 
@@ -14300,7 +15865,12 @@ class DecodedWidgetAccess(unittest.TestCase):
             objects, view, context, contradictory_effects=(), owned_dependencies=dependencies
         )
         self.assertEqual(len(policy.owned_dependencies), 27)
-        self.assertEqual(sum(len(v.sites) for v in dependencies[16:20]), 8)
+        widget_dependencies = dependencies[16:20]
+        if not all(isinstance(v, WidgetFamily) for v in widget_dependencies):
+            raise AssertionError("fixture widget families missing")
+        self.assertEqual(
+            sum(len(v.sites) for v in widget_dependencies if isinstance(v, WidgetFamily)), 8
+        )
         for fault in (
             "missing",
             "duplicate",
@@ -14321,6 +15891,8 @@ class DecodedWidgetAccess(unittest.TestCase):
                 values = values[:16] + values[20:]
             else:
                 family = values[16]
+                if not isinstance(family, WidgetFamily):
+                    raise AssertionError("fixture widget family missing")
                 c = family.context
                 if fault == "other_visitor":
                     visitor = replace(c.visitor, identity="different invocation")
@@ -14348,7 +15920,7 @@ class DecodedWidgetAccess(unittest.TestCase):
                     owned_dependencies=tuple(values),
                 )
 
-    def test_current_reader_checks_all_eight_widget_sites_not_old_readable_shapes(self):
+    def test_current_reader_checks_all_eight_widget_sites_not_old_readable_shapes(self) -> None:
         from config_widget_access import current_widget_family
         from dataclasses import replace
 
@@ -14373,17 +15945,22 @@ class DecodedWidgetAccess(unittest.TestCase):
                     replace(
                         family,
                         parent=family.parent + 0x2000,
-                        sites=tuple((a + 0x2000, *rest) for a, *rest in family.sites),
+                        sites=tuple(
+                            (a + 0x2000, raw, offset, width, direction, source)
+                            for a, raw, offset, width, direction, source in family.sites
+                        ),
                     ),
                 )
 
 
 class ActualDecodedWidgets(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture]:
         objects, rows, context, item = ActualDecodedViews().fixture()
-        extra = json.loads(
-            (Path(__file__).parent / "fixtures/config-decoded-widgets.json").read_bytes()
+        extra = decoded_fixture(
+            json.loads(
+                (Path(__file__).parent / "fixtures/config-decoded-widgets.json").read_bytes()
+            )
         )
         for at, encoded in extra["segments"] + extra["readonly"]:
             StartupConfigurationCopy.put(objects, at, bytes.fromhex(encoded))
@@ -14391,11 +15968,11 @@ class ActualDecodedWidgets(unittest.TestCase):
             for name, address, extent, index in f["aliases"]:
                 objects.elf.functions[name] = (address, extent, index)
             objects.elf.symbol_entries = list(
-                dict.fromkeys(objects.elf.symbol_entries + [tuple(v) for v in f["symbols"]])
+                dict.fromkeys(objects.elf.symbol_entries + f["symbols"])
             )
             if f["frame"] is not None:
                 objects.sizes[f["address"]] = f["frame"]
-            objects.elf.mapping_symbols.extend(tuple(v) for v in f["mapping"])
+            objects.elf.mapping_symbols.extend(f["mapping"])
         objects.elf.mapping_symbols = list(dict.fromkeys(objects.elf.mapping_symbols))
         for row in extra["records"]:
             at = row["address"]
@@ -14405,12 +15982,14 @@ class ActualDecodedWidgets(unittest.TestCase):
         return objects, rows, SameBLoaderBoundary.rebound(objects, context), item
 
     @staticmethod
-    def consume(objects, rows, context):
+    def consume(
+        objects: config_stack.DiagnosticObjects, rows: InstructionMap, context: object
+    ) -> WidgetsDescription:
         import config_decoded_widgets
 
         return config_decoded_widgets.first_boot_decoded_widgets(objects, rows, context)
 
-    def test_actual_group_continues_same_private_Views_once_before_Source_call(self):
+    def test_actual_group_continues_same_private_Views_once_before_Source_call(self) -> None:
         objects, rows, context, item = self.fixture()
         result = self.consume(objects, rows, context)
         self.assertEqual(
@@ -14425,7 +16004,7 @@ class ActualDecodedWidgets(unittest.TestCase):
         self.assertNotIn("acquired_owner", result)
         self.assertFalse(result["initial_facts_reinitialized"])
 
-    def test_private_Views_handoff_retains_actual_same_D_and_source_cursor(self):
+    def test_private_Views_handoff_retains_actual_same_D_and_source_cursor(self) -> None:
         from config_decoded_views import _first_boot_decoded_views_state
         from config_abstract import Span, SequenceInterface
 
@@ -14449,7 +16028,7 @@ class ActualDecodedWidgets(unittest.TestCase):
 
 
 class WidgetPublicEffects(unittest.TestCase):
-    def test_independent_B_and_Reset_stack_relocation_reaches_current_use_lineage(self):
+    def test_independent_B_and_Reset_stack_relocation_reaches_current_use_lineage(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         import zlib
 
@@ -14527,7 +16106,9 @@ class WidgetPublicEffects(unittest.TestCase):
                 objects, rows, SameBLoaderBoundary.rebound(objects, source)
             )
 
-    def test_same_public_success_precedes_coherent_late_store_backedge_and_return_rejections(self):
+    def test_same_public_success_precedes_coherent_late_store_backedge_and_return_rejections(
+        self,
+    ) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
 
         objects, rows, source, item = WidgetEmptyEntries.fixture(85)
@@ -14559,7 +16140,7 @@ class WidgetPublicEffects(unittest.TestCase):
 
     def test_active_Visitor_and_Advanced_relocations_rebind_actual_uses_not_absolute_addresses(
         self,
-    ):
+    ) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_headers import VISITOR
 
@@ -14571,6 +16152,8 @@ class WidgetPublicEffects(unittest.TestCase):
             objects, rows, SameBLoaderBoundary.rebound(objects, source)
         )
         self.assertTrue(any(e.committed for e in state.exits))
+        if result["Sources_ready"] is None:
+            self.fail("fixture did not reach Sources")
         self.assertEqual(result["Sources_ready"]["frontier"], 0x10078000 + 4376)
         families = {v.role: v for v in state.family_bridge.families}
         self.assertEqual(families["widget_assembly"].parent, 0x10078000)
@@ -14591,7 +16174,17 @@ class WidgetPublicEffects(unittest.TestCase):
 
 class WidgetInternalCapacity(unittest.TestCase):
     @staticmethod
-    def fixture(index, extent=6000):
+    def fixture(
+        index: int, extent: int = 6000
+    ) -> tuple[
+        config_stack.DiagnosticObjects,
+        InstructionMap,
+        _ViewsState,
+        _ViewsState,
+        _WidgetControlInput,
+        _WidgetActiveControl,
+        DecoderInterface,
+    ]:
         # Explicit supplied abstract adapter input, NOT a larger linked EAV,
         # public first-Boot64 fold or evidence of63 earlier actual commits.
         from config_decoded_widgets import (
@@ -14610,15 +16203,17 @@ class WidgetInternalCapacity(unittest.TestCase):
         from dataclasses import replace
         import zlib
 
-        objects, rows, source, item = WidgetEmptyEntries.fixture(85)
+        mutable, instructions, source, item = WidgetEmptyEntries.fixture(85)
+        objects: config_stack.DiagnosticObjects = mutable
+        rows: InstructionMap = instructions
         address = 0x100A0000
-        offset = len(objects.elf.data)
+        offset = len(mutable.elf.data)
         wire = bytearray(objects.read_only(0x10032B1E, 12) + bytes(extent))
         struct.pack_into("<H", wire, 6, extent)
         struct.pack_into("<I", wire, 8, zlib.crc32(wire[:8] + wire[12:]))
-        objects.elf.data += wire
-        objects.elf.sections.append((0, 1, 2, address, offset, len(wire), 0, 0, 1, 0))
-        source = SameBLoaderBoundary.rebound(objects, source)
+        mutable.elf.data += wire
+        mutable.elf.sections.append((0, 1, 2, address, offset, len(wire), 0, 0, 1, 0))
+        source = SameBLoaderBoundary.rebound(mutable, source)
         objects, rows = _detached_inputs(objects, rows)
         _, state, parents, children = _current_group(objects, rows, source)
         frame = state.context.headers["visitor_frame"]
@@ -14631,8 +16226,8 @@ class WidgetInternalCapacity(unittest.TestCase):
         )
         original = state.context.headers["visitor"]["sequence_state"]
         before = DecoderInterface(original.decoder.header, payload, Span(0, 0))
-        headers = dict(state.context.headers)
-        visitor = dict(headers["visitor"])
+        headers = state.context.headers.copy()
+        visitor = headers["visitor"].copy()
         visitor["sequence_state"] = SequenceInterface(original.header, before, Span(13, 13))
         headers["visitor"] = visitor
         top = SequenceInterface(original.header, before, Span(8, 8))
@@ -14659,7 +16254,9 @@ class WidgetInternalCapacity(unittest.TestCase):
         )
         return objects, rows, state, active, value, _widget_control(objects, rows, value), before
 
-    def test_supplied_large_adapter_parses_final_and_overflow_candidates_before_capacity(self):
+    def test_supplied_large_adapter_parses_final_and_overflow_candidates_before_capacity(
+        self,
+    ) -> None:
         from config_decoded_widgets import _widget_capacity_decision, _assembly_effects
         from unittest.mock import patch
         from dataclasses import replace
@@ -14670,12 +16267,14 @@ class WidgetInternalCapacity(unittest.TestCase):
             self.assertEqual(
                 decision["kind"], "candidate_ready" if index == 63 else "capacity_error"
             )
+            if decision["after"] is None:
+                self.fail("fixture capacity decision lacks successful decoder")
             self.assertGreaterEqual(decision["after"].cursor.lower, 80)
             guards = active.context.headers["visitor"]["protected"]
             for name in ("actual ordinary Widget prefix", "physical ordinary Widget prefix"):
                 self.assertTrue(any(v.identity == name and v.extent == 220 * index for v in guards))
-                headers = dict(active.context.headers)
-                visitor = dict(headers["visitor"])
+                headers = active.context.headers.copy()
+                visitor = headers["visitor"].copy()
                 visitor["protected"] = tuple(v for v in guards if v.identity != name)
                 headers["visitor"] = visitor
                 changed = replace(active, context=replace(active.context, headers=headers))
@@ -14709,7 +16308,7 @@ class WidgetInternalCapacity(unittest.TestCase):
                 self.assertIsNotNone(value.source.decoder)
                 self.assertTrue(value.advanced["errors"])
 
-    def test_all_64_slot_effects_keep_each_actual_prefix_and_last_store_geometry(self):
+    def test_all_64_slot_effects_keep_each_actual_prefix_and_last_store_geometry(self) -> None:
         from config_decoded_widgets import _assembly_effects, _iteration_state
 
         objects, rows, state, unused, value, control, before = self.fixture(0)
@@ -14731,7 +16330,7 @@ class WidgetInternalCapacity(unittest.TestCase):
 
 
 class WidgetFamilyLineage(unittest.TestCase):
-    def test_current_selection_keeps_complete_mutation_and_context_binding(self):
+    def test_current_selection_keeps_complete_mutation_and_context_binding(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from dataclasses import replace
 
@@ -14739,13 +16338,17 @@ class WidgetFamilyLineage(unittest.TestCase):
         result, state = _first_boot_decoded_widgets_state(objects, rows, source)
         bridge = state.family_bridge
         selection = bridge.structural.selection
-        for values in (selection.selected, selection.edges):
+
+        def remove_and_restore(values: dict[int, _FixtureValue]) -> None:
             key = next(iter(values))
             old = values.pop(key)
             with self.assertRaisesRegex(AssertionError, "lineage.*changed"):
                 bridge.current()
             values[key] = old
             bridge.current()
+
+        remove_and_restore(selection.selected)
+        remove_and_restore(selection.edges)
         for changed in (
             replace(selection, context=replace(selection.context)),
             replace(selection, children=dict(selection.children)),
@@ -14753,14 +16356,14 @@ class WidgetFamilyLineage(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "selection.*binding"):
                 replace(bridge, structural=replace(bridge.structural, selection=changed)).current()
 
-    def test_custom_reader_rechecks_non_site_structural_input_before_use(self):
+    def test_custom_reader_rechecks_non_site_structural_input_before_use(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_stack import DiagnosticObjects
 
         class ChangingReader(DiagnosticObjects):
             changed = False
 
-            def read_only(self, address, length):
+            def read_only(self, address: int, length: int) -> bytes:
                 raw = super().read_only(address, length)
                 if self.changed and address == 0x10033E22 and length == 256:
                     return bytes((raw[0] ^ 1,)) + raw[1:]
@@ -14775,7 +16378,7 @@ class WidgetFamilyLineage(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "UTF8 width table"):
             state.family_bridge.current()
 
-    def test_public_conditional_quartet_is_derived_from_same_actual_private_lineage(self):
+    def test_public_conditional_quartet_is_derived_from_same_actual_private_lineage(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_widget_access import EXPECTED_WIDGET_ROLES, current_widget_family
 
@@ -14806,7 +16409,7 @@ class WidgetFamilyLineage(unittest.TestCase):
         self.assertFalse(state.execution.to_record()["hardware_qualified"])
         self.assertFalse(result["unconditional_owner"])
 
-    def test_reached_uses_follow_actual_error_and_success_source_epochs(self):
+    def test_reached_uses_follow_actual_error_and_success_source_epochs(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
 
         for n in (1, 30, 85, 95):
@@ -14851,7 +16454,7 @@ class WidgetFamilyLineage(unittest.TestCase):
             self.assertTrue(result["conditional_Widget_accesses"]["actual_inherited16_pending"])
             self.assertNotIn("owned_policy", result)
 
-    def test_actual_second_candidate_protects_prefix_and_rejects_use_substitution(self):
+    def test_actual_second_candidate_protects_prefix_and_rejects_use_substitution(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_widget_uses import _check_use, _family_use
         from config_regions import borrow
@@ -14919,7 +16522,7 @@ class WidgetFamilyLineage(unittest.TestCase):
                 owned_dependencies=state.family_bridge.families,
             )
 
-    def test_canonical_metadata_cannot_borrow_another_attempt_or_input_package(self):
+    def test_canonical_metadata_cannot_borrow_another_attempt_or_input_package(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_structural import _detached_inputs
         from dataclasses import replace
@@ -14948,9 +16551,9 @@ class WidgetFamilyLineage(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "canonical"):
                 bad.current()
         with self.assertRaisesRegex(AssertionError, "family lineage"):
-            replace(state, family_bridge=state.execution)
+            dynamic_call(replace, state, family_bridge=state.execution)
 
-    def test_lineage_snapshot_rejects_changed_nested_source_or_base_protection(self):
+    def test_lineage_snapshot_rejects_changed_nested_source_or_base_protection(self) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
 
         objects, rows, source, item = WidgetEmptyEntries.fixture(85)
@@ -14973,12 +16576,16 @@ class WidgetFamilyLineage(unittest.TestCase):
         semantics["Config_visibility"] = old
         bridge.current()
         with self.assertRaises(TypeError):
-            bridge.checkpoint["context"]["owner"]["start"] = 0x20000000
+            checkpoint_context = dynamic_call(operator.getitem, bridge.checkpoint, "context")
+            checkpoint_owner = dynamic_call(operator.getitem, checkpoint_context, "owner")
+            dynamic_call(operator.setitem, checkpoint_owner, "start", 0x20000000)
 
 
 class WidgetEmptyEntries(unittest.TestCase):
     @staticmethod
-    def fixture(n):
+    def fixture(
+        n: int,
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], SourceContext, LoaderFixture]:
         import zlib
 
         objects, rows, context, item = ActualDecodedWidgets.fixture()
@@ -14996,7 +16603,9 @@ class WidgetEmptyEntries(unittest.TestCase):
         rows[0x1001FED8] = Instruction(0x1001FED8, raw, "addw", "r0, r12, #" + hex(12 + n))
         return objects, rows, SameBLoaderBoundary.rebound(objects, context), item
 
-    def test_no_Views_exit_preserves_actual_errors_without_fabricated_Widget_candidate(self):
+    def test_no_Views_exit_preserves_actual_errors_without_fabricated_Widget_candidate(
+        self,
+    ) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from unittest.mock import patch
 
@@ -15040,7 +16649,7 @@ class WidgetEmptyEntries(unittest.TestCase):
 
     def test_real_zero_Views_exit_with_only_Widget_length_errors_never_clears_or_enters_candidate(
         self,
-    ):
+    ) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from unittest.mock import patch
 
@@ -15084,7 +16693,9 @@ class WidgetEmptyEntries(unittest.TestCase):
         self.assertIn(0x1001C654 + 416, state.control["stopped_frontiers"])
         self.assertNotIn(0x1001C654 + 4402, state.control["stopped_frontiers"])
 
-    def test_guarded_N0_is_distinct_from_length_failure_and_nonempty_success_stays_possible(self):
+    def test_guarded_N0_is_distinct_from_length_failure_and_nonempty_success_stays_possible(
+        self,
+    ) -> None:
         from config_decoded_widgets import _first_boot_decoded_widgets_state
         from config_abstract import Span
 
@@ -15131,7 +16742,7 @@ class WidgetEmptyEntries(unittest.TestCase):
         # These are guarded unknown-N alternatives, not a claim that actual
         # readonly input scalars were evaluated or are uniquely zero.
 
-    def test_dormant_raw_edges_and_receipt_cannot_replace_active_source_control(self):
+    def test_dormant_raw_edges_and_receipt_cannot_replace_active_source_control(self) -> None:
         from config_decoded_widgets import (
             _first_boot_decoded_widgets_state,
             _ordinary_commit_evidence,
@@ -15151,7 +16762,7 @@ class WidgetEmptyEntries(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "active same-group"):
             _ordinary_commit_evidence(objects, rows, state.structural, state.structural)
         with self.assertRaisesRegex(AssertionError, "private control"):
-            replace(state, control=state.structural)
+            dynamic_call(replace, state, control=state.structural)
         for consumer in (require_exception_safe_execution, require_global_execution_owner):
             with self.assertRaises(AssertionError):
                 consumer(state.execution)
@@ -15163,7 +16774,7 @@ class WidgetEmptyEntries(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 ActualDecodedWidgets.consume(objects, rows, fake)
 
-    def test_error_only_current_Widget_bytes_and_foreign_ingress_are_still_rejected(self):
+    def test_error_only_current_Widget_bytes_and_foreign_ingress_are_still_rejected(self) -> None:
         V = 0x1001C654
         for fault in ("store", "return", "direct", "fallthrough", "computed", "stale_source"):
             objects, rows, context, item = self.fixture(1)
@@ -15233,7 +16844,7 @@ class WidgetEmptyEntries(unittest.TestCase):
                     objects, rows, SameBLoaderBoundary.rebound(objects, context)
                 )
 
-    def test_error_only_independent_UTF8_table_and_Visitor_relocations_remain_current(self):
+    def test_error_only_independent_UTF8_table_and_Visitor_relocations_remain_current(self) -> None:
         from config_utf8 import UTF8
         from config_headers import VISITOR
 
@@ -15259,15 +16870,45 @@ class WidgetEmptyEntries(unittest.TestCase):
         )
 
 
+RuntimeDecodeArgs = tuple[
+    config_stack.DiagnosticObjects,
+    InstructionMap,
+    HelperCoverageRecord,
+    DecoderState,
+    Storage,
+    tuple[Storage, ...],
+]
+
+
+class _ChangingPayloadObjects(config_stack.DiagnosticObjects):
+    def __init__(
+        self, original: config_stack.DiagnosticObjects, payload: View, changed_first: bool
+    ) -> None:
+        super().__init__(original.elf, original.sizes)
+        self.payload = payload
+        self.changed_first = changed_first
+        self.payload_reads = 0
+
+    def read_only(self, address: int, length: int) -> bytes:
+        raw = super().read_only(address, length)
+        if (address, length) == (self.payload.start, self.payload.extent):
+            self.payload_reads += 1
+            if self.changed_first and self.payload_reads == 1:
+                return bytes.fromhex("78563412")
+        return raw
+
+
 class WidgetPayloadBinding(unittest.TestCase):
     @staticmethod
-    def fixture(provider="ordinary", changed_first=False):
+    def fixture(
+        provider: str = "ordinary", changed_first: bool = False
+    ) -> tuple[RuntimeDecodeArgs, PlatformPolicy, View]:
         from config_platform import reviewed_eav_policy, TARGET, BOOT_CONTEXT
         from config_structural import _detached_inputs
         from config_regions import Storage, borrow
 
-        args = list(
-            OrdinaryDecodeEffects().fixture("deserialize_seed_f32", bytes.fromhex("0100c07f"))
+        args: RuntimeDecodeArgs = OrdinaryDecodeEffects().fixture(
+            "deserialize_seed_f32", bytes.fromhex("0100c07f")
         )
         original = args[0]
         payload = args[3].payload
@@ -15278,27 +16919,18 @@ class WidgetPayloadBinding(unittest.TestCase):
             contradictory_effects=(),
         )
         if provider == "custom":
-
-            class ChangingObjects(config_stack.DiagnosticObjects):
-                payload_reads = 0
-
-                def read_only(self, address, length):
-                    raw = super().read_only(address, length)
-                    if (address, length) == (payload.start, payload.extent):
-                        self.payload_reads += 1
-                        if changed_first and self.payload_reads == 1:
-                            return bytes.fromhex("78563412")
-                    return raw
-
-            args[0] = ChangingObjects(original.elf, original.sizes)
+            args = (_ChangingPayloadObjects(original, payload, changed_first), *args[1:])
         elif provider == "detached":
-            args[:2] = _detached_inputs(original, args[1])
+            detached, rows = _detached_inputs(original, args[1])
+            args = (detached, rows, *args[2:])
         frame = args[4]
         owner = Storage(frame.space, "R8", 144, 8, 4, frame.phase, True)
         output = borrow(owner, 0, 8, frame.phase, True)
         return args, policy, output
 
-    def test_custom_changed_first_valid_second_payload_cannot_authenticate_consumed_bits(self):
+    def test_custom_changed_first_valid_second_payload_cannot_authenticate_consumed_bits(
+        self,
+    ) -> None:
         from config_decode_effects import decode_effect
 
         args, policy, output = self.fixture("custom", changed_first=True)
@@ -15307,9 +16939,11 @@ class WidgetPayloadBinding(unittest.TestCase):
         # digest may authenticate the bits/output derived from that buffer.
         with self.assertRaisesRegex(AssertionError, "f32 decoder lost.*input prerequisite"):
             decode_effect(*args, output=output, platform_policy=policy)
+        if not isinstance(args[0], _ChangingPayloadObjects):
+            self.fail("fixture custom payload provider missing")
         self.assertEqual(args[0].payload_reads, 1)
 
-    def test_stable_ordinary_custom_and_detached_payloads_keep_exact_bits_and_writes(self):
+    def test_stable_ordinary_custom_and_detached_payloads_keep_exact_bits_and_writes(self) -> None:
         from config_decode_effects import decode_effect
 
         expected = None
@@ -15333,11 +16967,19 @@ class WidgetPayloadBinding(unittest.TestCase):
                 else:
                     self.assertEqual(result, expected)
                 if provider == "custom":
+                    if not isinstance(args[0], _ChangingPayloadObjects):
+                        self.fail("fixture custom payload provider missing")
                     self.assertEqual(args[0].payload_reads, 1)
 
 
+def _frozen_fixture(objects: config_stack.DiagnosticObjects) -> _FrozenObjects:
+    if not isinstance(objects, _FrozenObjects):
+        raise AssertionError("fixture did not select immutable structural provider")
+    return objects
+
+
 class WidgetStructuralInputs(unittest.TestCase):
-    def test_detached_structural_proofs_are_current_immutable_and_not_output_aliases(self):
+    def test_detached_structural_proofs_are_current_immutable_and_not_output_aliases(self) -> None:
         from config_structural import _detached_inputs
         from config_utf8 import utf8_body
 
@@ -15348,13 +16990,15 @@ class WidgetStructuralInputs(unittest.TestCase):
         self.assertEqual(first, expected)
         first["objects"].clear()
         self.assertEqual(utf8_body(frozen, current), expected)
-        self.assertEqual(frozen._counts[("config_utf8", "utf8_body")], (1, 1))
+        self.assertEqual(_frozen_fixture(frozen)._counts[("config_utf8", "utf8_body")], (1, 1))
         with self.assertRaises(TypeError):
-            current[next(iter(current))] = next(iter(current.values()))
+            dynamic_call(
+                operator.setitem, current, next(iter(current)), next(iter(current.values()))
+            )
         with self.assertRaises((TypeError, AttributeError)):
-            frozen.elf.functions.clear()
+            dynamic_call(operator.methodcaller("clear"), frozen.elf.functions)
         with self.assertRaises(AttributeError):
-            frozen.elf.data = b"changed"
+            setattr(frozen.elf, "data", b"changed")
         StartupConfigurationCopy.put(objects, 0x10033E22 + 0xC2, b"\0")
         self.assertEqual(utf8_body(frozen, current), expected)
         changed, changed_rows = _detached_inputs(objects, rows)
@@ -15363,7 +17007,7 @@ class WidgetStructuralInputs(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "another immutable input"):
             utf8_body(frozen, changed_rows)
 
-    def test_fresh_dynamic_UTF8_outputs_errors_and_protection_are_unchanged(self):
+    def test_fresh_dynamic_UTF8_outputs_errors_and_protection_are_unchanged(self) -> None:
         from config_structural import _detached_inputs
         from config_utf8 import from_utf8_interface
         from config_regions import Storage
@@ -15382,9 +17026,9 @@ class WidgetStructuralInputs(unittest.TestCase):
         )
         with self.assertRaisesRegex(AssertionError, "overlap|intersects"):
             from_utf8_interface(frozen, current, source, output, frame, (overlap,))
-        self.assertEqual(frozen._counts[("config_utf8", "utf8_body")], (1, 3))
+        self.assertEqual(_frozen_fixture(frozen)._counts[("config_utf8", "utf8_body")], (1, 3))
 
-    def test_new_calls_rebind_rows_frames_metadata_tables_and_source_hashes(self):
+    def test_new_calls_rebind_rows_frames_metadata_tables_and_source_hashes(self) -> None:
         from config_structural import _detached_inputs, _image_hash, _readonly_hash
         from config_utf8 import utf8_body
         from dataclasses import replace
@@ -15434,7 +17078,7 @@ class WidgetStructuralInputs(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         utf8_body(fresh, new_rows)
 
-    def test_context_keys_keywords_and_custom_provider_rechecks_are_preserved(self):
+    def test_context_keys_keywords_and_custom_provider_rechecks_are_preserved(self) -> None:
         from config_structural import _detached_inputs
         from config_helpers import helper_coverage
         from config_utf8 import utf8_body
@@ -15452,15 +17096,17 @@ class WidgetStructuralInputs(unittest.TestCase):
             self.assertEqual(proof, expected)
             proofs.append(proof)
         self.assertNotEqual(proofs[0]["coverage"]["context"], proofs[1]["coverage"]["context"])
-        self.assertEqual(frozen._counts[("config_helpers", "helper_coverage")], (2, 0))
+        self.assertEqual(
+            _frozen_fixture(frozen)._counts[("config_helpers", "helper_coverage")], (2, 0)
+        )
         objects, rows, source, output, frame = SourceBoundUTF8().fixture()
 
         class CustomObjects(config_stack.DiagnosticObjects):
             reads = 0
 
-            def read_only(self, *args):
+            def read_only(self, address: int, length: int) -> bytes:
                 self.reads += 1
-                return super().read_only(*args)
+                return super().read_only(address, length)
 
         custom = CustomObjects(objects.elf, objects.sizes)
         same, same_rows = _detached_inputs(custom, rows)
@@ -15471,7 +17117,7 @@ class WidgetStructuralInputs(unittest.TestCase):
         utf8_body(same, same_rows)
         self.assertGreater(custom.reads, before)
 
-    def test_f32_policy_reuse_keeps_fresh_cursor_count_and_output_protection(self):
+    def test_f32_policy_reuse_keeps_fresh_cursor_count_and_output_protection(self) -> None:
         from config_structural import _detached_inputs
         from config_abstract import sequence_interface, Span
         from config_platform import reviewed_eav_policy, TARGET, BOOT_CONTEXT
@@ -15496,28 +17142,25 @@ class WidgetStructuralInputs(unittest.TestCase):
             (Span(1, 1), Span(4, 7)),
         ):
             selected = replace(state, count=count, decoder=replace(state.decoder, cursor=cursor))
-            old = list(args)
-            old[3] = selected
-            new = list(old)
-            new[:2] = frozen, rows
+            old = (args[0], args[1], args[2], selected, args[4], args[5])
+            new = (frozen, rows, args[2], selected, args[4], args[5])
             self.assertEqual(
                 sequence_interface(*new, output=output, platform_policy=policy),
                 sequence_interface(*old, output=output, platform_policy=policy),
             )
-        new = list(args)
-        new[:2] = frozen, rows
-        new[5] = tuple(new[5]) + (
+        protected = args[5] + (
             Storage(frame.space, "prior prefix", output.start, 4, 4, frame.phase, False),
         )
+        new = (frozen, rows, args[2], args[3], args[4], protected)
         with self.assertRaises(AssertionError):
             sequence_interface(*new, output=output, platform_policy=policy)
         StartupConfigurationCopy.put(args[0], state.decoder.payload.start, b"X")
-        new = list(args)
-        new[:2] = _detached_inputs(args[0], args[1])
+        changed, changed_rows = _detached_inputs(args[0], args[1])
+        new = (changed, changed_rows, args[2], args[3], args[4], args[5])
         with self.assertRaisesRegex(AssertionError, "policy"):
             sequence_interface(*new, output=output, platform_policy=policy)
 
-    def test_each_relocated_call_rebinds_current_helper_code_pools_and_typed_objects(self):
+    def test_each_relocated_call_rebinds_current_helper_code_pools_and_typed_objects(self) -> None:
         from config_structural import _detached_inputs
         from config_helpers import helper_coverage
 
@@ -15539,7 +17182,7 @@ class WidgetStructuralInputs(unittest.TestCase):
                         expected,
                     )
 
-    def test_all_seven_closed_structural_APIs_retain_current_private_group_records(self):
+    def test_all_seven_closed_structural_APIs_retain_current_private_group_records(self) -> None:
         from config_structural import _detached_inputs
         from config_decoded_widgets import _current_group, _children
 
@@ -15547,7 +17190,50 @@ class WidgetStructuralInputs(unittest.TestCase):
         expected = _current_group(objects, rows, context)
         frozen, current = _detached_inputs(objects, rows)
         actual = _current_group(frozen, current, context)
-        self.assertEqual(actual, expected)
+        from dataclasses import replace
+
+        # Cached structural helpers can share immutable tuples that fresh raw
+        # calls allocate separately. Their invocation-local alias checkpoints
+        # are checked within each provider, not compared across providers.
+        self.assertEqual(actual[0], expected[0])
+        self.assertEqual(actual[2:], expected[2:])
+        self.assertEqual(
+            replace(
+                actual[1],
+                context=replace(actual[1].context, error_checkpoint=None),
+                error_checkpoint=None,
+            ),
+            replace(
+                expected[1],
+                context=replace(expected[1].context, error_checkpoint=None),
+                error_checkpoint=None,
+            ),
+        )
+        for provider, state in (("raw", expected[1]), ("detached", actual[1])):
+            with self.subTest(provider=provider):
+                prefix = state.context
+                prefix._checked_errors()
+                state._checked_errors()
+                self.assertTrue(prefix.error_frontiers)
+                original_error = prefix.error_frontiers[0]
+                # Equal values in a new container must not impersonate the
+                # actual invocation retained by this error occurrence.
+                forged = replace(original_error, invocation=original_error.invocation.copy())
+                self.assertEqual(forged, original_error)
+                with self.assertRaisesRegex(AssertionError, "Prefix private error relation"):
+                    replace(
+                        prefix, error_frontiers=(forged, *prefix.error_frontiers[1:])
+                    )._checked_errors()
+                self.assertTrue(state.error_frontiers)
+                view_error = state.error_frontiers[0]
+                forged_view = replace(view_error, source=replace(view_error.source))
+                self.assertEqual(forged_view, view_error)
+                with self.assertRaisesRegex(AssertionError, "Views private error relation"):
+                    replace(
+                        state, error_frontiers=(forged_view, *state.error_frontiers[1:])
+                    )._checked_errors()
+                prefix._checked_errors()
+                state._checked_errors()
         self.assertEqual(_children(frozen, current, actual[1], actual[2]), actual[3])
         original = {
             ("config_helpers", "helper_body"),
@@ -15559,12 +17245,16 @@ class WidgetStructuralInputs(unittest.TestCase):
             ("config_widget_children", "widget_body"),
         }
         self.assertEqual(len(original), 7)
-        self.assertEqual(set(frozen._counts), original)
-        self.assertTrue(all(misses > 0 and hits > 0 for misses, hits in frozen._counts.values()))
+        self.assertEqual(set(_frozen_fixture(frozen)._counts), original)
+        self.assertTrue(
+            all(
+                misses > 0 and hits > 0 for misses, hits in _frozen_fixture(frozen)._counts.values()
+            )
+        )
 
 
 class WidgetOuterLength(unittest.TestCase):
-    def test_actual_length_preserves_each_Views_exit_and_never_clears_on_error(self):
+    def test_actual_length_preserves_each_Views_exit_and_never_clears_on_error(self) -> None:
         from config_decoded_widgets import _widget_lengths
         from config_abstract import Span
 
@@ -15594,7 +17284,7 @@ class WidgetOuterLength(unittest.TestCase):
 
 
 class WidgetConstructionAdapters(unittest.TestCase):
-    def test_Band_tail_zero_and_aligned_copy_keep_zero_and_last_count_boundaries(self):
+    def test_Band_tail_zero_and_aligned_copy_keep_zero_and_last_count_boundaries(self) -> None:
         from config_widget_children import (
             band_tail_clear_interface,
             band_copy_interface,
@@ -15610,11 +17300,11 @@ class WidgetConstructionAdapters(unittest.TestCase):
         )
         tail = borrow(frame, 1440, 5, frame.phase, True)
         for length, want in ((0, (0, 5)), (1, (1, 5)), (5, None)):
-            result = band_tail_clear_interface(
+            clear_result = band_tail_clear_interface(
                 objects, rows, 0x1002924C, tail, Span(length, length), frame, ()
             )
-            self.assertEqual(result["zero_tail_relative"], want)
-            self.assertEqual(result["count_domain"], Span(5 - length, 5 - length))
+            self.assertEqual(clear_result["zero_tail_relative"], want)
+            self.assertEqual(clear_result["count_domain"], Span(5 - length, 5 - length))
         source = borrow(frame, 940, 48, frame.phase)
         target = borrow(frame, 1000, 48, frame.phase, True)
         for count in (0, 1, 2, 3):
@@ -15632,7 +17322,7 @@ class WidgetConstructionAdapters(unittest.TestCase):
         self.assertTrue(result["preserves_existing_tail"])
         self.assertTrue(result["requires_preceding_actual_tail_clear_and_validated_same_label"])
 
-    def test_Widget_copy_alias_count_and_wrong_scratch_epochs_reject(self):
+    def test_Widget_copy_alias_count_and_wrong_scratch_epochs_reject(self) -> None:
         from config_widget_children import band_copy_interface, band_tail_clear_interface
         from config_regions import Storage, borrow
         from config_abstract import Span
@@ -15678,7 +17368,9 @@ class WidgetConstructionAdapters(unittest.TestCase):
             )
 
     @staticmethod
-    def color_arguments(warning=False, count=(1, 1), cursor=(0, 0)):
+    def color_arguments(
+        warning: bool = False, count: tuple[int, int] = (1, 1), cursor: tuple[int, int] = (0, 0)
+    ) -> tuple[DiagnosticFixture, dict[int, Instruction], SequenceInterface, Storage, View | None]:
         from config_abstract import Span, SequenceInterface, DecoderInterface
         from config_regions import Storage, borrow
 
@@ -15697,7 +17389,7 @@ class WidgetConstructionAdapters(unittest.TestCase):
         output = borrow(owner, 0, 6, phase, True) if warning else None
         return objects, rows, state, frame, output
 
-    def test_Color_scalar_union_and_WarningColors_pair_keep_decrement_and_output(self):
+    def test_Color_scalar_union_and_WarningColors_pair_keep_decrement_and_output(self) -> None:
         from config_widget_children import (
             widget_body,
             color_interface,
@@ -15707,32 +17399,38 @@ class WidgetConstructionAdapters(unittest.TestCase):
         from config_widget_contracts import ROLES
         from config_abstract import Span
 
+        result: ColorResult | WarningColorsResult
         for warning in (False, True):
             objects, rows, state, frame, output = self.color_arguments(warning, cursor=(0, 1145))
             proof = widget_body(
                 objects, _name(objects, ROLES["warning_colors" if warning else "color"]), rows
             )
-            result = (
-                warning_colors_interface(objects, rows, proof, state, output, frame, ())
-                if warning
-                else color_interface(objects, rows, proof, state, frame, ())
-            )
+            if warning:
+                if output is None:
+                    self.fail("fixture WarningColors lacks output")
+                result = warning_colors_interface(objects, rows, proof, state, output, frame, ())
+            else:
+                result = color_interface(objects, rows, proof, state, frame, ())
             successes = [v for v in result["outcomes"] if v["kind"] == "some"]
             self.assertEqual(len(successes), 1)
             self.assertTrue(all(v["count"] == Span(0, 0) for v in result["outcomes"]))
             self.assertEqual(successes[0]["tag"], 1)
             if warning:
-                self.assertEqual(successes[0]["value_domains"], ((0, 65535), (0, 65535)))
+                self.assertEqual(
+                    _fixture_object(successes[0])["value_domains"], ((0, 65535), (0, 65535))
+                )
                 self.assertEqual(successes[0]["possible_writes"], ((output, 0, 6),))
                 self.assertEqual(result["physical_child_paths"], ((24, 8, 24, 16),))
             else:
-                self.assertEqual(successes[0]["value_domain"], (0, 65535))
+                self.assertEqual(_fixture_object(successes[0])["value_domain"], (0, 65535))
                 self.assertEqual(result["physical_child_paths"], ((8, 24, 16),))
             self.assertEqual(
                 {v["error"] for v in result["outcomes"] if v["kind"] == "error"}, {4, 5}
             )
 
-    def test_Color_zero_count_keeps_cursor_and_WarningColors_does_not_initialize_payload(self):
+    def test_Color_zero_count_keeps_cursor_and_WarningColors_does_not_initialize_payload(
+        self,
+    ) -> None:
         from config_widget_children import (
             widget_body,
             color_interface,
@@ -15742,16 +17440,18 @@ class WidgetConstructionAdapters(unittest.TestCase):
         from config_widget_contracts import ROLES
         from config_abstract import Span
 
+        result: ColorResult | WarningColorsResult
         for warning in (False, True):
             objects, rows, state, frame, output = self.color_arguments(warning, (0, 0), (7, 7))
             proof = widget_body(
                 objects, _name(objects, ROLES["warning_colors" if warning else "color"]), rows
             )
-            result = (
-                warning_colors_interface(objects, rows, proof, state, output, frame, ())
-                if warning
-                else color_interface(objects, rows, proof, state, frame, ())
-            )
+            if warning:
+                if output is None:
+                    self.fail("fixture WarningColors lacks output")
+                result = warning_colors_interface(objects, rows, proof, state, output, frame, ())
+            else:
+                result = color_interface(objects, rows, proof, state, frame, ())
             self.assertEqual(
                 [(v["kind"], v["tag"], v["count"], v["cursor"]) for v in result["outcomes"]],
                 [("none", 0, Span(0, 0), Span(7, 7))],
@@ -15760,7 +17460,7 @@ class WidgetConstructionAdapters(unittest.TestCase):
                 result["outcomes"][0]["possible_writes"], ((output, 0, 2),) if warning else ()
             )
 
-    def test_explicit_String5_inner_append_preserves_capacity_and_error_no_write(self):
+    def test_explicit_String5_inner_append_preserves_capacity_and_error_no_write(self) -> None:
         import config_construction
         import config_helpers
         from config_regions import Storage, borrow
@@ -15768,6 +17468,8 @@ class WidgetConstructionAdapters(unittest.TestCase):
         from config_abstract_compare import InitializedPrefix
 
         objects, rows, item, instance, frame = ConstructionInterfaces().fixture("vec_extend_inner")
+        if frame is None:
+            self.fail("fixture vec_extend_inner lacks frame")
         proof = config_helpers.helper_coverage(
             objects, instance["name"], rows, (instance["address"], "explicit String5 caller")
         )
@@ -15802,14 +17504,20 @@ class WidgetConstructionAdapters(unittest.TestCase):
 
 class WidgetFiniteReturns(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[
+        DiagnosticFixture,
+        dict[int, Instruction],
+        _ViewsState,
+        tuple[BodyRecord, ...],
+        dict[tuple[int, str], BodyRecord],
+    ]:
         from config_decoded_widgets import _current_group
 
         objects, rows, source, item = ActualDecodedWidgets.fixture()
         description, state, parents, children = _current_group(objects, rows, source)
         return objects, rows, state, parents, children
 
-    def test_each_actual_child_returns_to_its_own_call_and_restored_tail_depth(self):
+    def test_each_actual_child_returns_to_its_own_call_and_restored_tail_depth(self) -> None:
         from config_decoded_widgets import _child_returns
 
         objects, rows, state, parents, children = self.fixture()
@@ -15833,7 +17541,7 @@ class WidgetFiniteReturns(unittest.TestCase):
             {a for a, pc, sp in clears[0]["returns"]}, {0x1002924C + 190, 0x1002924C + 206}
         )
 
-    def test_conditional_restore_retains_original_fallthrough_save_map(self):
+    def test_conditional_restore_retains_original_fallthrough_save_map(self) -> None:
         from config_decoded_widgets import _child_returns
         from dataclasses import replace
 
@@ -15847,7 +17555,7 @@ class WidgetFiniteReturns(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unreviewed SP/save"):
             _child_returns(changed, state, parents, children)
 
-    def test_zero_frame_restore_consumes_its_callers_pending_save_map(self):
+    def test_zero_frame_restore_consumes_its_callers_pending_save_map(self) -> None:
         from config_decoded_widgets import _child_returns
 
         objects, rows, state, parents, children = self.fixture()
@@ -15862,7 +17570,7 @@ class WidgetFiniteReturns(unittest.TestCase):
             )
         )
 
-    def test_scratch_pop_cannot_replace_a_preserved_register_or_omit_tail_restore(self):
+    def test_scratch_pop_cannot_replace_a_preserved_register_or_omit_tail_restore(self) -> None:
         from config_decoded_widgets import _child_returns
         from dataclasses import replace
 
@@ -15878,7 +17586,7 @@ class WidgetFiniteReturns(unittest.TestCase):
 
 
 class WidgetAssemblyEffects(unittest.TestCase):
-    def test_early_lengths_keep_last_semantic_stores_pending_and_padding_opaque(self):
+    def test_early_lengths_keep_last_semantic_stores_pending_and_padding_opaque(self) -> None:
         from config_decoded_widgets import _assembly_effects
 
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
@@ -15905,7 +17613,7 @@ class WidgetAssemblyEffects(unittest.TestCase):
         self.assertFalse(result["completed_prefix_issued"])
         self.assertTrue(result["requires_same_decoded_source_package_and_ordinary_path"])
 
-    def test_capacity_indices_do_not_acquire_out_of_range_spare_slots(self):
+    def test_capacity_indices_do_not_acquire_out_of_range_spare_slots(self) -> None:
         from config_decoded_widgets import _assembly_effects
 
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
@@ -15913,7 +17621,7 @@ class WidgetAssemblyEffects(unittest.TestCase):
             with self.subTest(i=i, j=j), self.assertRaises(AssertionError):
                 _assembly_effects(objects, rows, state, parents, children, i, j)
 
-    def test_physical_protected_ancestor_cannot_alias_the_last_Widget_store(self):
+    def test_physical_protected_ancestor_cannot_alias_the_last_Widget_store(self) -> None:
         from config_decoded_widgets import _assembly_effects
         from config_regions import Storage
         from dataclasses import replace
@@ -15930,8 +17638,8 @@ class WidgetAssemblyEffects(unittest.TestCase):
             context.frame.phase,
             False,
         )
-        headers = dict(context.headers)
-        visitor = dict(headers["visitor"])
+        headers = context.headers.copy()
+        visitor = headers["visitor"].copy()
         visitor["protected"] = guards + (shifted,)
         headers["visitor"] = visitor
         with self.assertRaisesRegex(AssertionError, "protected live storage"):
@@ -15947,7 +17655,7 @@ class WidgetAssemblyEffects(unittest.TestCase):
 
 
 class WidgetBandSource(unittest.TestCase):
-    def test_full_Band_source_keeps_minimum_progress_and_prevalidation_domains(self):
+    def test_full_Band_source_keeps_minimum_progress_and_prevalidation_domains(self) -> None:
         from config_decoded_widgets import _band_candidate
         from config_abstract import SequenceInterface, Span
         from config_regions import borrow
@@ -15957,6 +17665,8 @@ class WidgetBandSource(unittest.TestCase):
         before = state.exits[0].sequence.decoder
         q = SequenceInterface(borrow(frame, 1400, 8, frame.phase, True), before, Span(4, 4))
         result = _band_candidate(objects, rows, state, parents, children, q)
+        if result["normal_decoder"] is None:
+            self.fail("fixture Band source has no successful decoder")
         self.assertEqual(result["normal_decoder"].cursor.lower, before.cursor.lower + 10)
         self.assertEqual(
             result["source_fields"],
@@ -15979,7 +17689,7 @@ class WidgetBandSource(unittest.TestCase):
         self.assertFalse(result["completed_Band_slot_issued"])
         self.assertNotIn("acquired_owner", result)
 
-    def test_Band_cannot_reuse_Advanced_header_or_missing_fourth_source_field(self):
+    def test_Band_cannot_reuse_Advanced_header_or_missing_fourth_source_field(self) -> None:
         from config_decoded_widgets import _band_candidate
         from config_abstract import SequenceInterface, Span
         from config_regions import borrow
@@ -15996,12 +17706,14 @@ class WidgetBandSource(unittest.TestCase):
 
 
 class WidgetSourcePackage(unittest.TestCase):
-    def test_grouped_prefix_preserves_wire_order_unknown_values_and_folded_counts(self):
+    def test_grouped_prefix_preserves_wire_order_unknown_values_and_folded_counts(self) -> None:
         from config_decoded_widgets import _widget_source_prefix
 
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
         before = state.exits[0].sequence.decoder
         result = _widget_source_prefix(objects, rows, state, parents, children, before)
+        if result.decoder is None:
+            self.fail("fixture Widget source has no successful decoder")
         self.assertEqual(result.decoder.cursor.lower, before.cursor.lower + 69)
         self.assertEqual(
             tuple(name for name, value in result.fields),
@@ -16024,8 +17736,8 @@ class WidgetSourcePackage(unittest.TestCase):
         self.assertEqual(
             fields["placement"], (("col", (0, 255)), ("row", (0, 255)), ("span", (0, 2)))
         )
-        self.assertEqual(fields["warning"]["f32_bits"], (0, 0xFFFFFFFF))
-        self.assertEqual(fields["gauge"]["f32_bits"], (0, 0xFFFFFFFF))
+        self.assertEqual(_fixture_object(fields["warning"])["f32_bits"], (0, 0xFFFFFFFF))
+        self.assertEqual(_fixture_object(fields["gauge"])["f32_bits"], (0, 0xFFFFFFFF))
         self.assertEqual(fields["colors"], ("Color16", 16, (0, 65535)))
         counts = dict(result.physical_counts)
         self.assertEqual(counts["Widget"], (10, 9, 8))
@@ -16037,7 +17749,7 @@ class WidgetSourcePackage(unittest.TestCase):
         self.assertEqual({error["error"] for error in result.errors}, {4, 5, 6, 8, 14})
         self.assertFalse(result.completed_source_Widget)
 
-    def test_Advanced_keeps_zero_to_three_Bands_and_parses_fourth_before_capacity(self):
+    def test_Advanced_keeps_zero_to_three_Bands_and_parses_fourth_before_capacity(self) -> None:
         from config_decoded_widgets import _advanced_source
 
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
@@ -16064,7 +17776,7 @@ class WidgetSourcePackage(unittest.TestCase):
         )
         self.assertFalse(result["completed_Advanced_slot_issued"])
 
-    def test_children_must_preserve_live_high_float_source_carriers(self):
+    def test_children_must_preserve_live_high_float_source_carriers(self) -> None:
         from config_decoded_widgets import _source_fp_preservation
         from dataclasses import replace
 
@@ -16081,7 +17793,7 @@ class WidgetSourcePackage(unittest.TestCase):
 
 
 class WidgetScratchEffects(unittest.TestCase):
-    def test_all_stores_have_one_owned_family_and_top_pointer_is_not_written(self):
+    def test_all_stores_have_one_owned_family_and_top_pointer_is_not_written(self) -> None:
         from config_decoded_widgets import _scratch_effects
 
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
@@ -16097,7 +17809,7 @@ class WidgetScratchEffects(unittest.TestCase):
         self.assertEqual(result["copied_opaque_bytes_claim_initialized"], False)
         self.assertFalse(result["completed_prefix_issued"])
 
-    def test_Source_header_cannot_overwrite_a_retained_ancestor(self):
+    def test_Source_header_cannot_overwrite_a_retained_ancestor(self) -> None:
         from config_decoded_widgets import _scratch_effects
         from config_regions import Storage
         from dataclasses import replace
@@ -16114,8 +17826,8 @@ class WidgetScratchEffects(unittest.TestCase):
             frame.phase,
             False,
         )
-        headers = dict(context.headers)
-        visitor = dict(headers["visitor"])
+        headers = context.headers.copy()
+        visitor = headers["visitor"].copy()
         visitor["protected"] = visitor["protected"] + (overlap,)
         headers["visitor"] = visitor
         with self.assertRaisesRegex(AssertionError, "protected live storage"):
@@ -16130,7 +17842,7 @@ class WidgetScratchEffects(unittest.TestCase):
 
 class WidgetOrdinaryControl(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture() -> tuple[DiagnosticFixture, dict[int, Instruction], _WidgetControlInput]:
         from config_decoded_widgets import (
             _WidgetControlInput,
             _widget_source_prefix,
@@ -16142,6 +17854,8 @@ class WidgetOrdinaryControl(unittest.TestCase):
         objects, rows, state, parents, children = WidgetFiniteReturns.fixture()
         before = state.exits[0].sequence.decoder
         source = _widget_source_prefix(objects, rows, state, parents, children, before)
+        if source.decoder is None:
+            raise AssertionError("fixture Widget source has no successful decoder")
         advanced = _advanced_source(objects, rows, state, parents, children, source.decoder)
         value = _WidgetControlInput(
             state,
@@ -16154,7 +17868,7 @@ class WidgetOrdinaryControl(unittest.TestCase):
         )
         return objects, rows, value
 
-    def test_full_selected_successors_consume416_and_stop_before_actual_Source(self):
+    def test_full_selected_successors_consume416_and_stop_before_actual_Source(self) -> None:
         from config_decoded_widgets import _widget_control
 
         objects, rows, value = self.fixture()
@@ -16174,7 +17888,7 @@ class WidgetOrdinaryControl(unittest.TestCase):
 
 
 class WidgetOrdinaryCommit(unittest.TestCase):
-    def test_only_checked_last_stores_and_backedges_can_supply_commit_relation(self):
+    def test_only_checked_last_stores_and_backedges_can_supply_commit_relation(self) -> None:
         from config_decoded_widgets import _widget_control, _ordinary_commit_evidence
         import copy
 

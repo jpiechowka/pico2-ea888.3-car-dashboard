@@ -36,12 +36,12 @@ impl<'d, T: Instance, const SM: usize> PioClk<'d, T, SM> {
         program: &PioClkProgram<'d, T>,
         frequency: u32,
     ) -> Self {
+        let divider = calculate_pio_clock_divider(state_machine_frequency(frequency));
         let pin = pio.make_pio_pin(pin);
         sm.set_pin_dirs(Direction::Out, &[&pin]);
 
         let mut cfg = Config::default();
-        let sm_frequency = frequency * PIO_CLK_PROGRAM_CLK_MULTIPLIER;
-        cfg.clock_divider = calculate_pio_clock_divider(sm_frequency);
+        cfg.clock_divider = divider;
         cfg.set_set_pins(&[&pin]);
         cfg.use_program(&program.prg, &[]);
 
@@ -51,28 +51,51 @@ impl<'d, T: Instance, const SM: usize> PioClk<'d, T, SM> {
     }
 
     /// Start at the the same as other drivers
-    pub fn start_batched(&mut self, b: &mut PioBatch<'d, T>) {
+    pub fn start_batched(
+        &mut self,
+        b: &mut PioBatch<'d, T>,
+    ) {
         b.set_enable(&mut self.sm, true);
     }
 
     /// Stop at the the same as other drivers
-    pub fn stop_batched(&mut self, b: &mut PioBatch<'d, T>) {
+    pub fn stop_batched(
+        &mut self,
+        b: &mut PioBatch<'d, T>,
+    ) {
         b.set_enable(&mut self.sm, false);
     }
 
     /// Start emmiting clock
-    pub fn start(&mut self) {
-        self.sm.set_enable(true);
-    }
+    pub fn start(&mut self) { self.sm.set_enable(true); }
 
     /// Stop emmiting clock
-    pub fn stop(&mut self) {
-        self.sm.set_enable(false);
-    }
+    pub fn stop(&mut self) { self.sm.set_enable(false); }
 
     /// Return the state machine and pin
     pub fn release(mut self) -> (StateMachine<'d, T, SM>, Pin<'d, T>) {
         self.stop();
         (self.sm, self.pin)
+    }
+}
+
+fn state_machine_frequency(frequency: u32) -> u32 {
+    frequency
+        .checked_mul(PIO_CLK_PROGRAM_CLK_MULTIPLIER)
+        .expect("PIO output clock overflow")
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn output_frequency_multiplier_preserves_values_and_rejects_wraparound() {
+        assert_eq!(state_machine_frequency(1_000_000), 2_000_000);
+        assert_eq!(state_machine_frequency(u32::MAX / 2), u32::MAX - 1);
+        for frequency in [0x8000_1000, u32::MAX] {
+            assert!(std::panic::catch_unwind(|| state_machine_frequency(frequency)).is_err());
+        }
     }
 }

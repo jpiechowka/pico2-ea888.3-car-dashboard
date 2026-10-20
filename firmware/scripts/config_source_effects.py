@@ -5,10 +5,20 @@ of complete Sources. Primitive transfers are fresh for the joined same-source
 cursor. Current parent argument/owned-access use is still required separately.
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import replace
+from typing import NotRequired, TypeAlias, TypeVar, TypedDict, cast
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
 from config_abstract import (
     Span,
+    DecoderInterface,
+    DecoderOutcome,
     SequenceInterface,
+    SequenceOutcome,
+    PrimitiveResult,
     decoder_interface,
     sequence_interface,
 )
@@ -17,9 +27,10 @@ from config_source_children import (
     source_children,
     source_return_profiles,
     CHANNEL_SOURCE,
+    SourceCoverageRecord,
 )
 from config_widget_children import _name
-from config_finite_returns import _closed_child_returns
+from config_finite_returns import ReturnNode, ReturnParent, _closed_child_returns
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_owner_entry import _direct_target
@@ -74,7 +85,7 @@ SUCCESS_WRITES = (
 )
 
 # Exact authored Source-relative sites, with the local counted predecessor.
-_ORIGINS = {
+_ORIGINS: dict[int, tuple[str, str, int | None]] = {
     28: ("definition", "take_varint_u32", None),
     54: ("access", "take_varint_u32", None),
     92: ("Access==1.pid", "seq_u8", None),
@@ -93,8 +104,121 @@ _ORIGINS = {
     648: ("freshness_ms.freshness_ms", "seq_u16", None),
 }
 
+Primitive: TypeAlias = PrimitiveResult[DecoderOutcome] | PrimitiveResult[SequenceOutcome]
+PrimitiveOutcome: TypeAlias = DecoderOutcome | SequenceOutcome
+Writes: TypeAlias = tuple[tuple[View, int, int], ...]
+FieldSpec: TypeAlias = tuple[str, int, str]
+FieldDomain: TypeAlias = tuple[str, str, tuple[int, int]]
+PrimitiveType = TypeVar(
+    "PrimitiveType", PrimitiveResult[DecoderOutcome], PrimitiveResult[SequenceOutcome]
+)
 
-def _source_error_origins(result):
+
+class SourceInvocation(TypedDict):
+    field: str
+    site: int
+    semantic_role: str
+    before: DecoderInterface | SequenceInterface
+    result: Primitive
+    arm_entry: DecoderInterface
+    predecessor: SourceInvocation | None
+    predecessor_outcome: SequenceOutcome | None
+
+
+class SourceError(TypedDict):
+    stage: str
+    error: int | None
+    cursor: Span
+    count_after: Span
+    tag: int
+    source_guard: str
+    origin: SourceInvocation
+    child_outcome: PrimitiveOutcome
+    domain_error: bool
+    possible_writes: Writes
+
+
+class SourceAlternative(TypedDict):
+    selector: int
+    payload: tuple[FieldDomain, ...]
+    before: DecoderInterface
+    after: DecoderInterface | None
+    children: tuple[Primitive, ...]
+    packed_word: NotRequired[str | None]
+    local_read: NotRequired[tuple[int, int] | None]
+    inactive_payload_opaque: NotRequired[bool]
+
+
+class SourceTransition(TypedDict):
+    field: str
+    before: DecoderInterface
+    after: DecoderInterface | None
+    primitive_invocations: tuple[SourceInvocation, ...]
+    domain: NotRequired[tuple[int, int]]
+    guard: NotRequired[str]
+    child: NotRequired[PrimitiveResult[DecoderOutcome]]
+    children: NotRequired[tuple[PrimitiveResult[SequenceOutcome], ...]]
+    alternatives: NotRequired[tuple[SourceAlternative, ...]]
+    all_alternatives: NotRequired[tuple[SourceAlternative, ...]]
+    parsed_child: NotRequired[PrimitiveResult[DecoderOutcome] | None]
+    relation: NotRequired[str]
+
+
+class SourceStorePartition(TypedDict):
+    local: tuple[int, ...]
+    output: tuple[int, ...]
+    caller_count: tuple[int, int, int]
+
+
+class SourceNone(TypedDict):
+    tag: int
+    count_after: Span
+    cursor: Span
+    possible_writes: Writes
+
+
+class SourceNormal(TypedDict):
+    source_order: tuple[str, ...]
+    before: DecoderInterface
+    after: DecoderInterface
+    count_after: Span
+    definition_domain: tuple[int, int]
+    access: tuple[SourceAlternative, ...]
+    decoder_domain: tuple[int, int]
+    evidence_domain: tuple[int, int]
+    route: tuple[SourceAlternative, ...]
+    poll: tuple[SourceAlternative, ...]
+    freshness_domain: tuple[int, int]
+    transitions: tuple[SourceTransition, ...]
+    output: View
+    tag_domain: tuple[int, ...]
+    return_site: int
+
+
+class SourceResult(TypedDict):
+    proof: SourceCoverageRecord
+    normal: SourceNormal | None
+    none: SourceNone | None
+    errors: tuple[SourceError, ...]
+    returns: tuple[ReturnNode, ...]
+    store_partition: SourceStorePartition
+    physical_child_bytes: int
+    primitive_invocations: tuple[SourceInvocation, ...]
+    count_after: Span
+    transitions: tuple[SourceTransition, ...]
+    guarded_access: tuple[SourceAlternative, ...]
+    guarded_routes: tuple[SourceAlternative, ...]
+    guarded_poll: tuple[SourceAlternative, ...]
+    output_padding: tuple[int, int]
+    pending_after_early_tag: tuple[tuple[int, int], ...]
+    last_output_store: int
+    completed_Source_issued: bool
+    semantic_Config_validated: bool
+    pending_owned_roles: tuple[str, ...]
+    requires_actual_parent_source_and_guarded_access_use: bool
+
+
+def _source_error_origins(result: SourceResult) -> tuple[SourceInvocation, ...]:
     """Check retained conditional call/outcome identities; no active authority.
 
     Actual current parent argument, branch and original-return joins remain
@@ -144,12 +268,12 @@ def _source_error_origins(result):
         spec = _ORIGINS.get(origin["site"])
         previous = origin["predecessor"]
         option = origin["predecessor_outcome"]
-        require(
+        if not (
             spec is not None
             and (origin["field"], origin["semantic_role"]) == spec[:2]
-            and origin["result"]["semantic_role"] == spec[1],
-            "Source error origin changes its call site/semantic",
-        )
+            and origin["result"]["semantic_role"] == spec[1]
+        ):
+            raise AssertionError("Source error origin changes its call site/semantic")
         before = origin["before"]
         entry = origin["arm_entry"]
         if spec[2] is None:
@@ -165,7 +289,9 @@ def _source_error_origins(result):
             )
         else:
             require(
-                any(previous is v for v in origins[:index])
+                previous is not None
+                and option is not None
+                and any(previous is v for v in origins[:index])
                 and previous["site"] == spec[2]
                 and previous["arm_entry"] is entry
                 and any(option is v for v in previous["result"]["outcomes"])
@@ -175,30 +301,34 @@ def _source_error_origins(result):
             )
     for error in result["errors"]:
         origin = error["origin"]
-        option = error["child_outcome"]
+        error_option = error["child_outcome"]
         require(
             any(origin is v for v in origins)
-            and any(option is v for v in origin["result"]["outcomes"])
-            and error["cursor"] == option["cursor"]
+            and any(error_option is v for v in origin["result"]["outcomes"])
+            and error["cursor"] == error_option["cursor"]
             and error["count_after"] == result["count_after"]
             and error["tag"] == 65535
             and error["stage"] == origin["field"] + (".invalid" if error["domain_error"] else ""),
             "Source error origin/outcome/cursor/count association differs",
         )
-        expected = 14 if error["domain_error"] or option["kind"] == "none" else option.get("error")
+        expected = (
+            14
+            if error["domain_error"] or error_option["kind"] == "none"
+            else error_option.get("error")
+        )
         require(
             error["error"] == expected
             and (
-                option["kind"] == "success"
+                error_option["kind"] == "success"
                 if error["domain_error"]
-                else option["kind"] not in ("success", "some")
+                else error_option["kind"] not in ("success", "some")
             ),
             "Source error origin has another domain/error outcome",
         )
     return origins
 
 
-def _store_partition():
+def _store_partition() -> SourceStorePartition:
     """Every current Source store has one fixed owned-write classification."""
     stores = {
         off
@@ -219,7 +349,15 @@ def _store_partition():
     return dict(local=tuple(sorted(local)), output=tuple(sorted(output)), caller_count=(20, 4, 4))
 
 
-def channel_source_interface(objects, rows, proof, state, output, frame, ancestor_protected):
+def channel_source_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+) -> SourceResult:
     require(
         isinstance(proof, dict) and proof.get("role") == CHANNEL_SOURCE,
         "ChannelSource lacks its complete current body",
@@ -228,6 +366,9 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         objects, _name(objects, CHANNEL_SOURCE, proof["function"]), rows
     )
     require(proof == current_proof, "ChannelSource effects use stale current body/dispatch facts")
+    # Full current-schema equality was checked above. Retain the caller's
+    # original proof object because the result records its source association.
+    proof = cast(SourceCoverageRecord, proof)
     partition = _store_partition()
     require(
         type(state) is SequenceInterface
@@ -262,17 +403,17 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
     ancestors = tuple(ancestor_protected)
     # Preserve both coordinate meanings, retaining an existing containing
     # interval rather than adding a duplicate projection inside it.
-    guards = list(ancestors)
+    guard_parts = list(ancestors)
     for g in ancestors:
         other = "address" if g.space != "address" else frame.space
         if not any(
             v.space == other and v.start <= g.start and g.start + g.extent <= v.start + v.extent
-            for v in guards
+            for v in guard_parts
         ):
-            guards.append(
+            guard_parts.append(
                 Storage(other, "physical " + g.identity, g.start, g.extent, 1, phase, False)
             )
-    guards = tuple(guards)
+    guards = tuple(guard_parts)
     require_disjoint((frame,) + guards)
     q = _object(state.header, "Source caller Q")
     d = _object(decoder.header, "Source D")
@@ -306,7 +447,9 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         and objects.read_only(call, len(row.raw)) == row.raw,
         "Source original return has another actual caller",
     )
-    parent = dict(function=call, ordinary_edges=((0, "bl", start, CHANNEL_SOURCE, 72),))
+    parent: ReturnParent = dict(
+        function=call, ordinary_edges=((0, "bl", start, CHANNEL_SOURCE, 72),)
+    )
     returns = _closed_child_returns(
         rows,
         (parent,),
@@ -320,18 +463,18 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         returns and min(v["lowest_SP"] for v in returns) == visitor.start - 120,
         "Source original-return or deepest child geometry differs",
     )
-    errors = []
-    steps = []
-    invocations = []
-    current = decoder
+    errors: list[SourceError] = []
+    steps: list[SourceTransition] = []
+    invocations: list[SourceInvocation] = []
+    current: DecoderInterface | None = decoder
     count = (
         Span(max(1, state.count.lower) - 1, state.count.upper - 1)
         if state.count.upper
         else Span(0, 0)
     )
 
-    def base(active=None):
-        reserved = (
+    def base(active: View | None = None) -> tuple[Storage, ...]:
+        reserved: tuple[Storage, ...] = (
             _object(borrow(frame, 0, 16, phase), "Source captured fields"),
             _object(borrow(frame, 24, 4, phase), "Source Route byte pair"),
         )
@@ -339,11 +482,13 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
             reserved += (_object(borrow(frame, 16, 8, phase), "Source D/freshness header"),)
         return guards + (saved, q, out) + reserved
 
-    def stable_writes(result, sequence=None):
+    def stable_writes(
+        result: PrimitiveType, sequence: SequenceInterface | None = None
+    ) -> PrimitiveType:
         # Primitive interfaces reserve their complete D/Q headers while
         # establishing child frames. Check the exact cursor/count writes
         # against the stable cells after that interface has classified them.
-        stable = (
+        stable: tuple[Storage, ...] = (
             _object(
                 borrow(decoder.header.storage, decoder.header.offset + 4, 4, phase), "stable D.end"
             ),
@@ -359,7 +504,7 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
             require_writes(outputs, option["possible_writes"], stable)
         return result
 
-    def child(site, semantic):
+    def child(site: int, semantic: str) -> BodyRecord:
         edge = edges[site]
         p = children[edge[2], edge[3]]
         if edge[3].startswith("@outline:"):
@@ -374,8 +519,16 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         require(p.get("semantic_role") == semantic, "Source field uses another current primitive")
         return p
 
-    def invocation(label, site, before, result, entry, previous=None, previous_outcome=None):
-        value = dict(
+    def invocation(
+        label: str,
+        site: int,
+        before: DecoderInterface | SequenceInterface,
+        result: Primitive,
+        entry: DecoderInterface,
+        previous: SourceInvocation | None = None,
+        previous_outcome: SequenceOutcome | None = None,
+    ) -> SourceInvocation:
+        value: SourceInvocation = dict(
             field=label,
             site=site,
             semantic_role=result["semantic_role"],
@@ -388,7 +541,14 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         invocations.append(value)
         return value
 
-    def error(label, code, option, guard, origin, domain=False):
+    def error(
+        label: str,
+        code: int | None,
+        option: PrimitiveOutcome,
+        guard: str,
+        origin: SourceInvocation,
+        domain: bool = False,
+    ) -> None:
         errors.append(
             dict(
                 stage=label,
@@ -404,10 +564,10 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
             )
         )
 
-    def nested(size, label):
+    def nested(size: int, label: str) -> Storage:
         return Storage(frame.space, "Source " + label, frame.start - size, size, 8, phase, True)
 
-    def direct(label, site, maximum):
+    def direct(label: str, site: int, maximum: int) -> None:
         nonlocal current
         if current is None:
             return
@@ -452,7 +612,9 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
             )
         )
 
-    def fields(label, before, items, header_offset=28):
+    def fields(
+        label: str, before: DecoderInterface, items: Sequence[FieldSpec], header_offset: int = 28
+    ) -> tuple[DecoderInterface | None, tuple[PrimitiveResult[SequenceOutcome], ...]]:
         local_q = borrow(frame, header_offset, 8, phase, True)
         seq = SequenceInterface(local_q, before, Span(len(items), len(items)))
         history = []
@@ -489,17 +651,24 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         require(seq.count == Span(0, 0), "Source payload omits a counted field")
         return seq.decoder, tuple(history)
 
-    def join(label, before, alternatives, invocation_start, parsed_child=None):
+    def join(
+        label: str,
+        before: DecoderInterface,
+        alternatives: Sequence[SourceAlternative],
+        invocation_start: int,
+        parsed_child: PrimitiveResult[DecoderOutcome] | None = None,
+    ) -> tuple[SourceAlternative, ...]:
         nonlocal current
         normals = tuple(v for v in alternatives if v["after"] is not None)
+        afters = tuple(after for v in normals if (after := v["after"]) is not None)
         current = (
             None
             if not normals
             else replace(
                 before,
                 cursor=Span(
-                    min(v["after"].cursor.lower for v in normals),
-                    max(v["after"].cursor.upper for v in normals),
+                    min(after.cursor.lower for after in afters),
+                    max(after.cursor.upper for after in afters),
                 ),
             )
         )
@@ -517,7 +686,7 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         )
         return normals
 
-    none = None
+    none: SourceNone | None = None
     if state.count.lower == 0:
         none = dict(
             tag=2, count_after=Span(0, 0), cursor=decoder.cursor, possible_writes=((output, 0, 2),)
@@ -526,12 +695,12 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         current = None
     direct("definition", 28, 15)
     direct("access", 54, 5)
-    access = ()
-    route = ()
-    poll = ()
+    access: tuple[SourceAlternative, ...] = ()
+    route: tuple[SourceAlternative, ...] = ()
+    poll: tuple[SourceAlternative, ...] = ()
     if current is not None:
         before = current
-        choices = []
+        choices: list[SourceAlternative] = []
         invocation_start = len(invocations)
         for selector, items, payload in (
             (0, (), ()),
@@ -626,7 +795,7 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
                 primitive_invocations=tuple(invocations[invocation_start:]),
             )
         )
-    normal = (
+    normal: SourceNormal | None = (
         None
         if current is None
         else dict(
@@ -655,7 +824,7 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
             return_site=call + 4,
         )
     )
-    result = dict(
+    source_result: SourceResult = dict(
         proof=proof,
         normal=normal,
         none=none,
@@ -677,5 +846,5 @@ def channel_source_interface(objects, rows, proof, state, output, frame, ancesto
         pending_owned_roles=("source_route_local", "source_route_output"),
         requires_actual_parent_source_and_guarded_access_use=True,
     )
-    _source_error_origins(result)
-    return result
+    _source_error_origins(source_result)
+    return source_result

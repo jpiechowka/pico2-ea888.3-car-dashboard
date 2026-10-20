@@ -9,7 +9,43 @@ accepts a caller summary or creates an acquired mutable owner.
 import struct
 import re
 from dataclasses import dataclass, replace
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, overload, cast
+from config_body_types import BodyRecord, Callback, InstructionMap, OrdinaryEdge
+from config_stack import DiagnosticObjects
+from config_decoded_prefix import _PrefixState
+from config_decoded_views import (
+    _ViewsState,
+    _ViewsExit,
+    _StructuralControl,
+    ViewsDescription,
+    ViewsError,
+    Children,
+    ControlRecord,
+    ControlExtension,
+    PendingContexts,
+    Successors,
+)
+from config_build_source import SourceBinding
+from config_decoded_prefix import PrefixOutcome
+from config_headers import VisitorHeader, VisitorHeaders
+from config_decode_effects import DecoderState
+from config_abstract import DecoderInterface, DecoderOutcome, PrimitiveResult, SequenceOutcome
+from config_construction import ExtendResult
+from config_widget_children import (
+    ColorResult,
+    ColorOutcome,
+    WarningColorsResult,
+    WarningColorsOutcome,
+    BandClearResult,
+    CopyResult,
+)
+from config_platform import PlatformPolicy, ExecutionReceipt, ExecutionRecord
+from config_refill_children import AdvancedResult, OpaqueCopyResult
+from config_utf8 import UTF8Result
+from config_finite_returns import ReturnNode
+from config_widget_contracts import WidgetObject
+from config_regions import View
 from config_abstract import Span, SequenceInterface, sequence_interface, decoder_interface
 from config_abstract_compare import InitializedPrefix
 from config_construction import (
@@ -54,14 +90,265 @@ from llvm_stack import mapping_ranges
 from config_finite_returns import _closed_child_returns
 from validation import require
 
+if TYPE_CHECKING:
+    from config_decoded_sources import PhaseGraph
+    from config_widget_uses import _WidgetFamilyBridge, _GuardedWidgetUse
 
-def _parent(objects, rows, state):
+
+# Heterogeneous source provenance is retained and compared, not executed.
+Trace = tuple[object, ...]
+Primitive = (
+    PrimitiveResult[DecoderOutcome]
+    | PrimitiveResult[SequenceOutcome]
+    | ColorResult
+    | WarningColorsResult
+)
+SequencePrimitive = PrimitiveResult[SequenceOutcome] | ColorResult | WarningColorsResult
+Choice = DecoderOutcome | SequenceOutcome | ColorOutcome | WarningColorsOutcome
+
+
+class WidgetError(TypedDict):
+    stage: str
+    error: int | None
+    cursor: Span
+    frontier: int
+    _origin: "_WidgetErrorOrigin"
+    guard: NotRequired[str | None]
+    source_field_consumed_before_error: NotRequired[bool]
+    completed_Band_source_prefix: NotRequired[int]
+    Band_count: NotRequired[int]
+    initialized_views: NotRequired[int]
+    initialized_widgets: NotRequired[int]
+    widgets_cleared: NotRequired[bool]
+    ordinary_current_candidate_unpublished: NotRequired[bool]
+    spare_Widget_borrow_created: NotRequired[bool]
+    _views_entry: NotRequired[_ViewsExit]
+
+
+class AdvancedNormal(TypedDict):
+    Band_count: int
+    decoder: DecoderInterface
+    guard: str
+    source_fields: tuple[tuple[str, str, tuple[int, int]], ...]
+
+
+class AdvancedSource(TypedDict):
+    normal: tuple[AdvancedNormal, ...]
+    errors: tuple[WidgetError, ...]
+    children: NotRequired[
+        tuple[tuple[str, "BandCandidate"], ...] | tuple[PrimitiveResult[DecoderOutcome], ...]
+    ]
+    Band_length: NotRequired[PrimitiveResult[DecoderOutcome]]
+    completed_Advanced_slot_issued: NotRequired[bool]
+    attribute_children: NotRequired[tuple[tuple[int, tuple[tuple[str, Primitive], ...]], ...]]
+    physical_counts: NotRequired[tuple[int, ...]]
+    logical_remaining_enum_fields: NotRequired[int]
+    source_enum_domains: NotRequired[tuple[tuple[str, int, int], ...]]
+    initializer_arguments: NotRequired[tuple[str, bool]]
+    initializer: NotRequired[AdvancedResult]
+    Band_capture_copies: NotRequired[tuple[tuple[int, int, int], ...]]
+    opaque_capture_effects: NotRequired[tuple[OpaqueCopyResult, ...]]
+    initializer_epoch: NotRequired[tuple[int, int]]
+    final_epoch: NotRequired[tuple[int, int]]
+    decoded_override_writes: NotRequired[tuple[tuple[View, int, int], ...]]
+    set_bands: NotRequired[list[CopyResult]]
+    high_float_carrier_preservation: NotRequired[tuple[tuple[int, int], ...]]
+
+
+CopyEffects = tuple[tuple[int, int, int, int, OpaqueCopyResult], ...]
+TransportChain = tuple[str, tuple[tuple[int, int, int], ...], int, int]
+
+
+class ScratchEffects(TypedDict):
+    selected_store_count: int
+    fixed_local_writes: tuple[tuple[int, int, int], ...]
+    inline_copies: tuple[tuple[int, int, int, tuple[int, ...]], ...]
+    child_copies: CopyEffects
+    paired_source_transport_chains: tuple[TransportChain, ...]
+    final_tail_origins: tuple[tuple[str, int, int], ...]
+    top_count_write: tuple[int, int, int]
+    next_Source_header_write: tuple[int, int, int]
+    stable_decoder_end: int
+    copied_opaque_bytes_claim_initialized: bool
+    completed_prefix_issued: bool
+
+
+class EarlyCount(TypedDict):
+    site: int
+    physical: int
+    logical: int
+
+
+class SlotAssembly(TypedDict):
+    slot_interval: tuple[int, int]
+    stores: tuple[tuple[int, int, int], ...]
+    early_count: EarlyCount
+    outstanding_after_count: tuple[tuple[int, int], ...]
+    last_semantic_store: int
+    checked_continuation: int
+    opaque_padding: tuple[tuple[int, int], ...]
+    copies: NotRequired[CopyEffects]
+
+
+class AssemblyEffects(TypedDict):
+    Widget: SlotAssembly
+    Band: SlotAssembly
+    completed_prefix_issued: bool
+    requires_same_decoded_source_package_and_ordinary_path: bool
+
+
+class CapacityDecision(TypedDict):
+    kind: Literal["source_error", "capacity_error", "candidate_ready"]
+    after: DecoderInterface | None
+    error: NotRequired[int]
+    spare_Widget_borrow_created: bool
+    completed_prefix_issued: bool
+
+
+class SourcesReady(TypedDict):
+    frontier: int
+    top_count: int
+    source_count: int
+    Source_bytes_consumed: int
+
+
+class DeclaredFrontier(TypedDict):
+    frontier: int
+    reached: bool
+
+
+class WidgetSuccess(TypedDict):
+    initialized_views: int
+    initialized_widgets: int
+    cursor: tuple[int, int]
+    top_count: int
+    source_count: int
+    guard: str
+
+
+class WidgetErrorDescription(TypedDict):
+    stage: str
+    error: int | None
+    cursor: tuple[int, int]
+    frontier: int
+    guard: NotRequired[str | None]
+    source_field_consumed_before_error: NotRequired[bool]
+    completed_Band_source_prefix: NotRequired[int]
+    Band_count: NotRequired[int]
+    initialized_views: NotRequired[int]
+    initialized_widgets: NotRequired[int]
+    widgets_cleared: NotRequired[bool]
+    ordinary_current_candidate_unpublished: NotRequired[bool]
+    spare_Widget_borrow_created: NotRequired[bool]
+
+
+class ControlDescription(TypedDict):
+    selected_instructions: int
+    stopped_frontiers: tuple[int, ...]
+    outside_shared_context_count: int
+    pending_contexts_confer_state: bool
+
+
+class StructuralDescription(TypedDict):
+    selected_instructions: int
+    raw_successor_count: int
+    unentered_outgoing: tuple[tuple[int, int], ...]
+    outside_shared_context_count: int
+    confers_active_state: bool
+
+
+class ConditionalAccesses(TypedDict):
+    families: tuple[str, ...]
+    sites: int
+    descriptors_are_reached_uses: bool
+    actual_inherited16_pending: bool
+
+
+class GuardedAccesses(TypedDict):
+    alternatives: int
+    roles: tuple[str, ...]
+    runtime_observation: bool
+    completed_prefix_issued: bool
+
+
+class PrefixPromotion(TypedDict):
+    Widget: tuple[int, int]
+    Band: tuple[int, int]
+
+
+class WidgetsDescription(TypedDict):
+    phase: str
+    mode: str
+    Sources_ready: SourcesReady | None
+    declared_Source_frontier: DeclaredFrontier
+    prefix_errors: tuple[PrefixOutcome, ...]
+    Views_errors: tuple[ViewsError, ...]
+    successes: tuple[WidgetSuccess, ...]
+    group_errors: tuple[WidgetErrorDescription, ...]
+    iterations: tuple[tuple[int, int, tuple[int, int], tuple[int, int]], ...]
+    control: ControlDescription
+    structural_control: StructuralDescription
+    conditional_Widget_accesses: ConditionalAccesses
+    source_guarded_accesses: GuardedAccesses
+    ordinary_domain: str
+    execution_scope: ExecutionRecord
+    logical_prefix_promotion: PrefixPromotion
+    exceptional_resume_established: bool
+    all_observers_compatible: bool
+    exception_safe_completion: bool
+    unconditional_owner: bool
+    source_context: SourceBinding
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    hardware_qualified: bool
+    initial_facts_reinitialized: bool
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    full_visitor_return_pending: bool
+    shared_error_suffix_pending: bool
+    pending: tuple[str, ...]
+
+
+class BandCandidate(TypedDict):
+    normal_decoder: DecoderInterface | None
+    errors: tuple[WidgetError, ...]
+    children: tuple[tuple[str, Primitive], ...]
+    completed_Band_slot_issued: bool
+    incoming_decoder: NotRequired[DecoderInterface]
+    utf8: NotRequired[UTF8Result]
+    extend: NotRequired[ExtendResult]
+    staging_copy_effects: NotRequired[tuple[OpaqueCopyResult, ...]]
+    clear: NotRequired[BandClearResult]
+    normalized_copy: NotRequired[CopyResult | None]
+    range_proof: NotRequired[BodyRecord]
+    source_fields: NotRequired[tuple[tuple[str, str, tuple[int, int]], ...]]
+    count_after_primitive_children: NotRequired[Span]
+    logical_source_fields_consumed: NotRequired[int]
+    normal_label_guard: NotRequired[str]
+    label_transport: NotRequired[tuple[tuple[int, int, int], ...]]
+    String5_Result_retired_after: NotRequired[int]
+    normalized_label_epoch: NotRequired[tuple[int, int]]
+    source_validity_before_config_validation: NotRequired[bool]
+
+
+class SequenceArguments(TypedDict, total=False):
+    output: View
+    platform_policy: PlatformPolicy
+
+
+def _parent(
+    objects: DiagnosticObjects, rows: InstructionMap, state: _ViewsState
+) -> tuple[BodyRecord, ...]:
     context = state.context
     V = context.headers["visitor"]["proof"]["function"]
     B = context.owner.start
     name = _name(objects, VISITOR, V)
 
-    def object_value(objects, value, descriptor):
+    def object_value(
+        objects: DiagnosticObjects, value: int, descriptor: WidgetObject
+    ) -> tuple[Callback, ...]:
         if descriptor == dict(kind="same_Config"):
             require(value == B, "Widget reload selects another private Config")
             return ()
@@ -105,7 +392,12 @@ def _parent(objects, rows, state):
     return proofs
 
 
-def _children(objects, rows, state, parents):
+def _children(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+) -> dict[tuple[int, str], BodyRecord]:
     proofs = dict(state.children)
     pending = [edge for p in parents for edge in p["ordinary_edges"]]
     while pending:
@@ -148,21 +440,27 @@ def _children(objects, rows, state, parents):
         ):
             proof = logger_body(objects, _name(objects, role, target), rows)
         else:
-            require(False, "Widget group contains an unclassified child")
+            raise AssertionError("Widget group contains an unclassified child")
         require(proof["frame"] == frame, "Widget child frame differs from current call edge")
         proofs[key] = proof
         pending.extend(proof["ordinary_edges"])
     return proofs
 
 
-def _current_group(objects, rows, source_context):
+def _current_group(
+    objects: DiagnosticObjects, rows: InstructionMap, source_context: object
+) -> tuple[
+    ViewsDescription, _ViewsState, tuple[BodyRecord, ...], dict[tuple[int, str], BodyRecord]
+]:
     description, state = _first_boot_decoded_views_state(objects, rows, source_context)
     parents = _parent(objects, rows, state)
     children = _children(objects, rows, state, parents)
     return description, state, parents, children
 
 
-def _child_returns(rows, state, parents, children):
+def _child_returns(
+    rows: InstructionMap, state: _ViewsState, parents: Sequence[BodyRecord], children: Children
+) -> tuple[ReturnNode, ...]:
     profiles = _views_return_profiles()
     advanced = "_RNvMs2_NtCs_16dashboard_config8advancedNtB5_15AdvancedDisplay11for_channel"
     ascii_range = next(role for role, family in NORMAL_ROLES.items() if family == "range_u8")
@@ -205,13 +503,15 @@ def _child_returns(rows, state, parents, children):
     return nodes
 
 
-def _edge_at(parents, site):
+def _edge_at(parents: Sequence[BodyRecord], site: int) -> OrdinaryEdge:
     edges = [e for p in parents for e in p["ordinary_edges"] if p["function"] + e[0] == site]
     require(len(edges) == 1, "Widget phase lacks its actual current call edge")
     return edges[0]
 
 
-def _at_child(parents, children, site, semantic):
+def _at_child(
+    parents: Sequence[BodyRecord], children: Children, site: int, semantic: str
+) -> BodyRecord:
     edge = _edge_at(parents, site)
     proof = children[edge[2], edge[3]]
     if edge[3].startswith("@outline:"):
@@ -226,14 +526,14 @@ def _at_child(parents, children, site, semantic):
     return proof
 
 
-def _nested_frame(context, size, label):
+def _nested_frame(context: _PrefixState, size: int, label: str) -> Storage:
     frame = context.headers["visitor_frame"]
     return Storage(
         frame.space, "decoded Widget " + label, frame.start - size, size, 8, frame.phase, True
     )
 
 
-def _primitive_guards(context, q):
+def _primitive_guards(context: _PrefixState, q: View) -> tuple[Storage, ...]:
     from config_source_handoff import _source_carrier_cells
 
     top = context.headers["visitor"]["sequence_state"].header
@@ -250,7 +550,9 @@ def _primitive_guards(context, q):
     )
 
 
-def _input_policy(objects, decoder):
+def _input_policy(
+    objects: DiagnosticObjects, decoder: DecoderInterface | DecoderState
+) -> PlatformPolicy:
     # The private first-Boot context establishes the selected source allocation;
     # this is the existing explicit conditional hardware prerequisite only.
     return reviewed_eav_policy(
@@ -262,13 +564,22 @@ def _input_policy(objects, decoder):
 
 
 def _source_sequence(
-    objects, rows, context, parents, children, site, semantic, sequence, output_offset=None
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    site: int,
+    semantic: str,
+    sequence: SequenceInterface,
+    output_offset: int | None = None,
+) -> PrimitiveResult[SequenceOutcome]:
     proof = _at_child(parents, children, site, semantic)
     frame = context.headers["visitor_frame"]
-    args = {}
+    args: SequenceArguments = {}
     if semantic == "seq_f32":
-        require(output_offset in (1064, 1440), "Widget f32 Result uses an unreviewed scratch epoch")
+        if output_offset is None or output_offset not in (1064, 1440):
+            raise AssertionError("Widget f32 Result uses an unreviewed scratch epoch")
         args = dict(
             output=borrow(frame, output_offset, 8, frame.phase, True),
             platform_policy=_input_policy(objects, sequence.decoder),
@@ -304,7 +615,14 @@ def _source_sequence(
     return result
 
 
-def _band_candidate(objects, rows, state, parents, children, sequence):
+def _band_candidate(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    sequence: SequenceInterface,
+) -> BandCandidate:
     """One actual four-field Band candidate, before the Vec push guard.
 
     Unknown scalar values stay unknown. UTF8 and ASCII success predicates are
@@ -325,12 +643,14 @@ def _band_candidate(objects, rows, state, parents, children, sequence):
         and sequence.decoder.payload == actual.payload,
         "Band loses its actual four-field Q/same-D/source epoch",
     )
-    errors = []
-    history = []
+    errors: list[WidgetError] = []
+    history: list[tuple[str, Primitive]] = []
     current = sequence
-    trace = [("incoming Band", sequence)]
+    trace: list[object] = [("incoming Band", sequence)]
 
-    def collect(stage, result, before, site):
+    def collect(
+        stage: str, result: SequencePrimitive, before: SequenceInterface, site: int
+    ) -> SequenceInterface | None:
         call = _widget_call(context, V + site, before, result, parents, children)
         normal = []
         for index, option in enumerate(result["outcomes"]):
@@ -362,22 +682,23 @@ def _band_candidate(objects, rows, state, parents, children, sequence):
             trace.append((stage, call, next(v for v in call.choices if v["kind"] == "some")))
         return normal[0] if normal else None
 
-    for label, site in (("min", 2676), ("max", 2708)):
+    for field_label, site in (("min", 2676), ("max", 2708)):
         result = _source_sequence(
             objects, rows, context, parents, children, V + site, "seq_f32", current, 1440
         )
-        current = collect(label, result, current, site)
-        if current is None:
+        updated = collect(field_label, result, current, site)
+        if updated is None:
             return dict(
                 normal_decoder=None,
                 errors=tuple(errors),
                 children=tuple(history),
                 completed_Band_slot_issued=False,
             )
+        current = updated
     edge = _edge_at(parents, V + 2736)
     proof = children[edge[2], edge[3]]
     require(proof["role"] == ROLES["color"], "Band color does not use binary u16 Color")
-    current = collect(
+    updated = collect(
         "color",
         color_interface(
             objects,
@@ -390,13 +711,14 @@ def _band_candidate(objects, rows, state, parents, children, sequence):
         current,
         2736,
     )
-    if current is None:
+    if updated is None:
         return dict(
             normal_decoder=None,
             errors=tuple(errors),
             children=tuple(history),
             completed_Band_slot_issued=False,
         )
+    current = updated
     require(current.count == Span(1, 1), "Band label guard lacks the remaining fourth source field")
     length_proof = _at_child(parents, children, V + 2784, "take_varint_u32")
     output = borrow(frame, 1440, 8, phase, True)
@@ -630,30 +952,37 @@ def _band_candidate(objects, rows, state, parents, children, sequence):
 @dataclass(frozen=True)
 class _WidgetCallOrigin:
     site: int
-    before: object
-    edge: tuple
-    root_body: tuple
-    body: tuple
-    choices: tuple
+    before: DecoderInterface | SequenceInterface
+    edge: OrdinaryEdge
+    root_body: tuple[object, ...]
+    body: tuple[object, ...]
+    choices: tuple[Choice, ...]
 
 
 @dataclass(frozen=True)
 class _WidgetErrorOrigin:
     call: object
-    choice_index: object
-    before: object
-    after: object
+    choice_index: int | None
+    before: DecoderInterface
+    after: DecoderInterface
     error: int
-    condition: object
-    trace: tuple
+    condition: str | None
+    trace: Trace
     saved: Storage
 
 
-def _widget_decoder(value):
+def _widget_decoder(value: DecoderInterface | SequenceInterface) -> DecoderInterface:
     return value.decoder if isinstance(value, SequenceInterface) else value
 
 
-def _widget_call(context, site, before, result, parents, children):
+def _widget_call(
+    context: _PrefixState,
+    site: int,
+    before: DecoderInterface | SequenceInterface,
+    result: Primitive,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> _WidgetCallOrigin:
     proof = result["proof"]
     edge = _edge_at(parents, site)
     root = children[edge[2], edge[3]]
@@ -679,7 +1008,18 @@ def _widget_call(context, site, before, result, parents, children):
     )
 
 
-def _widget_error(context, call, index, before, after, code, condition, trace):
+def _widget_error(
+    context: _PrefixState,
+    call: object,
+    index: int | None,
+    before: DecoderInterface | SequenceInterface,
+    after: DecoderInterface | SequenceInterface,
+    code: int | None,
+    condition: str | None,
+    trace: Sequence[object],
+) -> _WidgetErrorOrigin:
+    if code is None:
+        raise AssertionError("Widget error has no actual retained source relation")
     frame = context.headers["visitor_frame"]
     saved = next(
         v
@@ -698,12 +1038,12 @@ def _widget_error(context, call, index, before, after, code, condition, trace):
     )
 
 
-def _checked_widget_origin(origin, context):
+def _checked_widget_origin(origin: object, context: _PrefixState) -> _WidgetErrorOrigin:
     """Check retained local associations; enclosing current inputs remain required."""
-    require(
-        type(origin) is _WidgetErrorOrigin and origin.trace and origin.error in (4, 5, 6, 8, 14),
-        "Widget error has no actual retained source relation",
-    )
+    if not (
+        type(origin) is _WidgetErrorOrigin and origin.trace and origin.error in (4, 5, 6, 8, 14)
+    ):
+        raise AssertionError("Widget error has no actual retained source relation")
     actual = context.headers["visitor"]["sequence_state"].decoder
     frame = context.headers["visitor_frame"]
     require(
@@ -716,12 +1056,12 @@ def _checked_widget_origin(origin, context):
         "Widget error changed its decoder/source or original saved activation",
     )
     if origin.choice_index is not None:
-        require(
+        if not (
             type(origin.call) is _WidgetCallOrigin
             and type(origin.choice_index) is int
-            and 0 <= origin.choice_index < len(origin.call.choices),
-            "Widget error lost its actual primitive choice",
-        )
+            and 0 <= origin.choice_index < len(origin.call.choices)
+        ):
+            raise AssertionError("Widget error lost its actual primitive choice")
         choice = origin.call.choices[origin.choice_index]
         require(
             origin.before is _widget_decoder(origin.call.before)
@@ -740,17 +1080,24 @@ def _checked_widget_origin(origin, context):
 
 @dataclass(frozen=True)
 class _WidgetSourcePrefix:
-    decoder: object
-    fields: tuple
-    errors: tuple
-    children: tuple
-    physical_counts: tuple
-    incoming_decoder: object
+    decoder: DecoderInterface | None
+    fields: tuple[tuple[str, object], ...]
+    errors: tuple[WidgetError, ...]
+    children: tuple[tuple[str, object], ...]
+    physical_counts: tuple[tuple[str, tuple[int, ...]], ...]
+    incoming_decoder: DecoderInterface
     completed_source_Widget: bool = False
-    normal_trace: tuple = ()
+    normal_trace: Trace = ()
 
 
-def _widget_source_prefix(objects, rows, state, parents, children, decoder):
+def _widget_source_prefix(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    decoder: DecoderInterface,
+) -> _WidgetSourcePrefix:
     """The fixed nine source groups preceding AdvancedWire, as one union.
 
     This is not a payload parser. Complete current child interfaces supply
@@ -767,27 +1114,45 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
         decoder.header == actual.header and decoder.payload == actual.payload,
         "Widget source prefix has another actual D/source allocation",
     )
-    errors = []
-    history = []
-    fields = []
-    counts = []
-    trace = [("incoming Widget", decoder)]
-    last_call = None
+    errors: list[WidgetError] = []
+    history: list[tuple[str, object]] = []
+    fields: list[tuple[str, object]] = []
+    counts: list[tuple[str, tuple[int, ...]]] = []
+    trace: list[object] = [("incoming Widget", decoder)]
+    last_call: _WidgetCallOrigin | None = None
 
-    def error(label, code, cursor, guard=None, origin=None):
-        require(origin is not None, "Widget error emission omitted its actual source origin")
+    def error(
+        label: str,
+        code: int | None,
+        cursor: Span,
+        guard: str | None = None,
+        origin: _WidgetErrorOrigin | None = None,
+    ) -> None:
+        if origin is None:
+            raise AssertionError("Widget error emission omitted its actual source origin")
         errors.append(
             dict(
                 stage=label, error=code, cursor=cursor, guard=guard, frontier=V + 56, _origin=origin
             )
         )
 
-    def select(label, result, before, site):
+    @overload
+    def select(
+        label: str, result: PrimitiveResult[DecoderOutcome], before: DecoderInterface, site: int
+    ) -> DecoderInterface | None: ...
+    @overload
+    def select(
+        label: str, result: SequencePrimitive, before: SequenceInterface, site: int
+    ) -> SequenceInterface | None: ...
+    def select(
+        label: str, result: Primitive, before: DecoderInterface | SequenceInterface, site: int
+    ) -> DecoderInterface | SequenceInterface | None:
         nonlocal last_call
         call = _widget_call(context, V + site, before, result, parents, children)
         last_call = call
-        normal = [v for v in result["outcomes"] if v["kind"] in ("some", "success")]
-        for index, option in enumerate(result["outcomes"]):
+        choices: tuple[Choice, ...] = result["outcomes"]
+        normal = [v for v in choices if v["kind"] in ("some", "success")]
+        for index, option in enumerate(choices):
             if option["kind"] not in ("some", "success"):
                 code = 14 if option["kind"] == "none" else option["error"]
                 error(
@@ -804,7 +1169,13 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
             trace.append((label, call, normal[0], None))
         return normal[0]["state"] if normal else None
 
-    def sequence(label, offset, count, steps, before):
+    def sequence(
+        label: str,
+        offset: int,
+        count: int,
+        steps: Sequence[tuple[str, int, str]],
+        before: DecoderInterface,
+    ) -> tuple[SequenceInterface | None, tuple[int, ...]]:
         q = SequenceInterface(borrow(frame, offset, 8, phase, True), before, Span(count, count))
         physical = [count]
         for field, site, semantic in steps:
@@ -819,9 +1190,10 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
                 q,
                 1064 if semantic == "seq_f32" else None,
             )
-            q = select(label + "." + field, result, q, site)
-            if q is None:
+            next_q = select(label + "." + field, result, q, site)
+            if next_q is None:
                 return None, tuple(physical)
+            q = next_q
             require(
                 q.count.lower == q.count.upper and q.count.lower == physical[-1] - 1,
                 "Widget nested sequence loses decrement-before-child",
@@ -829,7 +1201,9 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
             physical.append(q.count.lower)
         return q, tuple(physical)
 
-    def varint(label, site, before, q_offset, maximum=None):
+    def varint(
+        label: str, site: int, before: DecoderInterface, q_offset: int, maximum: int | None = None
+    ) -> DecoderInterface | None:
         proof = _at_child(parents, children, V + site, "take_varint_u32")
         q = borrow(frame, q_offset, 8, phase, True)
         result = decoder_interface(
@@ -844,6 +1218,8 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
         after = select(label, result, before, site)
         if after is not None and maximum is not None:
             guard = "same decoded u32>" + str(maximum)
+            if last_call is None:
+                raise AssertionError("Widget error emission omitted its actual source origin")
             index = next(i for i, v in enumerate(last_call.choices) if v["kind"] == "success")
             error(
                 label + " invalid enum",
@@ -855,7 +1231,9 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
             trace.append((label + " normal domain", "same decoded u32<=" + str(maximum), last_call))
         return after
 
-    def manual_count(label, q, count_before, count_after, site):
+    def manual_count(
+        label: str, q: SequenceInterface, count_before: int, count_after: int, site: int
+    ) -> SequenceInterface:
         require(
             q.count == Span(count_before, count_before) and count_after >= 0,
             "Widget manual source fields lack the actual positive Q residual",
@@ -877,7 +1255,16 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
         trace.append((label + " physical count", V + site, q, after))
         return after
 
-    def string(label, capacity, length_site, utf8_site, extend_site, copy_site, before, q_offset):
+    def string(
+        label: str,
+        capacity: int,
+        length_site: int,
+        utf8_site: int,
+        extend_site: int,
+        copy_site: int,
+        before: DecoderInterface,
+        q_offset: int,
+    ) -> DecoderInterface | None:
         after = varint(label + " length", length_site, before, q_offset)
         if after is None:
             return None
@@ -965,7 +1352,7 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
             after, cursor=Span(after.cursor.lower, min(n, after.cursor.upper + capacity))
         )
 
-    def finish(before):
+    def finish(before: DecoderInterface | None) -> _WidgetSourcePrefix:
         return _WidgetSourcePrefix(
             before,
             tuple(fields),
@@ -1194,7 +1581,7 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
         site = V + 2038 + 36 * ordinal
         edge = _edge_at(parents, site)
         proof = children[edge[2], edge[3]]
-        colors = select(
+        next_colors = select(
             "WidgetColors." + str(ordinal),
             color_interface(
                 objects,
@@ -1207,12 +1594,13 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
             colors,
             site - V,
         )
-        if colors is None:
+        if next_colors is None:
             return finish(None)
+        colors = next_colors
         color_counts.append(colors.count.lower)
     edge = _edge_at(parents, V + 2544)
     proof = children[edge[2], edge[3]]
-    colors = select(
+    next_colors = select(
         "WidgetColors.warning",
         warning_colors_interface(
             objects,
@@ -1226,8 +1614,9 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
         colors,
         2544,
     )
-    if colors is None:
+    if next_colors is None:
         return finish(None)
+    colors = next_colors
     color_counts.append(colors.count.lower)
     counts.append(("WidgetColors", tuple(color_counts)))
     fields.append(("colors", ("Color16", 16, (0, 65535))))
@@ -1235,7 +1624,9 @@ def _widget_source_prefix(objects, rows, state, parents, children, decoder):
     return finish(colors.decoder)
 
 
-def _source_fp_preservation(rows, children):
+def _source_fp_preservation(
+    rows: InstructionMap, children: Children
+) -> tuple[tuple[int, int], ...]:
     """All matched normal descendants preserve the parent's s16..s31.
 
     Integer AAPCS summaries alone do not preserve the decoded float package.
@@ -1264,7 +1655,14 @@ def _source_fp_preservation(rows, children):
     return tuple(sorted(checked))
 
 
-def _advanced_source(objects, rows, state, parents, children, decoder):
+def _advanced_source(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    decoder: DecoderInterface,
+) -> AdvancedSource:
     """AdvancedWire8 with guarded Band source candidates and actual defaults.
 
     Band source values and their stored prefix are distinct. This produces no
@@ -1281,7 +1679,7 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
         "Advanced has another same-invocation D/source",
     )
     high_fp = _source_fp_preservation(rows, children)
-    errors = []
+    errors: list[WidgetError] = []
     history = []
     q = borrow(frame, 1380, 8, phase, True)
     guards = _primitive_guards(context, q) + (_object(q, "Advanced Q"),)
@@ -1328,7 +1726,7 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
     require(len(normal) == 1, "Band Vec length has unpaired normal states")
     current = normal[0]["state"]
     bands = []
-    band_trace = [("Bands length", length_call, normal[0])]
+    band_trace: list[object] = [("Bands length", length_call, normal[0])]
     for j in range(4):
         # Completion N==j consumes no next candidate. N>j must parse a complete
         # candidate BEFORE the j==3 capacity check, including every parse exit.
@@ -1343,15 +1741,16 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
         )
         history.append(("Band" + str(j), candidate))
         attempt = tuple(band_trace) + (("attempted Band", j, "N>" + str(j), current),)
-        errors.extend(
-            dict(
-                v,
-                stage="Band" + str(j) + "." + v["stage"],
-                completed_Band_source_prefix=j,
-                _origin=replace(v["_origin"], trace=attempt + v["_origin"].trace),
-            )
-            for v in candidate["errors"]
-        )
+        for candidate_error in candidate["errors"]:
+            extended_error: WidgetError = {
+                **candidate_error,
+                "stage": "Band" + str(j) + "." + candidate_error["stage"],
+                "completed_Band_source_prefix": j,
+                "_origin": replace(
+                    candidate_error["_origin"], trace=attempt + candidate_error["_origin"].trace
+                ),
+            }
+            errors.append(extended_error)
         after = candidate["normal_decoder"]
         if after is None:
             break
@@ -1381,18 +1780,22 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
                 ("completed Band source", j, current, after, candidate["normal_label_guard"])
             )
             current = after
-    outcomes = []
+    outcomes: list[AdvancedNormal] = []
     attribute_histories = []
     for j, before, prefix_trace in bands:
-        trace = list(prefix_trace) + [("Band source completion", "N==" + str(j), before)]
-        seq = SequenceInterface(q, before, Span(7, 7))
+        trace: list[object] = list(prefix_trace) + [
+            ("Band source completion", "N==" + str(j), before)
+        ]
+        seq: SequenceInterface | None = SequenceInterface(q, before, Span(7, 7))
         physical = [7]
-        attributes = []
+        attributes: list[tuple[str, Primitive]] = []
         for label, site, semantic in (
             ("reference", 3132, "seq_f32"),
             ("smoothing", 3162, "seq_u16"),
             ("peak_hold", 3196, "seq_u16"),
         ):
+            if seq is None:
+                raise AssertionError("Advanced scalar lost its current source state")
             result = _source_sequence(
                 objects,
                 rows,
@@ -1446,7 +1849,9 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
             ("reference_mode", 3346, 2),
         ):
             proof = _at_child(parents, children, V + site, "take_varint_u32")
-            result = decoder_interface(
+            if after is None:
+                raise AssertionError("Advanced enum lost its current source state")
+            decoder_result = decoder_interface(
                 objects,
                 rows,
                 proof,
@@ -1455,29 +1860,36 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
                 guards,
                 output=borrow(frame, 1064, 8, phase, True),
             )
-            attributes.append((label, result))
-            call = _widget_call(context, V + site, after, result, parents, children)
-            success = [v for v in result["outcomes"] if v["kind"] == "success"]
-            for index, v in enumerate(result["outcomes"]):
-                if v["kind"] != "success":
+            attributes.append((label, decoder_result))
+            call = _widget_call(context, V + site, after, decoder_result, parents, children)
+            decoder_success = [v for v in decoder_result["outcomes"] if v["kind"] == "success"]
+            for index, decoder_option in enumerate(decoder_result["outcomes"]):
+                if decoder_option["kind"] != "success":
                     errors.append(
                         dict(
                             stage="Advanced." + label,
-                            error=v["error"],
-                            cursor=v["cursor"],
+                            error=decoder_option["error"],
+                            cursor=decoder_option["cursor"],
                             frontier=V + 56,
                             Band_count=j,
                             _origin=_widget_error(
-                                context, call, index, after, v["state"], v["error"], None, trace
+                                context,
+                                call,
+                                index,
+                                after,
+                                decoder_option["state"],
+                                decoder_option["error"],
+                                None,
+                                trace,
                             ),
                         )
                     )
-            if not success:
+            if not decoder_success:
                 after = None
                 break
-            require(len(success) == 1, "Advanced enum has unpaired normal states")
-            trace.append((label, call, success[0]))
-            after = success[0]["state"]
+            require(len(decoder_success) == 1, "Advanced enum has unpaired normal states")
+            trace.append((label, call, decoder_success[0]))
+            after = decoder_success[0]["state"]
             errors.append(
                 dict(
                     stage="Advanced." + label + " invalid enum",
@@ -1489,7 +1901,9 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
                     _origin=_widget_error(
                         context,
                         call,
-                        next(index for index, v in enumerate(call.choices) if v is success[0]),
+                        next(
+                            index for index, v in enumerate(call.choices) if v is decoder_success[0]
+                        ),
                         call.before,
                         after,
                         14,
@@ -1625,7 +2039,13 @@ def _advanced_source(objects, rows, state, parents, children, decoder):
     )
 
 
-def _scratch_effects(objects, rows, state, parents, children):
+def _scratch_effects(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> ScratchEffects:
     """Complete230-store ownership partition for this fixed parent family.
 
     Contents and retirement are supplied by the paired source/transport
@@ -1688,7 +2108,7 @@ def _scratch_effects(objects, rows, state, parents, children):
     ):
         edge = _edge_at(parents, V + site)
         proof = children[edge[2], edge[3]]
-        target = edge[2]
+        target_address = edge[2]
         if edge[3].startswith("@outline:"):
             require(
                 len(proof["ordinary_edges"]) == 1, "Widget tail transport contains another child"
@@ -1698,7 +2118,7 @@ def _scratch_effects(objects, rows, state, parents, children):
                 tail[1] == "b.w" and tail[3] == "__aeabi_memcpy",
                 "Widget copy changes restored tail identity",
             )
-            target = tail[2]
+            target_address = tail[2]
         else:
             require(edge[3] == "__aeabi_memcpy", "Widget captured tail uses another primitive")
         child_copies.append(
@@ -1710,7 +2130,7 @@ def _scratch_effects(objects, rows, state, parents, children):
                 opaque_copy_interface(
                     objects,
                     rows,
-                    target,
+                    target_address,
                     borrow(frame, origin, size, phase),
                     borrow(frame, destination, size, phase, True),
                     size,
@@ -1809,16 +2229,18 @@ def _scratch_effects(objects, rows, state, parents, children):
 
 @dataclass(frozen=True)
 class _WidgetControlInput:
-    state: object
-    parents: tuple
-    children: dict
+    state: _ViewsState
+    parents: tuple[BodyRecord, ...]
+    children: Children
     source: _WidgetSourcePrefix
-    advanced: dict
-    scratch: dict
-    returns: tuple
+    advanced: AdvancedSource
+    scratch: ScratchEffects
+    returns: tuple[ReturnNode, ...]
 
 
-def _widget_control_profile(value, context, parents, children):
+def _widget_control_profile(
+    value: object, context: _PrefixState, parents: Sequence[BodyRecord], children: Children
+) -> ControlExtension:
     """The sole closed extension to the existing Views control walk.
 
     The public group derives this object itself. This function accepts no
@@ -1828,15 +2250,15 @@ def _widget_control_profile(value, context, parents, children):
     """
     from config_decoded_views import _ViewsState
 
-    require(
+    if not (
         type(value) is _WidgetControlInput
         and type(value.state) is _ViewsState
         and value.state.context is context
         and value.children is children
         and tuple(parents) == value.state.parents + value.parents
-        and type(value.source) is _WidgetSourcePrefix,
-        "Widget control extension is not its actual private phase state",
-    )
+        and type(value.source) is _WidgetSourcePrefix
+    ):
+        raise AssertionError("Widget control extension is not its actual private phase state")
     V = context.headers["visitor"]["proof"]["function"]
     _frame = context.headers["visitor_frame"]
     require(
@@ -1904,24 +2326,39 @@ def _widget_control_profile(value, context, parents, children):
 
 
 @dataclass(frozen=True)
-class _WidgetActiveControl(Mapping):
-    state: object
-    parents: tuple
-    children: dict
-    profile: dict
-    record: dict
+class _WidgetActiveControl(Mapping[str, object]):
+    state: _ViewsState
+    parents: tuple[BodyRecord, ...]
+    children: Children
+    profile: ControlExtension
+    record: ControlRecord
 
-    def __getitem__(self, key):
-        return self.record[key]
+    @overload
+    def __getitem__(self, key: Literal["selected_instructions"]) -> int: ...
+    @overload
+    def __getitem__(self, key: Literal["successors"]) -> Successors: ...
+    @overload
+    def __getitem__(self, key: Literal["nested_returns"]) -> tuple[ReturnNode, ...]: ...
+    @overload
+    def __getitem__(self, key: Literal["stopped_frontiers"]) -> tuple[int, ...]: ...
+    @overload
+    def __getitem__(self, key: Literal["outside_shared_contexts"]) -> PendingContexts: ...
+    @overload
+    def __getitem__(self, key: str) -> object: ...
+    def __getitem__(self, key: str) -> object:
+        record: Mapping[str, object] = self.record
+        return record[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.record)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.record)
 
 
-def _widget_control(objects, rows, value):
+def _widget_control(
+    objects: DiagnosticObjects, rows: InstructionMap, value: _WidgetControlInput
+) -> "_WidgetActiveControl":
     from config_decoded_views import _closure
 
     profile = _widget_control_profile(
@@ -1942,10 +2379,16 @@ def _widget_control(objects, rows, value):
 class _WidgetLengthEntry:
     sequence: SequenceInterface
     initialized_views: int
-    length_result: dict
+    length_result: PrimitiveResult[DecoderOutcome]
 
 
-def _widget_lengths(objects, rows, state, parents, children):
+def _widget_lengths(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> tuple[tuple["_WidgetLengthEntry", ...], tuple[WidgetError, ...]]:
     """Actual length416, before any clear or per-element source consumption.
 
     The length remains an unknown u32 paired with this same decoder. Its
@@ -1959,7 +2402,7 @@ def _widget_lengths(objects, rows, state, parents, children):
     top = context.headers["visitor"]["sequence_state"].header
     proof = _at_child(parents, children, V + 416, "take_varint_u32")
     entries = []
-    errors = []
+    errors: list[WidgetError] = []
     guards = context.headers["visitor"]["protected"] + (_object(top, "live top Q8"),)
     output = borrow(frame, 1064, 8, phase, True)
     for incoming in state.exits:
@@ -2044,17 +2487,19 @@ def _widget_lengths(objects, rows, state, parents, children):
 
 @dataclass(frozen=True)
 class _OrdinaryCommitEvidence:
-    Widget: tuple
-    Band: tuple
+    Widget: tuple[int, ...]
+    Band: tuple[int, ...]
     minimum_source_progress: int
     domain: str
     exception_safe_completion: bool
-    source: object
-    assembly: tuple
-    physical_stack: tuple
+    source: _WidgetControlInput
+    assembly: tuple[AssemblyEffects, ...]
+    physical_stack: tuple[int, int]
 
 
-def _ordinary_commit_evidence(objects, rows, value, control, index=0):
+def _ordinary_commit_evidence(
+    objects: DiagnosticObjects, rows: InstructionMap, value: object, control: object, index: int = 0
+) -> "_OrdinaryCommitEvidence":
     """Join complete source/effect/control witnesses, without a prefix token.
 
     This finite relation authorizes the guarded last-store transition only.
@@ -2062,14 +2507,16 @@ def _ordinary_commit_evidence(objects, rows, value, control, index=0):
     and remaining-count state. It cannot reuse an evaluated cursor interval
     from another iteration or treat this record as mutable ownership.
     """
-    require(
+    if not (
         type(value) is _WidgetControlInput
         and type(control) is _WidgetActiveControl
         and control.state is value.state
         and control.parents is value.parents
-        and control.children is value.children,
-        "Widget completion requires the active same-group source/control relation, not structural evidence",
-    )
+        and control.children is value.children
+    ):
+        raise AssertionError(
+            "Widget completion requires the active same-group source/control relation, not structural evidence"
+        )
     profile = _widget_control_profile(
         value, value.state.context, value.state.parents + value.parents, value.children
     )
@@ -2082,15 +2529,15 @@ def _ordinary_commit_evidence(objects, rows, value, control, index=0):
     V = context.headers["visitor"]["proof"]["function"]
     source = value.source
     advanced = value.advanced
-    require(
+    if not (
         source.decoder is not None
         and tuple(k for k, v in source.fields)
         == ("id", "view", "channel", "placement", "label", "display", "warning", "gauge", "colors")
         and source.decoder.header == source.incoming_decoder.header
         and source.decoder.payload == source.incoming_decoder.payload
-        and source.decoder.cursor.lower == source.incoming_decoder.cursor.lower + 69,
-        "Widget completion lacks its complete paired source prefix",
-    )
+        and source.decoder.cursor.lower == source.incoming_decoder.cursor.lower + 69
+    ):
+        raise AssertionError("Widget completion lacks its complete paired source prefix")
     require(
         advanced["normal"]
         and all(
@@ -2167,7 +2614,15 @@ def _ordinary_commit_evidence(objects, rows, value, control, index=0):
     )
 
 
-def _assembly_effects(objects, rows, state, parents, children, index, band_index):
+def _assembly_effects(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    index: int,
+    band_index: int,
+) -> AssemblyEffects:
     """Owned last-store relations, not a completed source package or prefix.
 
     The caller must separately establish the decoded package and the guarded
@@ -2287,7 +2742,9 @@ def _assembly_effects(objects, rows, state, parents, children, index, band_index
     )
 
 
-def _band_assembly_effects(state, band_index, guards):
+def _band_assembly_effects(
+    state: _ViewsState, band_index: int, guards: Sequence[Storage]
+) -> SlotAssembly:
     """Only the reached local Band; never borrow a spare Widget on error/i64."""
     require(
         type(band_index) is int and 0 <= band_index < 3,
@@ -2333,12 +2790,12 @@ def _band_assembly_effects(state, band_index, guards):
 @dataclass(frozen=True)
 class _CommittedWidget:
     index: int
-    before: object
-    after: object
-    source_fields: tuple
-    Band_alternatives: tuple
-    commit: tuple
-    uses: tuple = ()
+    before: DecoderInterface
+    after: DecoderInterface
+    source_fields: tuple[tuple[str, object], ...]
+    Band_alternatives: tuple[tuple[int, Span], ...]
+    commit: tuple[int, ...]
+    uses: tuple["_GuardedWidgetUse", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2346,28 +2803,30 @@ class _WidgetExit:
     sequence: SequenceInterface
     Source_sequence: SequenceInterface
     initialized_views: int
-    committed: tuple
+    committed: tuple[_CommittedWidget, ...]
 
 
 @dataclass(frozen=True)
 class _WidgetPathError:
-    summary: dict
-    entry: object
-    head: object
+    summary: WidgetError
+    entry: _WidgetLengthEntry | None
+    head: _WidgetExit | None
     index: int
-    prefix: tuple
+    prefix: tuple[tuple[int, DecoderInterface, DecoderInterface, tuple[int, ...]], ...]
 
 
-def _widget_prefix(committed):
+def _widget_prefix(
+    committed: Sequence["_CommittedWidget"],
+) -> tuple[tuple[int, DecoderInterface, DecoderInterface, tuple[int, ...]], ...]:
     return tuple((v.index, v.before, v.after, v.commit) for v in committed)
 
 
-def _widget_error_graph(state):
+def _widget_error_graph(state: "_WidgetsState") -> "PhaseGraph":
     from config_decoded_sources import _phase_graph
 
     entries = state.family_bridge.entries
 
-    def identity_index(item, values, label):
+    def identity_index(item: object, values: Sequence[object], label: str) -> int | None:
         if item is None:
             return None
         found = [i for i, v in enumerate(values) if v is item]
@@ -2393,20 +2852,20 @@ def _widget_error_graph(state):
 
 @dataclass(frozen=True)
 class _WidgetsState:
-    views: object
-    parents: tuple
-    children: dict
-    control: object
-    exits: tuple
-    errors: tuple
-    structural: object
-    execution: object
-    family_bridge: object
-    reached_uses: tuple
-    error_frontiers: tuple = ()
+    views: _ViewsState
+    parents: tuple[BodyRecord, ...]
+    children: Children
+    control: ControlRecord | _WidgetActiveControl
+    exits: tuple[_WidgetExit, ...]
+    errors: tuple[WidgetError, ...]
+    structural: _StructuralControl
+    execution: ExecutionReceipt
+    family_bridge: "_WidgetFamilyBridge"
+    reached_uses: tuple["_GuardedWidgetUse", ...]
+    error_frontiers: tuple[_WidgetPathError, ...] = ()
     error_checkpoint: object = None
 
-    def _checked_errors(self):
+    def _checked_errors(self) -> tuple[_WidgetPathError, ...]:
         """Private retained source relation inside the enclosing current boundary."""
         self.views._checked_errors()
         require(
@@ -2454,7 +2913,7 @@ class _WidgetsState:
                 )
         return self.error_frontiers
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         from config_decoded_views import _ViewsState, _StructuralControl
         from config_platform import ExecutionReceipt
         from config_widget_uses import _WidgetFamilyBridge
@@ -2489,7 +2948,7 @@ class _WidgetsState:
         )
 
 
-def _iteration_state(state, index):
+def _iteration_state(state: _ViewsState, index: int) -> _ViewsState:
     """Carry the actual prior prefix through *all* fresh child effects."""
     require(type(index) is int and 0 <= index <= 64, "Widget head has an unbounded index")
     if index == 0:
@@ -2509,14 +2968,20 @@ def _iteration_state(state, index):
         frame.phase,
         False,
     )
-    headers = dict(context.headers)
-    visitor = dict(headers["visitor"])
+    headers: VisitorHeaders = {**context.headers}
+    visitor: VisitorHeader = {**headers["visitor"]}
     visitor["protected"] = visitor["protected"] + (prefix, projected)
     headers["visitor"] = visitor
     return replace(state, context=replace(context, headers=headers))
 
 
-def _widget_capacity_decision(value, active, before, index, control):
+def _widget_capacity_decision(
+    value: _WidgetControlInput,
+    active: _ViewsState,
+    before: DecoderInterface,
+    index: int,
+    control: _WidgetActiveControl,
+) -> CapacityDecision:
     """The shared post-parse capacity boundary, never a slot/prefix grant.
 
     Public use follows the private lineage/reached-use checks. Explicit
@@ -2586,16 +3051,33 @@ def _widget_capacity_decision(value, active, before, index, control):
             max(v["decoder"].cursor.upper for v in normal),
         ),
     )
-    return dict(
+    result: CapacityDecision = dict(
         kind="capacity_error" if index == 64 else "candidate_ready",
         after=after,
-        **({"error": 14} if index == 64 else {}),
         spare_Widget_borrow_created=False,
         completed_prefix_issued=False,
     )
+    if index == 64:
+        result["error"] = 14
+    return result
 
 
-def _first_boot_decoded_widgets_state(objects, rows, source_context):
+def _describe_error(value: WidgetError) -> WidgetErrorDescription:
+    # Preserve every public field (including retained extra metadata), stripping
+    # only private keys. The typed source supplies all required public fields;
+    # cursor is the sole value whose representation changes here.
+    return cast(
+        WidgetErrorDescription,
+        dict(
+            {key: item for key, item in value.items() if not key.startswith("_")},
+            cursor=(value["cursor"].lower, value["cursor"].upper),
+        ),
+    )
+
+
+def _first_boot_decoded_widgets_state(
+    objects: DiagnosticObjects, rows: InstructionMap, source_context: object
+) -> tuple["WidgetsDescription", "_WidgetsState"]:
     """Fresh finite candidate evaluation on each actual private Views exit.
 
     No evaluated cursor/source dictionary is translated into another epoch.
@@ -2627,10 +3109,17 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
     exits = []
     control = None
     iterations = []
-    reached_uses = []
+    reached_uses: list[_GuardedWidgetUse] = []
     error_frontiers = [_WidgetPathError(v, None, None, 0, ()) for v in errors]
 
-    def record_errors(options, entry, index, head, committed, preceding=()):
+    def record_errors(
+        options: Sequence[WidgetError],
+        entry: _WidgetLengthEntry,
+        index: int,
+        head: _WidgetExit,
+        committed: Sequence[_CommittedWidget],
+        preceding: Sequence[object] = (),
+    ) -> None:
         for option in options:
             origin = option["_origin"]
             trace = (
@@ -2646,14 +3135,14 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
                 + tuple(preceding)
                 + origin.trace
             )
-            summary = dict(
-                option,
-                initialized_views=entry.initialized_views,
-                initialized_widgets=index,
-                widgets_cleared=True,
-                ordinary_current_candidate_unpublished=True,
-                _origin=replace(origin, trace=trace),
-            )
+            summary: WidgetError = {
+                **option,
+                "initialized_views": entry.initialized_views,
+                "initialized_widgets": index,
+                "widgets_cleared": True,
+                "ordinary_current_candidate_unpublished": True,
+                "_origin": replace(origin, trace=trace),
+            }
             errors.append(summary)
             error_frontiers.append(
                 _WidgetPathError(summary, entry, head, index, _widget_prefix(committed))
@@ -2661,10 +3150,10 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
 
     for entry in entries:
         current = entry.sequence.decoder
-        committed = ()
+        committed: tuple[_CommittedWidget, ...] = ()
         n = current.payload.extent
         if n - current.cursor.lower >= 65:
-            summary = dict(
+            summary: WidgetError = dict(
                 stage="Widgets pre-clear capacity",
                 error=14,
                 cursor=current.cursor,
@@ -2706,7 +3195,7 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
             active = _iteration_state(state, index)
             source = _widget_source_prefix(objects, rows, active, parents, children, current)
             record_errors(source.errors, entry, index, head, committed)
-            advanced = (
+            advanced: AdvancedSource = (
                 dict(normal=(), errors=())
                 if source.decoder is None
                 else _advanced_source(objects, rows, active, parents, children, source.decoder)
@@ -2729,6 +3218,8 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
                 break
             normal = advanced["normal"]
             after = decision["after"]
+            if after is None:
+                raise AssertionError("parsed Widget candidate lost its decoder successor")
             if decision["kind"] == "capacity_error":
                 summary = dict(
                     stage="Widget precommit capacity",
@@ -2786,7 +3277,9 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
     # Structural coverage above does not activate any dormant outgoing edge.
     if control is None:
         require(not entries, "Widget entries lost their actual guarded active control")
-        control = state.control
+    final_control: ControlRecord | _WidgetActiveControl = (
+        state.control if control is None else control
+    )
     from config_platform import _execution_receipt
 
     receipt = _execution_receipt(
@@ -2796,7 +3289,7 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
     )
     # Public diagnostics deliberately omit the heavyweight checked histories;
     # neither the description nor its copied execution receipt is a capability.
-    description = dict(
+    description: WidgetsDescription = dict(
         phase="first_boot_decoded_widgets_pending_remaining_visitor_canonical_and_loader_routes",
         mode="sizez",
         Sources_ready=dict(frontier=V + 4376, top_count=7, source_count=8, Source_bytes_consumed=0)
@@ -2816,21 +3309,15 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
             )
             for e in exits
         ),
-        group_errors=tuple(
-            dict(
-                {k: item for k, item in v.items() if not k.startswith("_")},
-                cursor=(v["cursor"].lower, v["cursor"].upper),
-            )
-            for v in errors
-        ),
+        group_errors=tuple(_describe_error(v) for v in errors),
         iterations=tuple(
             (views, index, (before.lower, before.upper), (after.lower, after.upper))
             for views, index, before, after in iterations
         ),
         control=dict(
-            selected_instructions=control["selected_instructions"],
-            stopped_frontiers=control["stopped_frontiers"],
-            outside_shared_context_count=len(control["outside_shared_contexts"]),
+            selected_instructions=final_control["selected_instructions"],
+            stopped_frontiers=final_control["stopped_frontiers"],
+            outside_shared_context_count=len(final_control["outside_shared_contexts"]),
             pending_contexts_confer_state=False,
         ),
         structural_control=dict(
@@ -2886,7 +3373,7 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
         state,
         parents,
         children,
-        control,
+        final_control,
         tuple(exits),
         tuple(errors),
         structural,
@@ -2900,5 +3387,7 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
     return description, private
 
 
-def first_boot_decoded_widgets(objects, instructions, source_context):
+def first_boot_decoded_widgets(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> "WidgetsDescription":
     return _first_boot_decoded_widgets_state(objects, instructions, source_context)[0]

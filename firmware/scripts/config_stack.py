@@ -3,15 +3,75 @@
 import re
 import struct
 import json
+from collections.abc import Mapping, Sequence
+from elf_image import MappedImage
+from typing import NotRequired, TypedDict
+from llvm_stack import Instruction
 from validation import require
 from llvm_stack import mapping_ranges
 from config_format_contracts import FORMAT_GRAMMARS
 from config_validation_contracts import VALIDATION_BUILDERS
 
+
+class FormatBridgeRecord(TypedDict):
+    role: str
+    function: int
+    extent: int
+    frame: int
+    objects: tuple[int, ...]
+    pad_targets: tuple[int, ...] | None
+    raw_callbacks: tuple[int, ...]
+    sink_sites: tuple[int, ...]
+    ordinary_sites: tuple[int, ...]
+    ordinary_edges: tuple[tuple[int, int, str], ...]
+    pretty_sites: tuple[int, ...]
+    defaults_required: bool
+
+
+class ValidationBuilderRecord(TypedDict):
+    function: int
+    extent: int
+    frame: int
+    callee: int
+    callbacks: tuple[tuple[str, int], ...]
+    fields: tuple[tuple[str, int, str], ...]
+    channel_reference_cell: int
+    payload_closure_required: bool
+
+
+class EnumDispatchRecord(TypedDict):
+    role: str
+    function: int
+    table: int
+    entries: tuple[int, ...]
+    prefix_bytes: int
+    epilogue: str | None
+
+
+class OutlineCall(TypedDict):
+    target: int
+    effect: str
+    frame: int
+    site: int
+
+
+class FieldBinding(TypedDict):
+    case: str
+    role: str
+    site: int
+    callback: NotRequired[int]
+    vtable: NotRequired[int]
+    bridge: NotRequired[int]
+    outlines: NotRequired[list[OutlineCall]]
+
+
+FieldValue = int | tuple[str, int]
+Outlines = Mapping[int, Sequence[Instruction]]
+
 CONDITIONS = r"(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?"
 
 
-def transfer_family(mnemonic):
+def transfer_family(mnemonic: str) -> str | None:
     """Finite selected-LLVM transfer spellings, including predicated forms."""
     for family in (
         "blxns",
@@ -37,7 +97,7 @@ def transfer_family(mnemonic):
     return None
 
 
-def canonical_symbol(symbol):
+def canonical_symbol(symbol: str) -> str:
     # Preserve the complete v0 receiver/trait/generic backreference structure.
     # Only crate disambiguators and LLVM's numeric clone suffix are unstable.
     return re.sub(r"Cs[A-Za-z0-9]+_", "Cs_", re.sub(r"\.\d+$", "", symbol))
@@ -51,9 +111,10 @@ ERROR_ROOTS = {
 }
 
 
-def error_root_role(symbol):
+def error_root_role(symbol: str) -> str:
     role = ERROR_ROOTS.get(canonical_symbol(symbol))
-    require(role is not None, "unreviewed configuration diagnostic callback root: " + symbol)
+    if role is None:
+        raise AssertionError("unreviewed configuration diagnostic callback root: " + symbol)
     return role
 
 
@@ -149,14 +210,12 @@ class DiagnosticObjects:
     instructions. Merely finding a valid object nearby establishes no edge.
     """
 
-    def __init__(self, elf, sizes):
+    def __init__(self, elf: MappedImage, sizes: Mapping[int, int]) -> None:
         self.elf, self.sizes = elf, sizes
 
-    def read_only(self, address, length):
-        require(
-            isinstance(address, int) and isinstance(length, int) and length > 0,
-            "invalid diagnostic object extent",
-        )
+    def read_only(self, address: int, length: int) -> bytes:
+        if not (isinstance(address, int) and isinstance(length, int) and (length > 0)):
+            raise AssertionError("invalid diagnostic object extent")
         matches = [
             s
             for s in self.elf.sections
@@ -172,7 +231,7 @@ class DiagnosticObjects:
         require(len(data) == length, "truncated diagnostic object")
         return data
 
-    def panic_guard(self, address):
+    def panic_guard(self, address: int) -> int:
         # Object ordinal .0 is part of this identity, not a function clone.
         entries = [
             e
@@ -194,13 +253,11 @@ class DiagnosticObjects:
         )
         return address
 
-    def defmt_id(self, value, role):
+    def defmt_id(self, value: int, role: str) -> int:
         # Locked defmt.x.in reserves zero and places these one-byte primitive /
         # error objects before END < 65534, hence value + 1 <= 65533.
-        require(
-            role in DEFMT_IDENTITIES and isinstance(value, int) and 1 <= value <= 65532,
-            "unreviewed or reserved defmt symbol ID",
-        )
+        if not (role in DEFMT_IDENTITIES and isinstance(value, int) and (1 <= value <= 65532)):
+            raise AssertionError("unreviewed or reserved defmt symbol ID")
         entries = []
         for entry in self.elf.symbol_entries:
             if not entry[0].startswith("{"):
@@ -228,13 +285,13 @@ class DiagnosticObjects:
         )
         return value
 
-    def debug_vtable(self, address, role):
+    def debug_vtable(self, address: int, role: str) -> int:
         layouts = ERROR_LAYOUTS | PAYLOAD_LAYOUTS
         require(role in layouts and address % 4 == 0, "unreviewed or unaligned diagnostic vtable")
         drop, size, align, pointer = struct.unpack("<4I", self.read_only(address, 16))
         require((drop, size, align) == (0, *layouts[role]), "diagnostic vtable type layout differs")
         require(pointer & 1, "diagnostic callback is not Thumb")
-        target = pointer & ~1
+        target = int(pointer) & ~1
         aliases = [
             (name, entry) for name, entry in self.elf.functions.items() if entry[0] & ~1 == target
         ]
@@ -260,7 +317,7 @@ class DiagnosticObjects:
         require(target in self.sizes, "missing diagnostic callback frame metadata")
         return target
 
-    def default_template(self, address, role):
+    def default_template(self, address: int, role: str) -> tuple[int, ...]:
         require(role in DEFAULT_TEMPLATES, "unreviewed diagnostic template role")
         expected, count = DEFAULT_TEMPLATES[role]
         require(
@@ -269,14 +326,14 @@ class DiagnosticObjects:
         )
         return tuple(range(count))
 
-    def tagged_literal(self, address, word, role):
-        require(
+    def tagged_literal(self, address: int, word: int, role: str) -> bytes:
+        if not (
             role in FIXED_LITERALS
             and isinstance(word, int)
-            and 0 < word <= 0xFFFFFFFF
-            and word & 1,
-            "unreviewed or non-tagged fixed diagnostic Arguments",
-        )
+            and (0 < word <= 4294967295)
+            and word & 1
+        ):
+            raise AssertionError("unreviewed or non-tagged fixed diagnostic Arguments")
         expected = FIXED_LITERALS[role]
         require(word >> 1 == len(expected), "tagged diagnostic literal length differs")
         actual = self.read_only(address, len(expected))
@@ -284,14 +341,14 @@ class DiagnosticObjects:
         return actual
 
 
-def typed_function(objects, target, role):
+def typed_function(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, int, str]:
     """Current complete function ownership for one exact normalized interface."""
     extent, name = _typed_function_extent(objects, target, role)
     require(target in objects.sizes, "missing typed function frame")
     return extent, objects.sizes[target], name
 
 
-def _typed_function_extent(objects, target, role):
+def _typed_function_extent(objects: DiagnosticObjects, target: int, role: str) -> tuple[int, str]:
     """Private extent half; frame-less assembly requires a complete consumer."""
     aliases = [(n, e) for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
     require(aliases, "missing typed function entry")
@@ -364,7 +421,9 @@ FORMAT_TRANSFERS = {
 }
 
 
-def format_bridge(objects, name, instructions):
+def format_bridge(
+    objects: DiagnosticObjects, name: str, instructions: Sequence[Instruction]
+) -> FormatBridgeRecord:
     """Complete finite body/relocation witness; caller defaults remain required.
 
     Every pretty transfer is retained in the returned inventory. This function
@@ -389,7 +448,7 @@ def format_bridge(objects, name, instructions):
     records = sorted(instructions, key=lambda r: r.address)
     require(len(records) == len(grammar), "formatting bridge instruction inventory differs")
     next_address = start
-    producers = {}
+    producers: dict[int, dict[str, int]] = {}
     edges = []
     for record, line in zip(records, grammar):
         offset = int(line.split(" ", 1)[0], 16)
@@ -403,32 +462,30 @@ def format_bridge(objects, name, instructions):
         mnemonic, operands = line.split(" ", 1)[1].split("\t", 1)
         require(record.mnemonic == mnemonic, "formatting bridge instruction differs")
         actual = record.operands.split("@", 1)[0].strip()
-        address = re.search(r"@addr([0-9]+)\.(low|high)", operands)
+        address_match = re.search(r"@addr([0-9]+)\.(low|high)", operands)
         self_branch = re.search(r"@self\+([0-9a-f]+)", operands)
         target_role = re.search(r"@role:(\S+)", operands)
-        if address:
+        if address_match:
             match = re.fullmatch(r"(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                match is not None and int(match[2], 0) <= 0xFFFF, "invalid bridge readonly producer"
-            )
-            index = int(address[1])
-            part = address[2]
+            if not (match is not None and int(match[2], 0) <= 65535):
+                raise AssertionError("invalid bridge readonly producer")
+            index = int(address_match[1])
+            part = address_match[2]
             require(
                 index < len(FORMAT_OBJECTS[role]) and part not in producers.setdefault(index, {}),
                 "ambiguous bridge readonly producer",
             )
             producers[index][part] = int(match[2], 0)
-            actual = match[1] + ", " + address[0]
+            actual = match[1] + ", " + address_match[0]
         elif self_branch:
             target = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                target is not None and int(target[1], 16) == start + int(self_branch[1], 16),
-                "bridge branch target differs",
-            )
+            if not (target is not None and int(target[1], 16) == start + int(self_branch[1], 16)):
+                raise AssertionError("bridge branch target differs")
             actual = actual[: target.start()] + self_branch[0]
         elif target_role:
             target = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(target is not None, "unresolved bridge ordinary edge")
+            if not (target is not None):
+                raise AssertionError("unresolved bridge ordinary edge")
             address_value = int(target[1], 16)
             typed_function(objects, address_value, target_role[1])
             edges.append((offset, address_value, target_role[1]))
@@ -454,9 +511,9 @@ def format_bridge(objects, name, instructions):
             words = struct.unpack("<6I", objects.read_only(address, 24))
             require(words[:3] == (0, 12, 4), "bridge PadAdapter layout differs")
             targets = []
-            for pointer, target_role, expected_frame in zip(words[3:], PAD_ROLES, (56, 24, 8)):
+            for pointer, pad_role, expected_frame in zip(words[3:], PAD_ROLES, (56, 24, 8)):
                 require(pointer & 1, "bridge PadAdapter callback is not Thumb")
-                _, current_frame, _ = typed_function(objects, pointer & ~1, target_role)
+                _, current_frame, _ = typed_function(objects, pointer & ~1, pad_role)
                 require(current_frame == expected_frame, "bridge PadAdapter callback frame differs")
                 targets.append(pointer & ~1)
             pad_targets = tuple(targets)
@@ -483,7 +540,9 @@ def format_bridge(objects, name, instructions):
     )
 
 
-def validation_builder(objects, name, instructions):
+def validation_builder(
+    objects: DiagnosticObjects, name: str, instructions: Sequence[Instruction]
+) -> ValidationBuilderRecord:
     """Bind the complete source-created ValidationError to all five tuples.
 
     The root consumer must still prove the incoming error's source identity;
@@ -507,8 +566,8 @@ def validation_builder(objects, name, instructions):
     rows = sorted(instructions, key=lambda r: r.address)
     require(len(rows) == len(grammar), "ValidationError builder instruction inventory differs")
     code = {a for lo, hi, k in mapping if k == "t" for a in range(lo, hi)}
-    covered = set()
-    pairs = {}
+    covered: set[int] = set()
+    pairs: dict[int, dict[str, int]] = {}
     callee = None
     for record, line in zip(rows, grammar):
         offset = int(line.split(" ", 1)[0], 16)
@@ -528,10 +587,8 @@ def validation_builder(objects, name, instructions):
         value = re.search(r"@value([0-9]+)\.(low|high)", expected)
         if value:
             match = re.fullmatch(r"(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                match is not None and int(match[2], 0) <= 0xFFFF,
-                "invalid ValidationError readonly producer",
-            )
+            if not (match is not None and int(match[2], 0) <= 65535):
+                raise AssertionError("invalid ValidationError readonly producer")
             index = int(value[1])
             part = value[2]
             require(
@@ -542,10 +599,8 @@ def validation_builder(objects, name, instructions):
             actual = match[1] + ", " + value[0]
         elif expected == "@struct5":
             match = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                match is not None and callee is None,
-                "unresolved/repeated ValidationError struct5 call",
-            )
+            if not (match is not None and callee is None):
+                raise AssertionError("unresolved/repeated ValidationError struct5 call")
             callee = int(match[1], 16)
             _, child_frame, _ = typed_function(
                 objects, callee, "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish"
@@ -553,10 +608,11 @@ def validation_builder(objects, name, instructions):
             require(child_frame == 40, "ValidationError struct5 frame differs")
             actual = "@struct5"
         require(actual == expected, "ValidationError builder operands/source cells differ")
-    require(covered == code and callee is not None, "incomplete ValidationError builder code/edge")
+    if not (covered == code and callee is not None):
+        raise AssertionError("incomplete ValidationError builder code/edge")
     callbacks = []
     literal_cells = set()
-    for index, (sites, expected) in enumerate(producers):
+    for index, (sites, expected_object) in enumerate(producers):
         if pairs:
             require(
                 index in pairs and set(pairs[index]) == {"low", "high"},
@@ -567,11 +623,10 @@ def validation_builder(objects, name, instructions):
             consumer, pool = sites
             record = next(r for r in rows if r.address == start + consumer)
             match = re.fullmatch(r"r[0-9]+, \[pc, #(0x[0-9a-f]+|[0-9]+)\]", record.operands)
-            require(
-                match is not None
-                and ((record.address + 4) & ~3) + int(match[1], 0) == start + pool,
-                "ValidationError literal pool producer differs",
-            )
+            if not (
+                match is not None and (record.address + 4 & ~3) + int(match[1], 0) == start + pool
+            ):
+                raise AssertionError("ValidationError literal pool producer differs")
             points = set(range(pool, pool + 4))
             literal_cells |= points
             require(
@@ -579,12 +634,14 @@ def validation_builder(objects, name, instructions):
                 "ValidationError literal is not mapped data",
             )
             address = struct.unpack("<I", objects.read_only(start + pool, 4))[0]
-        kind, role = expected
+        kind, role = expected_object
         if kind == "literal":
             require(
                 objects.read_only(address, len(role)) == role, "ValidationError field name differs"
             )
         else:
+            if not isinstance(role, str):
+                raise AssertionError("ValidationError callback role is not text")
             callbacks.append((role, objects.debug_vtable(address, role)))
     data = {a for lo, hi, k in mapping if k == "d" for a in range(lo, hi)}
     require(literal_cells == data, "ValidationError unbound literal pool bytes")
@@ -607,7 +664,9 @@ def validation_builder(objects, name, instructions):
     )
 
 
-def constant_before(instructions, consumer, register, objects):
+def constant_before(
+    instructions: Sequence[Instruction], consumer: int, register: str, objects: DiagnosticObjects
+) -> tuple[int, tuple[int, ...]]:
     """Match one bounded straight-line constant producer at a call boundary.
 
     Input must be the byte-checked caller extent from the resolved adapter.
@@ -615,10 +674,8 @@ def constant_before(instructions, consumer, register, objects):
     Branches, calls, unknown definitions and runtime memory producers fail;
     it is not a register executor or a reaching-definition merge algorithm.
     """
-    require(
-        re.fullmatch(r"r(?:[0-9]|1[0-2])", register) is not None,
-        "unsupported constant argument register",
-    )
+    if not (re.fullmatch("r(?:[0-9]|1[0-2])", register) is not None):
+        raise AssertionError("unsupported constant argument register")
     records = sorted(instructions, key=lambda i: i.address)
     require(
         len({i.address for i in records}) == len(records), "ambiguous boundary instruction record"
@@ -701,7 +758,7 @@ def constant_before(instructions, consumer, register, objects):
         "nop",
     }
 
-    def producer(before, wanted, nesting):
+    def producer(before: int, wanted: str, nesting: int) -> tuple[int, tuple[int, ...]]:
         require(nesting <= 8, "constant argument dependency bound exceeded")
         next_address = records[before].address
         for index in range(before - 1, start - 1, -1):
@@ -755,10 +812,13 @@ def constant_before(instructions, consumer, register, objects):
                     return value, (record.address, *evidence)
                 if mnemonic == "ldr":
                     literal = re.fullmatch(r"\[pc(?:, #(-?0x[0-9a-f]+|-?[0-9]+))?\]", source)
-                    require(literal is not None, "constant argument has runtime memory producer")
+                    if literal is None:
+                        raise AssertionError("constant argument has runtime memory producer")
                     offset = int(literal[1], 0) if literal[1] else 0
                     address = ((record.address + 4) & ~3) + offset
-                    return struct.unpack("<I", objects.read_only(address, 4))[0], (record.address,)
+                    return int(struct.unpack("<I", objects.read_only(address, 4))[0]), (
+                        record.address,
+                    )
                 require(
                     mnemonic in ("str", "strb", "strh", "strd", "cmp", "tst"),
                     "unreviewed constant argument definition",
@@ -809,12 +869,12 @@ def constant_before(instructions, consumer, register, objects):
             # x in 0..255. This proves no ingress into this protected interval,
             # NOT table/index provenance, valid enum objects or ordinary closure.
             index = re.fullmatch(r"\[pc, r([0-9]|1[0-2])\]", operands)
-            require(
+            if not (
                 index is not None
                 and len(record.raw) == 4
-                and record.raw == struct.pack("<HH", 0xE8DF, 0xF000 | int(index[1])),
-                "unreviewed PC-relative TBB ingress encoding",
-            )
+                and (record.raw == struct.pack("<HH", 59615, 61440 | int(index[1])))
+            ):
+                raise AssertionError("unreviewed PC-relative TBB ingress encoding")
             require(
                 0 <= record.address <= 0xFFFFFFFF - 514 and record.address % 2 == 0,
                 "PC-relative TBB destination extent wraps",
@@ -835,10 +895,11 @@ def constant_before(instructions, consumer, register, objects):
                 operands.split(",")[-1].strip() if transfer in ("cbz", "cbnz") else operands
             )
             target = re.match(r"(0x[0-9a-f]+)(?:\s|$)", target_text)
-            require(target is not None, "constant producer has unresolved direct ingress")
-            target = int(target[1], 16)
+            if target is None:
+                raise AssertionError("constant producer has unresolved direct ingress")
+            target_address = int(target[1], 16)
             require(
-                not (first < target <= consumer and not first <= record.address < consumer),
+                not (first < target_address <= consumer and not first <= record.address < consumer),
                 "alternate ingress bypasses current argument producer",
             )
     return value, evidence
@@ -860,7 +921,9 @@ ENUM_PREFIXES = {
 }
 
 
-def enum_dispatch(objects, name, instructions):
+def enum_dispatch(
+    objects: DiagnosticObjects, name: str, instructions: Sequence[Instruction]
+) -> EnumDispatchRecord:
     """Bind one finite typed enum prefix and current code/data entry table.
 
     It does not accept a raw table hash, prove arbitrary invalid enum values,
@@ -869,7 +932,8 @@ def enum_dispatch(objects, name, instructions):
     elf = objects.elf
     require(name in elf.functions, "missing typed enum callback")
     role = PAYLOAD_ROLES.get(canonical_symbol(name))
-    require(role in ENUM_PREFIXES, "unreviewed typed enum dispatch role")
+    if role is None or role not in ENUM_PREFIXES:
+        raise AssertionError("unreviewed typed enum dispatch role")
     pointer, extent, index = elf.functions[name]
     start = pointer & ~1
     require(
@@ -901,7 +965,7 @@ def enum_dispatch(objects, name, instructions):
     require(len(records) == len(instructions), "duplicate typed enum instruction")
     ranges = mapping_ranges(elf, name)
     code = {a for lo, hi, kind in ranges if kind == "t" for a in range(lo, hi)}
-    covered = set()
+    covered: set[int] = set()
     for address, record in records.items():
         require(
             len(record.raw) in (2, 4)
@@ -927,8 +991,12 @@ def enum_dispatch(objects, name, instructions):
         any(kind == "d" and lo <= table < table + count * width <= hi for lo, hi, kind in ranges),
         "typed enum table is not mapped read-only data",
     )
-    offsets = objects.read_only(table, count * width)
-    offsets = struct.unpack("<58H", offsets) if width == 2 else tuple(offsets)
+    offset_bytes = objects.read_only(table, count * width)
+    offsets = (
+        tuple(int(v) for v in struct.unpack("<58H", offset_bytes))
+        if width == 2
+        else tuple(offset_bytes)
+    )
     entries = tuple(table + 2 * offset for offset in offsets)
     require(
         len(set(entries)) == count
@@ -978,7 +1046,9 @@ FIELD_CASES = tuple(
 )
 
 
-def _field_outline(objects, target, outlines):
+def _field_outline(
+    objects: DiagnosticObjects, target: int, outlines: Mapping[int, Sequence[Instruction]] | None
+) -> tuple[str, int | None]:
     """Complete zero-growth Field adapters; ordinals are not acceptance keys."""
     aliases = [(n, e) for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
     require(
@@ -1001,7 +1071,8 @@ def _field_outline(objects, target, outlines):
         and section[3] <= target < target + extent <= section[3] + section[5],
         "Field outline is outside its declared RO executable section",
     )
-    require(outlines is not None and target in outlines, "missing current Field outline body")
+    if outlines is None or target not in outlines:
+        raise AssertionError("missing current Field outline body")
     records = sorted(outlines[target], key=lambda i: i.address)
     raw = objects.read_only(target, extent)
     require(
@@ -1036,7 +1107,14 @@ def _field_outline(objects, target, outlines):
     raise AssertionError("unreviewed Field zero-growth outline body")
 
 
-def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"):
+def _field_case(
+    objects: DiagnosticObjects,
+    records: Mapping[int, Instruction],
+    entry: int,
+    case: str,
+    outlines: Outlines | None = None,
+    epilogue: str | None = "classic",
+) -> tuple[FieldBinding, set[int]]:
     """Closed Field operand-materialization vocabulary; no general executor.
 
     Input is a typed, byte-checked case entry from enum_dispatch. Registers carry
@@ -1044,36 +1122,35 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
     Each predecessor is walked separately and cannot borrow another's producer.
     This does not prove the subsequently selected tuple/sink bridge body.
     """
-    values = {"r0": ("field", 0), "r1": ("formatter", 0)}
+    values: dict[str, FieldValue] = {"r0": ("field", 0), "r1": ("formatter", 0)}
     require(epilogue in ("classic", "scratch"), "unreviewed Field prologue/epilogue family")
-    cells = {}
+    cells: dict[int, FieldValue] = {}
     sp = 0
     visited = set()
-    binding = None
+    binding: FieldBinding | None = None
     address = entry
-    outline_calls = []
+    outline_calls: list[OutlineCall] = []
     history = []
 
-    def get(register):
+    def get(register: str) -> FieldValue:
         if register == "sp":
             return ("stack", sp)
         require(register in values, "missing typed Field operand producer")
         return values[register]
 
-    def number(text):
+    def number(text: str) -> int:
         require(re.fullmatch(r"#(?:0x[0-9a-f]+|[0-9]+)", text), "unreviewed Field immediate")
         return int(text[1:], 0)
 
-    def plus(term, amount):
-        require(
-            isinstance(term, tuple) and term[0] in ("field", "stack"),
-            "untyped Field address arithmetic",
-        )
+    def plus(term: FieldValue, amount: int) -> tuple[str, int]:
+        if not (isinstance(term, tuple) and term[0] in ("field", "stack")):
+            raise AssertionError("untyped Field address arithmetic")
         return term[0], term[1] + amount
 
-    def memory(text):
+    def memory(text: str) -> tuple[str, int]:
         match = re.fullmatch(r"\[(r(?:[0-9]|1[0-2])|sp|pc)(?:, (#(?:0x[0-9a-f]+|[0-9]+)))?\]", text)
-        require(match is not None, "unreviewed Field memory operand/writeback")
+        if not (match is not None):
+            raise AssertionError("unreviewed Field memory operand/writeback")
         return match[1], number(match[2]) if match[2] else 0
 
     for _ in range(48):
@@ -1105,7 +1182,8 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                 )
                 if mnemonic == "movt":
                     previous = get(destination)
-                    require(isinstance(previous, int), "missing Field low-address producer")
+                    if not (isinstance(previous, int)):
+                        raise AssertionError("missing Field low-address producer")
                     values[destination] = previous & 0xFFFF | immediate << 16
                 else:
                     values[destination] = immediate
@@ -1155,27 +1233,29 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
             values[second] = ("sink_vtable", 0)
         elif mnemonic == "b":
             target = re.match(r"0x([0-9a-f]+)(?:\s|$)", operands)
-            require(target is not None, "unresolved Field shared-suffix branch")
+            if not (target is not None):
+                raise AssertionError("unresolved Field shared-suffix branch")
             next_address = int(target[1], 16)
         elif mnemonic == "bl":
             require(sp == 0, "Field call moved incoming SP away from its argument cells")
             values.pop("lr", None)  # Every real BL replaces LR, including outlines.
-            target = re.match(r"0x([0-9a-f]+)(?:\s|$)", operands)
-            require(target is not None, "unresolved Field callback bridge")
-            target = int(target[1], 16)
+            target_match = re.match(r"0x([0-9a-f]+)(?:\s|$)", operands)
+            if not (target_match is not None):
+                raise AssertionError("unresolved Field callback bridge")
+            target_address = int(target_match[1], 16)
             if any(
-                n.startswith("OUTLINED_FUNCTION_") and e[0] & ~1 == target
+                n.startswith("OUTLINED_FUNCTION_") and e[0] & ~1 == target_address
                 for n, e in objects.elf.functions.items()
             ):
-                effect, length = _field_outline(objects, target, outlines)
+                effect, length = _field_outline(objects, target_address, outlines)
                 require(get("r1") == ("formatter", 0), "Field outline lost Formatter origin")
                 if effect == "vtable_transport":
-                    require(
+                    if not (
                         case in FIELD_PAYLOADS
                         and isinstance(get("r0"), int)
-                        and isinstance(get("r2"), int),
-                        "Field outline lost current vtable/name producers",
-                    )
+                        and isinstance(get("r2"), int)
+                    ):
+                        raise AssertionError("Field outline lost current vtable/name producers")
                     cells[sp] = get("r0")
                     values["r0"] = get("r1")
                     values["r1"] = get("r2")
@@ -1186,15 +1266,15 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                     if length is not None:
                         values["r2"] = length
                 outline_calls.append(
-                    {"target": target, "effect": effect, "frame": 0, "site": address}
+                    {"target": target_address, "effect": effect, "frame": 0, "site": address}
                 )
                 address = next_address
                 continue
-            aliases = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
+            aliases = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target_address]
             require(
                 aliases
                 and all(canonical_symbol(n) == TUPLE1_ROLE for n in aliases)
-                and target in objects.sizes,
+                and target_address in objects.sizes,
                 "unreviewed Field tuple bridge",
             )
             pointer, extent, index = objects.elf.functions[aliases[0]]
@@ -1210,10 +1290,13 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                 section[1] == 1
                 and section[2] & 6 == 6
                 and not section[2] & 1
-                and section[3] <= target < target + extent <= section[3] + section[5],
+                and section[3]
+                <= target_address
+                < target_address + extent
+                <= section[3] + section[5],
                 "Field tuple bridge is outside its declared RO executable section",
             )
-            objects.read_only(target, extent)
+            objects.read_only(target_address, extent)
             require(
                 case in FIELD_PAYLOADS
                 and binding is None
@@ -1222,29 +1305,32 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                 and cells.get(4) == ("field", FIELD_PAYLOADS[case][1]),
                 "Field tuple reference does not match source case",
             )
-            pointer, length = get("r1"), get("r2")
-            require(
-                isinstance(pointer, int)
-                and isinstance(length, int)
-                and objects.read_only(pointer, length) == case.encode(),
-                "Field tuple name differs",
-            )
-            require(isinstance(cells.get(0), int), "missing current Field vtable stack producer")
-            callback = objects.debug_vtable(cells[0], FIELD_PAYLOADS[case][0])
+            name_pointer, name_length = get("r1"), get("r2")
+            if not (
+                isinstance(name_pointer, int)
+                and isinstance(name_length, int)
+                and (objects.read_only(name_pointer, name_length) == case.encode())
+            ):
+                raise AssertionError("Field tuple name differs")
+            vtable = cells.get(0)
+            if not (isinstance(vtable, int)):
+                raise AssertionError("missing current Field vtable stack producer")
+            callback = objects.debug_vtable(vtable, FIELD_PAYLOADS[case][0])
             binding = {
                 "case": case,
                 "role": FIELD_PAYLOADS[case][0],
                 "callback": callback,
-                "vtable": cells[0],
-                "bridge": target,
+                "vtable": vtable,
+                "bridge": target_address,
                 "site": address,
             }
             for register in ("r0", "r1", "r2", "r3", "r12", "lr"):
                 values.pop(register, None)
         elif mnemonic == "pop":
-            registers = re.fullmatch(r"\{([^{}]+)\}", operands)
-            require(registers is not None, "unreviewed Field return list")
-            registers = registers[1].split(", ")
+            register_match = re.fullmatch(r"\{([^{}]+)\}", operands)
+            if not (register_match is not None):
+                raise AssertionError("unreviewed Field return list")
+            registers = register_match[1].split(", ")
             require(
                 registers
                 in (["r7", "pc"], ["r7", "lr"], ["r5", "r6", "r7", "lr"], ["r2", "r3", "r7", "pc"]),
@@ -1266,9 +1352,8 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                     and before_sp == 0
                 )
                 require(expected, "Field tuple lacks its reviewed restoring epilogue")
-                require(
-                    sp == 16 and binding is not None, "Field tuple return lacks balanced binding"
-                )
+                if not (sp == 16 and binding is not None):
+                    raise AssertionError("Field tuple return lacks balanced binding")
                 binding["outlines"] = outline_calls
                 return binding, visited
         elif mnemonic == "bx":
@@ -1286,13 +1371,13 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
                 and get("r0") == ("sink_data", 0),
                 "unbound Field sink tail",
             )
-            pointer, length = get("r1"), get("r2")
-            require(
-                isinstance(pointer, int)
-                and isinstance(length, int)
-                and objects.read_only(pointer, length) == case.encode(),
-                "Field unit name differs",
-            )
+            name_pointer, name_length = get("r1"), get("r2")
+            if not (
+                isinstance(name_pointer, int)
+                and isinstance(name_length, int)
+                and (objects.read_only(name_pointer, name_length) == case.encode())
+            ):
+                raise AssertionError("Field unit name differs")
             return {
                 "case": case,
                 "role": "live_write_str",
@@ -1305,7 +1390,12 @@ def _field_case(objects, records, entry, case, outlines=None, epilogue="classic"
     raise AssertionError("Field producer/suffix bound exceeded")
 
 
-def field_case_bindings(objects, name, instructions, outlines=None):
+def field_case_bindings(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: Sequence[Instruction],
+    outlines: Outlines | None = None,
+) -> list[FieldBinding]:
     dispatch = enum_dispatch(objects, name, instructions)
     require(
         dispatch["role"] == "field" and len(FIELD_CASES) == len(dispatch["entries"]),

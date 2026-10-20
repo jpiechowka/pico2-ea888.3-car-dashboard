@@ -899,6 +899,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> StateMachine<'d, PIO, SM> {
 
     /// Set the clock divider for this state machine.
     pub fn set_clock_divider(&mut self, clock_divider: FixedU32<U8>) {
+        assert!(clock_divider >= 1 && clock_divider <= 65536, "clkdiv must be 1..=65536");
         let sm = Self::this_sm();
         sm.clkdiv().write(|w| w.0 = clock_divider.to_bits() << 8);
     }
@@ -1264,6 +1265,10 @@ pub struct Irq<'d, PIO: Instance, const N: usize> {
 }
 
 impl<'d, PIO: Instance, const N: usize> Irq<'d, PIO, N> {
+    pub(crate) fn clear(&mut self) {
+        PIO::PIO.irq().write(|w| w.set_irq(1 << N));
+    }
+
     /// Wait for an IRQ to fire.
     pub fn wait<'a>(&'a mut self) -> IrqFuture<'a, 'd, PIO> {
         IrqFuture {
@@ -1454,21 +1459,8 @@ trait SealedInstance {
     const PIO: &'static crate::pac::pio::Pio;
     const FUNCSEL: crate::pac::io::vals::Gpio0ctrlFuncsel;
 
-    #[inline]
-    fn wakers() -> &'static Wakers {
-        static WAKERS: Wakers = Wakers([const { AtomicWaker::new() }; 12]);
-        &WAKERS
-    }
-
-    #[inline]
-    fn state() -> &'static State {
-        static STATE: State = State {
-            users: AtomicU8::new(0),
-            used_pins: AtomicU64::new(0),
-        };
-
-        &STATE
-    }
+    fn wakers() -> &'static Wakers;
+    fn state() -> &'static State;
 }
 
 /// PIO instance.
@@ -1484,6 +1476,21 @@ macro_rules! impl_pio {
             const PIO_NO: u8 = $pio;
             const PIO: &'static pac::pio::Pio = &pac::$pac;
             const FUNCSEL: pac::io::vals::Gpio0ctrlFuncsel = pac::io::vals::Gpio0ctrlFuncsel::$funcsel;
+
+            // Statics in trait default methods are shared across implementors.
+            // Emit separate storage for each hardware PIO instance.
+            fn wakers() -> &'static Wakers {
+                static WAKERS: Wakers = Wakers([const { AtomicWaker::new() }; 12]);
+                &WAKERS
+            }
+
+            fn state() -> &'static State {
+                static STATE: State = State {
+                    users: AtomicU8::new(0),
+                    used_pins: AtomicU64::new(0),
+                };
+                &STATE
+            }
         }
         impl Instance for peripherals::$name {
             type Interrupt = crate::interrupt::typelevel::$irq;
@@ -1495,6 +1502,24 @@ impl_pio!(PIO0, 0, PIO0, PIO0_0, PIO0_IRQ_0);
 impl_pio!(PIO1, 1, PIO1, PIO1_0, PIO1_IRQ_0);
 #[cfg(feature = "_rp235x")]
 impl_pio!(PIO2, 2, PIO2, PIO2_0, PIO2_IRQ_0);
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+
+    #[test]
+    fn pio_instances_have_distinct_wakers_and_pin_ownership() {
+        assert!(!core::ptr::eq(peripherals::PIO0::wakers(), peripherals::PIO1::wakers()));
+        assert!(!core::ptr::eq(peripherals::PIO0::state(), peripherals::PIO1::state()));
+        #[cfg(feature = "_rp235x")]
+        {
+            assert!(!core::ptr::eq(peripherals::PIO0::wakers(), peripherals::PIO2::wakers()));
+            assert!(!core::ptr::eq(peripherals::PIO1::wakers(), peripherals::PIO2::wakers()));
+            assert!(!core::ptr::eq(peripherals::PIO0::state(), peripherals::PIO2::state()));
+            assert!(!core::ptr::eq(peripherals::PIO1::state(), peripherals::PIO2::state()));
+        }
+    }
+}
 
 /// PIO pin.
 pub trait PioPin: gpio::Pin {}

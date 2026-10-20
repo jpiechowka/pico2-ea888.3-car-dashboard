@@ -1,15 +1,17 @@
 """Radio provenance rejects changed, missing and additional source bytes."""
 
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from check_radio_vendor import verify_tree
+from check_vendor import run_verifier
 
 
 class Provenance(unittest.TestCase):
-    def test_only_top_level_cargo_output_is_ignored(self):
+    def test_only_top_level_cargo_output_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "src").mkdir()
@@ -23,13 +25,13 @@ class Provenance(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 verify_tree(root, expected, {})
 
-    def test_exact_bytes_and_reviewed_overlay(self):
+    def test_exact_bytes_and_reviewed_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "src").mkdir()
             (root / "src/lib.rs").write_bytes(b"patched\n")
 
-            def digest(data):
+            def digest(data: bytes) -> str:
                 return hashlib.sha256(data).hexdigest()
 
             original = {"src/lib.rs": digest(b"original\n")}
@@ -48,7 +50,7 @@ class Provenance(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 verify_tree(root, original, patched)
 
-    def test_paths_hashes_and_empty_manifest_are_rejected(self):
+    def test_paths_hashes_and_empty_manifest_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             for name in ["../outside", "/absolute", "a\\b", "a/../b", "a//b", "C:/outside", "."]:
@@ -56,7 +58,12 @@ class Provenance(unittest.TestCase):
                     verify_tree(root, {name: "0" * 64}, {})
             for manifest in [{}, {"a": "0" * 63}, {"a": "g" * 64}, {"a": None}]:
                 with self.assertRaises(AssertionError):
-                    verify_tree(root, manifest, {})
+                    # Malformed wire values exercise the admission boundary,
+                    # beyond the typed convenience wrapper's string map API.
+                    run_verifier(
+                        ["tree", "--root", str(root.absolute())],
+                        json.dumps({"original": manifest, "modified": {}}),
+                    )
 
 
 if __name__ == "__main__":

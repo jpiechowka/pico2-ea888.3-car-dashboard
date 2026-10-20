@@ -5,6 +5,14 @@ dependent alternatives, private predecessor, effects and ordinary closure
 must all be composed before the public pending boundary can be issued.
 """
 
+from __future__ import annotations
+
+from config_body_types import BodyRecord, Callback, InstructionMap
+from config_stack import DiagnosticObjects
+from config_build_source import SourceBinding, SourceContext
+from config_platform import ExecutionRecord
+from config_source_parent_effects import ParentEnvelopes
+from config_source_contracts import SourceObject
 from config_finite import _literal_body
 from config_headers import VISITOR
 from config_source_contracts import GRAMMARS
@@ -13,21 +21,341 @@ from config_widget_children import _name
 from validation import require
 from dataclasses import dataclass, fields, is_dataclass, replace
 from types import MappingProxyType
-from config_abstract import SequenceInterface, Span
-from config_regions import Storage, borrow, require_writes, require_disjoint
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Never, NotRequired, TypeAlias, TypeVar, TypedDict, cast
+from config_abstract import (
+    DecoderInterface,
+    DecoderOutcome,
+    PrimitiveResult,
+    SequenceOutcome,
+    SequenceInterface,
+    Span,
+)
+from config_widget_children import WarningColorsOutcome, WarningColorsResult
+from config_regions import Storage, View, borrow, require_writes, require_disjoint
 from config_decode_effects import _object
 from config_source_children import source_children, CHANNEL_SOURCE
-from config_source_effects import channel_source_interface, SOURCE_EPOCHS
+from config_source_effects import (
+    channel_source_interface,
+    SOURCE_EPOCHS,
+    SourceNormal,
+    SourceResult,
+    SourceError,
+    SourceNone,
+)
+from config_finite_returns import ReturnNode
+from config_refill_children import OpaqueCopyResult
+from config_source_sharing import SharedCopyResult
+
+if TYPE_CHECKING:
+    from config_source_sharing import _CopyDescriptions
+    from config_decoded_widgets import _WidgetsState, WidgetsDescription
+    from config_source_handoff import _SourceEntry
+    from config_source_control import _SourceStructuralControl, _SourceActiveControl
+    from config_source_uses import _SourceAccessBridge, _SourceUse
+
+
+class ArrayErrorFields(TypedDict):
+    index: int
+    parsed_prefix: int
+    old_array_unchanged: bool
+    ordinary_frontier: int
+
+
+class ArraySourceError(SourceError, ArrayErrorFields):
+    pass
+
+
+class ArrayMissing(SourceNone, ArrayErrorFields):
+    pass
+
+
+class ArrayInvocation(TypedDict):
+    index: int
+    site: int
+    before: SequenceInterface
+    result: SourceResult
+
+
+class SourcePackage(TypedDict):
+    index: int
+    site: int
+    source: SourceNormal
+    sequence_before: SequenceInterface
+    sequence_after: SequenceInterface
+    output: View
+    captured_tag: View
+    original_returns: tuple[ReturnNode, ...]
+    opaque_padding: tuple[int, int]
+    pending_roles: tuple[str, ...]
+
+
+class SourceArray(TypedDict):
+    packages: tuple[SourcePackage, ...]
+    invocations: tuple[ArrayInvocation, ...]
+    errors: tuple[ArraySourceError | ArrayMissing, ...]
+    sequence: SequenceInterface | None
+    old_array: Storage
+    protected_outputs: tuple[Storage, ...]
+    fixed_array_committed: bool
+    requires_actual_predecessor_control_transports_and_owned_use: bool
+
+
+class InlineEffect(TypedDict):
+    possible_writes: tuple[tuple[View, int, int], ...]
+    opaque_payload_not_promoted: bool
+
+
+class ArrayTransfer(TypedDict):
+    index: int
+    site: int
+    source: View
+    destination: View
+    effect: OpaqueCopyResult | SharedCopyResult | InlineEffect
+
+
+class ArraySlot(TypedDict):
+    index: int
+    source_package: SourcePackage
+    tag_store: int
+    payload: ArrayTransfer
+    complete_after: int
+    prior_prefix_bytes: int
+    outstanding_after_tag: tuple[tuple[int, int], ...]
+    opaque_padding: tuple[int, int]
+
+
+class ArrayEffects(TypedDict):
+    transports: tuple[tuple[ArrayTransfer, ...], ...]
+    transport_execution_order: tuple[tuple[int, ...], ...]
+    slots: tuple[ArraySlot, ...]
+    nonpadding_written_bytes: int
+    opaque_Config_padding: tuple[tuple[int, int], ...]
+    inactive_variant_payload_remains_opaque: bool
+    complete_ordinary_Source_prefix_issued: bool
+    requires_actual_ordinary_source_guards_and_reached_access_uses: bool
+
+
+RemainingOutcome: TypeAlias = DecoderOutcome | SequenceOutcome | WarningColorsOutcome
+RemainingPrimitive = TypeVar(
+    "RemainingPrimitive",
+    PrimitiveResult[DecoderOutcome],
+    PrimitiveResult[SequenceOutcome],
+    WarningColorsResult,
+)
+FuelField: TypeAlias = tuple[str, str, tuple[int, int]]
+FuelOption: TypeAlias = tuple[int, int, DecoderInterface, tuple[FuelField, ...], int | None]
+
+
+class WarningTransport(TypedDict):
+    kind: str
+    path: tuple[int, ...]
+    mask: int
+    whole_r5_is_scalar_error: bool
+
+
+class RemainingError(TypedDict):
+    stage: str
+    error: int | None
+    cursor: Span
+    completed_aggregates: tuple[str, ...]
+    frontier: int
+    child_outcome: RemainingOutcome
+    partial_current_aggregate_not_promoted: NotRequired[bool]
+    source_guard: NotRequired[str]
+    error_transport: NotRequired[WarningTransport]
+    source_invocation: NotRequired[ColorsInvocation]
+
+
+class RemainingStep(TypedDict):
+    field: str
+    site: int
+    before: DecoderInterface | SequenceInterface
+    after: DecoderInterface | SequenceInterface | None
+    child: PrimitiveResult[DecoderOutcome] | PrimitiveResult[SequenceOutcome]
+    domain: NotRequired[tuple[int, int]]
+    guard: NotRequired[str]
+    source_guard: NotRequired[tuple[int, int]]
+    sequence_count_before: NotRequired[Span]
+    sequence_count_after: NotRequired[Span]
+
+
+class WarningAssignment(TypedDict):
+    before: DecoderInterface
+    after: DecoderInterface
+    scope_domain: tuple[int, int]
+    mode_domain: tuple[int, int]
+    page_domain: tuple[int, int]
+    packed_word: str
+    scratch_read: tuple[int, int]
+    complete_store: int
+    physical_top_before_fold: int
+    logical_remaining: int
+    packed_error_tag: int
+    packed_error_lowbyte_only: bool
+
+
+class FuelRecord(TypedDict):
+    wire_tag: int
+    emitted_tag: int
+    active_fields: tuple[FuelField, ...]
+    padding: tuple[int, int]
+    complete_store: int
+    early_tag_store: int
+    pending_after_tag: tuple[tuple[int, int], ...]
+    inactive_payload_opaque: bool
+    density_newtype_count_decrement: int
+    remaining_sequence_counts: tuple[int, ...]
+    folded_top_count: int
+
+
+class FuelAssignment(TypedDict):
+    Fuel: FuelRecord
+    before: DecoderInterface | None
+    after: DecoderInterface
+    source_guard: tuple[int, int | None]
+    possible_writes: tuple[tuple[View, int, int], ...]
+
+
+class ColorsInvocation(TypedDict):
+    site: int
+    before: SequenceInterface
+    child: WarningColorsResult
+    Fuel_assignment: FuelAssignment
+
+
+class ColorsAssignment(TypedDict):
+    source: WarningColorsResult
+    invocation: ColorsInvocation
+    partial_background_store: int
+    complete_store: int
+    same_source_order: tuple[str, ...]
+
+
+class RemainingNormal(TypedDict):
+    wire_tag: int
+    emitted_tag: int
+    Fuel: FuelRecord
+    after: SequenceInterface
+    colors: ColorsAssignment
+
+
+class RemainingAggregates(TypedDict):
+    warning: WarningAssignment | None
+    Fuel_assignments: tuple[FuelAssignment, ...]
+    Colors_invocations: tuple[ColorsInvocation, ...]
+    normal: tuple[RemainingNormal, ...]
+    errors: tuple[RemainingError, ...]
+    transitions: tuple[RemainingStep, ...]
+    carrier_guards: tuple[Storage, ...]
+    before: SequenceInterface
+    complete_ordinary_group_issued: bool
+    pending_owned_roles: tuple[str, ...]
+    requires_actual_Source_prefix_ordinary_control_and_reached_uses: bool
+
+
+# Labels are retained equality/hash keys; only counts, codes and cursors are interpreted.
+ErrorSummaryKey: TypeAlias = tuple[str, object, int, object, object, tuple[object, ...]]
+ErrorSummaryRow: TypeAlias = tuple[
+    str, object, int, object, object, tuple[object, ...], int, int, int
+]
+
+
+class ControlsReady(TypedDict):
+    frontier: int
+    top_count: int
+    Controls_consumed: bool
+
+
+class DeclaredFrontier(TypedDict):
+    frontier: int
+    reached: bool
+
+
+class SourceCompletionSites(TypedDict):
+    Sources: int
+    WarningPresentation: int
+    Fuel: int
+    WarningColors: int
+
+
+class ConditionalSourceAccesses(TypedDict):
+    families: tuple[str, ...]
+    static_sites: int
+    descriptors_are_reached_uses: bool
+    actual_inherited16_pending: bool
+
+
+class GuardedAccesses(TypedDict):
+    role_counts: tuple[tuple[str, int], ...]
+    completed_prefix_issued: bool
+    runtime_observation: bool
+
+
+class SourceControlDescription(TypedDict):
+    selected_instructions: int
+    stopped_frontiers: tuple[int, ...]
+    outside_shared_context_count: int
+    pending_contexts_confer_state: bool
+
+
+class SourceStructuralDescription(TypedDict):
+    selected_instructions: int
+    outside_shared_context_count: int
+    confers_active_state: bool
+    unentered: bool
+
+
+class SourcesDescription(TypedDict):
+    phase: str
+    mode: str
+    Controls_ready: ControlsReady | None
+    declared_Controls_frontier: DeclaredFrontier
+    successes: tuple[tuple[int, int, int, int, int, int, int], ...]
+    success_columns: tuple[str, ...]
+    error_summary: tuple[ErrorSummaryRow, ...]
+    error_occurrences: int
+    error_columns: tuple[str, ...]
+    diagnostic_error_envelopes_are_not_paths: bool
+    exact_error_relations_retained_privately: bool
+    physical_completion_sites: SourceCompletionSites
+    conditional_Source_accesses: ConditionalSourceAccesses
+    source_guarded_accesses: GuardedAccesses
+    control: SourceControlDescription | None
+    structural_control: SourceStructuralDescription
+    ordinary_domain: str
+    execution_scope: ExecutionRecord
+    source_context: SourceBinding
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    exception_graph_limit: tuple[str, ...]
+    exceptional_resume_established: bool
+    exception_absence_established: bool
+    all_observers_compatible: bool
+    exception_safe_completion: bool
+    unconditional_owner: bool
+    hardware_qualified: bool
+    initial_facts_reinitialized: bool
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    full_visitor_return_pending: bool
+    shared_error_suffix_pending: bool
+    complete_policy_and_resource_producer_pending: bool
+    pending: tuple[str, ...]
 
 
 _WINDOWS = (4376, 4410, 5732, 5860, 5974, 6218, 6446, 6656)
 
 
-def _parents(objects, rows, V, B):
+def _parents(
+    objects: DiagnosticObjects, rows: InstructionMap, V: int, B: int
+) -> tuple[BodyRecord, ...]:
     """Complete authored selected windows, with source-owned pool values."""
     name = _name(objects, VISITOR, V)
 
-    def object_value(objects, value, descriptor):
+    def object_value(
+        objects: DiagnosticObjects, value: int, descriptor: SourceObject
+    ) -> tuple[Callback, ...]:
         if descriptor == dict(kind="same_Config"):
             require(value == B, "Sources reload loses the same private Config")
             return ()
@@ -55,7 +383,14 @@ def _parents(objects, rows, V, B):
     )
 
 
-def _source_array(objects, rows, parents, sequence, protected, old_array):
+def _source_array(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    sequence: SequenceInterface,
+    protected: Sequence[Storage],
+    old_array: Storage,
+) -> SourceArray:
     """Eight fresh same-Q invocations; this stage still cannot commit Config.
 
     Each package retains its own selected Source alternatives and cursor
@@ -127,13 +462,17 @@ def _source_array(objects, rows, parents, sequence, protected, old_array):
     )
     top = borrow(frame, 288, 8, phase)
     guard = tuple(protected) + (old_array, _object(top, "stable top Q during Sources"))
-    packages = []
-    errors = []
-    live = []
-    current = sequence
-    invocations = []
+    packages: list[SourcePackage] = []
+    errors: list[ArraySourceError | ArrayMissing] = []
+    live: list[Storage] = []
+    current: SequenceInterface | None = sequence
+    invocations: list[ArrayInvocation] = []
     child_frame = Storage(frame.space, "actual Sources child", frame.start - 72, 72, 8, phase, True)
     for index, ((site, proof), (offset, out, tag)) in enumerate(zip(source_edges, SOURCE_EPOCHS)):
+        if current is None:
+            raise AssertionError(
+                "Sources array bypasses one of its eight complete normal invocations"
+            )
         require(
             site == V + offset and current.count == Span(8 - index, 8 - index),
             "Sources call consumes another predecessor/count epoch",
@@ -145,25 +484,24 @@ def _source_array(objects, rows, parents, sequence, protected, old_array):
         invocations.append(dict(index=index, site=site, before=current, result=result))
         # Error descriptions preserve the exact parsed prefix, same input and
         # decrement-before-child cursor. None is an explicit missing field.
-        errors.extend(
-            dict(
-                v,
-                index=index,
-                parsed_prefix=index,
-                old_array_unchanged=True,
-                ordinary_frontier=V + 56,
-            )
-            for v in result["errors"]
-        )
+        for source_error in result["errors"]:
+            occurrence: ArraySourceError = {
+                **source_error,
+                "index": index,
+                "parsed_prefix": index,
+                "old_array_unchanged": True,
+                "ordinary_frontier": V + 56,
+            }
+            errors.append(occurrence)
         if result["none"] is not None:
             errors.append(
-                dict(
-                    result["none"],
-                    index=index,
-                    parsed_prefix=index,
-                    old_array_unchanged=True,
-                    ordinary_frontier=V + 170,
-                )
+                {
+                    **result["none"],
+                    "index": index,
+                    "parsed_prefix": index,
+                    "old_array_unchanged": True,
+                    "ordinary_frontier": V + 170,
+                }
             )
         normal = result["normal"]
         if normal is None:
@@ -276,8 +614,16 @@ _COMMIT = (
 
 
 def _array_effects(
-    objects, rows, parents, array, owner, frame, protected, sequence, _descriptions=None
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    array: SourceArray,
+    owner: Storage,
+    frame: Storage,
+    protected: Sequence[Storage],
+    sequence: SequenceInterface,
+    _descriptions: _CopyDescriptions | None = None,
+) -> ArrayEffects:
     """Actual fixed-array transport and per-slot last-write envelopes.
 
     This proves the copy/preservation relation. An actual selected ordinary
@@ -330,8 +676,8 @@ def _array_effects(
         )
         before = package["sequence_after"]
     require(before == array["sequence"], "Sources publication lost its final paired cursor")
-    guards = list(protected)
-    guards.extend(
+    guard_list = list(protected)
+    guard_list.extend(
         (
             _object(sequence.header, "complete Source Q"),
             _object(sequence.decoder.header, "live D"),
@@ -341,16 +687,16 @@ def _array_effects(
     )
     # Preserve physical meaning even where the caller uses different storage
     # coordinate names. No cross-space name alone can avoid the child check.
-    for g in tuple(guards):
+    for g in tuple(guard_list):
         for space in ("address", frame.space):
             if g.space != space and not any(
                 v.space == space and v.start <= g.start and g.start + g.extent <= v.start + v.extent
-                for v in guards
+                for v in guard_list
             ):
-                guards.append(
+                guard_list.append(
                     Storage(space, "physical " + g.identity, g.start, g.extent, 1, phase, False)
                 )
-    guards = tuple(guards)
+    guards = tuple(guard_list)
     tag_cells = tuple(
         _object(p["captured_tag"], "captured Poll tag " + str(i)) for i, p in enumerate(packages)
     )
@@ -359,13 +705,20 @@ def _array_effects(
         _object(borrow(frame, p["output"].offset, 22, phase), "parsed Source " + str(i))
         for i, p in enumerate(packages)
     )
-    chains = []
+    chains: list[tuple[ArrayTransfer, ...]] = []
 
-    def transfer(spec, index, protect, child=False, destination_owner=None):
+    def transfer(
+        spec: tuple[int, int, int, int],
+        index: int,
+        protect: tuple[Storage, ...],
+        child: bool = False,
+        destination_owner: Storage | None = None,
+    ) -> ArrayTransfer:
         site, source, destination, size = spec
         target_owner = frame if destination_owner is None else destination_owner
         inp = borrow(frame, source, size, phase)
         out = borrow(target_owner, destination, size, phase, True)
+        effect: OpaqueCopyResult | SharedCopyResult | InlineEffect
         if child:
             edge = _edge_at(parents, V + site)
             target = edge[2]
@@ -383,7 +736,7 @@ def _array_effects(
             effect = _descriptions.checked(effect, objects, rows, target)
         else:
             writes = ((out, 0, 16), (out, 16, 2), (out, 18, 1)) if size == 19 else ((out, 0, 20),)
-            expected_sites = (
+            expected_sites: tuple[int, ...] = (
                 (site, site + 4, site + 8)
                 if site == 5768
                 else ((site, site + 8, site + 6) if site == 4422 else (site, site + 6, site + 16))
@@ -409,7 +762,7 @@ def _array_effects(
         (_CARRIER_COPY, False),
         (_FINAL_LOCAL, False),
     ):
-        destinations = []
+        destinations: list[Storage] = []
         stage_chain = []
         for index, spec in enumerate(stage):
             proof = transfer(
@@ -430,7 +783,7 @@ def _array_effects(
     fixed_after = Storage(
         "address", "Config after Source array", owner.start + 208, 14604 - 208, 4, phase, False
     )
-    slots = []
+    slots: list[ArraySlot] = []
     for index, spec in enumerate(_COMMIT):
         offset = 32 + 22 * index
         prior = (
@@ -464,8 +817,8 @@ def _array_effects(
             )
         )
         protect = guards + tag_cells + live + (fixed_before, fixed_after) + prior + suffix
-        tag = borrow(owner, offset, 2, phase, True)
-        require_writes((tag,), ((tag, 0, 2),), protect)
+        tag_output = borrow(owner, offset, 2, phase, True)
+        require_writes((tag_output,), ((tag_output, 0, 2),), protect)
         if index == 0:
             split = borrow(owner, 34, 1, phase, True)
             require_writes((split,), ((split, 0, 1),), protect)
@@ -500,7 +853,14 @@ def _array_effects(
     )
 
 
-def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
+def _remaining_aggregates(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parents: tuple[BodyRecord, ...],
+    sequence: SequenceInterface,
+    owner: Storage,
+    protected: Sequence[Storage],
+) -> RemainingAggregates:
     """Fresh source-typed Warning/Fuel/colors after the fixed Source array.
 
     The folded physical count store differs from conceptual field order.
@@ -508,7 +868,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
     independent enum alternatives into complete Config histories.
     """
     from config_abstract import decoder_interface, sequence_interface
-    from config_decoded_widgets import _at_child, _input_policy
+    from config_decoded_widgets import _at_child, _input_policy, SequenceArguments
     from config_widget_children import warning_colors_interface
     from config_widget_contracts import ROLES as WIDGET
     from config_source_handoff import _CARRIERS
@@ -532,18 +892,18 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
         "Sources suffix uses stale parent/source effects",
     )
     children = source_children(objects, rows, parents)
-    errors = []
-    steps = []
+    errors: list[RemainingError] = []
+    steps: list[RemainingStep] = []
     # The actual predecessor already retains these same cell borrows. Keep
     # that original protection identity instead of inventing overlapping
     # allocations for the same caller bytes; supplied adapters add the cells.
-    inherited = list(protected)
+    inherited_list = list(protected)
     carrier_guards = []
     for cell, target, sites in _CARRIERS:
         original = next(
             (
                 v
-                for v in inherited
+                for v in inherited_list
                 if v.space == frame.space and v.start == frame.start + cell and v.extent == 4
             ),
             None,
@@ -552,29 +912,29 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             original = _object(
                 borrow(frame, cell, 4, phase), "reserved Source pointer " + str(cell)
             )
-            inherited.append(original)
+            inherited_list.append(original)
         carrier_guards.append(original)
-    inherited = tuple(inherited)
-    guards = list(inherited)
+    inherited = tuple(inherited_list)
+    guard_list = list(inherited)
     for g in inherited:
         for space in ("address", frame.space):
             if g.space != space and not any(
                 v.space == space and v.start <= g.start and g.start + g.extent <= v.start + v.extent
-                for v in guards
+                for v in guard_list
             ):
-                guards.append(
+                guard_list.append(
                     Storage(space, "physical " + g.identity, g.start, g.extent, 1, phase, False)
                 )
-    guards = tuple(guards)
+    guards = tuple(guard_list)
 
-    def base(active=None):
+    def base(active: View | None = None) -> tuple[Storage, ...]:
         return guards + (
             ()
             if active == sequence.header
             else (_object(sequence.header, "stable physical top Q"),)
         )
 
-    def nested(proof, label):
+    def nested(proof: BodyRecord, label: str) -> Storage:
         return Storage(
             frame.space,
             "Sources " + label,
@@ -585,7 +945,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             True,
         )
 
-    def warning_transport(stage, kind):
+    def warning_transport(stage: str, kind: str) -> WarningTransport:
         # Exact current route anchors, including the packed intermediate r5.
         # Frontier56 copies the complete packed r5 into r0. Its low byte is
         # the conceptual error; narrowing by the later returned-error ABI
@@ -595,6 +955,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             and kind in ("domain", "none", "error"),
             "unreviewed packed Warning error route",
         )
+        prefix: tuple[int, ...]
         if kind in ("domain", "none"):
             prefix = (6446, 6448)
         elif stage == "Warning page":
@@ -610,8 +971,13 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             whole_r5_is_scalar_error=False,
         )
 
-    def error(stage, option, completed, source_invocation=None):
-        record = dict(
+    def error(
+        stage: str,
+        option: RemainingOutcome,
+        completed: tuple[str, ...],
+        source_invocation: ColorsInvocation | None = None,
+    ) -> None:
+        record: RemainingError = dict(
             stage=stage,
             error=14 if option["kind"] == "none" else option["error"],
             cursor=option["cursor"],
@@ -625,11 +991,13 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
                 stage, "none" if option["kind"] == "none" else "error"
             )
         if source_invocation is not None:
-            record.update(source_invocation=source_invocation, child_outcome=option)
+            record.update({"source_invocation": source_invocation, "child_outcome": option})
         errors.append(record)
 
-    def stable(result, state=None):
-        fixed = (
+    def stable(
+        result: RemainingPrimitive, state: SequenceInterface | None = None
+    ) -> RemainingPrimitive:
+        fixed: tuple[Storage, ...] = (
             _object(
                 borrow(
                     sequence.decoder.header.storage, sequence.decoder.header.offset + 4, 4, phase
@@ -646,7 +1014,13 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             require_writes(available, option["possible_writes"], fixed)
         return result
 
-    def direct(label, site, decoder, maximum, completed):
+    def direct(
+        label: str,
+        site: int,
+        decoder: DecoderInterface | None,
+        maximum: int,
+        completed: tuple[str, ...],
+    ) -> DecoderInterface | None:
         if decoder is None:
             return None
         proof = _at_child(parents, children, V + site, "take_varint_u32")
@@ -665,7 +1039,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
         for option in result["outcomes"]:
             if option["kind"] == "success":
                 normal.append(option["state"])
-                record = dict(
+                record: RemainingError = dict(
                     stage=label + ".domain",
                     error=14,
                     cursor=option["cursor"],
@@ -693,9 +1067,11 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
         )
         return after
 
-    def scalar(label, site, state, semantic, completed):
+    def scalar(
+        label: str, site: int, state: SequenceInterface, semantic: str, completed: tuple[str, ...]
+    ) -> SequenceInterface | None:
         proof = _at_child(parents, children, V + site, semantic)
-        kwargs = {}
+        kwargs: SequenceArguments = {}
         if semantic == "seq_f32":
             kwargs = dict(
                 output=borrow(frame, 1064, 8, phase, True),
@@ -725,7 +1101,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
         )
         return normal[0] if normal else None
 
-    def assignment(writes):
+    def assignment(writes: tuple[tuple[View, int, int], ...]) -> None:
         available = tuple(dict.fromkeys(v for v, offset, size in writes))
         require_writes(
             available,
@@ -738,7 +1114,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             ),
         )
 
-    completed = ("Sources",)
+    completed: tuple[str, ...] = ("Sources",)
     current = direct("Warning scope", 4814, sequence.decoder, 1, completed)
     current = direct("Warning mode", 4850, current, 1, completed)
     if current is not None:
@@ -750,7 +1126,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             completed,
         )
         current = None if page is None else page.decoder
-    warning = None
+    warning: WarningAssignment | None = None
     if current is not None:
         assignment(
             (
@@ -788,7 +1164,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             ),
         )
     fuel_start = direct("Fuel", 5064, current, 2, completed)
-    fuel = []
+    fuel: list[FuelOption] = []
     if fuel_start is not None:
         fuel.append((0, 2, fuel_start, (), None))
         ratio = scalar(
@@ -813,7 +1189,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
         blend = direct("Blend origin", 5988, blend, 1, completed)
         blend = direct("Blend density", 6236, blend, 1, completed)
         if blend is not None:
-            density = [(0, blend)]
+            density_options = [(0, blend)]
             proof = _at_child(parents, children, V + 6266, "deserialize_seed_f32")
             extra = stable(
                 decoder_interface(
@@ -831,7 +1207,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             for option in extra["outcomes"]:
                 if option["kind"] == "success":
                     temperature.append(option["state"])
-                    density.append((1, option["state"]))
+                    density_options.append((1, option["state"]))
                 else:
                     error("Blend density temperature", option, completed)
             require(
@@ -849,14 +1225,18 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
                     sequence_count_after=Span(4, 4),
                 )
             )
-            for tag, after in density:
-                q = SequenceInterface(borrow(frame, 1000, 8, phase, True), after, Span(4, 4))
+            for tag, after in density_options:
+                q: SequenceInterface | None = SequenceInterface(
+                    borrow(frame, 1000, 8, phase, True), after, Span(4, 4)
+                )
                 for field, site in (
                     ("gasoline_stoich", 6288),
                     ("ethanol_stoich", 6320),
                     ("gasoline_density", 6352),
                     ("ethanol_density", 6384),
                 ):
+                    if q is None:
+                        raise AssertionError("Blend omitted a counted field")
                     q = scalar("Blend " + field, site, q, "seq_f32", completed)
                     if q is None:
                         break
@@ -875,9 +1255,9 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
                     if tag:
                         fields += (("temperature", "f32_bits", (0, 0xFFFFFFFF)),)
                     fuel.append((2, tag, q.decoder, fields, tag))
-    normals = []
-    fuel_assignments = []
-    colors_invocations = []
+    normals: list[RemainingNormal] = []
+    fuel_assignments: list[FuelAssignment] = []
+    colors_invocations: list[ColorsInvocation] = []
     for wire, tag, decoder, fields, density in fuel:
         writes = (
             (0, 4),
@@ -896,7 +1276,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             (borrow(owner, 0, 32, phase, True), offset, size) for offset, size in writes
         )
         assignment(possible)
-        record = dict(
+        record: FuelRecord = dict(
             wire_tag=wire,
             emitted_tag=tag,
             active_fields=fields,
@@ -938,13 +1318,13 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
             base(sequence.header),
         )
         stable(colors, sequence)
-        invocation = dict(
+        invocation: ColorsInvocation = dict(
             site=V + 5578, before=colors_before, child=colors, Fuel_assignment=fuel_assignments[-1]
         )
         colors_invocations.append(invocation)
-        for option in colors["outcomes"]:
-            if option["kind"] != "some":
-                error("global WarningColors", option, completed + ("Fuel",), invocation)
+        for color_outcome in colors["outcomes"]:
+            if color_outcome["kind"] != "some":
+                error("global WarningColors", color_outcome, completed + ("Fuel",), invocation)
                 continue
             assignment(
                 (
@@ -957,7 +1337,7 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
                     wire_tag=wire,
                     emitted_tag=tag,
                     Fuel=record,
-                    after=option["state"],
+                    after=color_outcome["state"],
                     colors=dict(
                         source=colors,
                         invocation=invocation,
@@ -982,27 +1362,38 @@ def _remaining_aggregates(objects, rows, parents, sequence, owner, protected):
     )
 
 
+class SourceEntryData(TypedDict):
+    exit_index: int
+    sequence: SequenceInterface
+    carriers: tuple[tuple[View, int], ...]
+    protected: tuple[Storage, ...]
+    saved_top_count: tuple[View, Span, int]
+    old_array: View
+    call_site: int
+    call_arguments: tuple[tuple[str, int], ...]
+
+
 @dataclass(frozen=True)
 class _SourcePhase:
-    entry: object
-    array: dict
-    effects: object
-    remaining: object
-    parent_envelopes: dict
+    entry: _SourceEntry
+    array: SourceArray
+    effects: ArrayEffects | None
+    remaining: RemainingAggregates | None
+    parent_envelopes: ParentEnvelopes
 
 
 @dataclass(frozen=True)
 class _SourcePhaseData:
     """Snapshot only local records, without copying the predecessor bridge."""
 
-    entry: dict
-    array: dict
-    effects: object
-    remaining: object
-    parent_envelopes: dict
+    entry: SourceEntryData
+    array: SourceArray
+    effects: ArrayEffects | None
+    remaining: RemainingAggregates | None
+    parent_envelopes: ParentEnvelopes
 
 
-def _entry_data(entry, widgets):
+def _entry_data(entry: _SourceEntry, widgets: _WidgetsState) -> SourceEntryData:
     require(
         entry.predecessor is widgets and any(entry.exit is v for v in widgets.exits),
         "Sources private phase lost its actual predecessor/exit identity",
@@ -1020,16 +1411,16 @@ def _entry_data(entry, widgets):
 
 
 def _phase_checkpoint(
-    widgets,
-    entries,
-    parents,
-    children,
-    returns,
-    phases,
-    payload_sha256,
-    structural,
-    predecessor_description,
-):
+    widgets: _WidgetsState,
+    entries: tuple[_SourceEntry, ...],
+    parents: tuple[BodyRecord, ...],
+    children: Mapping[tuple[int, str], BodyRecord],
+    returns: tuple[ReturnNode, ...],
+    phases: tuple[_SourcePhase, ...],
+    payload_sha256: str,
+    structural: _SourceStructuralControl,
+    predecessor_description: WidgetsDescription,
+) -> PhaseGraph:
     from config_source_control import _structural_data
 
     require(
@@ -1055,7 +1446,20 @@ def _phase_checkpoint(
     )
 
 
-def _phase_graph(value):
+# Encodings preserve arbitrary dataclass metadata on the fallback path. Their
+# internal tuple values are opaque to callers, which compare complete graphs.
+PhaseToken: TypeAlias = tuple[object, ...]
+PhaseNode: TypeAlias = tuple[object, ...]
+PhaseGraph: TypeAlias = tuple[PhaseToken, tuple[PhaseNode, ...]]
+PhasePair: TypeAlias = tuple[PhaseToken, PhaseToken]
+
+
+def _released_phase_work(item: object) -> Never:
+    """Noncapturing terminal value releases recursive closures in finally."""
+    raise AssertionError("phase traversal used after workspace release")
+
+
+def _phase_graph(value: object) -> PhaseGraph:
     """Independent immutable values and alias edges for one checked invocation.
 
     Array/effect records intentionally retain the same Source package. A tree
@@ -1066,14 +1470,14 @@ def _phase_graph(value):
     identity is deliberately absent from this encoding: identical typed
     literal tokens share immutable storage only within this snapshot call.
     """
-    nodes = []
-    memo = {}
-    active = set()
-    literals = {}
-    descriptions = {}
-    scalar_pairs = {}
+    nodes: list[PhaseNode | None] = []
+    memo: dict[int, PhaseToken] = {}
+    active: set[int] = set()
+    literals: dict[tuple[type[object], object], PhaseToken] = {}
+    descriptions: dict[PhaseNode, PhaseNode] = {}
+    scalar_pairs: dict[PhasePair, PhasePair] = {}
 
-    def mapping_pair(key, value):
+    def mapping_pair(key: PhaseToken, value: PhaseToken) -> PhasePair:
         pair = (key, value)
         # These are freshly authored typed scalar tokens, never input objects
         # or reference edges. Saturation only declines new storage reuse.
@@ -1085,7 +1489,7 @@ def _phase_graph(value):
                 scalar_pairs[pair] = pair
         return pair
 
-    def visit(item):
+    def visit(item: object) -> PhaseToken:
         kind = type(item)
         if kind in (str, bytes, int, bool, type(None)):
             key = (kind, item)
@@ -1101,10 +1505,15 @@ def _phase_graph(value):
         memo[identity] = token
         nodes.append(None)
         active.add(identity)
+        node: PhaseNode
         if kind in (dict, MappingProxyType):
-            node = ("mapping", tuple(mapping_pair(visit(k), visit(v)) for k, v in item.items()))
+            # Preserve the writer's existing type-equality dispatch, including
+            # metaclass callbacks. Casts describe each selected operation only;
+            # they deliberately do not replace that dispatch with isinstance.
+            mapping = cast(Mapping[object, object], item)
+            node = ("mapping", tuple(mapping_pair(visit(k), visit(v)) for k, v in mapping.items()))
         elif kind in (tuple, list):
-            node = (kind.__name__, tuple(visit(v) for v in item))
+            node = (kind.__name__, tuple(visit(v) for v in cast(Sequence[object], item)))
         elif is_dataclass(item) and not isinstance(item, type):
             node = (
                 "dataclass",
@@ -1113,7 +1522,7 @@ def _phase_graph(value):
                 tuple((f.name, visit(getattr(item, f.name))) for f in fields(item)),
             )
         else:
-            require(False, "unsupported Sources phase snapshot value")
+            raise AssertionError("unsupported Sources phase snapshot value")
         # Input identities keep their separate slots/indices. Only complete
         # immutable encoded descriptions can share storage, after every child
         # was freshly visited. Unusual dataclass metadata keeps the original
@@ -1121,7 +1530,10 @@ def _phase_graph(value):
         eligible = kind in (dict, MappingProxyType, tuple, list) or (
             type(node[1]) is str
             and type(node[2]) is str
-            and all(type(name) is str for name, value in node[3])
+            and all(
+                type(name) is str
+                for name, value in cast(tuple[tuple[object, PhaseToken], ...], node[3])
+            )
         )
         active.remove(identity)
         nodes[index] = descriptions.setdefault(node, node) if eligible else node
@@ -1132,9 +1544,11 @@ def _phase_graph(value):
         # The recursive function otherwise keeps these construction tables
         # cyclically reachable after both successful and failed traversals.
         root = visit(value)
-        return root, tuple(nodes)
+        # A successful visit fills every reserved slot before returning. Cycles
+        # and unsupported nodes raise, so no placeholder escapes this boundary.
+        return root, cast(tuple[PhaseNode, ...], tuple(nodes))
     finally:
-        visit = None
+        visit = _released_phase_work
         nodes.clear()
         memo.clear()
         active.clear()
@@ -1143,17 +1557,19 @@ def _phase_graph(value):
         scalar_pairs.clear()
 
 
-def _phase_plain_fields(kind):
+def _phase_plain_fields(kind: type[object]) -> tuple[str, ...] | None:
     """Recognize only ordinary, directly stored dataclass fields without callbacks."""
-    from dataclasses import Field, _FIELD
+    import dataclasses
+    from dataclasses import Field
     from types import GetSetDescriptorType
 
+    field_marker: object = getattr(dataclasses, "_FIELD")
     if type(kind) is not type:
         return None
-    ancestry = type.__getattribute__(kind, "__mro__")
+    ancestry: tuple[type[object], ...] = type.__getattribute__(kind, "__mro__")
     if len(ancestry) != 2 or ancestry[1] is not object:
         return None
-    namespace = type.__getattribute__(kind, "__dict__")
+    namespace: Mapping[str, object] = type.__getattribute__(kind, "__dict__")
     if any(type(name) is not str for name in namespace):
         return None
     if "__getattribute__" in namespace or "__getattr__" in namespace:
@@ -1173,11 +1589,11 @@ def _phase_plain_fields(kind):
     declared = namespace.get("__dataclass_fields__")
     if type(declared) is not dict or any(type(name) is not str for name in declared):
         return None
-    names = []
+    names: list[str] = []
     for field in declared.values():
         if type(field) is not Field:
             return None
-        if field._field_type is not _FIELD:
+        if getattr(field, "_field_type") is not field_marker:
             continue
         name = field.name
         if type(name) is not str or name in ("__class__", "__dict__", "__dataclass_fields__"):
@@ -1198,7 +1614,7 @@ def _phase_plain_fields(kind):
     return tuple(names)
 
 
-def _phase_matches(value, baseline):
+def _phase_matches(value: object, baseline: object) -> bool:
     """Compare without retaining another encoded graph for plain local records.
 
     A callback-free preflight selects the optimization before any getter runs.
@@ -1207,13 +1623,14 @@ def _phase_matches(value, baseline):
     can make both traversal and interning observable. They are not speculated.
     This is a local comparison, never a cached validation or successor token.
     """
-    seen = set()
-    classes = {}
-    memo = {}
-    active = set()
+    seen: set[int] = set()
+    classes: dict[type[object], tuple[str, ...] | None] = {}
+    memo: dict[int, PhaseToken] = {}
+    active: set[int] = set()
+    encoded: tuple[object, tuple[object, ...]]
     matched = True
 
-    def plain(item):
+    def plain(item: object) -> bool:
         kind = type(item)
         if kind is str or kind is bytes or kind is int or kind is bool or kind is type(None):
             return True
@@ -1222,9 +1639,9 @@ def _phase_matches(value, baseline):
             return True
         seen.add(identity)
         if kind is dict:
-            return all(plain(k) and plain(v) for k, v in item.items())
+            return all(plain(k) and plain(v) for k, v in cast(dict[object, object], item).items())
         if kind is list or kind is tuple:
-            return all(plain(v) for v in item)
+            return all(plain(v) for v in cast(Sequence[object], item))
         # Check the metaclass before dictionary lookup or type comparison:
         # custom type equality/hash is itself observable in the writer.
         if type(kind) is not type:
@@ -1234,20 +1651,20 @@ def _phase_matches(value, baseline):
         names = classes[kind]
         if names is None:
             return False
-        stored = object.__getattribute__(item, "__dict__")
+        stored: object = object.__getattribute__(item, "__dict__")
         if type(stored) is not dict or any(type(name) is not str for name in stored):
             return False
         if "__dataclass_fields__" in stored:
             return False
         return all(name in stored and plain(stored[name]) for name in names)
 
-    def plain_encoded(item):
+    def plain_encoded(item: object) -> bool:
         kind = type(item)
         if kind is tuple:
-            return all(plain_encoded(v) for v in item)
+            return all(plain_encoded(v) for v in cast(tuple[object, ...], item))
         return kind is str or kind is bytes or kind is int or kind is bool or kind is type(None)
 
-    def visit(item):
+    def visit(item: object) -> PhaseToken:
         nonlocal matched
         kind = type(item)
         if kind in (str, bytes, int, bool, type(None)):
@@ -1260,21 +1677,28 @@ def _phase_matches(value, baseline):
         token = ("reference", index)
         memo[identity] = token
         active.add(identity)
+        node: PhaseNode
         if kind is dict:
-            node = ("mapping", tuple((visit(k), visit(v)) for k, v in item.items()))
+            node = (
+                "mapping",
+                tuple((visit(k), visit(v)) for k, v in cast(dict[object, object], item).items()),
+            )
         elif kind in (tuple, list):
-            node = (kind.__name__, tuple(visit(v) for v in item))
+            node = (kind.__name__, tuple(visit(v) for v in cast(Sequence[object], item)))
         else:
+            names = classes[kind]
+            if names is None:
+                raise AssertionError("phase preflight lost plain dataclass fields")
             node = (
                 "dataclass",
                 kind.__module__,
                 kind.__qualname__,
-                tuple((name, visit(getattr(item, name))) for name in classes[kind]),
+                tuple((name, visit(getattr(item, name))) for name in names),
             )
         active.remove(identity)
         # Preflight proved both sides callback-free. Completion order can now
         # differ from node-table equality order, but traversal never stops early.
-        if index >= len(baseline[1]) or node != baseline[1][index]:
+        if index >= len(encoded[1]) or node != encoded[1][index]:
             matched = False
         return token
 
@@ -1294,12 +1718,15 @@ def _phase_matches(value, baseline):
         if not eligible:
             classes.clear()
             return _phase_graph(value) == baseline
+        # The complete callback-free preflight checked both tuple envelopes and
+        # every nested encoded value. Traversal only indexes the two envelopes.
+        encoded = cast(tuple[object, tuple[object, ...]], baseline)
         root = visit(value)
-        return root == baseline[0] and matched and len(memo) == len(baseline[1])
+        return root == encoded[0] and matched and len(memo) == len(encoded[1])
     finally:
-        plain = None
-        plain_encoded = None
-        visit = None
+        plain = _released_phase_work
+        plain_encoded = _released_phase_work
+        visit = _released_phase_work
         seen.clear()
         classes.clear()
         memo.clear()
@@ -1308,23 +1735,23 @@ def _phase_matches(value, baseline):
 
 @dataclass(frozen=True)
 class _SourcePhasesState:
-    widgets: object
-    objects: object
-    rows: object
-    source_context: object
-    parents: tuple
-    children: dict
-    returns: tuple
-    structural: object
-    entries: tuple
-    phases: tuple
-    checkpoint: object
+    widgets: _WidgetsState
+    objects: DiagnosticObjects
+    rows: InstructionMap
+    source_context: SourceContext
+    parents: tuple[BodyRecord, ...]
+    children: Mapping[tuple[int, str], BodyRecord]
+    returns: tuple[ReturnNode, ...]
+    structural: _SourceStructuralControl
+    entries: tuple[_SourceEntry, ...]
+    phases: tuple[_SourcePhase, ...]
+    checkpoint: PhaseGraph
     payload_sha256: str
-    predecessor_description: dict
+    predecessor_description: WidgetsDescription
     complete_ordinary_group_issued: bool = False
     ordinary_frontier_pending: int = 5630
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             self.complete_ordinary_group_issued is False
             and type(self.ordinary_frontier_pending) is int
@@ -1332,7 +1759,7 @@ class _SourcePhasesState:
             "Sources private phase cannot mint ordinary completion",
         )
 
-    def current(self):
+    def current(self) -> _SourcePhasesState:
         from config_source_handoff import _source_entries
         from config_structural import _readonly_hash
 
@@ -1389,7 +1816,9 @@ class _SourcePhasesState:
         return self
 
 
-def _first_boot_source_phases(objects, rows, source_context):
+def _first_boot_source_phases(
+    objects: DiagnosticObjects, rows: InstructionMap, source_context: object
+) -> _SourcePhasesState:
     """Derive the actual private predecessor once; ordinary closure is pending.
 
     This is deliberately not the public Sources boundary. No descriptor,
@@ -1420,7 +1849,7 @@ def _first_boot_source_phases(objects, rows, source_context):
     from config_source_sharing import _CopyDescriptions
 
     entries = _source_entries(objects, rows, widgets)
-    phases = []
+    phase_list: list[_SourcePhase] = []
     descriptions = _CopyDescriptions(objects, rows)
     for entry in entries:
         envelopes = _parent_envelopes(
@@ -1456,10 +1885,10 @@ def _first_boot_source_phases(objects, rows, source_context):
             remaining = _remaining_aggregates(
                 objects, rows, parents, top, c.owner, entry.protected + (completed,)
             )
-        phases.append(_SourcePhase(entry, array, effects, remaining, envelopes))
+        phase_list.append(_SourcePhase(entry, array, effects, remaining, envelopes))
     payload = c.headers["visitor"]["sequence_state"].decoder.payload
     digest = _readonly_hash(objects, payload.start, payload.extent)
-    phases = tuple(phases)
+    phases = tuple(phase_list)
     checkpoint = _phase_checkpoint(
         widgets,
         entries,
@@ -1492,10 +1921,15 @@ def _first_boot_source_phases(objects, rows, source_context):
 class _SourcesExit:
     phase_index: int
     sequence: SequenceInterface
-    source_normal: dict
+    source_normal: RemainingNormal
 
 
-def _source_exits(state, control, bridge, uses):
+def _source_exits(
+    state: _SourcePhasesState,
+    control: _SourceActiveControl,
+    bridge: _SourceAccessBridge,
+    uses: tuple[_SourceUse, ...],
+) -> tuple[_SourcesExit, ...]:
     """Same-source ordinary outcomes after the authoritative whole-use batch.
 
     This consumes no description or external completion flag. The caller is
@@ -1504,7 +1938,7 @@ def _source_exits(state, control, bridge, uses):
     as an independent owner or exceptional-resume capability.
     """
     from config_source_control import _SourceActiveControl
-    from config_source_uses import _SourceAccessBridge
+    from config_source_uses import _SourceAccessBridge, is_fuel_source
 
     require(
         type(state) is _SourcePhasesState
@@ -1538,6 +1972,7 @@ def _source_exits(state, control, bridge, uses):
                 and any(
                     use.role == "Fuel_final_halfword"
                     and use.phase_index == index
+                    and is_fuel_source(use.source)
                     and use.source["assignment"]["Fuel"] is normal["Fuel"]
                     for use in uses
                 ),
@@ -1550,11 +1985,11 @@ def _source_exits(state, control, bridge, uses):
 @dataclass(frozen=True)
 class _SourcesState:
     phases: _SourcePhasesState
-    control: object
-    access_bridge: object
-    exits: tuple
+    control: _SourceActiveControl | None
+    access_bridge: _SourceAccessBridge | None
+    exits: tuple[_SourcesExit, ...]
 
-    def current(self):
+    def current(self) -> _SourcesState:
         from config_source_uses import _check_source_uses
 
         if not self.phases.entries:
@@ -1564,6 +1999,8 @@ class _SourcesState:
             )
             self.phases.current()
             return self
+        if self.control is None or self.access_bridge is None:
+            raise AssertionError("Sources exit lacks its actual guarded source/access collection")
         uses = _check_source_uses(self.access_bridge)
         fresh = _source_exits(self.phases, self.control, self.access_bridge, uses)
         require(
@@ -1579,7 +2016,9 @@ class _SourcesState:
         return self
 
 
-def _error_summary(groups):
+def _error_summary(
+    groups: Iterable[tuple[str, Iterable[Mapping[str, object]]]],
+) -> tuple[tuple[ErrorSummaryRow, ...], int]:
     """Lossless occurrence counts with diagnostic cursor envelopes only.
 
     Exact before/outcome/guard/alias relations remain in the private state.
@@ -1587,21 +2026,27 @@ def _error_summary(groups):
     envelopes cannot authorize later reads, continuation or publication.
     Every supplied error occurrence contributes once, including old errors.
     """
-    values = {}
+    values: dict[ErrorSummaryKey, list[int]] = {}
     total = 0
     for origin, errors in groups:
         for error in errors:
             cursor = error["cursor"]
-            lo, hi = (cursor.lower, cursor.upper) if type(cursor) is Span else tuple(cursor)
-            require(
-                type(lo) is type(hi) is int and 0 <= lo <= hi and type(error["error"]) is int,
-                "Sources diagnostic error has an untyped cursor/code",
+            # The original projection accepts iterable cursor pairs and opaque
+            # iterable labels. These casts describe those existing operations;
+            # scalar code/cursor validation remains explicit below.
+            lo, hi = (
+                (cursor.lower, cursor.upper)
+                if type(cursor) is Span
+                else tuple(cast(Iterable[object], cursor))
             )
-            completed = tuple(error.get("completed_aggregates", ()))
+            code = error["error"]
+            if not (type(lo) is int and type(hi) is int and 0 <= lo <= hi and type(code) is int):
+                raise AssertionError("Sources diagnostic error has an untyped cursor/code")
+            completed = tuple(cast(Iterable[object], error.get("completed_aggregates", ())))
             key = (
                 origin,
                 error.get("stage", "configuration version"),
-                error["error"],
+                code,
                 error.get("index", -1),
                 error.get("frontier", error.get("ordinary_frontier")),
                 completed,
@@ -1613,10 +2058,12 @@ def _error_summary(groups):
             value[1] = min(value[1], lo)
             value[2] = max(value[2], hi)
             total += 1
-    return tuple((*key, *value) for key, value in values.items()), total
+    return tuple((*key, value[0], value[1], value[2]) for key, value in values.items()), total
 
 
-def _first_boot_decoded_sources_state(objects, instructions, source_context):
+def _first_boot_decoded_sources_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[SourcesDescription, _SourcesState]:
     """Derive the complete current named ordinary Sources group once.
 
     The public projection is a bounded diagnostic, not a producer result or
@@ -1633,8 +2080,8 @@ def _first_boot_decoded_sources_state(objects, instructions, source_context):
     state = _first_boot_source_phases(objects, instructions, source_context)
     control = None
     bridge = None
-    uses = ()
-    exits = ()
+    uses: tuple[_SourceUse, ...] = ()
+    exits: tuple[_SourcesExit, ...] = ()
     if state.entries:
         # Preserve the first COMPLETE incoming validation after generation.
         control = _source_control(state)
@@ -1698,7 +2145,7 @@ def _first_boot_decoded_sources_state(objects, instructions, source_context):
         state.current()
     prior = state.predecessor_description
     V = state.widgets.views.context.headers["visitor"]["proof"]["function"]
-    errors = [
+    errors: list[tuple[str, Iterable[Mapping[str, object]]]] = [
         ("prefix", prior["prefix_errors"]),
         ("Views", prior["Views_errors"]),
         ("Widgets", prior["group_errors"]),
@@ -1721,7 +2168,7 @@ def _first_boot_decoded_sources_state(objects, instructions, source_context):
         for e in exits
     )
     record = control.record if control is not None else None
-    description = dict(
+    description: SourcesDescription = dict(
         phase="first_boot_decoded_sources_pending_controls_history_led_visitor_return_canonical_and_loader_routes",
         mode="sizez",
         Controls_ready=dict(frontier=V + 5630, top_count=4, Controls_consumed=False)
@@ -1814,5 +2261,7 @@ def _first_boot_decoded_sources_state(objects, instructions, source_context):
     return _bounded_record(description), _SourcesState(state, control, bridge, exits)
 
 
-def first_boot_decoded_sources(objects, instructions, source_context):
+def first_boot_decoded_sources(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> SourcesDescription:
     return _first_boot_decoded_sources_state(objects, instructions, source_context)[0]

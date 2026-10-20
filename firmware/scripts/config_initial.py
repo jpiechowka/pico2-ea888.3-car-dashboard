@@ -7,14 +7,37 @@ be composed separately before any acquired mutable Config can be issued.
 """
 
 import hashlib
+from typing import TypedDict
+from config_stack import DiagnosticObjects
 from config_entry import CONFIG, static_role
-from config_initial_contract import GROUPS, OPAQUE
+from config_initial_contract import GROUPS as GROUPS, OPAQUE as OPAQUE
 from config_logger import _initialized
 from validation import require
 
 
-def _partition():
-    active = {}
+class InitialConfiguration(TypedDict):
+    address: int
+    extent: int
+    alignment: int
+    role: str
+    elf_sha256: str
+    file_offset: int
+    load_physical: int
+    phase: str
+    groups: tuple[str, ...]
+    active_bytes: int
+    opaque_bytes: int
+    opaque_intervals: tuple[tuple[int, int], ...]
+    initial_collection_lengths: tuple[int, int]
+    requires_actual_startup_copy_and_live_preservation: bool
+    requires_actual_successful_once_and_exclusive_source_owner: bool
+    requires_first_batch_caller_specialized_loader_and_alias_closure: bool
+    must_not_reuse_after_any_decode_or_refill_write: bool
+    requires_complete_validated_outcome_before_publication: bool
+
+
+def _partition() -> tuple[dict[int, int], tuple[str, ...]]:
+    active: dict[int, int] = {}
     names = []
     require(
         type(GROUPS) is tuple and len(GROUPS) == 15 and type(OPAQUE) is tuple,
@@ -47,7 +70,7 @@ def _partition():
                 for j, value in enumerate(raw):
                     require(lo + j not in active, "active initial fields overlap")
                     active[lo + j] = value
-    opaque = set()
+    opaque: set[int] = set()
     previous = 0
     for lo, hi in OPAQUE:
         require(
@@ -66,7 +89,7 @@ def _partition():
     return active, tuple(names)
 
 
-def initial_configuration(objects):
+def initial_configuration(objects: DiagnosticObjects) -> InitialConfiguration:
     """Compare the unique typed object's initial file bytes, never live RAM.
 
     No expected values, mask or caller-owned phase can be supplied. The return

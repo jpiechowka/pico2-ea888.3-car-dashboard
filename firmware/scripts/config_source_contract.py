@@ -6,7 +6,41 @@ selectors, paired fields, owned writes and inactive bytes stay explicit.
 No runtime generation or binary-learned acceptance policy.
 """
 
-SOURCE_CONTRACT = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+from config_entry_contracts import EntryStaticObject
+
+
+class SourceLiteral(TypedDict):
+    kind: Literal["source_literal"]
+    value: int
+
+
+class SourceNamed(TypedDict):
+    kind: Literal["source_channels", "source_led_default"]
+
+
+SourceObject = EntryStaticObject | SourceLiteral | SourceNamed
+
+
+class SourceCase(TypedDict):
+    i: int
+    id: int
+    definition: str
+    channel: int
+    name: str
+    offset: int
+    source_base: int
+    access: list[str | int]
+    decoder: int
+    evidence: int
+    unavailable: int | None
+    route: str
+    poll: str | list[str | int]
+    freshness_ms: int
+
+
+SOURCE_CONTRACT: BodyContract[SourceObject] = {
     "extent": 342,
     "frame": 456,
     "instructions": [
@@ -145,7 +179,7 @@ SOURCE_CONTRACT = {
         {"kind": "source_led_default"},
     ],
 }
-SOURCE_CASES = [
+SOURCE_CASES: list[SourceCase] = [
     {
         "i": 0,
         "id": 5,
@@ -275,7 +309,7 @@ SOURCE_CASES = [
         "freshness_ms": 500,
     },
 ]
-SOURCE_WRITES = [
+SOURCE_WRITES: list[tuple[int, str, int, int, str]] = [
     (12, "P", 252, 4, "zero scratch"),
     (14, "P", 248, 4, "IDs4..7"),
     (18, "P", 244, 4, "IDs0..3"),

@@ -6,19 +6,64 @@ ownership and exhaustive parent coverage remain explicit graph obligations.
 """
 
 import re
+from typing import Never, NotRequired, TypedDict
+from config_body_types import BodyRecord, InstructionMap
 from config_entry import entry_object
 from config_finite import _literal_body
 from config_issuer_contracts import ISSUER_GRAMMARS
-from config_roots import root_window
-from config_stack import canonical_symbol, typed_function, transfer_family
+from config_roots import WindowRecord, root_window
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function, transfer_family
 from validation import require
 
 
-def _no_issuer_outline(*args):
-    require(False, "issuer contains an unsupported outline call")
+class IssuerState(TypedDict):
+    phase: str
+    tag_register: str
+    tag_value: int
+    value_register: str
+    value: NotRequired[int]
 
 
-def issuer_region(objects, name, instructions):
+class IssuerWrite(TypedDict):
+    owner_role: str
+    address: int
+    offset: int
+    extent: int
+    operation: str
+
+
+class IssuerFailure(TypedDict):
+    kind: str
+    parent: int
+    source: str
+    destination: int
+    site: int
+    root_role: str
+
+
+class IssuerRecord(BodyRecord):
+    window: int
+    caller: int
+    attempts: int
+    previous_register: str
+    failure_suffix: WindowRecord
+    branch_edges: tuple[tuple[int, str, int], ...]
+    continuation: int
+    state_alternatives: tuple[IssuerState, ...]
+    writes: tuple[IssuerWrite, ...]
+    local_write_ranges: tuple[()]
+    helper_calls: tuple[()]
+    failure_edge: IssuerFailure
+    requires_parent_phase_all_ingress_and_coverage: bool
+
+
+def _no_issuer_outline(*args: object) -> Never:
+    raise AssertionError("issuer contains an unsupported outline call")
+
+
+def issuer_region(
+    objects: DiagnosticObjects, name: str, instructions: InstructionMap
+) -> IssuerRecord:
     """A finite AtomicU32 region with a demanded root-suffix continuation.
 
     Structural anchors are discovered uniquely in the current typed parent;
@@ -46,14 +91,14 @@ def issuer_region(objects, name, instructions):
         if target is None or int(target[1], 16) not in expect_targets:
             continue
         try:
-            proof = root_window(objects, name, instructions, at)
+            suffix = root_window(objects, name, instructions, at)
         except AssertionError:
             continue
-        if proof["location_role"] == "identity_first":
-            roots.append(proof)
+        if suffix["location_role"] == "identity_first":
+            roots.append(suffix)
     require(len(roots) == 1, "issuer failure suffix is missing or ambiguous")
     failure = roots[0]
-    results = []
+    results: list[IssuerRecord] = []
     for variant, original in variants:
         if original["frame"] != frame:
             continue
@@ -65,7 +110,7 @@ def issuer_region(objects, name, instructions):
                 or failure["window"] < start
             ):
                 continue
-            contract = dict(original)
+            contract = original.copy()
             contract["instructions"] = [
                 (
                     offset,
@@ -112,16 +157,17 @@ def issuer_region(objects, name, instructions):
             tag = "r0" if variant == "speed2" else "r1"
             previous = original["previous_register"]
             issuer = proof["objects"][0]
-            proof.update(
-                window=start,
-                caller=parent,
-                caller_extent=extent,
-                attempts=original["attempts"],
-                previous_register=original["previous_register"],
-                failure_suffix=failure,
-                branch_edges=tuple(edges),
-                continuation=end,
-                state_alternatives=(
+            result: IssuerRecord = {
+                **proof,
+                "window": start,
+                "caller": parent,
+                "caller_extent": extent,
+                "attempts": original["attempts"],
+                "previous_register": original["previous_register"],
+                "failure_suffix": failure,
+                "branch_edges": tuple(edges),
+                "continuation": end,
+                "state_alternatives": (
                     dict(
                         phase="issued_previous",
                         tag_register=tag,
@@ -136,7 +182,7 @@ def issuer_region(objects, name, instructions):
                         value=0,
                     ),
                 ),
-                writes=(
+                "writes": (
                     dict(
                         owner_role=original["objects"][0]["role"],
                         address=issuer,
@@ -145,9 +191,9 @@ def issuer_region(objects, name, instructions):
                         operation="exclusive-store checked increment",
                     ),
                 ),
-                local_write_ranges=(),
-                helper_calls=(),
-                failure_edge=dict(
+                "local_write_ranges": (),
+                "helper_calls": (),
+                "failure_edge": dict(
                     kind="root_suffix",
                     parent=parent,
                     source="issuer_previous_zero",
@@ -155,8 +201,8 @@ def issuer_region(objects, name, instructions):
                     site=failure["site"],
                     root_role="identity_first",
                 ),
-                requires_parent_phase_all_ingress_and_coverage=True,
-            )
-            results.append(proof)
+                "requires_parent_phase_all_ingress_and_coverage": True,
+            }
+            results.append(result)
     require(len(results) == 1, "missing, changed or ambiguous issuer retry region")
     return results[0]

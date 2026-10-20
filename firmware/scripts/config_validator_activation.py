@@ -7,6 +7,24 @@ reviewed families. A pending diagnostic ends this relation before its callee;
 it is never a machine nonreturn or a reusable ownership capability.
 """
 
+from collections.abc import Mapping, Sequence
+from typing import Literal, NotRequired, TypeGuard, TypedDict
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
+from config_default_sources import SourceTerminal
+from config_validator_children import NormalBody
+from config_validator_access import ValidatorContext
+from config_validator_controls import ValidatorControls
+from config_validator_traversal import (
+    ChildBinding,
+    NormalCall,
+    PhaseRelations,
+    ReceiverArguments,
+    TraversalCoverage,
+)
+from config_refill_children import DefinitionResult, PeriodResult
+from config_refill_handoff import RefillDescription
+from llvm_stack import Instruction
 from dataclasses import dataclass
 import re
 import struct
@@ -15,6 +33,133 @@ from config_stack import transfer_family
 from config_refill_contracts import CATALOG_DISPATCH
 from config_validator_traversal import TERMINAL_PADDING
 from validation import require
+
+
+class ReturnRoute(TypedDict):
+    site: int
+    PC: int
+    SP: int
+    route: str
+    saved_return_slot: int | None
+    token: str
+
+
+class Invocation(TypedDict):
+    identity: str
+    parent: str | None
+    family: str | None
+    function: int
+    extent: int
+    transfer: str
+    calling_site: int
+    entry_SP: int
+    return_SP: int
+    return_to: int
+    return_token: str
+    source_receiver_phase: ReceiverArguments
+    return_sites: list[ReturnRoute]
+    minimum_SP: NotRequired[int]
+
+
+class RetainedGeometry(TypedDict):
+    Q: int
+    R: int
+    Config: int
+    first: tuple[int, int]
+    capture: tuple[int, int]
+    valid: tuple[int, int]
+
+
+class DiagnosticCut(TypedDict):
+    kind: str
+    invocation: str
+    site: int
+    target: int
+    role: str
+    SP: int
+    retained_return_slots: tuple[int, ...]
+    retained_geometry: RetainedGeometry
+    source_receiver_phase: ReceiverArguments
+    return_token: None
+    machine_nonreturn_established: bool
+
+
+class InheritedCut(TypedDict):
+    kind: str
+    invocation: str
+    retained_frontier: tuple[str, int]
+    return_token: None
+    machine_nonreturn_established: bool
+
+
+class ActivationClosure(TypedDict):
+    scope: str
+    return_to: int
+    invocations: tuple[Invocation, ...]
+    pending_diagnostic_cuts: tuple[DiagnosticCut | InheritedCut, ...]
+    instruction_states: int
+    closed_invocation_count: int
+    executable_site_count: int
+    diagnostics_entered_or_nonreturn_proved: bool
+    expires_at: str
+
+
+class FunctionExtent(TypedDict):
+    function: int
+    extent: int
+
+
+class ComputedContext(TypedDict):
+    return_to: int
+    invocations: tuple[Invocation, ...]
+
+
+class SelectedDisposition(TypedDict):
+    site: int
+    status: Literal["selected_current_source_targets"]
+    targets: tuple[int, ...]
+    raw: str
+
+
+class OutsideDisposition(TypedDict):
+    site: int
+    status: Literal["outside_selected_guard_stopped_prefix"]
+    raw: str
+    architectural_envelope: tuple[int, int]
+    current_owners: tuple[tuple[str, int, int, int], ...]
+    foreign_context_validated: bool
+    reason: str
+    diagnostic_or_other_invocation_context_remains_unresolved: bool
+
+
+ComputedDisposition = SelectedDisposition | OutsideDisposition
+
+
+class _Binding(TypedDict):
+    proof: BodyRecord
+    family: str
+    arguments: ReceiverArguments
+    effects: tuple[()]
+    cut: Literal[False]
+
+
+class _CutBinding(TypedDict):
+    cut: Literal[True]
+    target: int
+    role: str
+    arguments: ReceiverArguments
+
+
+Binding = ChildBinding | _Binding
+
+
+def _has_copy_bodies(binding: Binding) -> TypeGuard[ChildBinding]:
+    return "copy_bodies" in binding
+
+
+def _has_normal_children(proof: BodyRecord) -> TypeGuard[NormalBody]:
+    # Only the closed normal-child producer attaches this recursive relation.
+    return "children" in proof
 
 
 # Exact SP/save instructions from the complete matched families. This finite
@@ -101,14 +246,17 @@ class _Return:
     sp: int
 
 
-def _target(row):
+def _target(row: Instruction) -> int:
     text = row.operands.split("@", 1)[0].split("<", 1)[0].strip()
     found = re.fullmatch(r"(?:r(?:[0-9]|1[0-2]),\s*)?(0x[0-9a-f]+)", text)
-    require(found is not None, "guarded activation has an unbound direct target")
+    if found is None:
+        raise AssertionError("guarded activation has an unbound direct target")
     return int(found[1], 16)
 
 
-def _catalogue_table(objects, proof, source):
+def _catalogue_table(
+    objects: DiagnosticObjects, proof: BodyRecord, source: SourceTerminal
+) -> tuple[int, tuple[int, ...]]:
     dispatch = CATALOG_DISPATCH[proof["shape"]]
     start = proof["function"]
     site = start + dispatch["site"]
@@ -131,19 +279,19 @@ def _catalogue_table(objects, proof, source):
 
 
 def guard_stopped_normal_activation_closure(
-    objects,
-    rows,
-    parent,
-    context,
-    source,
-    coverage,
-    bindings,
-    controls,
-    normal,
-    catalogue,
-    description,
-    relations,
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parent: BodyRecord,
+    context: ValidatorContext,
+    source: SourceTerminal,
+    coverage: TraversalCoverage,
+    bindings: Mapping[int, ChildBinding],
+    controls: ValidatorControls,
+    normal: Sequence[NormalCall],
+    catalogue: Mapping[int, DefinitionResult | PeriodResult],
+    description: RefillDescription,
+    relations: PhaseRelations,
+) -> tuple[ActivationClosure, set[int], dict[int, tuple[int, ...]]]:
     """Derive invocation nodes and PC/save transports, never accept a graph."""
     q = context.frame
     call = description["before_validator"]["call"]
@@ -152,14 +300,24 @@ def guard_stopped_normal_activation_closure(
         parent["frame"] == 320 and q.start + 320 == P and context.result.start == P + 236,
         "guarded activation loses its privately derived default caller",
     )
-    invocations = {}
-    cuts = []
-    completed = {}
-    active = []
-    projection = set()
-    computed = {}
+    invocations: dict[str, Invocation] = {}
+    cuts: list[DiagnosticCut | InheritedCut] = []
+    completed: dict[
+        tuple[
+            str,
+            int,
+            _Return,
+            tuple[tuple[int, str | _Return | None], ...],
+            str | _Return | None,
+            tuple[tuple[int, str | _Return | None], ...],
+        ],
+        tuple[ReturnRoute, ...],
+    ] = {}
+    active: list[int] = []
+    projection: set[int] = set()
+    computed: dict[int, tuple[int, ...]] = {}
     states_checked = 0
-    invocation_ids = {(None, call, "selected_call"): "v0"}
+    invocation_ids: dict[tuple[str | None, int, str], str] = {(None, call, "selected_call"): "v0"}
     writes = relations["checked_owned_write_intervals"]
     require(
         writes and all(type(lo) is int and type(hi) is int and lo < hi for lo, hi in writes),
@@ -183,12 +341,14 @@ def guard_stopped_normal_activation_closure(
         "parent tables lose the initialized source/paired loop transport",
     )
 
-    def dependencies(binding):
+    def dependencies(binding: Binding) -> dict[int, _Binding | _CutBinding]:
         proof = binding["proof"]
         family = binding["family"]
-        result = {}
+        result: dict[int, _Binding | _CutBinding] = {}
         start = proof["function"]
         if family in ("text_valid", "contrasts"):
+            if not _has_normal_children(proof):
+                raise AssertionError("normal activation lacks its checked child relation")
             for offset, op, target, role, frame in proof["ordinary_edges"]:
                 child = proof["children"][
                     "text_restore" if role == "@outline:text_restore" else offset
@@ -208,6 +368,8 @@ def guard_stopped_normal_activation_closure(
                     cut=False,
                 )
         elif family == "copy_wrapper":
+            if not _has_copy_bodies(binding) or binding["copy_bodies"] is None:
+                raise AssertionError("copy activation loses its full restored tail")
             require(
                 len(binding["copy_bodies"]) == 2, "copy activation loses its full restored tail"
             )
@@ -221,9 +383,9 @@ def guard_stopped_normal_activation_closure(
                 cut=False,
             )
         elif family == "action_allowed":
-            child = controls["children"]["zero_to_bool"]
+            control_body = controls["children"]["zero_to_bool"]
             result[start + 50] = dict(
-                proof=child,
+                proof=control_body,
                 family="zero_to_bool",
                 arguments=binding["arguments"],
                 effects=(),
@@ -248,7 +410,7 @@ def guard_stopped_normal_activation_closure(
             )
         return result
 
-    def table_for(binding, at):
+    def table_for(binding: Binding, at: int) -> tuple[int, ...]:
         proof = binding["proof"]
         family = binding["family"]
         start = proof["function"]
@@ -279,17 +441,17 @@ def guard_stopped_normal_activation_closure(
         return tuple(at + 4 + 2 * v for v in objects.read_only(at + 4, 5))
 
     def walk(
-        binding,
-        identity,
-        parent_id,
-        transfer,
-        edge_site,
-        entry_sp,
-        token,
-        cells,
-        lr,
-        expected_cells,
-    ):
+        binding: Binding,
+        identity: str,
+        parent_id: str | None,
+        transfer: str,
+        edge_site: int,
+        entry_sp: int,
+        token: _Return,
+        cells: dict[int, str | _Return | None],
+        lr: str | _Return | None,
+        expected_cells: dict[int, str | _Return | None],
+    ) -> tuple[ReturnRoute, ...]:
         nonlocal states_checked
         proof = binding["proof"]
         family = binding["family"]
@@ -307,7 +469,7 @@ def guard_stopped_normal_activation_closure(
         )
         if key in completed:
             return completed[key]
-        node = dict(
+        node: Invocation = dict(
             identity=identity,
             parent=parent_id,
             family=family,
@@ -330,7 +492,7 @@ def guard_stopped_normal_activation_closure(
             invocations[identity] = node
         active.append(start)
         body = {a: r for a, r in rows.items() if start <= a < end}
-        steps = _STACK.get(family, {})
+        steps = _STACK.get(family, {}) if family is not None else {}
         require(
             bool(body) and not proof["indirect_sites"],
             "normal activation has no complete fixed body or gains a callback",
@@ -383,9 +545,11 @@ def guard_stopped_normal_activation_closure(
                     "complete normal body gains an implicit/security/exception PC effect",
                 )
         pending = [(start, entry_sp, lr, tuple(sorted(cells.items())))]
-        seen = set()
-        returns = []
-        used = set()
+        seen: set[
+            tuple[int, int, str | _Return | None, tuple[tuple[int, str | _Return | None], ...]]
+        ] = set()
+        returns: list[ReturnRoute] = []
+        used: set[int] = set()
         min_sp = entry_sp
         while pending:
             at, sp, current_lr, stored = pending.pop()
@@ -409,9 +573,10 @@ def guard_stopped_normal_activation_closure(
             pc_slot = None
             if at - start in steps:
                 if operation.startswith(("push", "vpush")):
-                    registers = re.fullmatch(r"\{([^}]+)\}", row.operands)
-                    require(registers is not None, "save family loses its register list")
-                    registers = registers[1].split(", ")
+                    register_match = re.fullmatch(r"\{([^}]+)\}", row.operands)
+                    if register_match is None:
+                        raise AssertionError("save family loses its register list")
+                    registers = register_match[1].split(", ")
                     width = 8 if operation == "vpush" else 4
                     new_sp = sp - len(registers) * width
                     require(
@@ -427,9 +592,10 @@ def guard_stopped_normal_activation_closure(
                             )
                         slot_map[slot] = current_lr if reg == "lr" else reg
                 elif operation.startswith(("pop", "vpop")):
-                    registers = re.fullmatch(r"\{([^}]+)\}", row.operands)
-                    require(registers is not None, "restore family loses its register list")
-                    registers = registers[1].split(", ")
+                    register_match = re.fullmatch(r"\{([^}]+)\}", row.operands)
+                    if register_match is None:
+                        raise AssertionError("restore family loses its register list")
+                    registers = register_match[1].split(", ")
                     width = 8 if operation == "vpop" else 4
                     for i, reg in enumerate(registers):
                         slot = sp + i * width
@@ -454,8 +620,8 @@ def guard_stopped_normal_activation_closure(
                             )
                     new_sp = sp + len(registers) * width
                 else:
-                    value = int(row.operands.split("#")[1], 0)
-                    new_sp = sp + (value if operation == "add" else -value)
+                    adjustment = int(row.operands.split("#")[1], 0)
+                    new_sp = sp + (adjustment if operation == "add" else -adjustment)
                     if new_sp < sp:
                         require(
                             not any(new_sp <= v < sp for v in slot_map),
@@ -554,7 +720,7 @@ def guard_stopped_normal_activation_closure(
                     value == token and new_sp == token.sp and slot_map == expected_cells,
                     "normal return loses original continuation/SP/protected saved cells",
                 )
-                route = dict(
+                route: ReturnRoute = dict(
                     site=at,
                     PC=token.destination,
                     SP=new_sp,
@@ -610,7 +776,7 @@ def guard_stopped_normal_activation_closure(
         return tuple(returns)
 
     root_token = _Return("v0", call + 4, P)
-    root = dict(
+    root: _Binding = dict(
         proof=parent,
         family="validator",
         arguments=dict(
@@ -642,7 +808,7 @@ def guard_stopped_normal_activation_closure(
         )
     # Projection follows the completed contextual relation; it is never an
     # acceptance set supplied by a caller or assembled from role names.
-    unique = []
+    unique: list[DiagnosticCut | InheritedCut] = []
     for cut in cuts:
         if cut not in unique:
             unique.append(cut)
@@ -663,11 +829,18 @@ def guard_stopped_normal_activation_closure(
     )
 
 
-def computed_context_dispositions(objects, rows, parent, projection, computed, closure):
+def computed_context_dispositions(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    parent: FunctionExtent,
+    projection: set[int],
+    computed: Mapping[int, tuple[int, ...]],
+    closure: ComputedContext,
+) -> tuple[ComputedDisposition, ...]:
     """Bind foreign envelopes only after complete internal forward closure."""
     start = parent["function"]
     end = start + parent["extent"]
-    result = []
+    result: list[ComputedDisposition] = []
     require(
         closure["return_to"] and closure["invocations"] and projection,
         "computed disposition has no closed guarded activation",

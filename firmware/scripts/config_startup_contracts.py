@@ -7,7 +7,9 @@ Six Reset literals outside its STT_FUNC are separate mandatory dependencies.
 Changed source/compiler/link shape requires fresh review.
 """
 
-STARTUP = {
+from config_body_types import BodyContract
+
+STARTUP: dict[str, BodyContract[object]] = {
     "Reset": {
         "extent": 62,
         "frame": 0,
@@ -160,7 +162,7 @@ STARTUP = {
 
 # Exact c003af17 RP235x assembly; external MMIO pool is separately bound.
 # The historical compiler-shaped entries above remain unchanged.
-ASSEMBLY_PRE_INIT = {
+ASSEMBLY_PRE_INIT: BodyContract[object] = {
     "extent": 42,
     "frame": 0,
     "mapping": ((0, 42, "t"),),

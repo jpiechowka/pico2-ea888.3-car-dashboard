@@ -2,8 +2,10 @@
 
 import re
 import struct
+from typing import Literal, TypedDict, overload
+from config_body_types import Callback, InstructionMap, OrdinaryEdge, IndirectSite
 from config_panic_contracts import PANIC_GRAMMARS
-from config_stack import canonical_symbol, typed_function
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
 from llvm_stack import mapping_ranges
 from validation import require
 
@@ -40,7 +42,7 @@ PANIC_LITERALS = dict(
 )
 
 
-def _callback(objects, pointer, kind):
+def _callback(objects: DiagnosticObjects, pointer: int, kind: str) -> Callback:
     require(pointer & 1, "panic callback is not Thumb")
     role, variants = PANIC_CALLBACKS[kind]
     extent, frame, _ = typed_function(objects, pointer & ~1, role)
@@ -48,7 +50,21 @@ def _callback(objects, pointer, kind):
     return (pointer & ~1, role, extent, frame)
 
 
-def panic_object(objects, address, kind):
+@overload
+def panic_object(
+    objects: DiagnosticObjects, address: int, kind: Literal["panicinfo_vtable", "sink_vtable"]
+) -> tuple[Callback, ...]: ...
+
+
+@overload
+def panic_object(
+    objects: DiagnosticObjects, address: int, kind: str
+) -> int | Callback | tuple[Callback, ...]: ...
+
+
+def panic_object(
+    objects: DiagnosticObjects, address: int, kind: str
+) -> int | Callback | tuple[Callback, ...]:
     """One originating interface, never a union of all plausible formatter slots."""
     if kind == "panicked":
         return objects.panic_guard(address)
@@ -76,7 +92,25 @@ def panic_object(objects, address, kind):
     return tuple(_callback(objects, pointer, role) for pointer, role in zip(words[3:], targets))
 
 
-def panic_body(objects, name, instructions):
+PanicBinding = int | Callback | tuple[Callback, ...]
+
+
+class PanicRecord(TypedDict):
+    shape: str
+    function: int
+    extent: int
+    frame: int
+    objects: dict[str, int]
+    bindings: dict[str, PanicBinding]
+    ordinary_edges: tuple[OrdinaryEdge, ...]
+    indirect_sites: tuple[IndirectSite, ...]
+    guarded_reentry_frames: tuple[int, ...]
+    requires_root_arguments_default_options_and_logger_closure: bool
+    requires_child_sink_table: bool
+    requires_parent_local_restore: int | None
+
+
+def panic_body(objects: DiagnosticObjects, name: str, instructions: InstructionMap) -> PanicRecord:
     """Exact complete body plus typed relocations and every outgoing interface.
 
     Input is the current byte-checked decoder map. The return preserves child
@@ -109,12 +143,14 @@ def panic_body(objects, name, instructions):
         "panic instruction inventory differs",
     )
     code = {a for lo, hi, k in mapping if k == "t" for a in range(lo, hi)}
-    covered = set()
-    pairs = {}
+    covered: set[int] = set()
+    pairs: dict[str, dict[str, int]] = {}
     edges = []
     indirect = []
     for record, line, width in zip(rows, contract["grammar"], contract["instruction_widths"]):
         match = re.fullmatch(r"([0-9a-f]+) (\S+)(?:[\t ]+(.*))?", line)
+        if match is None:
+            raise AssertionError("invalid pinned panic instruction grammar")
         offset = int(match[1], 16)
         mnemonic = match[2]
         expected = match[3] or ""
@@ -135,24 +171,21 @@ def panic_body(objects, name, instructions):
         external = re.search(r"@role:(\S+)", expected)
         if producer:
             material = re.fullmatch(r"(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)", actual)
-            require(
-                material is not None and int(material[2], 0) <= 0xFFFF,
-                "invalid panic object producer",
-            )
+            if material is None or int(material[2], 0) > 0xFFFF:
+                raise AssertionError("invalid panic object producer")
             key, part = producer[1], producer[2]
             require(part not in pairs.setdefault(key, {}), "ambiguous panic object producer")
             pairs[key][part] = int(material[2], 0)
             actual = material[1] + ", " + producer[0]
         elif local:
             target = re.search(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(
-                target is not None and int(target[1], 16) == start + int(local[1], 16),
-                "panic local guard/branch differs",
-            )
+            if target is None or int(target[1], 16) != start + int(local[1], 16):
+                raise AssertionError("panic local guard/branch differs")
             actual = actual[: target.start()] + local[0]
         elif external or expected == "@panicinfo_epilogue":
             target = re.match(r"0x([0-9a-f]+)(?:\s|$)", actual)
-            require(target is not None, "unresolved panic external transfer")
+            if target is None:
+                raise AssertionError("unresolved panic external transfer")
             address = int(target[1], 16)
             if external:
                 _, child_frame, _ = typed_function(objects, address, external[1])
@@ -177,7 +210,7 @@ def panic_body(objects, name, instructions):
         require(actual == expected, "panic operands/object/cell/guard differ")
     require(covered == code, "incomplete panic mapped code")
     data = {a for lo, hi, k in mapping if k == "d" for a in range(lo, hi)}
-    pool_bytes = set()
+    pool_bytes: set[int] = set()
     values = {}
     bindings = {}
     row_map = {r.address - start: r for r in rows}
@@ -210,7 +243,7 @@ def panic_body(objects, name, instructions):
         values[key] = value
         bindings[key] = panic_object(objects, value, key)
     require(pool_bytes == data and set(pairs) <= set(values), "unbound panic pool/producer bytes")
-    reentry = ()
+    reentry: tuple[int, ...] = ()
     if shape.startswith("handler"):
         names = [
             n
@@ -218,8 +251,10 @@ def panic_body(objects, name, instructions):
             if canonical_symbol(n) == PANIC_GRAMMARS["panic_fmt"]["raw_role"]
         ]
         require(len(names) == 1, "missing/ambiguous panic reentry function")
-        target = objects.elf.functions[names[0]][0] & ~1
-        child_extent, child_frame, _ = typed_function(objects, target, canonical_symbol(names[0]))
+        reentry_target = objects.elf.functions[names[0]][0] & ~1
+        child_extent, child_frame, _ = typed_function(
+            objects, reentry_target, canonical_symbol(names[0])
+        )
         require((child_extent, child_frame) == (28, 32), "panic reentry frame/extent differs")
         reentry = (child_frame, frame)
     return dict(

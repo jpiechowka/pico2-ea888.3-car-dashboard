@@ -5,8 +5,23 @@ input/result/error association; neither a body receipt nor this conditional
 adapter establishes the selected parent execution or an acquired owner.
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import replace
-from config_abstract import Span, SequenceInterface, decoder_interface, sequence_interface
+from typing import Generic, NotRequired, TypeAlias, TypeVar, TypedDict
+from config_abstract import (
+    Span,
+    DecoderInterface,
+    DecoderOutcome,
+    SequenceInterface,
+    SequenceOutcome,
+    PrimitiveResult,
+    decoder_interface,
+    sequence_interface,
+)
+from config_body_types import BodyRecord, InstructionMap
+from config_stack import DiagnosticObjects
 from config_regions import Storage, View, borrow, require_disjoint, require_writes
 from config_decode_effects import _object
 from config_tail_children import (
@@ -14,15 +29,224 @@ from config_tail_children import (
     tail_children,
     tail_return_profiles,
     ACTION_TARGET_OFFSETS,
+    TailCoverageRecord,
+    TailParentRecord,
+    is_child_coverage,
 )
 from config_tail_contracts import ROLES
-from config_widget_children import _name
-from config_finite_returns import _closed_child_returns
+from config_widget_children import _name, ColorResult, ColorOutcome
+from config_finite_returns import ReturnNode, ReturnParent, _closed_child_returns
 from config_owner_entry import _direct_target
 from validation import require
 
+Writes: TypeAlias = tuple[tuple[View, int, int], ...]
+GuardBindings: TypeAlias = tuple[tuple[Storage, Storage], ...]
 
-def _guards(frame, values):
+
+class ActionPrimitive(TypedDict):
+    site: int
+    semantic_role: str
+    before: DecoderInterface
+    result: PrimitiveResult[DecoderOutcome]
+    decrement_before_call: bool
+    caller: int
+    protected_constituents: GuardBindings
+
+
+class ActionNone(TypedDict):
+    status: int
+    action_low: int
+    after: SequenceInterface
+    possible_writes: Writes
+
+
+class ActionNormal(TypedDict):
+    status: int
+    domain: tuple[int, int]
+    mapping: tuple[tuple[int, int], ...]
+    guard: str
+    after: SequenceInterface
+    origins: tuple[ActionPrimitive, ...]
+    successful_outcomes: tuple[DecoderOutcome, ...]
+    possible_writes: Writes
+
+
+class ActionError(TypedDict):
+    stage: str
+    status: int
+    error: int | None
+    guard: NotRequired[str]
+    origin: ActionPrimitive
+    child_outcome: DecoderOutcome
+    after: SequenceInterface
+    cursor: Span
+
+
+Normal = TypeVar("Normal")
+Missing = TypeVar("Missing")
+Error = TypeVar("Error")
+
+
+class ResultBase(TypedDict, Generic[Normal, Missing, Error]):
+    proof: TailCoverageRecord
+    before: SequenceInterface
+    normal: Normal | None
+    none: Missing | None
+    errors: tuple[Error, ...]
+    nested_returns: tuple[ReturnNode, ...]
+    call_site: int
+    protected: tuple[Storage, ...]
+    requires_selected_parent_source_control: bool
+
+
+class ActionResult(ResultBase[ActionNormal, ActionNone, ActionError]):
+    primitive_invocations: tuple[ActionPrimitive, ...]
+    parent: TailCoverageRecord
+
+
+class ActionCall(TypedDict):
+    field: str
+    site: int
+    before: SequenceInterface
+    result: ActionResult
+    predecessor: TailCall | None
+
+
+class ButtonNone(TypedDict):
+    low: int
+    upper_bits: str
+    after: SequenceInterface
+    possible_writes: Writes
+
+
+class ButtonNormal(TypedDict):
+    fields: tuple[tuple[str, tuple[int, int]], ...]
+    upper_bits: str
+    after: SequenceInterface
+    invocations: tuple[ActionCall, ...]
+    source_order: tuple[str, ...]
+
+
+class ButtonError(TypedDict):
+    stage: str
+    low: int
+    error: int | None
+    origin: ActionCall
+    cause: ActionError | ActionNone
+    after: SequenceInterface
+    cursor: Span
+
+
+class ButtonResult(ResultBase[ButtonNormal, ButtonNone, ButtonError]):
+    invocations: tuple[ActionCall, ...]
+    parent: TailCoverageRecord
+
+
+class ButtonCall(TypedDict):
+    field: str
+    site: int
+    before: SequenceInterface
+    result: ButtonResult
+    predecessor: TailCall | None
+
+
+class DirectCall(TypedDict):
+    field: str
+    site: int
+    before: DecoderInterface
+    result: PrimitiveResult[DecoderOutcome]
+    protected_constituents: GuardBindings
+    predecessor: NotRequired[TailCall]
+
+
+class ScalarCall(TypedDict):
+    field: str
+    site: int
+    before: SequenceInterface
+    result: PrimitiveResult[SequenceOutcome] | ColorResult
+    protected_constituents: GuardBindings
+    predecessor: TailCall
+
+
+TailCall: TypeAlias = ActionCall | ButtonCall | DirectCall | ScalarCall
+
+
+class OrdinaryReturn(TypedDict):
+    return_PC: int
+    return_SP: int
+    preserved_high_gprs: tuple[str, ...]
+    architectural_LR_preserved: bool
+
+
+class OutputNone(TypedDict):
+    tag: int
+    after: SequenceInterface
+    possible_writes: Writes
+    physical_child_bytes: int
+    source_guard: tuple[int, str]
+    selected_local_path: tuple[int, ...]
+    ordinary_return: OrdinaryReturn
+
+
+class ScreenError(TypedDict):
+    stage: str
+    tag: int
+    error: int | None
+    origin: TailCall
+    cause: NotRequired[ActionError | ButtonError | ActionNone | ButtonNone]
+    child_outcome: NotRequired[DecoderOutcome]
+    guard: NotRequired[str]
+    cursor: Span
+    after: SequenceInterface
+
+
+class ScreenNormal(TypedDict):
+    source_order: tuple[str, ...]
+    buttons: tuple[ButtonNormal, ...]
+    rotation_domain: tuple[int, int]
+    click_domain: tuple[int, int]
+    invocations: tuple[TailCall, ...]
+    after: SequenceInterface
+    physical_output_order: tuple[tuple[int, int, int], ...]
+    outstanding_after_tag: tuple[tuple[int, int], ...]
+    initialized_bytes: tuple[int, ...]
+    completion_requires_all_stores_and_original_return: bool
+
+
+class ScreenResult(ResultBase[ScreenNormal, OutputNone, ScreenError]):
+    output: View
+    invocations: tuple[TailCall, ...]
+    requires_bound_Screen_word_access_policy: bool
+
+
+class LedError(TypedDict):
+    stage: str
+    tag: int
+    error: int | None
+    origin: DirectCall | ScalarCall
+    child_outcome: DecoderOutcome | SequenceOutcome | ColorOutcome
+    guard: NotRequired[str]
+    cursor: Span
+    after: SequenceInterface
+
+
+class LedNormal(TypedDict):
+    fields: tuple[tuple[str, tuple[int, int]], ...]
+    after: SequenceInterface
+    invocations: tuple[TailCall, ...]
+    initialized_bytes: tuple[int, ...]
+    opaque_bytes: tuple[int, ...]
+    physical_output_order: tuple[tuple[int, int, int], ...]
+    completion_requires_all_stores_and_original_return: bool
+
+
+class LedResult(ResultBase[LedNormal, OutputNone, LedError]):
+    output: View
+    invocations: tuple[TailCall, ...]
+    requires_bound_LED_word_access_policy: bool
+
+
+def _guards(frame: Storage, values: Sequence[Storage]) -> tuple[Storage, ...]:
     """Retain all guards and their physical meaning across coordinate spaces."""
     result = list(dict.fromkeys(values))
     require(
@@ -51,7 +275,7 @@ def _guards(frame, values):
     return tuple(result)
 
 
-def _guard_envelopes(values):
+def _guard_envelopes(values: Sequence[Storage]) -> tuple[tuple[Storage, ...], GuardBindings]:
     """Use containing guards for pairwise helper APIs, retaining every part.
 
     Only exact containment in the same space/lifetime can coalesce. No union
@@ -78,17 +302,29 @@ def _guard_envelopes(values):
     return tuple(envelopes), tuple(bindings)
 
 
-def _current(objects, rows, proof, shape):
+def _current(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord | TailParentRecord,
+    shape: str,
+) -> TailCoverageRecord:
     require(
         type(proof) is dict and proof.get("shape") == shape and proof.get("role") == ROLES[shape],
         "Tail effect lacks its complete current aggregate body",
     )
     current = tail_coverage(objects, _name(objects, ROLES[shape], proof["function"]), rows)
     require(current == proof, "Tail effect uses stale complete body/dispatch facts")
+    if not is_child_coverage(current):
+        raise AssertionError("Tail effect lacks its complete current aggregate body")
     return current
 
 
-def _layout(state, frame, size, protected):
+def _layout(
+    state: SequenceInterface,
+    frame: Storage,
+    size: int,
+    protected: Sequence[Storage],
+) -> tuple[Storage, Storage, tuple[Storage, ...]]:
     require(
         type(state) is SequenceInterface
         and type(frame) is Storage
@@ -114,7 +350,15 @@ def _layout(state, frame, size, protected):
     return q, d, guards
 
 
-def _caller(objects, rows, proof, call_site, state, frame, shape):
+def _caller(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: TailCoverageRecord,
+    call_site: int,
+    state: SequenceInterface,
+    frame: Storage,
+    shape: str,
+) -> TailCoverageRecord:
     require(
         type(call_site) is int and call_site in rows, "Tail child has no current caller instruction"
     )
@@ -126,6 +370,7 @@ def _caller(objects, rows, proof, call_site, state, frame, shape):
         and objects.read_only(call_site, 4) == row.raw,
         "Tail child has another current ordinary target",
     )
+    allowed: tuple[tuple[str, tuple[int, ...], int, int], ...]
     if shape == "ControlAction":
         allowed = (("ButtonBinding", (22, 48), 24, 0), ("ScreenBindings", (234,), 64, 12))
     elif shape == "ButtonBinding":
@@ -136,6 +381,8 @@ def _caller(objects, rows, proof, call_site, state, frame, shape):
     for parent, offsets, extent, q_offset in allowed:
         name = _name(objects, ROLES[parent])
         body = tail_coverage(objects, name, rows)
+        if not is_child_coverage(body):
+            raise AssertionError("Tail child call is not a selected current typed parent site")
         if call_site - body["function"] in offsets:
             require(
                 (state.header.storage.extent, state.header.offset, state.header.extent)
@@ -148,9 +395,16 @@ def _caller(objects, rows, proof, call_site, state, frame, shape):
     return matches[0]
 
 
-def _returns(objects, rows, proof, call_site, frame, guards):
+def _returns(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord,
+    call_site: int,
+    frame: Storage,
+    guards: Sequence[Storage],
+) -> tuple[ReturnNode, ...]:
     children = {(proof["function"], proof["role"]): proof, **tail_children(objects, rows, (proof,))}
-    parent = dict(
+    parent: ReturnParent = dict(
         function=call_site,
         ordinary_edges=((0, "bl", proof["function"], proof["role"], proof["frame"]),),
     )
@@ -174,12 +428,12 @@ def _returns(objects, rows, proof, call_site, frame, guards):
         ),
         None,
     )
-    require(
+    if not (
         root is not None
         and root["return_SP"] == entry
-        and root["preserved_high_gprs"] == tuple("r" + str(i) for i in range(4, 12)),
-        "Tail aggregate loses original return/high-register lineage",
-    )
+        and root["preserved_high_gprs"] == tuple("r" + str(i) for i in range(4, 12))
+    ):
+        raise AssertionError("Tail aggregate loses original return/high-register lineage")
     active = Storage(
         frame.space,
         frame.identity + ":complete descendants",
@@ -194,13 +448,13 @@ def _returns(objects, rows, proof, call_site, frame, guards):
     return nodes
 
 
-def _child_frame(frame, size, label):
+def _child_frame(frame: Storage, size: int, label: str) -> Storage:
     return Storage(
         frame.space, frame.identity + ":" + label, frame.start - size, size, 8, frame.phase, True
     )
 
 
-def _join_decoders(options):
+def _join_decoders(options: Sequence[DecoderOutcome]) -> DecoderInterface:
     require(options, "Tail join has no source-valid successful predecessor")
     before = options[0]["state"]
     require(
@@ -218,12 +472,20 @@ def _join_decoders(options):
     )
 
 
-def control_action_interface(objects, rows, proof, state, frame, ancestor_protected, call_site):
+def control_action_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord | TailParentRecord,
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+    call_site: int,
+) -> ActionResult:
     """One Q element: actual varint domain guard, nineteen mapped ordinals."""
     proof = _current(objects, rows, proof, "ControlAction")
     q, d, guards = _layout(state, frame, 16, ancestor_protected)
     parent = _caller(objects, rows, proof, call_site, state, frame, "ControlAction")
-    result = dict(
+    result: ActionResult = dict(
         proof=proof,
         before=state,
         normal=None,
@@ -251,7 +513,9 @@ def control_action_interface(objects, rows, proof, state, frame, ancestor_protec
     edge = proof["ordinary_edges"]
     require(len(edge) == 1 and edge[0][0] == 16, "Action changes its same-source varint call")
     scalar = children[edge[0][2], edge[0][3]]
-    require(scalar["semantic_role"] == "take_varint_u32", "Action loses its u32 selector source")
+    require(
+        scalar.get("semantic_role") == "take_varint_u32", "Action loses its u32 selector source"
+    )
     protected, bindings = _guard_envelopes(guards + (q, saved))
     child = decoder_interface(
         objects,
@@ -262,7 +526,7 @@ def control_action_interface(objects, rows, proof, state, frame, ancestor_protec
         protected,
         output=scratch,
     )
-    origin = dict(
+    origin: ActionPrimitive = dict(
         site=proof["function"] + 16,
         semantic_role="take_varint_u32",
         before=state.decoder,
@@ -272,7 +536,7 @@ def control_action_interface(objects, rows, proof, state, frame, ancestor_protec
         protected_constituents=bindings,
     )
     count = Span(max(1, state.count.lower) - 1, state.count.upper - 1)
-    errors = []
+    errors: list[ActionError] = []
     success = []
     for option in child["outcomes"]:
         after = replace(state, count=count, decoder=option["state"])
@@ -317,16 +581,26 @@ def control_action_interface(objects, rows, proof, state, frame, ancestor_protec
             successful_outcomes=tuple(success),
             possible_writes=((state.header, 4, 4),),
         )
-    result.update(errors=tuple(errors), primitive_invocations=(origin,), nested_returns=returns)
+    result.update(
+        {"errors": tuple(errors), "primitive_invocations": (origin,), "nested_returns": returns}
+    )
     return result
 
 
-def button_binding_interface(objects, rows, proof, state, frame, ancestor_protected, call_site):
+def button_binding_interface(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord | TailParentRecord,
+    state: SequenceInterface,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+    call_site: int,
+) -> ButtonResult:
     """Ordered tap then hold; no independent-field Cartesian histories."""
     proof = _current(objects, rows, proof, "ButtonBinding")
     q, d, guards = _layout(state, frame, 24, ancestor_protected)
     parent = _caller(objects, rows, proof, call_site, state, frame, "ButtonBinding")
-    result = dict(
+    result: ButtonResult = dict(
         proof=proof,
         before=state,
         normal=None,
@@ -354,16 +628,14 @@ def button_binding_interface(objects, rows, proof, state, frame, ancestor_protec
     require_writes((state.header,), ((state.header, 4, 4),), guards + (saved, d))
     count = Span(max(1, state.count.lower) - 1, state.count.upper - 1)
     inner = SequenceInterface(local, state.decoder, Span(2, 2))
-    invocations = []
-    errors = []
-    previous = None
+    invocations: list[ActionCall] = []
+    errors: list[ButtonError] = []
+    previous: ActionCall | None = None
     targets = {e[0]: e for e in proof["ordinary_edges"]}
     for field, off in (("tap", 22), ("hold", 48)):
         edge = targets.get(off)
-        require(
-            edge is not None and edge[3] == ROLES["ControlAction"],
-            "Button changes its paired Action child",
-        )
+        if edge is None or edge[3] != ROLES["ControlAction"]:
+            raise AssertionError("Button changes its paired Action child")
         action = tail_coverage(objects, _name(objects, ROLES["ControlAction"], edge[2]), rows)
         child = control_action_interface(
             objects,
@@ -374,7 +646,7 @@ def button_binding_interface(objects, rows, proof, state, frame, ancestor_protec
             guards + (saved, q),
             proof["function"] + off,
         )
-        origin = dict(
+        origin: ActionCall = dict(
             field=field,
             site=proof["function"] + off,
             before=inner,
@@ -424,11 +696,22 @@ def button_binding_interface(objects, rows, proof, state, frame, ancestor_protec
             invocations=tuple(invocations),
             source_order=("tap", "hold"),
         )
-    result.update(errors=tuple(errors), invocations=tuple(invocations), nested_returns=returns)
+    result.update(
+        {"errors": tuple(errors), "invocations": tuple(invocations), "nested_returns": returns}
+    )
     return result
 
 
-def _visitor_caller(objects, rows, proof, state, output, frame, call_site, shape):
+def _visitor_caller(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: TailCoverageRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    call_site: int,
+    shape: str,
+) -> int:
     from config_headers import VISITOR
 
     name = _name(objects, VISITOR)
@@ -466,7 +749,15 @@ def _visitor_caller(objects, rows, proof, state, output, frame, call_site, shape
     return V
 
 
-def _output_layout(output, frame, q, d, guards, positive, writes):
+def _output_layout(
+    output: View,
+    frame: Storage,
+    q: Storage,
+    d: Storage,
+    guards: tuple[Storage, ...],
+    positive: int,
+    writes: Sequence[tuple[int, int]],
+) -> Storage:
     out = _object(output, "Tail aggregate output")
     require_disjoint((frame, q, d, out))
     require_writes(
@@ -477,10 +768,21 @@ def _output_layout(output, frame, q, d, guards, positive, writes):
     return out
 
 
-def _direct_u32(objects, rows, proof, off, before, output, frame, guards, field):
+def _direct_u32(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: TailCoverageRecord,
+    off: int,
+    before: DecoderInterface,
+    output: View,
+    frame: Storage,
+    guards: Sequence[Storage],
+    field: str,
+) -> tuple[DirectCall, tuple[DecoderOutcome, ...]]:
     children = tail_children(objects, rows, (proof,))
     edge = next((e for e in proof["ordinary_edges"] if e[0] == off), None)
-    require(edge is not None, "Tail aggregate loses its actual direct scalar site")
+    if edge is None:
+        raise AssertionError("Tail aggregate loses its actual direct scalar site")
     scalar = children[edge[2], edge[3]]
     require(
         scalar.get("semantic_role") == "take_varint_u32",
@@ -490,7 +792,7 @@ def _direct_u32(objects, rows, proof, off, before, output, frame, guards, field)
     child = decoder_interface(
         objects, rows, scalar, before, _child_frame(frame, 32, "varint"), protected, output=output
     )
-    origin = dict(
+    origin: DirectCall = dict(
         field=field,
         site=proof["function"] + off,
         before=before,
@@ -500,7 +802,16 @@ def _direct_u32(objects, rows, proof, off, before, output, frame, guards, field)
     return origin, tuple(v for v in child["outcomes"] if v["kind"] == "success")
 
 
-def _pushed_output_none(objects, rows, proof, state, output, frame, guards, call_site):
+def _pushed_output_none(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: TailCoverageRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    guards: Sequence[Storage],
+    call_site: int,
+) -> OutputNone:
     """The two authored output families push BEFORE their outer count test.
 
     Universal fresh return equations include their selected missing path.
@@ -537,14 +848,21 @@ def _pushed_output_none(objects, rows, proof, state, output, frame, guards, call
 
 
 def screen_bindings_interface(
-    objects, rows, proof, state, output, frame, ancestor_protected, call_site
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord | TailParentRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+    call_site: int,
+) -> ScreenResult:
     """Four ordered Button packages, rotation and click before ten-byte output."""
     proof = _current(objects, rows, proof, "ScreenBindings")
     q, d, guards = _layout(state, frame, 64, ancestor_protected)
     _visitor_caller(objects, rows, proof, state, output, frame, call_site, "ScreenBindings")
     out = _output_layout(output, frame, q, d, guards, state.count.upper, ((0, 10),))
-    result = dict(
+    result: ScreenResult = dict(
         proof=proof,
         before=state,
         output=output,
@@ -583,11 +901,11 @@ def screen_bindings_interface(
     require_writes((state.header,), ((state.header, 4, 4),), guards + (saved, d, out))
     count = Span(max(1, state.count.lower) - 1, state.count.upper - 1)
     inner = SequenceInterface(borrow(frame, 20, 8, frame.phase, True), state.decoder, Span(4, 4))
-    calls = []
-    errors = []
-    buttons = []
+    calls: list[TailCall] = []
+    errors: list[ScreenError] = []
+    buttons: list[ButtonNormal] = []
 
-    def record_errors(origin, options):
+    def record_errors(origin: TailCall, options: Sequence[ActionError | ButtonError]) -> None:
         for error in options:
             errors.append(
                 dict(
@@ -603,10 +921,8 @@ def screen_bindings_interface(
 
     for index, off in enumerate((30, 62, 94, 122)):
         edge = next((e for e in proof["ordinary_edges"] if e[0] == off), None)
-        require(
-            edge is not None and edge[3] == ROLES["ButtonBinding"],
-            "Screen loses its paired Button call",
-        )
+        if edge is None or edge[3] != ROLES["ButtonBinding"]:
+            raise AssertionError("Screen loses its paired Button call")
         child_proof = tail_coverage(objects, _name(objects, ROLES["ButtonBinding"], edge[2]), rows)
         protected = guards + (saved, q, out, pointer) + ((captured,) if index == 3 else ())
         child = button_binding_interface(
@@ -618,7 +934,7 @@ def screen_bindings_interface(
             protected,
             proof["function"] + off,
         )
-        origin = dict(
+        origin: ButtonCall = dict(
             field=("buttonA", "buttonB", "buttonX", "buttonY")[index],
             site=proof["function"] + off,
             before=inner,
@@ -641,7 +957,9 @@ def screen_bindings_interface(
                 )
             )
         if child["normal"] is None:
-            result.update(errors=tuple(errors), invocations=tuple(calls), nested_returns=returns)
+            result.update(
+                {"errors": tuple(errors), "invocations": tuple(calls), "nested_returns": returns}
+            )
             return result
         buttons.append(child["normal"])
         inner = child["normal"]["after"]
@@ -698,7 +1016,7 @@ def screen_bindings_interface(
         click = SequenceInterface(click_q, _join_decoders(normal), Span(1, 1))
         edge = next(e for e in proof["ordinary_edges"] if e[0] == 234)
         child_proof = tail_coverage(objects, _name(objects, ROLES["ControlAction"], edge[2]), rows)
-        child = control_action_interface(
+        click_child = control_action_interface(
             objects,
             rows,
             child_proof,
@@ -707,49 +1025,58 @@ def screen_bindings_interface(
             guards + (saved, q, out, captured),
             proof["function"] + 234,
         )
-        origin = dict(
+        click_origin: ActionCall = dict(
             field="click",
             site=proof["function"] + 234,
             before=click,
-            result=child,
+            result=click_child,
             predecessor=rotation,
         )
-        calls.append(origin)
-        record_errors(origin, child["errors"])
-        if child["none"] is not None:
-            none = child["none"]
+        calls.append(click_origin)
+        record_errors(click_origin, click_child["errors"])
+        if click_child["none"] is not None:
+            click_none = click_child["none"]
             errors.append(
                 dict(
                     stage="click",
                     tag=254,
                     error=14,
-                    origin=origin,
-                    cause=none,
-                    cursor=none["after"].decoder.cursor,
-                    after=replace(state, count=count, decoder=none["after"].decoder),
+                    origin=click_origin,
+                    cause=click_none,
+                    cursor=click_none["after"].decoder.cursor,
+                    after=replace(state, count=count, decoder=click_none["after"].decoder),
                 )
             )
-        if child["normal"] is not None:
-            require(child["normal"]["after"].count == Span(0, 0), "Screen omits its click source")
+        if click_child["normal"] is not None:
+            require(
+                click_child["normal"]["after"].count == Span(0, 0), "Screen omits its click source"
+            )
             result["normal"] = dict(
                 source_order=("buttonA", "buttonB", "buttonX", "buttonY", "rotation", "click"),
                 buttons=tuple(buttons),
                 rotation_domain=(0, 3),
                 click_domain=(0, 18),
                 invocations=tuple(calls),
-                after=replace(state, count=count, decoder=child["normal"]["after"].decoder),
+                after=replace(state, count=count, decoder=click_child["normal"]["after"].decoder),
                 physical_output_order=((266, 1, 1), (268, 0, 1), (296, 6, 4), (306, 2, 4)),
                 outstanding_after_tag=((2, 8),),
                 initialized_bytes=tuple(range(10)),
                 completion_requires_all_stores_and_original_return=True,
             )
-    result.update(errors=tuple(errors), invocations=tuple(calls), nested_returns=returns)
+    result.update({"errors": tuple(errors), "invocations": tuple(calls), "nested_returns": returns})
     return result
 
 
 def led_pattern_interface(
-    objects, rows, proof, state, output, frame, ancestor_protected, call_site
-):
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    proof: BodyRecord | TailParentRecord,
+    state: SequenceInterface,
+    output: View,
+    frame: Storage,
+    ancestor_protected: Sequence[Storage],
+    call_site: int,
+) -> LedResult:
     """All fields decode for every kind, including Off; padding stays opaque."""
     from config_widget_children import color_interface
     from config_widget_contracts import ROLES as WIDGET
@@ -758,7 +1085,7 @@ def led_pattern_interface(
     q, d, guards = _layout(state, frame, 48, ancestor_protected)
     _visitor_caller(objects, rows, proof, state, output, frame, call_site, "LedPattern")
     out = _output_layout(output, frame, q, d, guards, state.count.upper, ((0, 1), (2, 4), (6, 4)))
-    result = dict(
+    result: LedResult = dict(
         proof=proof,
         before=state,
         output=output,
@@ -799,8 +1126,8 @@ def led_pattern_interface(
         guards + (saved, q, out, local_owner),
         "kind",
     )
-    calls = [kind]
-    errors = []
+    calls: list[TailCall] = [kind]
+    errors: list[LedError] = []
     for option in kind["result"]["outcomes"]:
         if option["kind"] == "success":
             require(option["value_domain"] == (0, 0xFFFFFFFF), "LED kind loses source u32 domain")
@@ -829,7 +1156,9 @@ def led_pattern_interface(
                 )
             )
     if not success:
-        result.update(errors=tuple(errors), invocations=tuple(calls), nested_returns=returns)
+        result.update(
+            {"errors": tuple(errors), "invocations": tuple(calls), "nested_returns": returns}
+        )
         return result
     inner = SequenceInterface(local_q, _join_decoders(success), Span(4, 4))
     children = tail_children(objects, rows, (proof,))
@@ -841,9 +1170,11 @@ def led_pattern_interface(
     )
     for field, off, semantic, domain in fields:
         edge = next((e for e in proof["ordinary_edges"] if e[0] == off), None)
-        require(edge is not None, "LED loses a source field call")
+        if edge is None:
+            raise AssertionError("LED loses a source field call")
         scalar = children[edge[2], edge[3]]
         protected, bindings = _guard_envelopes(guards + (saved, q, out))
+        child: ColorResult | PrimitiveResult[SequenceOutcome]
         if semantic == "color":
             require(scalar["role"] == WIDGET["color"], "LED color changes actual typed child")
             child = color_interface(
@@ -857,7 +1188,7 @@ def led_pattern_interface(
             child = sequence_interface(
                 objects, rows, scalar, inner, _child_frame(frame, 8, semantic), protected
             )
-        origin = dict(
+        origin: ScalarCall = dict(
             field=field,
             site=proof["function"] + off,
             before=inner,
@@ -867,23 +1198,23 @@ def led_pattern_interface(
         )
         calls.append(origin)
         normal = []
-        for option in child["outcomes"]:
-            if option["kind"] == "some":
+        for field_option in child["outcomes"]:
+            if field_option["kind"] == "some":
                 require(
-                    option["value_domain"] == domain,
+                    field_option["value_domain"] == domain,
                     "LED field was restricted by later semantic validation",
                 )
-                normal.append(option)
+                normal.append(field_option)
             else:
                 errors.append(
                     dict(
                         stage=field,
                         tag=254,
-                        error=14 if option["kind"] == "none" else option["error"],
+                        error=14 if field_option["kind"] == "none" else field_option["error"],
                         origin=origin,
-                        child_outcome=option,
-                        cursor=option["cursor"],
-                        after=replace(state, count=count, decoder=option["state"].decoder),
+                        child_outcome=field_option,
+                        cursor=field_option["cursor"],
+                        after=replace(state, count=count, decoder=field_option["state"].decoder),
                     )
                 )
         if not normal:
@@ -920,5 +1251,5 @@ def led_pattern_interface(
             physical_output_order=((184, 0, 1), (186, 6, 4), (194, 2, 4)),
             completion_requires_all_stores_and_original_return=True,
         )
-    result.update(errors=tuple(errors), invocations=tuple(calls), nested_returns=returns)
+    result.update({"errors": tuple(errors), "invocations": tuple(calls), "nested_returns": returns})
     return result

@@ -7,7 +7,11 @@ boot object. It never accepts caller-selected addresses, source flags or
 phase records. It is not an acquired Config owner or a whole-graph result.
 """
 
+from collections.abc import Mapping
+from typing import TypedDict
+from config_body_types import InstructionMap
 from config_entry import (
+    EntryRecord,
     BOOT_POOL,
     DASHBOARD_POOL,
     CONFIG,
@@ -17,14 +21,73 @@ from config_entry import (
     entry_object,
 )
 from config_entry_contracts import ENTRY_GRAMMARS
-from config_owner_entry import _direct_target
+from config_owner_entry import OnceRetry, OnceTaken, _direct_target
 from config_preclaim_contracts import WRITES
-from config_stack import transfer_family
-from config_startup import startup_configuration_copy
+from config_stack import DiagnosticObjects, transfer_family
+from config_startup import StartupRecord, startup_configuration_copy
 from validation import require
 
 
-def _allocations(objects, startup):
+class PreclaimWrite(TypedDict):
+    phase: str
+    shape: str
+    instruction: int
+    destination: str
+    interval: tuple[int, int]
+    scope: str
+    applies_to_first_boot_invocation_only: bool
+
+
+class PreclaimClaim(TypedDict):
+    load: int
+    store: int
+    taken: int
+    required_before_taken: int
+    after_success_taken: int
+    failed_exclusive_write_bytes: int
+    conditions: tuple[str, str]
+    retry: OnceRetry
+    already_taken: OnceTaken
+    loader_r0: int
+    restored_before_loader: bool
+
+
+class PendingDiagnostic(TypedDict):
+    kind: str
+    edges: tuple[tuple[str, int, int, str, int], ...]
+
+
+class PreclaimRecord(TypedDict):
+    mode: str
+    phase: str
+    startup: StartupRecord
+    allocations: dict[str, tuple[int, int]]
+    static_producer_bindings: tuple[tuple[str, int, str, int], ...]
+    executor: tuple[int, int]
+    normal_stack_interval: tuple[int, int]
+    writes: tuple[PreclaimWrite, ...]
+    Config_write_intersections: tuple[tuple[int, int, str], ...]
+    publication_attempts: tuple[int, ...]
+    detached_consume: tuple[int, ...]
+    task: tuple[int, int]
+    callback: tuple[int, int, int]
+    future: tuple[int, int, int, int]
+    callback_expiry: str
+    claim: PreclaimClaim
+    pending_diagnostics: tuple[PendingDiagnostic, ...]
+    pending_other_shared_invocations: tuple[tuple[int, str, str, int], ...]
+    alternatives: tuple[str, ...]
+    source_qualification: str
+    requires_M2_pre_init_source_reconciliation: bool
+    hardware_qualified: bool
+    requires_complete_source_alias_and_diagnostic_closure: bool
+    requires_first_batch_and_all_implicit_computed_ingress_closure: bool
+    requires_same_B_specialized_loader_and_all_later_source_epochs: bool
+    must_not_reuse_after_decode_refill_or_publication: bool
+    existing_conservative_frame_arithmetic_unchanged: bool
+
+
+def _allocations(objects: DiagnosticObjects, startup: StartupRecord) -> dict[str, tuple[int, int]]:
     result = {}
     for role in (BOOT_POOL, DASHBOARD_POOL, CONFIG, ISSUER):
         values = [v for v in objects.elf.symbol_entries if static_role(v[0]) == role]
@@ -51,7 +114,7 @@ def _allocations(objects, startup):
     return result
 
 
-def _activation(mode, phase):
+def _activation(mode: str, phase: str) -> tuple[int, int]:
     # E is this invocation's entry SP relative to the same actual Reset S.
     # Sequential initializer/spawn/push children are not retained with poll.
     fixed = dict(
@@ -71,7 +134,9 @@ def _activation(mode, phase):
     return fixed[phase]
 
 
-def _stack(objects, startup):
+def _stack(
+    objects: DiagnosticObjects, startup: StartupRecord
+) -> tuple[int, tuple[int, int], tuple[int, int]]:
     mode = startup["entry"]["mode"]
     sp = startup["copy"]["initial_sp"]
     extent = 96 if mode == "sizez" else 80
@@ -111,7 +176,9 @@ def _stack(objects, startup):
     return sp, (lo, sp), (sp - 24, 8)
 
 
-def _static_bindings(phases, allocations):
+def _static_bindings(
+    phases: Mapping[str, EntryRecord], allocations: Mapping[str, tuple[int, int]]
+) -> tuple[tuple[str, int, str, int], ...]:
     # Full-body matching binds each PC/MOV producer to its typed descriptor.
     # The same source role in another phase must name the same whole object.
     bindings = []
@@ -134,7 +201,9 @@ def _static_bindings(phases, allocations):
     return tuple(bindings)
 
 
-def _ingress(rows, startup, phases):
+def _ingress(
+    rows: InstructionMap, startup: StartupRecord, phases: Mapping[str, EntryRecord]
+) -> tuple[tuple[int, str, str, int], ...]:
     allowed = {}
     for proof in phases.values():
         for offset, operation, target, role, frame in proof["ordinary_edges"]:
@@ -172,10 +241,16 @@ def _ingress(rows, startup, phases):
     return tuple(shared)
 
 
-def _writes(phases, mode, sp, allocations, executor):
+def _writes(
+    phases: Mapping[str, EntryRecord],
+    mode: str,
+    sp: int,
+    allocations: Mapping[str, tuple[int, int]],
+    executor: tuple[int, int],
+) -> tuple[tuple[PreclaimWrite, ...], tuple[tuple[int, int, str], ...]]:
     names = {"boot": BOOT_POOL, "dashboard": DASHBOARD_POOL, "Config": CONFIG}
-    records = []
-    intersections = []
+    records: list[PreclaimWrite] = []
+    intersections: list[tuple[int, int, str]] = []
     config, config_size = allocations[CONFIG]
     for phase, proof in phases.items():
         shape = proof["shape"]
@@ -256,7 +331,9 @@ def _writes(phases, mode, sp, allocations, executor):
     return tuple(records), tuple(intersections)
 
 
-def preclaim_configuration_preservation(objects, instructions):
+def preclaim_configuration_preservation(
+    objects: DiagnosticObjects, instructions: InstructionMap
+) -> PreclaimRecord:
     """Bind normal physical effects; diagnostics/source/loader still fail closed.
 
     The compatible complete machine shapes retain the source-reviewed null
@@ -315,7 +392,7 @@ def preclaim_configuration_preservation(objects, instructions):
     )
     boot_base = allocations[BOOT_POOL][0]
     once = boundary["once"]
-    diagnostics = tuple(
+    diagnostics: tuple[PendingDiagnostic, ...] = tuple(
         dict(
             kind=kind,
             edges=tuple(

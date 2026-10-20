@@ -186,6 +186,27 @@ const POWMAN_PASSWORD: u32 = 0x5AFE << 16;
 static WAKER: AtomicWaker = AtomicWaker::new();
 static ALARM_OCCURRED: AtomicBool = AtomicBool::new(false);
 
+fn set_timer_interrupt(powman: pac::powman::Powman, enabled: bool) {
+    powman.inte().modify(|w| {
+        w.0 = (w.0 & 0xffff) | POWMAN_PASSWORD;
+        w.set_timer(enabled);
+    });
+}
+
+fn clear_alarm_state(powman: pac::powman::Powman, occurred: &AtomicBool) {
+    critical_section::with(|_| {
+        powman.timer().modify(|w| {
+            w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(true); // W1C
+        });
+        occurred.store(false, Ordering::SeqCst);
+    });
+}
+
+fn alarm_after(now: u64, duration_ms: u64) -> Result<u64, Error> {
+    now.checked_add(duration_ms).ok_or(Error::AlarmOverflow)
+}
+
 /// Alarm wake mode configuration
 ///
 /// Controls which low-power wake mechanisms are enabled for the alarm.
@@ -261,13 +282,16 @@ pub enum ClockSource {
 pub enum Error {
     /// The alarm time is in the past
     AlarmInPast,
+    /// Adding a relative duration would overflow the counter.
+    AlarmOverflow,
     /// DateTime conversion error
     DateTime(DateTimeError),
 }
 
 /// AON Timer driver
 pub struct AonTimer<'d> {
-    _phantom: PhantomData<&'d ()>,
+    // The IRQ and its completion flag belong to the constructing core.
+    _phantom: PhantomData<&'d mut *mut ()>,
     config: Config,
 }
 
@@ -296,6 +320,7 @@ impl<'d> AonTimer<'d> {
         _irq: impl interrupt::typelevel::Binding<interrupt::typelevel::POWMAN_IRQ_TIMER, InterruptHandler> + 'd,
         config: Config,
     ) -> Self {
+        assert!((1..=65535).contains(&config.clock_freq_khz), "AON clock exceeds its 16-bit kHz field");
         let powman = pac::POWMAN;
 
         match config.clock_source {
@@ -321,13 +346,17 @@ impl<'d> AonTimer<'d> {
             }
         }
 
-        interrupt::POWMAN_IRQ_TIMER.unpend();
-        unsafe { interrupt::POWMAN_IRQ_TIMER.enable() };
-
-        Self {
+        let mut timer = Self {
             _phantom: PhantomData,
             config,
-        }
+        };
+        timer.disable_alarm_interrupt();
+        timer.disable_alarm();
+        timer.disable_dormant_wake();
+        timer.clear_alarm();
+        interrupt::POWMAN_IRQ_TIMER.unpend();
+        unsafe { interrupt::POWMAN_IRQ_TIMER.enable() };
+        timer
     }
 
     /// Start the timer
@@ -337,6 +366,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false); // Preserve the W1C status.
             match self.config.clock_source {
                 ClockSource::Lposc => w.set_use_lposc(true),
                 ClockSource::Xosc => w.set_use_xosc(true),
@@ -353,6 +383,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false);
             w.set_run(false);
             *w
         });
@@ -461,14 +492,12 @@ impl<'d> AonTimer<'d> {
     ///
     /// This allows the alarm to trigger POWMAN_IRQ_TIMER and wake from WFI/WFE.
     fn enable_alarm_interrupt(&mut self) {
-        let powman = pac::POWMAN;
-        powman.inte().modify(|w| w.set_timer(true));
+        set_timer_interrupt(pac::POWMAN, true);
     }
 
     /// Disable the alarm interrupt (INTE.TIMER)
     pub fn disable_alarm_interrupt(&mut self) {
-        let powman = pac::POWMAN;
-        powman.inte().modify(|w| w.set_timer(false));
+        set_timer_interrupt(pac::POWMAN, false);
     }
 
     /// Set the internal alarm value in milliseconds
@@ -501,12 +530,7 @@ impl<'d> AonTimer<'d> {
 
     /// Clear the alarm flag
     pub fn clear_alarm(&mut self) {
-        let powman = pac::POWMAN;
-        powman.timer().modify(|w| {
-            w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
-            w.set_alarm(true); // Write 1 to clear
-            *w
-        });
+        clear_alarm_state(pac::POWMAN, &ALARM_OCCURRED);
     }
 
     /// Disable the alarm
@@ -514,6 +538,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false);
             w.set_alarm_enab(false);
             *w
         });
@@ -524,6 +549,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false);
             w.set_alarm_enab(true);
             *w
         });
@@ -544,6 +570,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false);
             w.set_pwrup_on_alarm(true);
             *w
         });
@@ -560,6 +587,7 @@ impl<'d> AonTimer<'d> {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
+            w.set_alarm(false);
             w.set_pwrup_on_alarm(false);
             *w
         });
@@ -601,9 +629,10 @@ impl<'d> AonTimer<'d> {
     /// Set an alarm to fire after a duration from now
     ///
     /// This is a convenience method that sets the alarm to `now() + duration`.
+    /// Returns `AlarmOverflow` if the sum cannot be represented.
     pub fn set_alarm_after(&mut self, duration: Duration) -> Result<(), Error> {
         let current_ms = self.now();
-        let alarm_ms = current_ms + duration.as_millis();
+        let alarm_ms = alarm_after(current_ms, duration.as_millis())?;
         self.set_alarm(alarm_ms)
     }
 
@@ -708,17 +737,55 @@ impl interrupt::typelevel::Handler<interrupt::typelevel::POWMAN_IRQ_TIMER> for I
     unsafe fn on_interrupt() {
         let powman = crate::pac::POWMAN;
 
-        powman.inte().modify(|w| w.set_timer(false));
+        if !powman.ints().read().timer() {
+            return;
+        }
+        set_timer_interrupt(powman, false);
 
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
             w.set_alarm_enab(false);
+            w.set_alarm(true);
             *w
         });
 
-        powman.intr().modify(|w| w.set_timer(true));
-
         ALARM_OCCURRED.store(true, Ordering::SeqCst);
         WAKER.wake();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alarm_interrupt_writes_include_password_and_preserve_other_sources() {
+        let mut words = [0u32; 256];
+        let regs = unsafe { pac::powman::Powman::from_ptr(words.as_mut_ptr().cast()) };
+        regs.inte().write(|w| w.0 = 1);
+        set_timer_interrupt(regs, true);
+        assert_eq!(regs.inte().read().0 >> 16, 0x5afe);
+        assert!(regs.inte().read().timer());
+        assert_eq!(regs.inte().read().0 & 1, 1);
+        set_timer_interrupt(regs, false);
+        assert_eq!(regs.inte().read().0 >> 16, 0x5afe);
+        assert!(!regs.inte().read().timer());
+    }
+
+    #[test]
+    fn clearing_old_alarm_invalidates_its_software_completion() {
+        let mut words = [0u32; 256];
+        let regs = unsafe { pac::powman::Powman::from_ptr(words.as_mut_ptr().cast()) };
+        let occurred = AtomicBool::new(true);
+        clear_alarm_state(regs, &occurred);
+        assert!(!occurred.load(Ordering::SeqCst));
+        assert!(regs.timer().read().alarm());
+        assert_eq!(regs.timer().read().0 >> 16, 0x5afe);
+    }
+
+    #[test]
+    fn relative_alarm_overflow_is_an_error() {
+        assert_eq!(alarm_after(10, 20), Ok(30));
+        assert!(alarm_after(u64::MAX, 1).is_err());
     }
 }

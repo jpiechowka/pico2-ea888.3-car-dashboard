@@ -7,6 +7,22 @@ visitor/canonical/loader/resource routes. All copies retain opaque padding.
 
 from dataclasses import dataclass, replace
 import re
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Never, TypedDict
+from config_abstract import DecoderInterface, DecoderOutcome, PrimitiveResult, SequenceOutcome
+from config_build_source import SourceBinding
+from config_construction import ExtendResult
+from config_decoded_prefix import _PrefixState, PrefixDescription, PrefixOutcome
+from config_finite_returns import ReturnNode
+from config_refill_children import OpaqueCopyResult
+from config_utf8 import UTF8Result
+from llvm_stack import Instruction
+
+if TYPE_CHECKING:
+    from config_decoded_sources import PhaseGraph
+    from config_decoded_widgets import _WidgetControlInput
+from config_body_types import BodyRecord, Callback, InstructionMap, OrdinaryEdge
+from config_stack import DiagnosticObjects
 from config_abstract import Span, SequenceInterface, sequence_interface, decoder_interface
 from config_abstract_compare import InitializedPrefix
 from config_construction import VecInterface, extend_interface
@@ -21,8 +37,156 @@ from config_owner_entry import _direct_target
 from config_refill_children import opaque_copy_interface
 from config_regions import Storage, borrow, require_writes, require_disjoint, _control
 from config_utf8 import UTF8Slice, from_utf8_interface, utf8_body, UTF8
-from config_views_contracts import GRAMMARS, ROLES, SHARED_PENDING, PENDING_VARINT_TRANSPORT
+from config_views_contracts import (
+    GRAMMARS,
+    ROLES,
+    SHARED_PENDING,
+    PENDING_VARINT_TRANSPORT,
+    ViewsObject,
+    PendingWitness,
+    FallthroughWitness,
+)
 from validation import require
+
+Children = Mapping[tuple[int, str], BodyRecord]
+Successors = tuple[tuple[int, int | None, int | None], ...]
+PendingContexts = tuple[tuple[int, int, str], ...]
+StageOrigin = tuple[UTF8Result, ExtendResult, OpaqueCopyResult, OpaqueCopyResult | None]
+# Retained provenance is compared structurally, never interpreted as new authority.
+Trace = tuple[object, ...]
+
+
+class ViewsError(TypedDict):
+    stage: str
+    error: int
+    r5: int
+    frontier: int
+    cursor: tuple[int, int]
+    top_Q_physical_count: int
+    initialized_views: int
+    views_cleared: bool
+    boot_view_assigned: bool
+    initial_active_bytes_preserved: int
+    guard: str | None
+    no_rollback: bool
+    unfinished_element_not_published: bool
+
+
+class ViewsSuccess(TypedDict):
+    initialized_views: int
+    desired_length: int
+    cursor: tuple[int, int]
+    frontier: int
+    top_count: int
+    initial_active_bytes_preserved: int
+    source_guard: str
+    complete_UTF8_string_prefix: bool
+    opaque_capacity_from: int
+    Widget_bytes_consumed: int
+
+
+class ViewsLocals(TypedDict):
+    fixed_local_writes: tuple[tuple[int, int, int], ...]
+    D_cursor_write: int
+    top_Q_count_write: int
+    staging_intervals: tuple[tuple[int, int, str], ...]
+    Result_to_String_retirement: tuple[int, str]
+    String_to_A: tuple[int, int]
+    A_to_C: tuple[int, int]
+    C_last_read: int
+    loop_reuse_after_publication: tuple[int, int]
+    next_Result_write_only_after_C_last_read: bool
+
+
+class ViewsStage(TypedDict):
+    index: int
+    normal_string_length: tuple[int, int]
+    actual_source_pair: str
+    cursor_advance_before_UTF8: bool
+    byte_header_reset_after_capture: int
+    scratch_epochs: tuple[tuple[int, int, str], ...]
+    stage_copies: tuple[tuple[int, int, int], ...]
+    id_domain: tuple[int, int]
+    initialized_prefix_before: int
+    initialized_prefix_after: int
+    Config_writes: tuple[tuple[int, int], ...]
+    precommit_guard: tuple[int, int, str]
+    publication: int | None
+    semantic_element: tuple[str, ...]
+    opaque: tuple[str, ...]
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    return_after_copy: int
+    copy_preserves: tuple[str, ...]
+    second_copy_preserves: tuple[str, ...] | None
+
+
+class ControlRecord(TypedDict):
+    selected_instructions: int
+    successors: Successors
+    nested_returns: tuple[ReturnNode, ...]
+    stopped_frontiers: tuple[int, ...]
+    outside_shared_contexts: PendingContexts
+    pending_contexts_confer_state: bool
+    full_visitor_return_pending: bool
+
+
+class ControlExclusions(TypedDict):
+    excluded_taken: dict[int, tuple[int, str]]
+    excluded_fallthrough: dict[int, tuple[int, str]]
+
+
+class ControlExtension(ControlExclusions):
+    nested_returns: tuple[ReturnNode, ...]
+
+
+class WidgetReady(TypedDict):
+    frontier: int
+    top_count: int
+    bytes_consumed: int
+
+
+class LogicalCounts(TypedDict):
+    after_u16: int
+    after_boot: int
+    Views_active_logical: int
+    Widget_entry_materialized: int
+
+
+class NullString(TypedDict):
+    excluded_by: str
+    island: int
+    machine_nonreturn_established: bool
+
+
+class ViewsDescription(TypedDict):
+    phase: str
+    mode: str
+    source_context: SourceBinding
+    prefix_errors: tuple[PrefixOutcome, ...]
+    boot_view_domain: tuple[int, int]
+    group_errors: tuple[ViewsError, ...]
+    successes: tuple[ViewsSuccess, ...]
+    iterations: tuple[ViewsStage, ...]
+    control: ControlRecord
+    locals: ViewsLocals
+    Widget_ready: WidgetReady
+    deepest_child_SP: int
+    physical_child_paths: tuple[tuple[int, ...], ...]
+    logical_and_physical_counts: LogicalCounts
+    null_string_branch: NullString
+    shared_error_suffix_pending: bool
+    full_visitor_return_pending: bool
+    initial_facts_reinitialized: bool
+    target_policy_unchanged: bool
+    source_qualification: str
+    external_qualifications: tuple[str, ...]
+    requires_H8_consumed_input_closure: bool
+    requires_M2_pre_init_source_reconciliation: bool
+    exception_graph_limit: tuple[str, ...]
+    exception_absence_established: bool
+    hardware_qualified: bool
+    pending: tuple[str, ...]
+
 
 _CUSTOM = {v: k for k, v in ROLES.items() if v.startswith("@outline:")}
 
@@ -35,16 +199,18 @@ class _ViewsExit:
 
 @dataclass(frozen=True)
 class _ViewsErrorFrontier:
-    source: object
-    before: object
-    after: object
+    source: SequenceInterface
+    before: DecoderInterface
+    after: DecoderInterface
     origin: object
-    trace: tuple
-    summary: dict
+    trace: Trace
+    summary: ViewsError
     saved: Storage
 
 
-def _views_error_graph(context, frontiers):
+def _views_error_graph(
+    context: _PrefixState, frontiers: Sequence[_ViewsErrorFrontier]
+) -> "PhaseGraph":
     from config_decoded_sources import _phase_graph
 
     return _phase_graph((context.headers, context.success, frontiers))
@@ -52,16 +218,16 @@ def _views_error_graph(context, frontiers):
 
 @dataclass(frozen=True)
 class _ViewsState:
-    prefix: dict
-    context: object
-    parents: tuple
-    children: dict
-    exits: tuple
-    control: dict
-    error_frontiers: tuple = ()
+    prefix: PrefixDescription
+    context: _PrefixState
+    parents: tuple[BodyRecord, ...]
+    children: Children
+    exits: tuple[_ViewsExit, ...]
+    control: ControlRecord
+    error_frontiers: tuple[_ViewsErrorFrontier, ...] = ()
     error_checkpoint: object = None
 
-    def _checked_errors(self):
+    def _checked_errors(self) -> tuple[_ViewsErrorFrontier, ...]:
         """Retained private source relation, not standalone input authority."""
         self.context._checked_errors()
         require(
@@ -93,15 +259,21 @@ class _ViewsState:
         return self.error_frontiers
 
 
-def _outline(objects, name, rows, role, ancestry=()):
+def _outline(
+    objects: DiagnosticObjects,
+    name: str,
+    rows: InstructionMap,
+    role: str,
+    ancestry: tuple[int, ...] = (),
+) -> BodyRecord:
     require(
         role in _CUSTOM and re.fullmatch(r"OUTLINED_FUNCTION_[0-9]+", name),
         "unreviewed decoded Views outline",
     )
     contract = GRAMMARS[_CUSTOM[role]]
 
-    def no_object(*args):
-        require(False, "unexpected decoded outline object")
+    def no_object(*args: object) -> Never:
+        raise AssertionError("unexpected decoded outline object")
 
     proof = _complete_body(
         objects,
@@ -119,12 +291,16 @@ def _outline(objects, name, rows, role, ancestry=()):
     return proof
 
 
-def _parent(objects, rows, context):
+def _parent(
+    objects: DiagnosticObjects, rows: InstructionMap, context: _PrefixState
+) -> tuple[BodyRecord, ...]:
     V = context.headers["visitor"]["proof"]["function"]
     name = _name(objects, VISITOR, V)
     B = context.owner.start
 
-    def same_config(objects, value, descriptor):
+    def same_config(
+        objects: DiagnosticObjects, value: int, descriptor: ViewsObject
+    ) -> tuple[Callback, ...]:
         require(
             descriptor == dict(kind="same_Config") and value == B,
             "Views reload selects another Config",
@@ -148,8 +324,10 @@ def _parent(objects, rows, context):
     )
 
 
-def _children(objects, rows, parents):
-    proofs = {}
+def _children(
+    objects: DiagnosticObjects, rows: InstructionMap, parents: Sequence[BodyRecord]
+) -> dict[tuple[int, str], BodyRecord]:
+    proofs: dict[tuple[int, str], BodyRecord] = {}
     pending = [e for p in parents for e in p["ordinary_edges"]]
     while pending:
         off, operation, target, role, frame = pending.pop()
@@ -177,31 +355,31 @@ def _children(objects, rows, parents):
                     objects, _name(objects, role, target), rows, (target, "decoded Views child")
                 )
         else:
-            require(False, "unclassified decoded Views child")
+            raise AssertionError("unclassified decoded Views child")
         require(proof["frame"] == frame, "Views child activation differs")
         proofs[key] = proof
         pending.extend(proof["ordinary_edges"])
     return proofs
 
 
-def _edge(parents, offset):
+def _edge(parents: Sequence[BodyRecord], offset: int) -> OrdinaryEdge:
     main = parents[0]
     edges = [v for v in main["ordinary_edges"] if v[0] == offset - 82]
     require(len(edges) == 1, "Views lacks its exact source call")
     return edges[0]
 
 
-def _child(children, parents, offset):
+def _child(children: Children, parents: Sequence[BodyRecord], offset: int) -> BodyRecord:
     e = _edge(parents, offset)
     return children[e[2], e[3]]
 
 
-def _frame(context, size, label):
+def _frame(context: _PrefixState, size: int, label: str) -> Storage:
     p = context.headers["visitor_frame"]
     return Storage(p.space, label, p.start - size, size, 8, p.phase, True)
 
 
-def _stable(context, state):
+def _stable(context: _PrefixState, state: SequenceInterface) -> tuple[Storage, ...]:
     q = state.header
     d = state.decoder.header
     p = context.frame.phase
@@ -211,7 +389,13 @@ def _stable(context, state):
     )
 
 
-def _sequence(objects, rows, context, proof, state):
+def _sequence(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    proof: BodyRecord,
+    state: SequenceInterface,
+) -> PrimitiveResult[SequenceOutcome]:
     top = context.headers["visitor"]["sequence_state"].header
     guards = context.headers["visitor"]["protected"] + (
         () if state.header == top else (_object(top, "top Q"),)
@@ -228,7 +412,14 @@ def _sequence(objects, rows, context, proof, state):
     return result
 
 
-def _length(objects, rows, context, proof, state, guards):
+def _length(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    proof: BodyRecord,
+    state: DecoderInterface,
+    guards: Sequence[Storage],
+) -> PrimitiveResult[DecoderOutcome]:
     parent = context.headers["visitor_frame"]
     out = borrow(parent, 1064, 8, parent.phase, True)
     result = decoder_interface(
@@ -242,7 +433,7 @@ def _length(objects, rows, context, proof, state, guards):
     return result
 
 
-def _local_effects(context):
+def _local_effects(context: _PrefixState) -> ViewsLocals:
     """Full live-object protection at each fixed parent scratch epoch."""
     frame = context.headers["visitor_frame"]
     phase = frame.phase
@@ -310,18 +501,18 @@ def _local_effects(context):
 
 
 def _stage_effects(
-    objects,
-    rows,
-    context,
-    parents,
-    children,
-    index,
-    decoder,
-    string_before,
-    string_length,
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    index: int,
+    decoder: DecoderInterface,
+    string_before: Span,
+    string_length: Span,
     *,
-    _origin_sink=None,
-):
+    _origin_sink: list[StageOrigin] | None = None,
+) -> ViewsStage:
     """Bind one affine element's complete string/copy/publication effects.
 
     The source predicate is a paired p/n domain, not independent choices of
@@ -404,7 +595,7 @@ def _stage_effects(
         guards + (_object(A, "live A bytes"), _object(S, "live String header/bytes")),
     )
     require(index <= 8, "View loop index escaped its bounded prefix")
-    element_writes = ()
+    element_writes: tuple[tuple[int, int], ...] = ()
     second = None
     if index < 8:
         element = borrow(context.owner, 248 + 24 * index, 21, phase, True)
@@ -472,23 +663,40 @@ def _stage_effects(
     )
 
 
-def _phase_outcomes(objects, rows, context, parents, children):
+def _phase_outcomes(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> tuple[
+    tuple[ViewsError, ...],
+    tuple[ViewsSuccess, ...],
+    tuple[ViewsStage, ...],
+    tuple[_ViewsExit, ...],
+    tuple[_ViewsErrorFrontier, ...],
+]:
     V = parents[0]["function"] - 82
     frame = context.headers["visitor_frame"]
     _B = context.owner.start
     top = context.headers["visitor"]["sequence_state"].header
-    errors = []
-    successes = []
-    iterations = []
-    exits = []
-    frontiers = []
+    errors: list[ViewsError] = []
+    successes: list[ViewsSuccess] = []
+    iterations: list[ViewsStage] = []
+    exits: list[_ViewsExit] = []
+    frontiers: list[_ViewsErrorFrontier] = []
     saved = next(
         v
         for v in context.headers["visitor"]["protected"]
         if v.space == frame.space and v.start == frame.start + 1512 and v.extent == 96
     )
 
-    def origin(site, before, result, choice):
+    def origin(
+        site: int,
+        before: DecoderInterface | SequenceInterface,
+        result: PrimitiveResult[DecoderOutcome] | PrimitiveResult[SequenceOutcome],
+        choice: DecoderOutcome | SequenceOutcome,
+    ) -> Trace:
         require(
             any(choice is v for v in result["outcomes"]),
             "Views source error choice leaves its actual invocation",
@@ -501,21 +709,23 @@ def _phase_outcomes(objects, rows, context, parents, children):
         return (V + site, (p["function"], p["role"], p["extent"], p["frame"]), before, choice)
 
     def error(
-        stage,
-        code,
-        cursor,
-        index,
-        cleared,
-        boot=True,
-        guard=None,
+        stage: str,
+        code: int | None,
+        cursor: Span,
+        index: int,
+        cleared: bool,
+        boot: bool = True,
+        guard: str | None = None,
         *,
-        before,
-        after,
-        cause,
-        trace,
-        source,
-    ):
-        summary = dict(
+        before: DecoderInterface,
+        after: DecoderInterface,
+        cause: object,
+        trace: Trace,
+        source: SequenceInterface,
+    ) -> None:
+        if code is None:
+            raise AssertionError("Views private error origin/header/carrier association changed")
+        summary: ViewsError = dict(
             stage=stage,
             error=code,
             r5=code,
@@ -600,7 +810,7 @@ def _phase_outcomes(objects, rows, context, parents, children):
                 current = choice["state"]
                 n = current.payload.extent
                 remaining = n - current.cursor.lower
-                trace = prefix + (origin(130, decoder, length, choice),)
+                trace: Trace = prefix + (origin(130, decoder, length, choice),)
                 if remaining >= 9:
                     error(
                         "Views pre-clear capacity",
@@ -710,7 +920,7 @@ def _phase_outcomes(objects, rows, context, parents, children):
                         # After the exact remaining check, actual p/n stays
                         # paired; no representative pointer or value is chosen.
                         taken = replace(before, cursor=Span(before.cursor.lower, n))
-                        capture = []
+                        capture: list[StageOrigin] = []
                         stage = _stage_effects(
                             objects,
                             rows,
@@ -809,7 +1019,7 @@ def _phase_outcomes(objects, rows, context, parents, children):
     return tuple(errors), tuple(successes), tuple(iterations), tuple(exits), tuple(frontiers)
 
 
-def _views_return_profiles():
+def _views_return_profiles() -> dict[str, set[int]]:
     builtin = "_RNvNtCs_17compiler_builtins3mem6memcpy"
     return {
         "__aeabi_memcpy": {0, 4},
@@ -832,7 +1042,9 @@ def _views_return_profiles():
     }
 
 
-def _child_returns(rows, context, parents, children):
+def _child_returns(
+    rows: InstructionMap, context: _PrefixState, parents: Sequence[BodyRecord], children: Children
+) -> tuple[ReturnNode, ...]:
     from config_finite_returns import _closed_child_returns
 
     sp = context.headers["visitor_frame"].start
@@ -847,12 +1059,12 @@ def _child_returns(rows, context, parents, children):
 
 @dataclass(frozen=True)
 class _ControlSelection:
-    context: object
-    children: dict
-    proofs: tuple
-    selected: dict
-    edges: dict
-    cuts: frozenset
+    context: _PrefixState
+    children: Children
+    proofs: tuple[BodyRecord, ...]
+    selected: dict[int, Instruction]
+    edges: dict[int, tuple[str, int, str]]
+    cuts: frozenset[int]
     widget: bool
 
 
@@ -861,14 +1073,20 @@ class _StructuralControl:
     """Raw fixed-body coverage only; no reached source or active cut state."""
 
     selection: _ControlSelection
-    raw_successors: tuple
-    raw_returns: tuple
-    nested_returns: tuple
-    outside_shared_contexts: tuple
-    unentered_outgoing: tuple
+    raw_successors: Successors
+    raw_returns: tuple[int, ...]
+    nested_returns: tuple[ReturnNode, ...]
+    outside_shared_contexts: PendingContexts
+    unentered_outgoing: tuple[tuple[int, int], ...]
 
 
-def _control_selection(objects, rows, context, parents, children):
+def _control_selection(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+) -> _ControlSelection:
     root = context.headers["root"]["proof"]
     visitor = context.headers["visitor"]["proof"]
     V = visitor["function"]
@@ -888,7 +1106,7 @@ def _control_selection(objects, rows, context, parents, children):
         ),
         "Widget structural selection has another fixed window family",
     )
-    proofs = [
+    proofs: list[BodyRecord] = [
         root,
         visitor,
         *context.regions,
@@ -937,13 +1155,15 @@ def _control_selection(objects, rows, context, parents, children):
     )
 
 
-def _selected_successors(selection, extension=None):
+def _selected_successors(
+    selection: _ControlSelection, extension: ControlExclusions | None = None
+) -> tuple[Successors, tuple[int, ...], tuple[tuple[int, int], ...]]:
     context = selection.context
     V = context.headers["visitor"]["proof"]["function"]
     R = context.headers["root"]["proof"]["function"]
     selected, edges, cuts = selection.selected, selection.edges, selection.cuts
     returns = []
-    successors = []
+    successors: list[tuple[int, int | None, int | None]] = []
     dormant = []
     for at, row in selected.items():
         family, conditional = _control(row)
@@ -1023,13 +1243,15 @@ def _selected_successors(selection, extension=None):
     return tuple(successors), tuple(returns), tuple(dormant)
 
 
-def _foreign_ingress(objects, rows, selection):
+def _foreign_ingress(
+    objects: DiagnosticObjects, rows: InstructionMap, selection: _ControlSelection
+) -> PendingContexts:
     context = selection.context
     V = context.headers["visitor"]["proof"]["function"]
     R = context.headers["root"]["proof"]["function"]
     proofs, selected, children = selection.proofs, selection.selected, selection.children
-    source_pending = {}
-    source_fallthrough = {}
+    source_pending: dict[int, PendingWitness] = {}
+    source_fallthrough: dict[int, FallthroughWitness] = {}
     if type(selection) is not _ControlSelection:
         from config_source_control import _SourceSelection, _pending_profile
 
@@ -1043,7 +1265,7 @@ def _foreign_ingress(objects, rows, selection):
     pending_profiles = {**SHARED_PENDING, **source_pending}
     seen_fallthrough = set()
 
-    def pending_call(current, expected):
+    def pending_call(current: Instruction, expected: str) -> str:
         """Current typed identity only; no later invocation is activated."""
         require(current.mnemonic == "bl", "foreign Views shared-error call family differs")
         target = _direct_target(current, "bl")
@@ -1082,8 +1304,8 @@ def _foreign_ingress(objects, rows, selection):
                 "pending Views varint transport lacks its exact outline origin",
             )
 
-            def no_object(*args):
-                require(False, "unexpected pending Views transport object")
+            def no_object(*args: object) -> Never:
+                raise AssertionError("unexpected pending Views transport object")
 
             proof = _complete_body(
                 objects,
@@ -1105,15 +1327,15 @@ def _foreign_ingress(objects, rows, selection):
             )
         return expected
 
-    def check_context(witness):
+    def check_context(witness: PendingWitness | FallthroughWitness) -> None:
         for off, width, text in witness["context"]:
             current = rows.get(V + off)
-            require(
+            if not (
                 current is not None
                 and len(current.raw) == width
-                and objects.read_only(current.address, width) == current.raw,
-                "foreign Views context has stale or missing bytes",
-            )
+                and objects.read_only(current.address, width) == current.raw
+            ):
+                raise AssertionError("foreign Views context has stale or missing bytes")
             actual = (
                 current.mnemonic + " " + current.operands.split("@", 1)[0].split("<", 1)[0].strip()
             )
@@ -1234,7 +1456,14 @@ def _foreign_ingress(objects, rows, selection):
     return tuple(sorted(pending))
 
 
-def _widget_structural_control(objects, rows, state, parents, children, returns):
+def _widget_structural_control(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    state: _ViewsState,
+    parents: tuple[BodyRecord, ...],
+    children: Children,
+    returns: tuple[ReturnNode, ...],
+) -> _StructuralControl:
     require(
         type(state) is _ViewsState, "Widget structure lacks the actual private Views predecessor"
     )
@@ -1262,7 +1491,15 @@ def _widget_structural_control(objects, rows, state, parents, children, returns)
     )
 
 
-def _closure(objects, rows, context, parents, children, *, _widget=None):
+def _closure(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    context: _PrefixState,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    *,
+    _widget: "_WidgetControlInput | None" = None,
+) -> ControlRecord:
     """Closed selected invocation; later shared-error callers stay pending."""
     extension = None
     if _widget is not None:
@@ -1293,7 +1530,9 @@ def _closure(objects, rows, context, parents, children, *, _widget=None):
     )
 
 
-def _first_boot_decoded_views_state(objects, instructions, source_context):
+def _first_boot_decoded_views_state(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> tuple[ViewsDescription, _ViewsState]:
     """Derive once; only the actual private Q/D exits may feed Widgets.
 
     The public description remains a readonly report, never a capability.
@@ -1323,7 +1562,7 @@ def _first_boot_decoded_views_state(objects, instructions, source_context):
         not (task[0] < S and low < task[1]) and context.owner.start + 14604 <= low,
         "Views child physically aliases Config/Boot",
     )
-    description = dict(
+    description: ViewsDescription = dict(
         phase="first_boot_decoded_views_pending_widgets_remaining_visitor_canonical_and_loader_routes",
         mode="sizez",
         source_context=prefix["source_context"],
@@ -1385,5 +1624,7 @@ def _first_boot_decoded_views_state(objects, instructions, source_context):
     return description, state
 
 
-def first_boot_decoded_views(objects, instructions, source_context):
+def first_boot_decoded_views(
+    objects: DiagnosticObjects, instructions: InstructionMap, source_context: object
+) -> ViewsDescription:
     return _first_boot_decoded_views_state(objects, instructions, source_context)[0]

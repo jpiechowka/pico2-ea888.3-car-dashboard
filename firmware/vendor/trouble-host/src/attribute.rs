@@ -1034,15 +1034,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             return Ok(());
         }
 
-        self.authorize_unsolicited(connection, cccd_handle).await?;
-
         let uns = AttUns::Notify {
             handle: self.handle,
             data: value,
         };
-        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
-        conn.send(pdu).await;
-        Ok(())
+        send_unsolicited(server, conn, cccd_handle, uns).await
     }
 
     /// Check if indications should be sent to `connection` for this characteristic.
@@ -1050,7 +1046,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         let Some(cccd_handle) = self.cccd_handle else {
             return false;
         };
-        connection.server.should_notify(connection.raw(), cccd_handle)
+        connection.server.should_indicate(connection.raw(), cccd_handle)
     }
 
     /// Send an indication to `connection` with a new `value` for the characteristic.
@@ -1106,27 +1102,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             return Ok(());
         }
 
-        self.authorize_unsolicited(connection, cccd_handle).await?;
-
-        conn.acquire_indication_slot().await?;
-        let _drop = crate::host::OnDrop::new(|| conn.release_indication_slot());
-
         let uns = AttUns::Indicate {
             handle: self.handle,
             data: value,
         };
-        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
-        conn.send(pdu).await;
-
-        match with_timeout(ATT_TRANSACTION_TIMEOUT, conn.wait_indication_confirmation()).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(e),
-            Err(_) => {
-                warn!("[gatt] ATT transaction timeout (30s) waiting for indication confirmation, disconnecting");
-                conn.disconnect();
-                Err(Error::Timeout)
-            }
-        }
+        send_unsolicited(server, conn, cccd_handle, uns).await
     }
 
     /// Set the value of the characteristic in the provided attribute server.
@@ -1193,30 +1173,61 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             phantom: PhantomData,
         }
     }
+}
 
-    async fn authorize_unsolicited<P: PacketPool>(
-        &self,
-        connection: &GattConnection<'_, '_, P>,
-        cccd_handle: u16,
-    ) -> Result<(), Error> {
-        let server = connection.server;
-        let conn = connection.raw();
-
-        // Ensure encryption before sending notifications that require security
-        // (BT Core Spec Vol 3, Part C, Section 10.3.1.1: server "shall" initiate encryption)
-        // Write permission on the CCCD defines permission to receive notifications/indications
-        match server.can_write(conn, cccd_handle) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                #[cfg(feature = "security")]
-                if conn.is_bonded_peer() && !conn.security_level().is_ok_and(|l| l.encrypted()) {
-                    conn.try_enable_encryption().await?;
-                    server.can_write(conn, cccd_handle)?;
-                    return Ok(());
-                }
-                Err(err.into())
+/// Common authorization and indication lifetime for characteristic and bulk APIs.
+pub(crate) async fn send_unsolicited<P: PacketPool>(
+    server: &dyn crate::attribute_server::DynamicAttributeServer<P>,
+    conn: &crate::connection::Connection<'_, P>,
+    cccd_handle: u16,
+    uns: AttUns<'_>,
+) -> Result<(), Error> {
+    // CCCD write permission governs receipt, including restored subscriptions.
+    if let Err(err) = server.can_write(conn, cccd_handle) {
+        #[cfg(feature = "security")]
+        {
+            if conn.is_bonded_peer() && !conn.security_level().is_ok_and(|l| l.encrypted()) {
+                conn.try_enable_encryption().await?;
+                server.can_write(conn, cccd_handle)?;
+            } else {
+                return Err(err.into());
             }
         }
+        #[cfg(not(feature = "security"))]
+        return Err(err.into());
+    }
+    let indication = matches!(uns, AttUns::Indicate { .. });
+    if !indication {
+        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
+        conn.send(pdu).await;
+        return Ok(());
+    }
+    conn.acquire_indication_slot().await?;
+    // Assembly failure has not started a transaction. Release the slot without
+    // disconnecting; after sending begins, a late confirmation is ambiguous.
+    let completed = core::cell::Cell::new(true);
+    let _drop = crate::host::OnDrop::new(|| {
+        if !completed.get() {
+            // A late confirmation has no transaction ID. Cancellation must
+            // close this bearer before another indication can own the slot.
+            conn.disconnect();
+        }
+        conn.release_indication_slot();
+    });
+    let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
+    completed.set(false);
+    let outcome = with_timeout(ATT_TRANSACTION_TIMEOUT, async {
+        conn.send(pdu).await;
+        conn.wait_indication_confirmation().await
+    })
+    .await;
+    match outcome {
+        Ok(Ok(())) => {
+            completed.set(true);
+            Ok(())
+        }
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(Error::Timeout),
     }
 }
 

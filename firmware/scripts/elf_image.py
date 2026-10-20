@@ -1,8 +1,9 @@
 """Small read-only ELF32/ARM inspector shared by firmware artifact gates."""
 
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 import struct
-from typing import TypeAlias, cast
+from typing import Protocol, TypeAlias, cast
 from validation import require
 
 
@@ -10,6 +11,56 @@ from validation import require
 Section: TypeAlias = tuple[int, int, int, int, int, int, int, int, int, int]
 Segment: TypeAlias = tuple[int, int, int, int, int, int, int, int]
 Symbol: TypeAlias = tuple[str, int, int, int, int]
+SectionEntry: TypeAlias = tuple[int, str, Section]
+
+
+class ImageBytes(Protocol):
+    """Immutable bytes used for source/image identity."""
+
+    @property
+    def data(self) -> bytes: ...
+
+
+class ProgramData(ImageBytes, Protocol):
+    """Read-only ELF payload and LOAD headers used by physical image checks."""
+
+    @property
+    def segments(self) -> Sequence[Segment]: ...
+
+
+class LinkedData(ProgramData, Protocol):
+    """Named ELF objects, separate from instruction decoding or live ownership."""
+
+    @property
+    def section_entries(self) -> Sequence[SectionEntry]: ...
+
+    @property
+    def symbol_entries(self) -> Sequence[Symbol]: ...
+
+
+class InspectableImage(LinkedData, Protocol):
+    """Parsed image interface shared by gates and explicit synthetic fixtures."""
+
+    @property
+    def sections(self) -> Sequence[Section]: ...
+
+    @property
+    def named(self) -> Mapping[str, Section]: ...
+
+    @property
+    def symbols(self) -> Mapping[str, int]: ...
+
+    @property
+    def functions(self) -> Mapping[str, tuple[int, int, int]]: ...
+
+    def function_bytes(self, name: str) -> bytes: ...
+
+    def section_bytes(self, name: str) -> bytes: ...
+
+
+class MappedImage(InspectableImage, Protocol):
+    @property
+    def mapping_symbols(self) -> Sequence[tuple[str, int, int]]: ...
 
 
 class ElfImage:

@@ -1,6 +1,7 @@
 """Build and admit a standalone BLE probe artifact; never accesses a device."""
 
 import argparse
+from collections.abc import Mapping, Sequence
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import tomllib
 
 from ble_probe_image import GATE, check, check_sources, sha, source_hashes, source_digest
 from validation import require
+from script_values import integer_value, object_fields, string_value
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "host/scripts"))
@@ -20,7 +22,7 @@ TARGET = "thumbv8m.main-none-eabihf"
 BIN_RUSTC_FLAGS = ["-C", "llvm-args=--inline-threshold=100000"]
 
 
-def build_command(profile):
+def build_command(profile: str) -> list[str]:
     require(profile in ("stock", "280-70"), "unknown profile")
     args = [
         "cargo",
@@ -41,7 +43,7 @@ def build_command(profile):
     return args + ["--", *BIN_RUSTC_FLAGS]
 
 
-def build_environment(original, toolchain, attempt):
+def build_environment(original: Mapping[str, str], toolchain: str, attempt: Path) -> dict[str, str]:
     # Child-only configuration: never mutate the caller or another build.
     from benchmark_environment import ENV_PREFIXES
 
@@ -74,10 +76,10 @@ def build_environment(original, toolchain, attempt):
     return env
 
 
-def find_clock_metadata(build_root):
+def find_clock_metadata(build_root: Path) -> Path:
     # Cargo nightlies use both package-hash/out and package/hash/out layouts.
     # The attempt has a fresh target tree; never pick one from a shared cache.
-    found = []
+    found: list[Path] = []
     for path in build_root.rglob("clock_profile.json"):
         require(len(found) < 8, "generated clock candidate bound")
         found.append(path)
@@ -85,7 +87,7 @@ def find_clock_metadata(build_root):
     return found[0]
 
 
-def build(name, profile, expert):
+def build(name: str, profile: str, expert: bool) -> None:
     require(
         re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name) is not None, "invalid attempt name"
     )
@@ -94,13 +96,15 @@ def build(name, profile, expert):
     attempt = REPO / "firmware/target/ble-probe-captures" / name
     attempt.mkdir(parents=True, exist_ok=False)
     firmware = REPO / "firmware"
-    toolchain = tomllib.loads((firmware / "rust-toolchain.toml").read_text())["toolchain"][
-        "channel"
-    ]
+    toolchain_record = object_fields(
+        tomllib.loads((firmware / "rust-toolchain.toml").read_text())["toolchain"],
+        "invalid pinned toolchain",
+    )
+    toolchain = string_value(toolchain_record["channel"], "invalid pinned toolchain channel")
     env = build_environment(os.environ, toolchain, attempt)
     flags = env["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
 
-    def run(args, timeout=120, host=False):
+    def run(args: Sequence[str], timeout: float = 120, host: bool = False) -> str:
         selected_env = env.copy()
         if host:
             selected_env.pop("CARGO_ENCODED_RUSTFLAGS", None)
@@ -136,15 +140,17 @@ def build(name, profile, expert):
     run(args, 1200)
     check_sources(REPO, sources)
     generated = find_clock_metadata(attempt / "build" / TARGET / "release/build")
-    clock_raw = generated.read_bytes()
+    with generated.open("rb") as clock_stream:
+        clock_raw = clock_stream.read(4097)
     require(len(clock_raw) <= 4096, "clock metadata bound")
-    clock = json.loads(clock_raw)
+    clock = object_fields(json.loads(clock_raw), "clock metadata object")
+    clock_values = object_fields(clock["clock"], "clock metadata values")
     expected_cpu, expected_spi = (
         (280000000, 70000000) if profile == "280-70" else (150000000, 37500000)
     )
     require(
-        clock["clock"]["actual_cpu_hz"] == expected_cpu
-        and clock["clock"]["actual_spi_hz"] == expected_spi,
+        integer_value(clock_values["actual_cpu_hz"], "invalid CPU clock") == expected_cpu
+        and integer_value(clock_values["actual_spi_hz"], "invalid SPI clock") == expected_spi,
         "resolved clock differs",
     )
     (attempt / "clock_profile.json").write_bytes(clock_raw)
@@ -201,12 +207,19 @@ def build(name, profile, expert):
     print(f"Ready for explicit device selection: {elf}\nNo device was accessed.")
 
 
-def main():
+class BuildOptions(argparse.Namespace):
+    name: str
+    profile: str
+    expert: bool
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name")
     parser.add_argument("--profile", choices=("stock", "280-70"), default="stock")
     parser.add_argument("--expert", action="store_true")
-    args = parser.parse_args()
+    args = BuildOptions()
+    parser.parse_args(namespace=args)
     build(args.name, args.profile, args.expert)
 
 

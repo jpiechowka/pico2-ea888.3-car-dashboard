@@ -325,14 +325,20 @@ impl<'d> Pwm<'d> {
     /// Splits the PWM driver into separate `PwmOutput` instances for channels A and B.
     #[inline]
     pub fn split(mut self) -> (Option<PwmOutput<'d>>, Option<PwmOutput<'d>>) {
-        (
+        let outputs = (
             self.pin_a
                 .take()
-                .map(|pin| PwmOutput::new(PwmChannelPin::A(pin), self.slice.clone(), true)),
+                .map(|pin| PwmOutput::new(PwmChannelPin::A(pin), self.slice, true)),
             self.pin_b
                 .take()
-                .map(|pin| PwmOutput::new(PwmChannelPin::B(pin), self.slice.clone(), true)),
-        )
+                .map(|pin| PwmOutput::new(PwmChannelPin::B(pin), self.slice, true)),
+        );
+        if outputs.0.is_some() || outputs.1.is_some() {
+            // Outputs now own the running slice. Dropping the original driver
+            // would stop both channels before their owners could use them.
+            core::mem::forget(self);
+        }
+        outputs
     }
     /// Splits the PWM driver by reference to allow for separate duty cycle control
     /// of each channel (A and B) without taking ownership of the PWM instance.
@@ -461,7 +467,7 @@ impl PwmBatch {
 
 impl<'d> Drop for Pwm<'d> {
     fn drop(&mut self) {
-        pac::PWM.ch(self.slice).csr().write_clear(|w| w.set_en(false));
+        stop_slice(pac::PWM.ch(self.slice));
         if let Some(pin) = &self.pin_a {
             pin.gpio().ctrl().write(|w| w.set_funcsel(31));
             // Enable pin PULL-DOWN
@@ -481,6 +487,39 @@ impl<'d> Drop for Pwm<'d> {
                 w.set_pde(true);
             });
         }
+    }
+}
+
+fn stop_slice(p: pac::pwm::Channel) {
+    p.csr().write_clear(|w| w.set_en(true));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn teardown_writes_only_enable_bit_to_clear_alias() {
+        let mut registers = [0u32; 4096];
+        let channel = unsafe { pac::pwm::Channel::from_ptr(registers.as_mut_ptr().cast()) };
+        stop_slice(channel);
+        assert_eq!(registers[0x3000 / 4], 1);
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[0x3000 / 4 + 1], 0);
+    }
+
+    #[test]
+    fn split_transfers_ownership_without_stopping_the_slice() {
+        // No MMIO is initialized: split must only move ownership. Keep the
+        // returned output from running its hardware destructor in this test.
+        let pwm = Pwm {
+            pin_a: Some(unsafe { AnyPin::steal(0) }),
+            pin_b: None,
+            slice: 0,
+        };
+        let outputs = core::mem::ManuallyDrop::new(pwm.split());
+        assert!(outputs.0.as_ref().unwrap().is_owned);
+        assert!(outputs.1.is_none());
     }
 }
 

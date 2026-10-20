@@ -31,21 +31,15 @@ pub const fn calculate_pio_clock_divider_value(sys_hz: u32, target_hz: u32) -> f
     // Requires a non-zero frequency
     core::assert!(target_hz > 0);
 
-    // Compute the integer and fractional part of the divider.
-    // Doing it this way allows us to avoid u64 division while
-    // maintaining precision.
-    let integer = sys_hz / target_hz;
-    let remainder = sys_hz % target_hz;
-    let frac = (remainder << 8) / target_hz;
+    // Widen before shifting: even ordinary clock remainders can exceed24 bits.
+    let result = ((sys_hz as u64) << 8) / target_hz as u64;
 
-    let result = integer << 8 | frac;
-
-    // Ensure the result will fit in 16+8 bits.
-    core::assert!(result <= 0xffff_ff);
+    // 65536 is represented by a zero integer field in the hardware register.
+    core::assert!(result <= 0x100_0000);
     // The clock divider can't be used to go faster than the system clock.
     core::assert!(result >= 0x0001_00);
 
-    fixed::FixedU32::from_bits(result)
+    fixed::FixedU32::from_bits(result as u32)
 }
 
 #[cfg(test)]
@@ -53,6 +47,19 @@ mod tests {
     use fixed::traits::ToFixed;
 
     use super::*;
+
+    #[test]
+    fn large_remainders_do_not_wrap_and_maximum_divider_is_representable() {
+        assert_eq!(calculate_pio_clock_divider_value(150_000_000, 80_000_000).to_bits(), 480);
+        assert_eq!(calculate_pio_clock_divider_value(u32::MAX, 1 << 24).to_bits(), 65535);
+        assert_eq!(calculate_pio_clock_divider_value(65_536_000, 1000).to_bits(), 1 << 24);
+    }
+
+    #[test]
+    #[should_panic]
+    fn oversized_divider_is_rejected_before_integer_shift_wraps() {
+        let _ = calculate_pio_clock_divider_value(16_777_217, 1);
+    }
 
     #[test]
     fn clock_divider_math() {

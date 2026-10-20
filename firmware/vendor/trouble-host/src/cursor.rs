@@ -27,12 +27,13 @@ impl<'d> WriteCursor<'d> {
         self.pos = self.pos.min(npos);
     }
 
-    /// Split into two cursors
+    /// Split the remaining writable bytes into two cursors. The parent position
+    /// is unchanged; commit the combined written length after both are dropped.
     pub fn split(&mut self, nbytes: usize) -> Result<(WriteCursor<'_>, WriteCursor<'_>), Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
         } else {
-            let (first, second) = self.data.split_at_mut(nbytes);
+            let (first, second) = self.data[self.pos..].split_at_mut(nbytes);
             Ok((
                 WriteCursor { data: first, pos: 0 },
                 WriteCursor { pos: 0, data: second },
@@ -167,5 +168,39 @@ impl<'d> ReadCursor<'d> {
 
     pub fn reset(&mut self) {
         self.pos = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_preserves_written_prefix_and_parent_position() {
+        let mut bytes = [0; 6];
+        let mut cursor = WriteCursor::new(&mut bytes);
+        cursor.append(&[0xaa, 0xbb]).unwrap();
+        let (mut header, mut body) = cursor.split(1).unwrap();
+        header.append(&[0xcc]).unwrap();
+        body.append(&[1, 2, 3]).unwrap();
+        assert_eq!(cursor.len(), 2);
+        cursor.commit(4).unwrap();
+        assert_eq!(cursor.finish(), [0xaa, 0xbb, 0xcc, 1, 2, 3]);
+    }
+
+    #[test]
+    fn split_checks_remaining_capacity_without_changing_cursor() {
+        let mut bytes = [0; 3];
+        let mut cursor = WriteCursor::new(&mut bytes);
+        cursor.append(&[7, 8]).unwrap();
+        assert!(matches!(cursor.split(2), Err(Error::InsufficientSpace)));
+        assert_eq!(cursor.len(), 2);
+        let (first, second) = cursor.split(0).unwrap();
+        assert_eq!(first.available(), 0);
+        assert_eq!(second.available(), 1);
+        cursor.commit(1).unwrap();
+        let (first, second) = cursor.split(0).unwrap();
+        assert_eq!(first.available(), 0);
+        assert_eq!(second.available(), 0);
     }
 }

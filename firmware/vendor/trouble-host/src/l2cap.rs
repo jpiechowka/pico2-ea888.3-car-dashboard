@@ -117,7 +117,7 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
 
     /// Get the peer's requested MTU.
     pub fn mtu(&self) -> u16 {
-        self.manager.mtu(self.index.unwrap())
+        self.manager.peer_mtu(self.index.unwrap())
     }
 
     /// Accept the connection, negotiate parameters, and return an established channel.

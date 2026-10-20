@@ -43,7 +43,9 @@ and task-future measurements remain required; this arithmetic excludes metadata.
   return an error. Padding sent to hardware is zeroed.
 - F2 lengths/offsets are checked before slicing; optional firmware-log bounds
   and UTF-8 are checked. Firmware upload allows 260 bytes for an aligned 255-byte
-  record. The trusted pinned firmware parser still requires validated input.
+  record. The compact Bluetooth firmware is fully validated before bus writes;
+  upload also independently validates record count, address arithmetic, modes
+  and exact end-of-input before consuming records.
 - Initialization retains upstream waits; the maintenance hook is a running-state
   boundary, not an initialization deadline or proof against hardware bus stalls.
 
@@ -76,3 +78,26 @@ padding. Both bluetooth-only/firmware-logs and general bluetooth configurations
 pass 16 native library tests. No transport production change was required by
 these fixtures, and passing fixtures do not establish the physical source of a
 short report.
+
+## Full-code audit (2026-10-20)
+
+Unknown F2 event kinds now preserve their numeric value instead of constructing
+an invalid Rust enum. The full 32-bit status remains available. SDIO `read16`
+decodes two bytes without attempting a four-byte conversion.
+
+The Bluetooth loader retains extended address mode across records, rejects
+truncation/count/address/EOF errors before hardware writes and preserves adjacent
+bytes around unaligned records with bounded 260-byte scratch storage. Initialization
+uses the same preflight validation. Upstream initialization waits still require
+the application's watchdog; no new timeout or cancellation guarantee is implied.
+
+The pinned firmware overlay contains the official CYW43439 Bluetooth 0065
+Data Length Extension correction. The Wi-Fi binary and `nvram_rp2040.bin`
+(also used by upstream Pico 2 W examples) are unchanged. Exact source/header/blob
+identities are in `../cyw43-firmware-provenance.json` and
+`../cyw43-firmware/README.md`.
+
+Native regressions cover both Bluetooth configurations, valid upload addresses
+and padding, malformed records and unknown event/status values. Independent
+decoding compared every old/new firmware record and rejected all 13,134 proper
+truncations. See the [full-code audit](../../../docs/validation/full-code-audit-2026-10-20.md).

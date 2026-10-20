@@ -1,8 +1,9 @@
 # Diagnostic measurements
 
-The 2026-10-19 audit traced dashboard Debug and standalone BLE probe values from
-their producers through the shared renderer. These are software observations;
-none establishes scanout, electrical margins or vehicle health.
+The [2026-10-20 re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
+traced dashboard Debug and standalone BLE probe values from their producers
+through the shared renderer, exports and Studio preview. These are software
+observations; none establishes scanout, electrical margins or vehicle health.
 
 ## Rates, work and memory
 
@@ -20,8 +21,9 @@ Average FPS is elapsed-time weighted, never the arithmetic mean of window rates.
 An already queued frame may complete in a newly selected dashboard page's first
 window; this is completion-time attribution. Dashboard frame count remains a
 lifetime counter. Probe navigation and peer recovery leave its meter running.
-SPI HAL return follows DMA completion, BSY clearing and CS high; scheduling delay
-can extend the observed time. It does not measure LCD scanout or tearing.
+Successful display completion follows DMA completion, BSY clearing and CS high;
+scheduling delay can extend the observed time. It does not measure LCD scanout or
+tearing.
 
 The work fields cover different scopes, so their percentages are not directly
 comparable. IRQ time inside measured segments is included; other work outside
@@ -43,6 +45,15 @@ Both screens round memory numerator and capacity upward to KiB (`K` in compact
 labels), after validating exact byte bounds. These rounded values must not be
 added together to infer exact free memory. Invalid rates, work percentages,
 memory pairs and buffer indices display unavailable.
+Debug's Cycles label instead uses thousands of cycles, rounded downward; a valid
+count below 1000 is `0K`. Its cycles, work percentage and observation time are
+published together after maintenance/discard decisions. Invalid, future or stale
+work also hides its cycles. An otherwise valid total wider than the cycle field
+can leave work available while the cycle display remains unknown.
+
+Studio's running synthetic preview has no hardware transfer observation and
+shows unavailable FPS. Explicitly labelled renderer fixtures may supply synthetic
+rates for layout tests; real firmware retains measured idle zero.
 
 The probe's compact `C0`/`C1` values are task-poll work percentages. `SP0`/`SP1`
 are sampled stack-depth maxima against their allocated capacities. They are not
@@ -86,6 +97,11 @@ fault acknowledgment without changing boot evidence. See the
 - [FRAME2 exports](telemetry-windows.md#versioned-export-and-collector) retain
   valid transfer counts/timing when cycle observations are unavailable. Their
   cycle sum is explicitly `na`, not zero or a partial sum.
+- Probe standard-read duration is frozen before reliable event publication, so
+  queue backpressure cannot inflate only its failure record. Global scan-error
+  age is unavailable when its observation is newer than the UI snapshot. Shared
+  capture admission rejects a global scan timestamp after the capture time,
+  while retaining global errors that predate the selected peer.
 
 ## Hardware/source cross-check
 
@@ -101,7 +117,9 @@ fault acknowledgment without changing boot evidence. See the
   CoreSight unlock sequence without resetting the shared counter.
 - CPU frequency is the HAL's configured/cached clock, not a frequency-counter
   measurement. SPI rate is register-derived from SPI0 CR0/CPSR and configured
-  peripheral clock: `clk_peri / (CPSDVSR × (SCR + 1))`.
+  peripheral clock: `clk_peri / (CPSDVSR × (SCR + 1))`. Checked decoding requires
+  an even prescaler from 2 through 254 and a nonzero result; unavailable metadata
+  stays unavailable through Debug and rejects a target benchmark.
 - `Vset` is the accepted regulator setting, not measured voltage. The locked HAL
   accepts VSEL codes 0–15, mapped to `550 + 50 × code` mV; it rejects the higher,
   nonlinear encodings. No ADC or wireless shared pin is touched by these metrics.
@@ -143,6 +161,7 @@ No automatic flash follows this audit.
 Record physical acceptance against the exact image using the
 [capture and diagnostic bench checklist](../validation/pico2-dnuc-runbook.md#standalone-probe-captures-and-diagnostics).
 
-Current software checks, shared fixes and linked memory are recorded in the
-[2026-10-19 validation record](../validation/probe-offline-audit-2026-10-19.md).
-Its image table supersedes historical memory figures only for those exact images.
+Current software checks and exact linked images are recorded in the
+[whole-code audit](../validation/full-code-audit-2026-10-20.md#verification-checkpoint).
+The [2026-10-19 record](../validation/probe-offline-audit-2026-10-19.md)
+retains the historical image values for that delivery.

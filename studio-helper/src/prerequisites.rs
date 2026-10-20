@@ -1,16 +1,24 @@
 //! Fixed, read-only prerequisite probes. Version evidence is not build/flash admission.
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::process;
-fn find(name: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+fn find(name: &str) -> Option<PathBuf> { find_on_path(&std::env::var_os("PATH").unwrap_or_default(), name) }
+fn find_on_path(
+    path: &OsStr,
+    name: &str,
+) -> Option<PathBuf> {
+    std::env::split_paths(path)
         .filter(|p| p.is_absolute())
         .map(|p| p.join(name))
         .find(|p| p.is_file())
         .and_then(|p| p.canonicalize().ok())
+}
+pub(crate) fn python_executable() -> Option<PathBuf> { python_on_path(&std::env::var_os("PATH").unwrap_or_default()) }
+fn python_on_path(path: &OsStr) -> Option<PathBuf> {
+    find_on_path(path, "python.exe").or_else(|| find_on_path(path, "python3.exe"))
 }
 fn probe(
     process: &mut process::ProcessContext,
@@ -223,7 +231,7 @@ pub(crate) fn check_with_process(
                 true,
             );
         }
-        let python = find("python.exe").or_else(|| find("python3.exe"));
+        let python = python_executable();
         match python {
             Some(p) => {
                 match probe(
@@ -497,6 +505,43 @@ pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
 mod tests {
     use super::*;
     #[test]
+    fn python_selection_supports_fallback_and_preserves_absolute_path_priority() {
+        let root = std::env::temp_dir().join(format!(
+            "studio-python-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let path = std::env::join_paths([Path::new("relative-entry"), &first, &second]).unwrap();
+        assert!(python_on_path(&path).is_none());
+        assert!(python_on_path(OsStr::new("")).is_none());
+        std::fs::create_dir(first.join("python.exe")).unwrap();
+        std::fs::write(first.join("python3.exe"), b"selection fixture only").unwrap();
+        assert_eq!(
+            python_on_path(&path),
+            Some(first.join("python3.exe").canonicalize().unwrap())
+        );
+        std::fs::write(second.join("python.exe"), b"preferred executable").unwrap();
+        assert_eq!(
+            python_on_path(&path),
+            Some(second.join("python.exe").canonicalize().unwrap())
+        );
+        std::fs::remove_dir(first.join("python.exe")).unwrap();
+        std::fs::write(first.join("python.exe"), b"earlier executable").unwrap();
+        assert_eq!(
+            python_on_path(&path),
+            Some(first.join("python.exe").canonicalize().unwrap())
+        );
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn missing_version_is_reported() {
         let mut rows = Vec::new();
         version(
@@ -515,7 +560,7 @@ mod tests {
     #[test]
     fn exact_version_passes_and_wrong_version_fails() {
         let process = &mut process::ProcessContext::default();
-        let python = find("python.exe").expect("Windows runner tests require Python");
+        let python = python_executable().expect("Windows runner tests require Python");
         let repo = std::env::current_dir().unwrap();
         for (observed, expected_status) in [("2.3.1", "passed"), ("2.2.0-a4", "incompatible")] {
             let script = format!("print('{observed}')");

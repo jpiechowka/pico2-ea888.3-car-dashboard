@@ -8,5 +8,18 @@
     "LICENSE-permissive-binary-license-1.0.txt": "5f65b8a496ac27afda41917c18cb6e690b4a022df1f5a12ea823eb38a287f50e",
     "nvram_rp2040.bin": "4904bdbb0c937bd0ac2eb2a1d62f2da4dd90e32082384e02874e8d671b0f330d",
     "README.md": "661188172bbe2304896f34567e397cc59d34acf25698b774187da9180a01908b"
+  },
+  "modified": {
+    "43439A0_btfw.bin": "d974384d0aa8124d30084f30d13519a3ed3b9f759f7ddd6a34ef3dcf1441bcf7",
+    "README.md": "df9058c4e5aa66c3908756be342f59438eca96bc8908ab8a462956fd33ef2dc1"
+  },
+  "bluetooth_update": {
+    "repository": "https://github.com/georgerobotics/cyw43-driver",
+    "revision": "bf3fa8ad5f61a30c1b4e7ee5ce86f7dbd8b8d2e4",
+    "path": "firmware/cyw43_btfw_43439.h",
+    "array": "cyw43_btfw_43439",
+    "source_sha256": "d05a8dca7e232ada470d8ed723edaa1ea78000098870f9b979d490d83ad35b22",
+    "blob_sha256": "d974384d0aa8124d30084f30d13519a3ed3b9f759f7ddd6a34ef3dcf1441bcf7",
+    "bytes": 6970
   }
 }

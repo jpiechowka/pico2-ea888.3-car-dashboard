@@ -60,7 +60,7 @@ impl DateTime {
     /// Convert to Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
     ///
     /// # Errors
-    /// Returns error if DateTime is before 1970-01-01.
+    /// Returns an error for invalid calendar fields or years outside 1970..=4095.
     pub fn timestamp_millis(&self) -> Result<u64, Error> {
         crate::datetime::epoch::datetime_to_millis(self)
     }

@@ -6,7 +6,66 @@ current-byte review and mutation/varied-link evidence, never learned shapes.
 Runtime state, root defaults, entry and repeated activations remain separate.
 """
 
-LOGGER_ROLES = {
+from typing import Literal, TypedDict
+from config_body_types import BodyContract
+
+
+class MetadataObject(TypedDict):
+    kind: Literal["defmt_metadata_id"]
+    raw_names: list[str]
+
+
+class WriteVtableObject(TypedDict):
+    kind: Literal["fmt_write_vtable"]
+    layout: list[int]
+    slots: list[list[str]]
+
+
+class LiteralObject(TypedDict):
+    kind: Literal["literal"]
+    length: int
+    hex: str
+
+
+class LocationObject(TypedDict):
+    kind: Literal["location"]
+    path_hex: str
+    line: int
+    column: int
+
+
+class WritableObject(TypedDict):
+    kind: Literal["writable_symbol"]
+    roles: list[str]
+
+
+class HeaderObject(TypedDict):
+    kind: Literal["rtt_header"]
+    extent: int
+    name_bytes: str
+    buffer_extent: int
+    fixed_words: dict[str, int]
+    roles: list[str]
+
+
+class SplitStateObject(TypedDict):
+    kind: Literal["split_state_anchor"]
+    anchor_is_encoder: bool
+    offsets: dict[str, int]
+    roles: list[list[str]]
+
+
+LoggerObject = (
+    MetadataObject
+    | WriteVtableObject
+    | LiteralObject
+    | LocationObject
+    | WritableObject
+    | HeaderObject
+    | SplitStateObject
+)
+
+LOGGER_ROLES: dict[str, list[str]] = {
     "_RINvNtCs_5defmt6export3fmtjECs_5pico2": ["logger_3a8f2202ed6f8466"],
     "@logger_timestamp": ["logger_72a566fabc4c26fd"],
     "_RNvNtCs_5defmt6export18acquire_and_header": [
@@ -93,7 +152,7 @@ MANUAL_BUILTINS = {
     "__aeabi_memcpy4": (164, 16),
 }
 
-LOGGER_GRAMMARS = {
+LOGGER_GRAMMARS: dict[str, BodyContract[LoggerObject]] = {
     "logger_3a8f2202ed6f8466": {
         "extent": 42,
         "frame": 16,

@@ -6,7 +6,11 @@ no runtime grammar generation, body-hash admission or generalized evaluator.
 Changed source/compiler emission requires explicit review and covering tests.
 """
 
-CONTINUATIONS = {
+from config_body_types import BodyContract
+from config_entry_contracts import EntryStaticObject
+
+
+CONTINUATIONS: dict[str, BodyContract[EntryStaticObject]] = {
     "fallback": {
         "extent": 62,
         "instructions": [

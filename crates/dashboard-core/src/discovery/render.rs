@@ -711,11 +711,11 @@ fn details(
         emit.text("Not attributed to the selected device");
         emit.formatted(format_args!("Bad batches {} / size {}", scan.total, scan.invalid_size));
         emit.formatted(format_args!("Invalid value {}", scan.invalid_value));
-        emit.formatted(format_args!(
-            "Last {:?} / {}s ago",
-            last.kind,
-            now.saturating_sub(last.at_ms) / 1000
-        ));
+        if let Some(age_ms) = now.checked_sub(last.at_ms) {
+            emit.formatted(format_args!("Last {:?} / {}s ago", last.kind, age_ms / 1000));
+        } else {
+            emit.formatted(format_args!("Last {:?} / age unavailable", last.kind));
+        }
         emit.formatted(format_args!(
             "Scan revision {} / entry {}/{}",
             last.revision,
@@ -1977,6 +1977,35 @@ mod tests {
                 .iter()
                 .any(|s| s == "Declared data length: missing header byte")
         );
+    }
+
+    #[test]
+    fn scan_observation_newer_than_ui_snapshot_has_unavailable_age() {
+        let mut p = Probe::new();
+        p.scan_diagnostics.record(ScanFailure {
+            kind: ScanErrorKind::InvalidSize,
+            revision: 1,
+            index: 0,
+            total_reports: 1,
+            report_bytes: 3,
+            remaining_bytes: 3,
+            declared_data_len: None,
+            at_ms: 5,
+        });
+        for (now, expected) in [
+            (4, "Last InvalidSize / age unavailable"),
+            (5, "Last InvalidSize / 0s ago"),
+            (1005, "Last InvalidSize / 1s ago"),
+        ] {
+            let mut rows = std::vec::Vec::<std::string::String>::new();
+            details(
+                &p,
+                now,
+                &mut EvidenceLines::new(Some(&mut |line| rows.push(line.into()))),
+            );
+            assert!(rows.iter().any(|line| line == expected), "{rows:?}");
+            assert!(rows.iter().all(|line| line.len() * 6 <= 300));
+        }
     }
 
     #[test]

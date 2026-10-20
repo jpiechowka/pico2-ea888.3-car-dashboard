@@ -5,7 +5,9 @@ authority. Current bytes, tables, typed calls and all semantic joins remain
 required. No runtime learning or hash-based permission.
 """
 
-GRAMMARS = {
+from config_body_types import BodyContract
+
+GRAMMARS: dict[str, BodyContract[object]] = {
     "ControlAction": {
         "extent": 190,
         "frame": 16,

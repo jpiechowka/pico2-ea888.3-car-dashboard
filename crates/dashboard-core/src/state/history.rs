@@ -124,8 +124,7 @@ impl History {
         &mut self,
         now_ms: u64,
     ) -> usize {
-        let duration = u64::from(self.data.seconds) * 1000;
-        let ordinal = (now_ms / duration) * 60 + (now_ms % duration) * 60 / duration;
+        let ordinal = self.ordinal(now_ms);
         let backwards = self.last_ms.is_some_and(|last| now_ms < last);
         let elapsed = ordinal.saturating_sub(self.data.newest);
         let visited = elapsed.min(60) as usize;
@@ -147,6 +146,32 @@ impl History {
         visited
     }
 
+    fn ordinal(
+        &self,
+        at_ms: u64,
+    ) -> u64 {
+        let duration = u64::from(self.data.seconds) * 1000;
+        (at_ms / duration) * 60 + (at_ms % duration) * 60 / duration
+    }
+
+    // Samples and faults may arrive after a later presentation tick. Place them
+    // in their own surviving bucket without moving the clock/window backwards.
+    fn event_ordinal(
+        &mut self,
+        at_ms: u64,
+    ) -> Option<u64> {
+        if self.last_ms.is_none_or(|last| at_ms >= last) {
+            self.advance(at_ms);
+            return Some(self.data.newest);
+        }
+        let ordinal = self.ordinal(at_ms);
+        self.data
+            .newest
+            .checked_sub(ordinal)
+            .filter(|age| *age < BUCKETS as u64)
+            .map(|_| ordinal)
+    }
+
     pub fn observe(
         &mut self,
         value: f32,
@@ -160,9 +185,11 @@ impl History {
         if self.observed_ms == Some(received_ms) {
             return;
         }
-        self.advance(received_ms);
+        let Some(ordinal) = self.event_ordinal(received_ms) else {
+            return;
+        };
         self.observed_ms = Some(received_ms);
-        let slot = (self.data.newest % 60) as usize;
+        let slot = (ordinal % BUCKETS as u64) as usize;
         let bit = 1 << slot;
         if self.data.valid & bit == 0 || self.data.values[slot].to_bits() != value.to_bits() {
             self.data.values[slot] = value;
@@ -177,10 +204,12 @@ impl History {
         &mut self,
         now_ms: u64,
     ) {
-        self.advance(now_ms);
-        let slot = self.data.newest % 60;
+        let Some(ordinal) = self.event_ordinal(now_ms) else {
+            return;
+        };
+        let slot = ordinal % BUCKETS as u64;
         let mut mask = 1 << slot;
-        if self.data.newest > 0 {
+        if ordinal > 0 && self.data.newest - ordinal < (BUCKETS - 1) as u64 {
             mask |= 1 << ((slot + 59) % 60);
         }
         if self.data.valid & mask != 0 {

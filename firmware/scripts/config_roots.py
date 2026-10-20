@@ -3,11 +3,13 @@
 import re
 import struct
 import hashlib
-from config_root_contracts import ROOT_WRAPPERS, ROOT_WRAPPER_ROLES
+from typing import TypedDict
+from config_body_types import BodyRecord, Callback, InstructionMap
+from config_root_contracts import ROOT_WRAPPERS, ROOT_WRAPPER_ROLES, RootObject
 from config_finite import _complete_body, _bounded_body
-from config_root_windows import ROOT_WINDOWS
+from config_root_windows import ROOT_WINDOWS, WindowObject
 from config_payload import payload_object
-from config_stack import canonical_symbol, typed_function
+from config_stack import DiagnosticObjects, canonical_symbol, typed_function
 from validation import require
 
 LOCATION_ROLES = {
@@ -38,7 +40,37 @@ LOCATION_ROLES = {
 }
 
 
-def root_location(objects, address, role):
+class LocationRecord(TypedDict):
+    role: str
+    address: int
+    filename_address: int
+    filename_bytes: bytes
+    filename_sha256: str
+    location_sha256: str
+    source_suffix: str
+    line: int
+    column: int
+    requires_caller_source_binding: bool
+
+
+class RootRecord(BodyRecord):
+    requires_typed_caller_arguments_and_location: bool
+    requires_callback_handler_defaults_and_sink_closure: bool
+    reference_only: bool
+
+
+class WindowRecord(BodyRecord):
+    caller: int
+    window: int
+    site: int
+    location_role: str
+    kind: str
+    requires_upstream_typed_value_and_all_ingress: bool
+    requires_parent_frame_coordinates_and_preserved_registers: bool
+    requires_default_options_live_sink_and_whole_closure: bool
+
+
+def root_location(objects: DiagnosticObjects, address: int, role: str) -> LocationRecord:
     """Typed readonly Location, with portable host-prefix provenance.
 
     Only the actual checkout/registry prefix and slash spelling may differ.
@@ -57,8 +89,8 @@ def root_location(objects, address, role):
     filename = objects.read_only(pointer, length)
     try:
         path = filename.decode("utf-8").replace("\\", "/")
-    except UnicodeDecodeError:
-        require(False, "root Location filename is not UTF-8")
+    except UnicodeDecodeError as error:
+        raise AssertionError("root Location filename is not UTF-8") from error
     require(
         "\0" not in path
         and not any(v in (".", "..") for v in path.split("/"))
@@ -79,9 +111,10 @@ def root_location(objects, address, role):
     )
 
 
-def root_object(objects, address, descriptor):
-    kind = descriptor["kind"]
-    if kind == "raw_arguments_callback":
+def root_object(
+    objects: DiagnosticObjects, address: int, descriptor: RootObject
+) -> tuple[Callback, ...]:
+    if descriptor["kind"] == "raw_arguments_callback":
         require(address & 1, "root Arguments callback is not Thumb")
         role = descriptor["role"]
         extent, frame, _ = typed_function(objects, address & ~1, role)
@@ -90,10 +123,10 @@ def root_object(objects, address, descriptor):
             "root raw callback extent/frame differs",
         )
         return ((address & ~1, role, extent, frame),)
-    if kind == "default_template":
+    if descriptor["kind"] == "default_template":
         objects.default_template(address, descriptor["role"])
         return ()
-    require(kind == "tagged_literal", "unreviewed root adapter object")
+    require(descriptor["kind"] == "tagged_literal", "unreviewed root adapter object")
     value = bytes.fromhex(descriptor["hex"])
     word = descriptor["word"]
     require(
@@ -103,14 +136,18 @@ def root_object(objects, address, descriptor):
     return ()
 
 
-def _window_object(objects, address, descriptor):
+def _window_object(
+    objects: DiagnosticObjects, address: int, descriptor: WindowObject
+) -> tuple[Callback, ...]:
     if descriptor["kind"] == "source_location":
         root_location(objects, address, descriptor["role"])
         return ()
     return payload_object(objects, address, descriptor)
 
 
-def root_window(objects, name, instructions, site):
+def root_window(
+    objects: DiagnosticObjects, name: str, instructions: InstructionMap, site: int
+) -> WindowRecord:
     """Bind one terminal producer span, without substituting for caller proof.
 
     Whole-caller ingress, typed Result/Option/accessor/CAS provenance and live
@@ -121,7 +158,7 @@ def root_window(objects, name, instructions, site):
         name in objects.elf.functions and site in instructions, "missing diagnostic caller/site"
     )
     role = canonical_symbol(name)
-    results = []
+    results: list[WindowRecord] = []
     for shape, contract in ROOT_WINDOWS.items():
         if contract["caller"] != role:
             continue
@@ -141,22 +178,30 @@ def root_window(objects, name, instructions, site):
             )
         except AssertionError:
             continue
-        proof.update(
-            caller=objects.elf.functions[name][0] & ~1,
-            window=start,
-            site=site,
-            location_role=contract["location"],
-            kind=contract["kind"],
-            requires_upstream_typed_value_and_all_ingress=True,
-            requires_parent_frame_coordinates_and_preserved_registers=True,
-            requires_default_options_live_sink_and_whole_closure=True,
+        results.append(
+            {
+                **proof,
+                "caller": objects.elf.functions[name][0] & ~1,
+                "window": start,
+                "site": site,
+                "location_role": contract["location"],
+                "kind": contract["kind"],
+                "requires_upstream_typed_value_and_all_ingress": True,
+                "requires_parent_frame_coordinates_and_preserved_registers": True,
+                "requires_default_options_live_sink_and_whole_closure": True,
+            }
         )
-        results.append(proof)
     require(len(results) == 1, "missing, changed or ambiguous diagnostic terminal producer window")
     return results[0]
 
 
-def root_adapter(objects, name, instructions, outline_role=None, _ancestry=()):
+def root_adapter(
+    objects: DiagnosticObjects,
+    name: str,
+    instructions: InstructionMap,
+    outline_role: str | None = None,
+    _ancestry: tuple[int, ...] = (),
+) -> RootRecord:
     require(name in objects.elf.functions, "missing raw Arguments adapter")
     start = objects.elf.functions[name][0] & ~1
     require(start not in _ancestry, "root adapter activation cycle")
@@ -178,9 +223,9 @@ def root_adapter(objects, name, instructions, outline_role=None, _ancestry=()):
         root_adapter,
         _ancestry,
     )
-    proof.update(
-        requires_typed_caller_arguments_and_location=True,
-        requires_callback_handler_defaults_and_sink_closure=True,
-        reference_only=role == "_RNvNtCs_4core9panicking5panic",
-    )
-    return proof
+    return {
+        **proof,
+        "requires_typed_caller_arguments_and_location": True,
+        "requires_callback_handler_defaults_and_sink_closure": True,
+        "reference_only": role == "_RNvNtCs_4core9panicking5panic",
+    }

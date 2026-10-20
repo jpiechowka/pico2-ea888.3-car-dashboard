@@ -111,158 +111,42 @@ pub(crate) fn new<'d>(state: &'d mut BtState) -> (BtRunner<'d>, BtDriver<'d>) {
     )
 }
 
-pub(crate) struct CybtFwCb<'a> {
-    pub p_next_line_start: &'a [u8],
-}
-
-pub(crate) struct HexFileData<'a> {
-    pub addr_mode: i32,
-    pub hi_addr: u16,
-    pub dest_addr: u32,
-    pub p_ds: &'a mut [u8],
-}
-
-pub(crate) fn read_firmware_patch_line(p_btfw_cb: &mut CybtFwCb, hfd: &mut HexFileData) -> u32 {
-    let mut abs_base_addr32 = 0;
-
-    loop {
-        let num_bytes = p_btfw_cb.p_next_line_start[0];
-        p_btfw_cb.p_next_line_start = &p_btfw_cb.p_next_line_start[1..];
-
-        let addr = (p_btfw_cb.p_next_line_start[0] as u16) << 8 | p_btfw_cb.p_next_line_start[1] as u16;
-        p_btfw_cb.p_next_line_start = &p_btfw_cb.p_next_line_start[2..];
-
-        let line_type = p_btfw_cb.p_next_line_start[0];
-        p_btfw_cb.p_next_line_start = &p_btfw_cb.p_next_line_start[1..];
-
-        if num_bytes == 0 {
-            break;
-        }
-
-        hfd.p_ds[..num_bytes as usize].copy_from_slice(&p_btfw_cb.p_next_line_start[..num_bytes as usize]);
-        p_btfw_cb.p_next_line_start = &p_btfw_cb.p_next_line_start[num_bytes as usize..];
-
-        match line_type {
-            BTFW_HEX_LINE_TYPE_EXTENDED_ADDRESS => {
-                hfd.hi_addr = (hfd.p_ds[0] as u16) << 8 | hfd.p_ds[1] as u16;
-                hfd.addr_mode = BTFW_ADDR_MODE_EXTENDED;
-            }
-            BTFW_HEX_LINE_TYPE_EXTENDED_SEGMENT_ADDRESS => {
-                hfd.hi_addr = (hfd.p_ds[0] as u16) << 8 | hfd.p_ds[1] as u16;
-                hfd.addr_mode = BTFW_ADDR_MODE_SEGMENT;
-            }
-            BTFW_HEX_LINE_TYPE_ABSOLUTE_32BIT_ADDRESS => {
-                abs_base_addr32 = (hfd.p_ds[0] as u32) << 24
-                    | (hfd.p_ds[1] as u32) << 16
-                    | (hfd.p_ds[2] as u32) << 8
-                    | hfd.p_ds[3] as u32;
-                hfd.addr_mode = BTFW_ADDR_MODE_LINEAR32;
-            }
-            BTFW_HEX_LINE_TYPE_DATA => {
-                hfd.dest_addr = addr as u32;
-                match hfd.addr_mode {
-                    BTFW_ADDR_MODE_EXTENDED => hfd.dest_addr += (hfd.hi_addr as u32) << 16,
-                    BTFW_ADDR_MODE_SEGMENT => hfd.dest_addr += (hfd.hi_addr as u32) << 4,
-                    BTFW_ADDR_MODE_LINEAR32 => hfd.dest_addr += abs_base_addr32,
-                    _ => {}
-                }
-                return num_bytes as u32;
-            }
-            _ => {}
-        }
-    }
-    0
-}
-
 impl<'a> BtRunner<'a> {
-    pub(crate) async fn init_bluetooth(&mut self, bus: &mut impl Bus, firmware: &[u8]) {
+    pub(crate) async fn init_bluetooth(&mut self, bus: &mut impl Bus, firmware: &[u8]) -> Result<(), ()> {
         trace!("init_bluetooth");
         bus.bp_write32(CHIP.bluetooth_base_address + BT2WLAN_PWRUP_ADDR, BT2WLAN_PWRUP_WAKE)
             .await;
         Timer::after(Duration::from_millis(2)).await;
-        self.upload_bluetooth_firmware(bus, firmware).await;
+        self.upload_bluetooth_firmware(bus, firmware).await?;
         self.wait_bt_ready(bus).await;
         self.init_bt_buffers(bus).await;
         self.wait_bt_awake(bus).await;
         self.bt_set_host_ready(bus).await;
         self.bt_toggle_intr(bus).await;
+        Ok(())
     }
 
-    pub(crate) async fn upload_bluetooth_firmware(&mut self, bus: &mut impl Bus, firmware: &[u8]) {
-        // read version
-        let version_length = firmware[0];
-        let _version = &firmware[1..=version_length as usize];
-        // skip version + 1 extra byte as per cybt_shared_bus_driver.c
-        let firmware = &firmware[version_length as usize + 2..];
-        // buffers
-        let mut data_buffer: [u8; 0x100] = [0; 0x100];
+    pub(crate) async fn upload_bluetooth_firmware(&mut self, bus: &mut impl Bus, firmware: &[u8]) -> Result<(), ()> {
+        let mut firmware = crate::bluetooth_firmware::Firmware::new(firmware, CHIP.bluetooth_base_address)?;
         // A u8-length record can need three prefix bytes plus end rounding.
-        let mut aligned_data_buffer: [u8; 260] = [0; 260];
-        // structs
-        let mut btfw_cb = CybtFwCb {
-            p_next_line_start: firmware,
-        };
-        let mut hfd = HexFileData {
-            addr_mode: BTFW_ADDR_MODE_EXTENDED,
-            hi_addr: 0,
-            dest_addr: 0,
-            p_ds: &mut data_buffer,
-        };
-        loop {
-            let num_fw_bytes = read_firmware_patch_line(&mut btfw_cb, &mut hfd);
-            if num_fw_bytes == 0 {
-                break;
+        let mut aligned: [u8; 260] = [0; 260];
+        while let Some((dest, bytes)) = firmware.next_data()? {
+            let start = util::round_down(dest, 4);
+            let prefix = (dest - start) as usize;
+            let end = prefix + bytes.len();
+            let len = (end + 3) & !3;
+            if prefix != 0 {
+                let old = bus.bp_read32(start).await.to_le_bytes();
+                aligned[..prefix].copy_from_slice(&old[..prefix]);
             }
-            let fw_bytes = &hfd.p_ds[0..num_fw_bytes as usize];
-            let mut dest_start_addr = hfd.dest_addr + CHIP.bluetooth_base_address;
-            let mut aligned_data_buffer_index: usize = 0;
-            // pad start
-            if !util::is_aligned(dest_start_addr, 4) {
-                let num_pad_bytes = dest_start_addr % 4;
-                let padded_dest_start_addr = util::round_down(dest_start_addr, 4);
-                let memory_value = bus.bp_read32(padded_dest_start_addr).await;
-                let memory_value_bytes = memory_value.to_le_bytes();
-                // Copy the previous memory value's bytes to the start
-                for i in 0..num_pad_bytes as usize {
-                    aligned_data_buffer[aligned_data_buffer_index] = memory_value_bytes[i];
-                    aligned_data_buffer_index += 1;
-                }
-                // Copy the firmware bytes after the padding bytes
-                for i in 0..num_fw_bytes as usize {
-                    aligned_data_buffer[aligned_data_buffer_index] = fw_bytes[i];
-                    aligned_data_buffer_index += 1;
-                }
-                dest_start_addr = padded_dest_start_addr;
-            } else {
-                // Directly copy fw_bytes into aligned_data_buffer if no start padding is required
-                for i in 0..num_fw_bytes as usize {
-                    aligned_data_buffer[aligned_data_buffer_index] = fw_bytes[i];
-                    aligned_data_buffer_index += 1;
-                }
+            aligned[prefix..end].copy_from_slice(bytes);
+            if end != len {
+                let old = bus.bp_read32(start + (end & !3) as u32).await.to_le_bytes();
+                aligned[end..len].copy_from_slice(&old[end & 3..]);
             }
-            // pad end
-            let mut dest_end_addr = dest_start_addr + aligned_data_buffer_index as u32;
-            if !util::is_aligned(dest_end_addr, 4) {
-                let offset = dest_end_addr % 4;
-                let num_pad_bytes_end = 4 - offset;
-                let padded_dest_end_addr = util::round_down(dest_end_addr, 4);
-                let memory_value = bus.bp_read32(padded_dest_end_addr).await;
-                let memory_value_bytes = memory_value.to_le_bytes();
-                // Append the necessary memory bytes to pad the end of aligned_data_buffer
-                for i in offset..4 {
-                    aligned_data_buffer[aligned_data_buffer_index] = memory_value_bytes[i as usize];
-                    aligned_data_buffer_index += 1;
-                }
-                dest_end_addr += num_pad_bytes_end;
-            } else {
-                // pad end alignment not needed
-            }
-            let buffer_to_write = &aligned_data_buffer[0..aligned_data_buffer_index as usize];
-            assert!(dest_start_addr % 4 == 0);
-            assert!(dest_end_addr % 4 == 0);
-            assert!(aligned_data_buffer_index % 4 == 0);
-            bus.bp_write(dest_start_addr, buffer_to_write).await;
+            bus.bp_write(start, &aligned[..len]).await;
         }
+        Ok(())
     }
 
     pub(crate) async fn wait_bt_ready(&mut self, bus: &mut impl Bus) {
@@ -629,6 +513,7 @@ mod ring_tests;
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use embassy_futures::block_on;
 
     use super::*;
@@ -805,8 +690,55 @@ mod tests {
     fn firmware_record_alignment_handles_largest_record() {
         let mut state = BtState::new();
         let (mut runner, _) = new(&mut state);
-        let mut firmware = [0u8; 2 + 4 + 255 + 4];
-        firmware[2..6].copy_from_slice(&[255, 0, 3, BTFW_HEX_LINE_TYPE_DATA]);
-        block_on(runner.upload_bluetooth_firmware(&mut MockBus::default(), &firmware));
+        let mut firmware = [0u8; 3 + 4 + 255 + 4];
+        firmware[..3].copy_from_slice(&[1, 0, 2]);
+        firmware[3..7].copy_from_slice(&[255, 0, 3, BTFW_HEX_LINE_TYPE_DATA]);
+        *firmware.last_mut().unwrap() = BTFW_HEX_LINE_TYPE_END_OF_DATA;
+        block_on(runner.upload_bluetooth_firmware(&mut MockBus::default(), &firmware)).unwrap();
+    }
+
+    #[test]
+    fn firmware_rejects_truncation_without_panicking_or_writing() {
+        for firmware in [&[][..], &[255], &[1, 0], &[1, 0, 1, 4, 0, 0, 0, 1]] {
+            let mut state = BtState::new();
+            let (mut runner, _) = new(&mut state);
+            let mut bus = MockBus::default();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assert!(block_on(runner.upload_bluetooth_firmware(&mut bus, firmware)).is_err());
+            }));
+            assert!(result.is_ok(), "truncated firmware panicked");
+            assert_eq!(bus.writes, 0);
+        }
+    }
+
+    #[test]
+    fn firmware_validates_later_records_before_any_write() {
+        let mut state = BtState::new();
+        let (mut runner, _) = new(&mut state);
+        let mut bus = MockBus::default();
+        // Valid data followed by an unknown record, then EOF.
+        let firmware = [1, 0, 3, 1, 0, 0, 0, 42, 1, 0, 0, 99, 1, 0, 0, 0, 1];
+        assert!(block_on(runner.upload_bluetooth_firmware(&mut bus, &firmware)).is_err());
+        assert_eq!(bus.writes, 0, "partially wrote an invalid image");
+    }
+
+    #[test]
+    fn firmware_upload_preserves_both_neighbouring_word_fragments() {
+        for offset in 0..4u8 {
+            for len in [1, 2, 3, 4, 254, 255u8] {
+                let mut firmware = std::vec![1, 0, 2, len, 0, offset, 0];
+                let data: std::vec::Vec<u8> = (0..len).collect();
+                firmware.extend_from_slice(&data);
+                firmware.extend_from_slice(&[0, 0, 0, 1]);
+                let mut state = BtState::new();
+                let (mut runner, _) = new(&mut state);
+                let mut bus = MockBus::default();
+                block_on(runner.upload_bluetooth_firmware(&mut bus, &firmware)).unwrap();
+                let end = usize::from(offset) + usize::from(len);
+                let mut expected = std::vec![0xff; (end + 3) & !3];
+                expected[usize::from(offset)..end].copy_from_slice(&data);
+                assert_eq!(bus.patch_writes, [(CHIP.bluetooth_base_address, expected)]);
+            }
+        }
     }
 }

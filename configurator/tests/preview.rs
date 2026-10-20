@@ -308,6 +308,74 @@ fn invalid_dashboard_off_masks_diagnostics_and_recovery_preserves_accepted_pendi
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+fn simulator_fps_modes_show_unavailable_without_device_transfer_measurements() {
+    use dashboard_configurator::editor::{Edit, Editor};
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::colors::WHITE;
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::mono_font::ascii::FONT_4X6;
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::primitives::Rectangle;
+    use embedded_graphics::text::Text;
+
+    for orientation in [Orientation::Landscape, Orientation::Portrait] {
+        let mut editor = Editor::default();
+        editor.apply(Edit::SetOrientation(orientation)).unwrap();
+        let mut sim = ControlSimulator::new(editor.preview().clone());
+        let mut preview = Preview::new();
+        let geometry = orientation.geometry();
+        let portrait = geometry == Geometry::Portrait;
+        let area = if portrait {
+            Rectangle::new(Point::new(180, 0), Size::new(56, 10))
+        } else {
+            Rectangle::new(Point::new(236, 0), Size::new(80, 26))
+        };
+        for (mode, label) in [
+            (FpsMode::Instant, "-- FPS"),
+            (FpsMode::Average, "-- AVG"),
+            (FpsMode::Combined, "--/-- AVG"),
+            (FpsMode::Off, ""),
+        ] {
+            sim.tap(ButtonId::X);
+            sim.advance(2100);
+            assert_eq!(sim.session().fps(), mode);
+            preview.render_simulation(&sim).unwrap();
+            assert_eq!(preview.geometry(), geometry);
+            let mut expected = Box::new(FrameBuffer::new());
+            let mut display = St7789Renderer::with_geometry(&mut expected, geometry);
+            display.fill_solid(&area, RED).unwrap();
+            Text::with_text_style(
+                label,
+                if portrait {
+                    Point::new(235, 7)
+                } else {
+                    Point::new(315, 17)
+                },
+                MonoTextStyle::new(
+                    if portrait {
+                        &FONT_4X6
+                    } else {
+                        dashboard_core::ui::LABEL_FONT
+                    },
+                    WHITE,
+                ),
+                dashboard_core::ui::RIGHT_ALIGNED,
+            )
+            .draw(&mut display.clipped(&area))
+            .unwrap();
+            for point in area.points() {
+                let index = (point.y as usize * usize::from(geometry.width()) + point.x as usize) * 2;
+                assert_eq!(
+                    &preview.rgb565()[index..index + 2],
+                    &expected[index..index + 2],
+                    "{orientation:?}/{mode:?} at {point:?}: missing device observation must not become zero"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time() {
     use dashboard_configurator::simulator::ControlSimulator;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -394,8 +462,8 @@ fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time(
             blink_on: dashboard_core::animations::blink_on(now),
             boost_psi: session.boost_psi(),
             fps_mode: session.fps(),
-            fps_instant: 0.,
-            fps_average: 0.,
+            fps_instant: f32::NAN,
+            fps_average: f32::NAN,
             backgrounds: [BLACK; 8],
             overlay: Overlay::configured_for_page(session.page(), session.overlay(candidate), None),
         };

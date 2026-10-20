@@ -364,18 +364,20 @@ pub fn validation_transition(
 }
 
 pub enum ImportFailure {
-    TooLarge,
+    TooLarge { limit_bytes: usize },
     Read,
     Rejected(EditorError),
 }
 pub fn import_outcome(result: Result<(), ImportFailure>) -> Notice {
     let message = match result {
-        Ok(()) => "Configuration imported and accepted",
-        Err(ImportFailure::TooLarge) => "Import exceeds 128 KiB; document unchanged",
-        Err(ImportFailure::Read) => "Import file could not be read; document unchanged",
-        Err(ImportFailure::Rejected(EditorError::JsonPending)) => "Import blocked by pending JSON",
-        Err(ImportFailure::Rejected(EditorError::StaleToken)) => "Stale import ignored; document unchanged",
-        Err(ImportFailure::Rejected(_)) => "Import rejected by codec, validation or current action readiness",
+        Ok(()) => "Configuration imported and accepted".into(),
+        Err(ImportFailure::TooLarge { limit_bytes }) => {
+            format!("Import exceeds its {limit_bytes} byte size limit; document unchanged")
+        }
+        Err(ImportFailure::Read) => "Import file could not be read; document unchanged".into(),
+        Err(ImportFailure::Rejected(EditorError::JsonPending)) => "Import blocked by pending JSON".into(),
+        Err(ImportFailure::Rejected(EditorError::StaleToken)) => "Stale import ignored; document unchanged".into(),
+        Err(ImportFailure::Rejected(_)) => "Import rejected by codec, validation or current action readiness".into(),
     };
     Notice {
         category: Category::ImportExport,
@@ -386,7 +388,7 @@ pub fn import_outcome(result: Result<(), ImportFailure>) -> Notice {
             "import.rejected"
         },
         subject: None,
-        message: message.into(),
+        message,
     }
 }
 #[derive(Clone, Copy)]

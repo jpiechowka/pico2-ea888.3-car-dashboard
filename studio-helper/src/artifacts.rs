@@ -142,10 +142,7 @@ pub(crate) fn admit(
     }
     let mut uf2_file = held(&uf2)?;
     let uf2_bytes = bytes(&mut uf2_file, MAX_UF2_BYTES)?;
-    let python = std::env::split_paths(&std::env::var_os("PATH").ok_or("PATH unavailable")?)
-        .map(|p| p.join("python.exe"))
-        .find(|p| p.is_absolute() && p.is_file())
-        .ok_or("Python executable unavailable")?;
+    let python = crate::prerequisites::python_executable().ok_or("Python executable unavailable")?;
     let script = frozen
         .source_root()
         .join("firmware/scripts/validate_capture_artifact.py");
@@ -292,10 +289,7 @@ mod qualification_tests {
 mod diagnostic_tests {
     #[test]
     fn failed_validator_streams_stderr_but_preserves_machine_stdout_privately() {
-        let cmd = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-            .map(|p| p.join("python.exe"))
-            .find(|p| p.is_absolute() && p.is_file())
-            .unwrap();
+        let cmd = crate::prerequisites::python_executable().expect("Python on an absolute PATH");
         let cwd = std::env::current_dir().unwrap();
         let mut observed = Vec::new();
         let output = super::run_validation_tool(

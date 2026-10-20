@@ -6,6 +6,9 @@ Changed compiler/source/ABI needs complete source/byte review and mutations.
 Actual parent arguments/epochs and owned effects remain separate obligations.
 """
 
+from collections.abc import Sequence
+from config_body_types import BodyContract, SourceLocationObject
+
 _INNER = "_RINvNvMs_NtCs_8heapless3vecINtB7_8VecInnerpppE17extend_from_slice23extend_from_slice_innerhjECs_16dashboard_config"
 _VEC = "_RNvMs_NtCs_8heapless3vecINtB4_8VecInnerhjINtNtB4_7storage15VecStorageInnerAINtNtNtCs_4core3mem12maybe_uninit11MaybeUninithEj{capacity}_EE17extend_from_sliceCs_16dashboard_config"
 _STRING = "_RNvXs4_NtCs_8heapless6stringINtB5_11StringInnerjINtNtNtB7_3vec7storage15VecStorageInnerAINtNtNtCs_4core3mem12maybe_uninit11MaybeUninithEje_EEINtNtB1G_7convert7TryFromReE8try_fromCs_16dashboard_config"
@@ -18,7 +21,9 @@ CONSTRUCTION_SEMANTIC_ROLES = {
 }
 
 
-def _contract(extent, frame, instructions):
+def _contract(
+    extent: int, frame: int, instructions: Sequence[tuple[int, int, str]]
+) -> BodyContract[SourceLocationObject]:
     return dict(
         extent=extent,
         frame=frame,
@@ -29,7 +34,7 @@ def _contract(extent, frame, instructions):
     )
 
 
-CONSTRUCTION_GRAMMARS = {
+CONSTRUCTION_GRAMMARS: dict[str, BodyContract[SourceLocationObject]] = {
     "construction_prepare_slice": _contract(
         8,
         0,

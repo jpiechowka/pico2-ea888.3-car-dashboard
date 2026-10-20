@@ -14,6 +14,9 @@ use crate::types::uuid::Uuid;
 use crate::{codec, Error, Identity, PacketPool};
 
 mod client_att_table;
+#[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
+#[path = "attribute_notify_tests.rs"]
+mod notify_tests;
 
 #[derive(Default)]
 struct Client {
@@ -283,7 +286,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
                     body.write(att_handle)?;
                     handle = att_handle;
 
-                    let new_ret = self.read_attribute_data(connection, att_handle, 0, att, body.write_buf());
+                    // The response's one-byte tuple length includes the two-byte handle.
+                    let value_limit = body.available().min(253);
+                    let new_ret =
+                        self.read_attribute_data(connection, att_handle, 0, att, &mut body.write_buf()[..value_limit]);
                     match (new_ret, ret) {
                         (Ok(first_length), Err(_)) => {
                             // First successful read, store this length, all subsequent ones must match it.
@@ -352,7 +358,12 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         let mut data = WriteCursor::new(buf);
 
         if start > end || start == 0 {
-            return Self::error_response(data, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+            return Self::error_response(
+                data,
+                att::ATT_READ_BY_GROUP_TYPE_REQ,
+                start,
+                AttErrorCode::INVALID_HANDLE,
+            );
         }
 
         let (mut header, mut body) = data.split(2)?;
@@ -369,7 +380,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
                     body.write(att_handle)?;
                     body.write(last_handle_in_group)?;
-                    let new_ret = self.read_attribute_data(connection, att_handle, 0, att, body.write_buf());
+                    let value_limit = body.available().min(251);
+                    let new_ret =
+                        self.read_attribute_data(connection, att_handle, 0, att, &mut body.write_buf()[..value_limit]);
                     match (new_ret, ret) {
                         (Ok(first_length), Err(_)) => {
                             // First successful read, store this length, all subsequent ones must match it.
@@ -501,7 +514,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         let attr_type = Uuid::new_short(attr_type);
 
         if start > end || start == 0 {
-            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+            return Self::error_response(w, att::ATT_FIND_BY_TYPE_VALUE_REQ, start, AttErrorCode::INVALID_HANDLE);
         }
 
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
@@ -536,7 +549,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         let mut w = WriteCursor::new(buf);
 
         if start > end || start == 0 {
-            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+            return Self::error_response(w, att::ATT_FIND_INFORMATION_REQ, start, AttErrorCode::INVALID_HANDLE);
         }
 
         let (mut header, mut body) = w.split(2)?;
@@ -608,7 +621,8 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     ) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
 
-        let err = connection.prepare_write(handle, offset, value);
+        let err = sealed::DynamicAttributeServer::can_write(self, connection, handle)
+            .and_then(|()| connection.prepare_write(handle, offset, value));
         match err {
             Ok(()) => {
                 w.write(att::ATT_PREPARE_WRITE_RSP)?;
@@ -642,6 +656,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         flags: u8,
     ) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
+        if flags > 1 {
+            return Self::error_response(w, att::ATT_EXECUTE_WRITE_REQ, 0, AttErrorCode::INVALID_PDU);
+        }
         if flags == 0x01 {
             let err = connection.with_prepare_write(|pw| {
                 if pw.handle == 0 {
@@ -707,12 +724,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
     fn handle_read_multiple(&self, buf: &mut [u8], handles: &[u8]) -> Result<usize, codec::Error> {
         let w = WriteCursor::new(buf);
-        Self::error_response(
-            w,
-            att::ATT_READ_MULTIPLE_REQ,
-            u16::from_le_bytes([handles[0], handles[1]]),
-            AttErrorCode::ATTRIBUTE_NOT_FOUND,
-        )
+        // This optional variable-length procedure is not implemented. Validate
+        // direct callers too; malformed input must never index an absent handle.
+        let code = if handles.len() < 4 || !handles.len().is_multiple_of(2) {
+            AttErrorCode::INVALID_PDU
+        } else {
+            AttErrorCode::REQUEST_NOT_SUPPORTED
+        };
+        Self::error_response(w, att::ATT_READ_MULTIPLE_VARIABLE_REQ, 0, code)
     }
 
     /// Process an event and produce a response if necessary
@@ -799,7 +818,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         self.att_table.write(value_handle, 0, data.as_gatt())?;
 
         // Check if the next handle is a CCCD
-        let cccd_handle = value_handle + 1;
+        let Some(cccd_handle) = value_handle.checked_add(1) else {
+            return Ok(());
+        };
         if self.att_table.uuid(cccd_handle)
             != Some(bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.into())
         {
@@ -814,7 +835,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     ///
     /// If the attribute at `value_handle + 1` is not a CCCD (UUID 0x2902), an error
     /// is returned. Each connection is checked for notification/indication
-    /// subscriptions and sent the appropriate PDU.
+    /// subscriptions and current permissions before sending. Indications wait
+    /// for confirmation. An error stops the iteration; earlier peers may have
+    /// already received the value.
     #[cfg(feature = "gatt")]
     pub async fn notify<C: crate::Controller, T: AsGatt + ?Sized>(
         &self,
@@ -823,7 +846,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         data: &T,
     ) -> Result<(), Error> {
         // Check if the next handle is a CCCD
-        let cccd_handle = value_handle + 1;
+        let cccd_handle = value_handle.checked_add(1).ok_or(Error::InvalidValue)?;
         if self.att_table.uuid(cccd_handle)
             != Some(bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.into())
         {
@@ -837,17 +860,13 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
                     handle: value_handle,
                     data,
                 };
-                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
-                    conn.send(pdu).await;
-                }
+                crate::attribute::send_unsolicited(self, &conn, cccd_handle, uns).await?;
             } else if self.should_notify(&conn, cccd_handle) {
                 let uns = att::AttUns::Notify {
                     handle: value_handle,
                     data,
                 };
-                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
-                    conn.send(pdu).await;
-                }
+                crate::attribute::send_unsolicited(self, &conn, cccd_handle, uns).await?;
             }
         }
         Ok(())
@@ -877,6 +896,166 @@ mod tests {
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
     use crate::Address;
+
+    #[test]
+    fn read_by_type_limits_long_values_and_preserves_response_framing() {
+        let value = [0x5a; 300];
+        let mut table = AttributeTable::<'_, NoopRawMutex, 8>::new();
+        let characteristic = table
+            .add_service(Service {
+                uuid: PRIMARY_SERVICE.into(),
+            })
+            .add_characteristic_ro::<[u8; 300], _>(Uuid::new_short(0xabcd), &value)
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+        let mgr = setup();
+        mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        )
+        .unwrap();
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!()
+        };
+        for mtu in [23, 256, 257, 512] {
+            let mut buf = [0u8; 512];
+            let len = server
+                .process(
+                    &conn,
+                    &AttClient::Request(AttReq::ReadByType {
+                        start: characteristic.handle,
+                        end: characteristic.handle,
+                        attribute_type: characteristic.uuid,
+                    }),
+                    &mut buf[..mtu],
+                )
+                .unwrap()
+                .unwrap();
+            let expected = (mtu - 4).min(253);
+            assert_eq!(len, 4 + expected);
+            assert_eq!(buf[0], att::ATT_READ_BY_TYPE_RSP);
+            assert_eq!(usize::from(buf[1]), expected + 2);
+            assert_eq!(&buf[2..4], &characteristic.handle.to_le_bytes());
+            assert_eq!(&buf[4..len], &value[..expected]);
+        }
+    }
+
+    #[test]
+    fn notification_and_indication_subscriptions_are_independent() {
+        let mut value = [1u8];
+        let mut table = AttributeTable::<'_, NoopRawMutex, 8>::new();
+        let characteristic = table
+            .add_service(Service {
+                uuid: PRIMARY_SERVICE.into(),
+            })
+            .add_characteristic(
+                Uuid::new_short(0xabcd),
+                &[CharacteristicProp::Notify, CharacteristicProp::Indicate],
+                1u8,
+                &mut value,
+            )
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+        let mgr = setup();
+        mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        )
+        .unwrap();
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!()
+        };
+        let gatt = crate::gatt::GattConnection::try_new(conn, &server).unwrap();
+        for bits in 0..=3u8 {
+            let mut buf = [0u8; 23];
+            server
+                .process(
+                    gatt.raw(),
+                    &AttClient::Request(AttReq::Write {
+                        handle: characteristic.cccd_handle.unwrap(),
+                        data: &[bits, 0],
+                    }),
+                    &mut buf,
+                )
+                .unwrap();
+            assert_eq!(characteristic.should_notify(&gatt), bits & 1 != 0);
+            assert_eq!(characteristic.should_indicate(&gatt), bits & 2 != 0);
+        }
+    }
+
+    #[test]
+    fn malformed_read_multiple_and_invalid_ranges_return_matching_errors() {
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(AttributeTable::<'_, NoopRawMutex, 8>::new());
+        let mgr = setup();
+        mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        )
+        .unwrap();
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!()
+        };
+        let mut buf = [0u8; 64];
+        for handles in [&[][..], &[1][..], &[1, 0][..], &[1, 0, 2][..]] {
+            let len = server
+                .process(&conn, &AttClient::Request(AttReq::ReadMultiple { handles }), &mut buf)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                &buf[..len],
+                &[
+                    1,
+                    att::ATT_READ_MULTIPLE_VARIABLE_REQ,
+                    0,
+                    0,
+                    AttErrorCode::INVALID_PDU.to_u8()
+                ]
+            );
+        }
+        for (start, end) in [(0, 1), (2, 1)] {
+            for (request, opcode) in [
+                (
+                    AttReq::FindInformation {
+                        start_handle: start,
+                        end_handle: end,
+                    },
+                    att::ATT_FIND_INFORMATION_REQ,
+                ),
+                (
+                    AttReq::FindByTypeValue {
+                        start_handle: start,
+                        end_handle: end,
+                        att_type: 0x2800,
+                        att_value: &[],
+                    },
+                    att::ATT_FIND_BY_TYPE_VALUE_REQ,
+                ),
+                (
+                    AttReq::ReadByGroupType {
+                        start,
+                        end,
+                        group_type: PRIMARY_SERVICE.into(),
+                    },
+                    att::ATT_READ_BY_GROUP_TYPE_REQ,
+                ),
+            ] {
+                let len = server
+                    .process(&conn, &AttClient::Request(request), &mut buf)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    &buf[..len],
+                    &[1, opcode, start as u8, 0, AttErrorCode::INVALID_HANDLE.to_u8()]
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {

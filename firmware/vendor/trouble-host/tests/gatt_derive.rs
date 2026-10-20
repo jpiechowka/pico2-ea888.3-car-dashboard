@@ -17,7 +17,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(connections_max = CONNECTIONS_MAX, mutex_type = NoopRawMutex, attribute_table_size = 31)]
+#[gatt_server(connections_max = CONNECTIONS_MAX, mutex_type = NoopRawMutex)]
 struct Server {
     service: CustomService,
     bas: BatteryService,
@@ -57,6 +57,7 @@ struct BatteryService {
 }
 
 #[tokio::test]
+#[ignore = "requires two physical Zephyr HCI UART adapters"]
 async fn gatt_client_server() {
     let _ = env_logger::try_init();
     let adapters = common::find_controllers();
@@ -91,7 +92,7 @@ async fn gatt_client_server() {
         // Random starting value to 'prove' the incremented value is correct
         let value: u8 = rand::random();
         // The first write will be rejected by the write callback, so value is not expected to change the first time
-        let mut expected = value;
+        let expected = value;
         server.set(&server.service.value, &value).unwrap();
 
         select! {
@@ -130,12 +131,13 @@ async fn gatt_client_server() {
                             GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
                                 if writes == 0 {
                                     event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
+                                    assert_eq!(server.get(&server.service.value).unwrap(), expected);
                                     writes += 1;
                                 } else {
-                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                    let characteristic = server.server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                    event.accept().unwrap().send().await;
                                     let value: u8 = conn.get(&characteristic).unwrap();
-                                    assert_eq!(expected, value);
-                                    expected = expected.wrapping_add(2);
+                                    assert_eq!(expected.wrapping_add(2), value);
                                     writes += 1;
                                     if writes == 2 {
                                         println!("expected value written twice, test pass");
@@ -235,24 +237,12 @@ async fn gatt_client_server() {
     });
 
     match tokio::time::timeout(Duration::from_secs(30), local).await {
-        Ok(_) => match tokio::join!(central, peripheral) {
-            (Err(e1), Err(e2)) => {
-                println!("Central error: {:?}", e1);
-                println!("Peripheral error: {:?}", e2);
-                panic!();
-            }
-            (Err(e), _) => {
-                println!("Central error: {:?}", e);
-                panic!();
-            }
-            (_, Err(e)) => {
-                println!("Peripheral error: {:?}", e);
-                panic!();
-            }
-            _ => {
-                println!("Test completed successfully");
-            }
-        },
+        Ok(_) => {
+            let (central, peripheral) = tokio::join!(central, peripheral);
+            common::assert_task_result("central", central);
+            common::assert_task_result("peripheral", peripheral);
+            println!("Test completed successfully");
+        }
         Err(e) => {
             println!("Test timed out: {:?}", e);
             panic!();

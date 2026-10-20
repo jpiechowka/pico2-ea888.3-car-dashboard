@@ -11,9 +11,10 @@ from unittest.mock import patch
 from check_flash_lockout import check
 import check_memory_layout
 from elf_image import ElfImage
+from image_test_support import section_fields, segment_fields
 
 
-def names(elf):
+def names(elf: ElfImage) -> list[str]:
     return [
         "SIO_IRQ_FIFO",
         next(n for n in elf.functions if "multicore12sio_fifo_ram" in n),
@@ -24,7 +25,7 @@ def names(elf):
     ]
 
 
-def rejected(elf, label):
+def rejected(elf: ElfImage, label: str) -> None:
     try:
         check(elf)
     except AssertionError:
@@ -33,14 +34,14 @@ def rejected(elf, label):
         raise AssertionError("missed " + label)
 
 
-def flip(elf, address):
+def flip(elf: ElfImage, address: int) -> None:
     data = bytearray(elf.data)
     section = elf.named[".data"]
     data[section[4] + address - section[3]] ^= 1
     elf.data = bytes(data)
 
 
-def body_fixtures(elf):
+def body_fixtures(elf: ElfImage) -> None:
     for name in names(elf):
         for fault in (
             "missing",
@@ -84,7 +85,7 @@ def body_fixtures(elf):
                 rejected(bad, name + " literal " + str(offset))
 
 
-def layout_fixtures(elf):
+def layout_fixtures(elf: ElfImage) -> None:
     for fault in (
         "vector",
         "tail",
@@ -134,7 +135,7 @@ def layout_fixtures(elf):
                     changed[5] = changed[4] - 1
                 else:
                     changed[3] += 4
-                bad.segments[bad.segments.index(segment)] = tuple(changed)
+                bad.segments[bad.segments.index(segment)] = segment_fields(changed)
             else:
                 # Protected bodies/vector survive; the complete startup copy
                 # section lacks initialized file backing.
@@ -148,8 +149,8 @@ def layout_fixtures(elf):
             section = bad.named[".data"]
             changed = list(section)
             changed[1 if fault == "section_type" else 2] = 8 if fault == "section_type" else 3
-            bad.sections[bad.sections.index(section)] = tuple(changed)
-            bad.named[".data"] = tuple(changed)
+            bad.sections[bad.sections.index(section)] = section_fields(changed)
+            bad.named[".data"] = section_fields(changed)
         elif fault == "moved_fifo":
             helper = names(bad)[1]
             value, size, index = bad.functions[helper]
@@ -171,7 +172,7 @@ def layout_fixtures(elf):
         rejected(bad, fault)
 
 
-def mixed_bodies(recipient, donor, selected):
+def mixed_bodies(recipient: ElfImage, donor: ElfImage, selected: int) -> None:
     bad = copy.deepcopy(recipient)
     current, other = names(recipient), names(donor)
     bodies = [
@@ -197,7 +198,7 @@ def mixed_bodies(recipient, donor, selected):
         rejected(bad, "mixed whole body " + str(selected))
 
 
-def main(args):
+def main(args: list[str]) -> None:
     rejected_paths = []
     if "--rejected" in args:
         split = args.index("--rejected")

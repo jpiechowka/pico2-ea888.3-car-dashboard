@@ -5,7 +5,32 @@ successors, source packages, return facts or ownership. This raw structure
 still needs the actual per-entry Source/aggregate guards and reached uses.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypedDict
+from config_abstract import DecoderInterface, SequenceInterface, Span
+from config_body_types import BodyRecord, InstructionMap
+from config_decoded_views import (
+    Children,
+    ControlRecord,
+    ControlExclusions,
+    Successors,
+    PendingContexts,
+)
+from config_finite_returns import ReturnNode
+from config_regions import View
+from config_stack import DiagnosticObjects
+from config_views_contracts import FallthroughWitness, PendingWitness
+from config_source_effects import SourceError, SourceAlternative, SourceInvocation
+from llvm_stack import Instruction
+
+if TYPE_CHECKING:
+    from config_decoded_widgets import _WidgetsState
+    from config_decoded_sources import _SourcePhasesState, _SourcePhase, FuelAssignment
+    from config_source_lineage import PublicationLineage, SuffixLineage
+
 from config_decoded_views import (
     _ControlSelection,
     _control_selection,
@@ -19,6 +44,74 @@ from config_source_children import (
     source_return_profiles,
 )
 from validation import require
+
+
+class CarrierReturns(TypedDict):
+    parent_calls: tuple[tuple[int, int, str, tuple[str, ...]], ...]
+    high_fp: tuple[tuple[int, int], ...]
+    architectural_LR_preserved: bool
+    requires_actual_protected_save_slots_and_parent_lifetimes: bool
+
+
+class GuardedCall(TypedDict):
+    index: int
+    site: int
+    before: SequenceInterface
+    Access_table_entered: bool
+    guarded_Access_domain: tuple[int, int]
+    Access_targets: tuple[int, ...]
+    error_alternatives: tuple[SourceError, ...]
+    guarded_routes: tuple[SourceAlternative, ...]
+    primitive_error_origins: tuple[SourceInvocation, ...]
+    output_store_reached: bool
+    after: DecoderInterface | None
+
+
+class SavedTopCount(TypedDict):
+    cell: View
+    value: Span
+    initialized_at: int
+    checked_read_sites: tuple[int, ...]
+    reached_reads: tuple[int, ...]
+    later_top_count_store: tuple[()] | tuple[int, int]
+    guard_rejections: tuple[tuple[int, int], ...]
+
+
+class PhaseGuards(TypedDict):
+    entry_index: int
+    invocations: tuple[GuardedCall, ...]
+    parsed_sources: int
+    complete_Source_array: bool
+    Controls_ready: bool
+    source_array_last_stores: tuple[int, ...]
+    publication_lineage: PublicationLineage | None
+    suffix_lineage: SuffixLineage | None
+    saved_top_count: SavedTopCount
+    retained_Fuel_assignments: tuple[FuelAssignment, ...]
+
+
+class SourceControlRecord(ControlRecord):
+    returns: tuple[int, ...]
+
+
+class StructuralData(TypedDict):
+    selection: tuple[
+        tuple[BodyRecord, ...],
+        dict[int, Instruction],
+        dict[int, tuple[str, int, str]],
+        tuple[int, ...],
+        bool,
+        Children,
+        tuple[tuple[tuple[int, str], BodyRecord, BodyRecord], ...],
+    ]
+    raw_successors: Successors
+    raw_returns: tuple[int, ...]
+    Source_returns: tuple[ReturnNode, ...]
+    carrier_returns: CarrierReturns
+    nested_returns: tuple[ReturnNode, ...]
+    outside_shared_contexts: PendingContexts
+    unentered_outgoing: tuple[tuple[int, int], ...]
+    confers_active_state: bool
 
 
 # Reviewed current predecessor contexts, normalized to the same typed parent.
@@ -89,7 +182,7 @@ SOURCE_PENDING = {
     ),
     6856: ((6854, 2, "movs r6, #0xe"), (6856, 2, "b @parent+1a00")),
 }
-SOURCE_FALLTHROUGH = {
+SOURCE_FALLTHROUGH: dict[int, FallthroughWitness] = {
     4408: dict(
         target=4410,
         context=(
@@ -115,33 +208,36 @@ SOURCE_FALLTHROUGH = {
 
 @dataclass(frozen=True)
 class _SourceSelection(_ControlSelection):
-    widgets: object
-    Source_parents: tuple
-    Source_children: dict
-    child_contexts: tuple
+    widgets: _WidgetsState
+    Source_parents: tuple[BodyRecord, ...]
+    Source_children: Children
+    child_contexts: tuple[tuple[tuple[int, str], BodyRecord, BodyRecord], ...]
 
 
 @dataclass(frozen=True)
 class _SourceStructuralControl:
     selection: _SourceSelection
-    raw_successors: tuple
-    raw_returns: tuple
-    Source_returns: tuple
-    carrier_returns: dict
-    nested_returns: tuple
-    outside_shared_contexts: tuple
-    unentered_outgoing: tuple
+    raw_successors: Successors
+    raw_returns: tuple[int, ...]
+    Source_returns: tuple[ReturnNode, ...]
+    carrier_returns: CarrierReturns
+    nested_returns: tuple[ReturnNode, ...]
+    outside_shared_contexts: PendingContexts
+    unentered_outgoing: tuple[tuple[int, int], ...]
     confers_active_state: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require(
             type(self.selection) is _SourceSelection and self.confers_active_state is False,
             "raw Sources structure cannot grant active execution",
         )
 
 
-def _pending_profile(selection):
-    require(type(selection) is _SourceSelection, "unreviewed Sources control selection")
+def _pending_profile(
+    selection: _ControlSelection,
+) -> tuple[dict[int, PendingWitness], dict[int, FallthroughWitness]]:
+    if type(selection) is not _SourceSelection:
+        raise AssertionError("unreviewed Sources control selection")
     require(
         selection.context is selection.widgets.views.context and selection.widget,
         "Sources selected parent leaves its actual Widget predecessor",
@@ -155,10 +251,11 @@ def _pending_profile(selection):
     )
 
 
-def _source_table_targets(selection, at, row):
-    require(
-        type(selection) is _SourceSelection, "Views selected invocation has an unresolved PC effect"
-    )
+def _source_table_targets(
+    selection: _ControlSelection, at: int, row: Instruction
+) -> tuple[int, ...]:
+    if type(selection) is not _SourceSelection:
+        raise AssertionError("Views selected invocation has an unresolved PC effect")
     proofs = tuple(p for p in selection.Source_children.values() if p["role"] == CHANNEL_SOURCE)
     require(len(proofs) == 1, "Sources table lacks its current complete child")
     proof = proofs[0]
@@ -169,8 +266,8 @@ def _source_table_targets(selection, at, row):
         and row.mnemonic == "tbb"
         and row.operands == "[pc, r6]"
         and proof["shape"] == "ChannelSource"
-        and proof["access_targets"] == targets
-        and proof["guarded_access_index_domain"] == (0, 5)
+        and proof.get("access_targets") == targets
+        and proof.get("guarded_access_index_domain") == (0, 5)
         and all(v in selection.selected for v in targets),
         "Sources structural table loses its exact guarded current targets",
     )
@@ -179,7 +276,13 @@ def _source_table_targets(selection, at, row):
     return targets
 
 
-def _source_structural_control(objects, rows, widgets, parents, children):
+def _source_structural_control(
+    objects: DiagnosticObjects,
+    rows: InstructionMap,
+    widgets: _WidgetsState,
+    parents: tuple[BodyRecord, ...],
+    children: Children,
+) -> _SourceStructuralControl:
     from config_decoded_widgets import _WidgetsState
     from config_decoded_sources import _parents
     from config_finite_returns import _closed_child_returns
@@ -266,7 +369,13 @@ def _source_structural_control(objects, rows, widgets, parents, children):
     )
 
 
-def _source_carrier_returns(rows, parents, children, returns, sp):
+def _source_carrier_returns(
+    rows: InstructionMap,
+    parents: Sequence[BodyRecord],
+    children: Children,
+    returns: Sequence[ReturnNode],
+    sp: int,
+) -> CarrierReturns:
     """Actual per-call transfer, conditional on separate protected save slots.
 
     Complete current body matching and the existing finite saved-PC walk are
@@ -310,13 +419,13 @@ def _source_carrier_returns(rows, parents, children, returns, sp):
 
 @dataclass(frozen=True)
 class _SourceActiveControl:
-    state: object
-    source_guards: tuple
-    record: dict
+    state: _SourcePhasesState
+    source_guards: tuple[PhaseGuards, ...]
+    record: SourceControlRecord
     checkpoint: object
     complete_ordinary_group_issued: bool = False
 
-    def current(self):
+    def current(self) -> _SourceActiveControl:
         from config_decoded_sources import _phase_graph
 
         require(
@@ -332,7 +441,7 @@ class _SourceActiveControl:
         return self
 
 
-def _phase_guards(state, phase):
+def _phase_guards(state: _SourcePhasesState, phase: _SourcePhase) -> PhaseGuards:
     """Paired source outcomes, not a body-list or completed-prefix approval."""
     from config_abstract import Span
     from config_source_effects import SOURCE_EPOCHS, _source_error_origins
@@ -344,8 +453,8 @@ def _phase_guards(state, phase):
     frame = state.widgets.views.context.headers["visitor_frame"]
     V = state.widgets.views.context.headers["visitor"]["proof"]["function"]
     array = phase.array
-    current = phase.entry.sequence
-    calls = []
+    current: SequenceInterface | None = phase.entry.sequence
+    calls: list[GuardedCall] = []
     parsed = 0
     saved, value, producer = phase.entry.saved_top_count
     require(
@@ -382,13 +491,15 @@ def _phase_guards(state, phase):
             "Sources saved top count changes its reaching load/update",
         )
     require(
-        current.count == Span(8, 8)
+        phase.entry.sequence.count == Span(8, 8)
         and phase.entry.exit.sequence.count == Span(7, 7)
         and phase.parent_envelopes["stores"] == 80
         and len(state.structural.carrier_returns["parent_calls"]) == 57,
         "Sources guarded phase lacks actual count/protected-write/callee relations",
     )
     for index, invocation in enumerate(array["invocations"]):
+        if current is None:
+            raise AssertionError("Sources failed invocation advances to another package")
         off, out, tag = SOURCE_EPOCHS[index]
         result = invocation["result"]
         error_origins = _source_error_origins(result)
@@ -402,7 +513,7 @@ def _phase_guards(state, phase):
         proof = result["proof"]
         require(
             state.children[proof["function"], CHANNEL_SOURCE] == proof
-            and proof["guarded_access_index_domain"] == (0, 5)
+            and proof.get("guarded_access_index_domain") == (0, 5)
             and result["returns"]
             and result["last_output_store"] == proof["function"] + 734,
             "Sources guarded invocation loses its current table/output/return body",
@@ -472,15 +583,15 @@ def _phase_guards(state, phase):
     complete = current is not None
     publication = None
     suffix_relation = None
-    if not complete:
+    effects = phase.effects
+    suffix = phase.remaining
+    if current is None:
         require(
             phase.effects is None and phase.remaining is None,
             "Sources parse failure reaches Config publication or remaining fields",
         )
     else:
-        effects = phase.effects
-        suffix = phase.remaining
-        require(
+        if not (
             effects is not None
             and suffix is not None
             and len(effects["slots"]) == 8
@@ -489,16 +600,18 @@ def _phase_guards(state, phase):
                 for i, (slot, package) in enumerate(zip(effects["slots"], array["packages"]))
             )
             and suffix["before"].decoder == current.decoder
-            and suffix["before"].count == Span(7, 7),
-            "Sources fixed-array last stores or remaining-field cursor are unpaired",
-        )
-        for normal in suffix["normal"]:
+            and suffix["before"].count == Span(7, 7)
+        ):
+            raise AssertionError(
+                "Sources fixed-array last stores or remaining-field cursor are unpaired"
+            )
+        for suffix_normal in suffix["normal"]:
             require(
-                normal["after"].count == Span(4, 4)
-                and normal["after"].decoder.header == current.decoder.header
-                and normal["after"].decoder.payload == current.decoder.payload
-                and normal["Fuel"]["complete_store"] == V + 5570
-                and normal["colors"]["complete_store"] == V + 5628,
+                suffix_normal["after"].count == Span(4, 4)
+                and suffix_normal["after"].decoder.header == current.decoder.header
+                and suffix_normal["after"].decoder.payload == current.decoder.payload
+                and suffix_normal["Fuel"]["complete_store"] == V + 5570
+                and suffix_normal["colors"]["complete_store"] == V + 5628,
                 "Sources outgoing top4 precedes the paired Fuel/Colors last stores",
             )
         require(
@@ -541,10 +654,10 @@ def _phase_guards(state, phase):
         invocations=tuple(calls),
         parsed_sources=parsed,
         complete_Source_array=complete,
-        Controls_ready=bool(complete and phase.remaining["normal"]),
+        Controls_ready=bool(suffix is not None and suffix["normal"]),
         source_array_last_stores=()
-        if not complete
-        else tuple(v["complete_after"] for v in phase.effects["slots"]),
+        if effects is None
+        else tuple(v["complete_after"] for v in effects["slots"]),
         publication_lineage=publication,
         suffix_lineage=suffix_relation,
         saved_top_count=dict(
@@ -554,20 +667,19 @@ def _phase_guards(state, phase):
             checked_read_sites=(V + 4796, V + 5044, V + 5052),
             reached_reads=(
                 ()
-                if not complete
-                else (V + 4796,)
-                + ((V + 5044, V + 5052) if phase.remaining["warning"] is not None else ())
+                if suffix is None
+                else (V + 4796,) + ((V + 5044, V + 5052) if suffix["warning"] is not None else ())
             ),
             later_top_count_store=()
-            if not complete or phase.remaining["warning"] is None
+            if suffix is None or suffix["warning"] is None
             else (V + 5058, 5),
             guard_rejections=((V + 4800, 0), (V + 5048, 1)),
         ),
-        retained_Fuel_assignments=() if not complete else phase.remaining["Fuel_assignments"],
+        retained_Fuel_assignments=() if suffix is None else suffix["Fuel_assignments"],
     )
 
 
-def _source_control(state):
+def _source_control(state: _SourcePhasesState) -> _SourceActiveControl:
     """Internally derived named ordinary relation, before reached-use closure.
 
     Raw structure, descriptions and receipts cannot enter this interface.
@@ -585,30 +697,32 @@ def _source_control(state):
     return _SourceActiveControl(state, guards, record, _phase_graph((guards, record)))
 
 
-def _source_control_data(state):
+def _source_control_data(
+    state: _SourcePhasesState,
+) -> tuple[tuple[PhaseGuards, ...], SourceControlRecord]:
     from config_decoded_widgets import _WidgetActiveControl
 
     widgets = state.widgets
     previous = widgets.control
-    require(
+    if not (
         state.entries
         and type(previous) is _WidgetActiveControl
         and previous.state is widgets.views
         and previous.parents is widgets.parents
-        and previous.children is widgets.children,
-        "Sources active control lacks its actual checked ordinary predecessor",
-    )
+        and previous.children is widgets.children
+    ):
+        raise AssertionError("Sources active control lacks its actual checked ordinary predecessor")
     guards = tuple(_phase_guards(state, p) for p in state.phases)
     # current() recomposes the predecessor profile through _source_entries.
     # No arbitrary external exclusions or raw-context cuts are accepted.
-    extension = dict(
+    extension: ControlExclusions = dict(
         excluded_taken=dict(previous.profile["excluded_taken"]),
         excluded_fallthrough=dict(previous.profile["excluded_fallthrough"]),
     )
     successors, returns, dormant = _selected_successors(state.structural.selection, extension)
     require(not dormant, "Sources active control retains an unproved outgoing route")
     pending = _foreign_ingress(state.objects, state.rows, state.structural.selection)
-    record = dict(
+    record: SourceControlRecord = dict(
         selected_instructions=len(state.structural.selection.selected),
         successors=successors,
         nested_returns=state.structural.nested_returns,
@@ -621,7 +735,12 @@ def _source_control_data(state):
     return guards, record
 
 
-def _structural_data(value, widgets, parents, children):
+def _structural_data(
+    value: _SourceStructuralControl,
+    widgets: _WidgetsState,
+    parents: tuple[BodyRecord, ...],
+    children: Children,
+) -> StructuralData:
     """Complete immutable-checkpoint input, excluding only checked identities."""
     require(
         type(value) is _SourceStructuralControl

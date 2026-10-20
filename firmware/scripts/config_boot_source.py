@@ -14,6 +14,7 @@ review; comments/whitespace alone do not alter the selected source contract.
 
 import hashlib
 import re
+from typing import TypedDict
 from validation import require
 
 _PRIVATE = """
@@ -40,7 +41,20 @@ _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+|::|->|[^\s]")
 _LIFETIME = re.compile(r"'[A-Za-z_][A-Za-z0-9_]*")
 
 
-def _cooked_string(text, start):
+class BootSourceContract(TypedDict):
+    kind: str
+    source_members: dict[str, str]
+    Config_visibility: str
+    ordered_boot_operations: tuple[str, ...]
+    Boot_main_attribute: str
+    Config_source_expression: str
+    take_source_expression: str
+    requires_checked_build_source_ELF_binding: bool
+    requires_actual_machine_and_first_batch_composition: bool
+    requires_all_direct_computed_indirect_and_address_taken_reference_closure: bool
+
+
+def _cooked_string(text: str, start: int) -> int:
     # The authored fragments need ordinary strings and cooked C strings,
     # with only these simple escapes. Preserve a whole literal as one token;
     # unsupported escapes and unterminated forms fail before matching names.
@@ -56,14 +70,12 @@ def _cooked_string(text, start):
             at += 2
         else:
             at += 1
-    require(False, "unterminated cooked source string")
+    raise AssertionError("unterminated cooked source string")
 
 
-def _tokens(raw):
-    require(
-        type(raw) is bytes and raw and len(raw) <= 65536,
-        "missing or oversized bounded source member",
-    )
+def _tokens(raw: object) -> tuple[str, ...]:
+    if not (type(raw) is bytes and raw and len(raw) <= 65536):
+        raise AssertionError("missing or oversized bounded source member")
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -97,16 +109,14 @@ def _tokens(raw):
             continue
         if text[at] == "'":
             lifetime = _LIFETIME.match(text, at)
-            require(
-                lifetime is not None
-                and (lifetime.end() == len(text) or text[lifetime.end()] != "'"),
-                "character literals or malformed lifetimes are unsupported",
-            )
+            if lifetime is None or (lifetime.end() != len(text) and text[lifetime.end()] == "'"):
+                raise AssertionError("character literals or malformed lifetimes are unsupported")
             tokens.append(lifetime[0])
             at = lifetime.end()
             continue
         token = _TOKEN.match(text, at)
-        require(token is not None, "unsupported source token")
+        if token is None:
+            raise AssertionError("unsupported source token")
         value = token[0]
         end = token.end()
         require(
@@ -127,11 +137,11 @@ def _tokens(raw):
     return tuple(tokens)
 
 
-def _occurrences(tokens, part):
+def _occurrences(tokens: tuple[str, ...], part: tuple[str, ...]) -> tuple[int, ...]:
     return tuple(i for i in range(len(tokens) - len(part) + 1) if tokens[i : i + len(part)] == part)
 
 
-def _top_level(tokens, index):
+def _top_level(tokens: tuple[str, ...], index: int) -> bool:
     stack = []
     close = {")": "(", "]": "[", "}": "{"}
     for token in tokens[:index]:
@@ -144,7 +154,7 @@ def _top_level(tokens, index):
     return not stack
 
 
-def _top_declaration(tokens, text):
+def _top_declaration(tokens: tuple[str, ...], text: str) -> int:
     part = _tokens(text.encode())
     indices = _occurrences(tokens, part)
     require(len(indices) == 1, "source declaration is missing or ambiguous")
@@ -156,19 +166,19 @@ def _top_declaration(tokens, text):
     return index
 
 
-def first_boot_source_contract(documents):
+def first_boot_source_contract(documents: object) -> BootSourceContract:
     """Recognize source semantics only; no current-checkout or ELF fallback.
 
     A caller dictionary containing these bytes is not build-source evidence.
     The final producer must obtain the members through the checked immutable
     attempt/ELF input path and recheck that binding before issuing any history.
     """
-    require(
+    if not (
         type(documents) is dict
         and all(type(name) is str for name in documents)
-        and set(documents) == {"main.rs", "view_config.rs"},
-        "first-boot source members are missing or include an undeclared input",
-    )
+        and set(documents) == {"main.rs", "view_config.rs"}
+    ):
+        raise AssertionError("first-boot source members are missing or include an undeclared input")
     private = _tokens(documents["view_config.rs"])
     main = _tokens(documents["main.rs"])
     require(

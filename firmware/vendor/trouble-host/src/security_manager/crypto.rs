@@ -11,7 +11,7 @@ use cmac::digest;
 use p256::ecdh;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::Address;
+use crate::{Address, Error};
 
 /// LE Secure Connections Long Term Key.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -109,24 +109,29 @@ impl IdentityResolvingKey {
     ///
     /// The generated address follows the format described in
     /// Bluetooth Core Specification [Vol 3] Part C, Section 10.8.2.
-    pub fn generate_resolvable_address<T: RngCore + CryptoRng>(&self, rng: &mut T) -> [u8; 6] {
-        // Generate prand (24 bits with top 2 bits set to 0b01 to indicate resolvable private address)
-        let mut prand = [0u8; 3];
-        rng.fill_bytes(&mut prand);
-
-        // Set the top 2 bits to 0b01 to indicate resolvable private address
-        prand[2] &= 0b00111111; // Clear top 2 bits
-        prand[2] |= 0b01000000; // Set 2nd bit from top
-
-        // Calculate hash using ah function
-        let hash = self.ah(prand);
-
-        // Construct the address: prand || hash
-        let mut address = [0u8; 6];
-        address[3..6].copy_from_slice(&prand);
-        address[0..3].copy_from_slice(&hash);
-
-        address
+    ///
+    /// Returns `InvalidValue` on RNG failure or four consecutive invalid random
+    /// parts. Callers must propagate failure rather than expose an identity address.
+    pub fn generate_resolvable_address<T: RngCore + CryptoRng>(&self, rng: &mut T) -> Result<[u8; 6], Error> {
+        for _ in 0..4 {
+            let mut prand = [0u8; 3];
+            rng.try_fill_bytes(&mut prand).map_err(|_| Error::InvalidValue)?;
+            prand[2] = (prand[2] & 0x3f) | 0x40;
+            // Core Vol 6 Part B 1.3.2.2 excludes all-zero/all-one random bits.
+            // Rejection preserves the distribution without an unbounded loop.
+            if prand == [0, 0, 0x40] || prand == [0xff, 0xff, 0x7f] {
+                continue;
+            }
+            let mut address = [0u8; 6];
+            address[3..].copy_from_slice(&prand);
+            // ah uses numeric big endian; BdAddr uses least-significant byte first.
+            prand.reverse();
+            let mut hash = self.ah(prand);
+            hash.reverse();
+            address[..3].copy_from_slice(&hash);
+            return Ok(address);
+        }
+        Err(Error::InvalidValue)
     }
 
     /// Resolves a resolvable private address.
@@ -1049,6 +1054,92 @@ mod tests {
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);
+    }
+
+    #[test]
+    fn generated_rpa_resolves_and_preserves_wire_order() {
+        struct FixedRandom([u8; 3]);
+        impl RngCore for FixedRandom {
+            fn next_u32(&mut self) -> u32 {
+                panic!("only address bytes are requested")
+            }
+            fn next_u64(&mut self) -> u64 {
+                panic!("only address bytes are requested")
+            }
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                dest.copy_from_slice(&self.0);
+            }
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+                self.fill_bytes(dest);
+                Ok(())
+            }
+        }
+        impl CryptoRng for FixedRandom {}
+        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b).unwrap();
+        // Core Vol 3 Part H Appendix D.7: prand708194 -> hash0dfbaa.
+        // BdAddr stores the least-significant byte first.
+        let address = irk
+            .generate_resolvable_address(&mut FixedRandom([0x94, 0x81, 0x70]))
+            .unwrap();
+        assert_eq!(address, [0xaa, 0xfb, 0x0d, 0x94, 0x81, 0x70]);
+        assert!(irk.resolve_address(&BdAddr::new(address)));
+        let other = IdentityResolvingKey::new(1).unwrap();
+        assert!(!other.resolve_address(&BdAddr::new(address)));
+        assert!(matches!(
+            irk.generate_resolvable_address(&mut FixedRandom([0; 3])),
+            Err(Error::InvalidValue)
+        ));
+        assert!(matches!(
+            irk.generate_resolvable_address(&mut FixedRandom([0xff; 3])),
+            Err(Error::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn rpa_retries_invalid_random_parts_and_bounds_rng_failure() {
+        struct RandomStream {
+            calls: usize,
+            fail: bool,
+        }
+        impl RngCore for RandomStream {
+            fn next_u32(&mut self) -> u32 {
+                unreachable!()
+            }
+            fn next_u64(&mut self) -> u64 {
+                unreachable!()
+            }
+            fn fill_bytes(&mut self, _: &mut [u8]) {
+                panic!("use fallible RNG boundary")
+            }
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+                self.calls += 1;
+                if self.fail {
+                    return Err(rand_core::Error::from(
+                        core::num::NonZeroU32::new(rand_core::Error::CUSTOM_START).unwrap(),
+                    ));
+                }
+                dest.copy_from_slice(match self.calls {
+                    1 => &[0, 0, 0],
+                    2 => &[0xff, 0xff, 0xff],
+                    _ => &[0x94, 0x81, 0x70],
+                });
+                Ok(())
+            }
+        }
+        impl CryptoRng for RandomStream {}
+        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b).unwrap();
+        let mut rng = RandomStream { calls: 0, fail: false };
+        assert_eq!(
+            irk.generate_resolvable_address(&mut rng).unwrap(),
+            [0xaa, 0xfb, 0x0d, 0x94, 0x81, 0x70]
+        );
+        assert_eq!(rng.calls, 3);
+        rng.fail = true;
+        assert!(matches!(
+            irk.generate_resolvable_address(&mut rng),
+            Err(Error::InvalidValue)
+        ));
+        assert_eq!(rng.calls, 4);
     }
 
     /// LE Legacy Pairing c1 test vector ([Vol 3] Part H, Appendix D.1).
