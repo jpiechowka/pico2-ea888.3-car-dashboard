@@ -196,7 +196,7 @@ variants overlap and must not be summed into a unique-test total.
 | Host Rust | Fresh default and no-default runs each pass 759 tests; strict Clippy/format pass; earlier benchmark test run also passed | Repeated variants: 1,518 executions, not 1,518 unique tests. |
 | Configurator | Fresh 418 native passes; strict native/Wasm Clippy and formatting pass | Includes 35 preview and 31 event tests. Real browser interactions remain separate. |
 | Windows helper | 92 passes and completed strict check | Native process/file tests; no USB enumeration or flashing qualification. |
-| Actual Trouble vendor manifest | 215 passes, three physical tests ignored; derive fixture passes | Additional advertising/channel feature subsets pass, as do final ARM consumers. Feature-off/on checks also cover the final conditional-import cleanup. |
+| Actual Trouble vendor manifest | 215 passes, three physical tests ignored; derive fixture passes | All five CI feature combinations pass locally: 186, 215, 56, 146 and 146 executions. Counts overlap. The reduced-feature test import correction described below is included. |
 | Actual CYW43 vendor manifest | 26 passes in each of Bluetooth and Bluetooth-only runs | Mock transport/real parser; no device execution. |
 | Actual HAL vendor manifest | 54 native passes; optimized PIO UART selection 7/7 | Single-thread MMIO storage/mock-time models. Nine existing native compiler warnings remain in this run. |
 | Python strict typing | 175/175 pass for Windows and Linux Mypy platform settings, with normal imports | Static platform checking on Windows; not Linux runtime execution. |
@@ -210,10 +210,18 @@ variants overlap and must not be summed into a unique-test total.
 | Final provenance and source reconciliation | Root provenance tests pass; all 872 source/configuration paths have matching reviewed hashes | Commit/push verification and CI use the exact publication SHA. Prior CI is not evidence for these changes. |
 | Physical validation | Not performed | No devices, flash or vehicle traffic used by this audit. |
 
+The first publication's exact CI run passed 28 of 29 jobs and exposed a
+test-only feature dependency: a regression inherited a type name from an
+optional production import. The same reduced-feature compilation failure was
+reproduced locally. Qualifying the type directly in the test fixes it without
+changing production imports or feature guards. All five CI feature combinations
+were then rerun successfully, and the vendored source provenance was reverified.
+Fresh image checks below include that correction in their source identity.
+
 ## Final linked images
 
 The final source refresh completed on 21 October 2026, after the diagnostics
-changes and final comment correction. All four builds report
+changes, final comment correction and CI test-feature correction. All four builds report
 `STATIC_IMAGE_CHECKS_PASS` with the dated nightly, Cortex-M33 target and unchanged
 admission rules. Dashboard builds select `ble-obd`, `frame-trace`, `te-trace`,
 `simple-outline` and speed optimization 3; probe builds are separate standalone
@@ -250,10 +258,10 @@ Exact local artifact SHA-256 identities:
 | --- | --- |
 | Dashboard stock ELF | `4345370a87572fe959892ca4ac0969f9bfb3977faa11124c06b86d8bdbdb27e6` |
 | Dashboard 280/70 ELF | `1734f0f2d1c17abaa256e6c79ab50a77c674e24f17bd3d4e5397cd05eb987a52` |
-| Probe stock ELF | `0c403741aec5a7679ea9837efedb2656b57c4b0f0ad3067896eaa273b5dc004f` |
-| Probe 280/70 ELF | `da632e38a2e619a40aa95bb731b4516813a014f7c958355f0cad97b882975f85` |
-| Probe stock UF2 | `44f1611d5c2cd1b07e19432ca7c7274fc21c10e855c977b7887bd1373964b85c` |
-| Probe 280/70 UF2 | `740c41ff71dcf4a4058d45ac1404998479cc800b27e16e04f81cdc54f1a8ea52` |
+| Probe stock ELF | `ec8c35a2d2dd05dd0db96b6984389de82b70b8d703b614469f26332bbb0591e5` |
+| Probe 280/70 ELF | `21b23953dac95730fccd7df574c4397107c5c2d59e43d34ae4e7d84d124cdfa6` |
+| Probe stock UF2 | `f5288e905d9688e9dd278194d40df29dcde52c9393f10a840b2fda7a3b61250d` |
+| Probe 280/70 UF2 | `dfe075fbd9c873985e28cd88e967721a453e3e2e92079b01775c60533108cce4` |
 
 All image results explicitly retain `hardware_qualified: false` and
 `complete_instruction_proof: false`. No device was accessed and no saved slot

@@ -61,7 +61,7 @@
   },
   "modified": {
     "Cargo.toml": "5f0132cd182196e7c1130567df065c88d61b1dbf55579079cd95654cb7a9ce1c",
-    "LOCAL_PATCHES.md": "879c97523baa598643872f66014256c5ae7303ffcfb934d21c875e05e9fabb00",
+    "LOCAL_PATCHES.md": "52e74348c71f7cc134b9fdf5ba336f59ea375f709e6655c4cb94b8b7bb963808",
     "gen_config.py": "a8c9bd0e08244f7ee9aa19b22883e92e7b6745fd292ebcecdb07d57df15aff2c",
     "rustfmt.toml": "8d3ecaf636a4420607560a59b51447634c990158192e27f627703c851eab260a",
     "src/advertise.rs": "046019186f5da5c19f98ec194bb4cf91dc0e7b33831a69a671940a52989b281d",
@@ -80,7 +80,7 @@
     "src/gatt_discovery_tests.rs": "76746cc3fdf05ef8f7c37ae7ccd516dc25928e05a7b865e06a211dab81a6e0ab",
     "src/host.rs": "cf1c8d16f60801f5c5e274aa93aa84cfcb85d0b115c1e88a4474d5a17bb6a451",
     "src/host_advertise_tests.rs": "fcf7752e67079b3ed7625f094ac4810a6c475387174f1110bd5b604c56161ac7",
-    "src/host_channel_tests.rs": "1c2a620bc2c230c7bef69b93c0edb9c7c39913f6fdca79cabbd2aeefc316539e",
+    "src/host_channel_tests.rs": "4bc4dc401592f5d73efe212f3339955c756ccb40c34ccff337cfcd366cdf0f62",
     "src/host_mtu_tests.rs": "7c489e8a8f7ab1ed0378dc9f091d61396b5b43f8f1f995fd0cdecee4ef0f83a2",
     "src/host_no_gatt_tests.rs": "6becfc98a25411843c94dd98ad5c767312df70c86931cd65d1b31519fd50f1a6",
     "src/host_regression_tests.rs": "00e7ad4e5b25d5b6869d4b374f434d2316ff235e3ddf677a3708dc0d40484d9a",

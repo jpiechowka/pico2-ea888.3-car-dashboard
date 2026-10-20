@@ -268,3 +268,11 @@ advertising and dynamic-channel corrections also protect optional upstream APIs
 but do not establish that those paths caused a physical failure. See the
 [full-code audit](../../../docs/validation/full-code-audit-2026-10-20.md) for
 finite test coverage and remaining hardware limits.
+
+## CI feature-isolation follow-up (2026-10-21)
+
+The central L2CAP parameter regression names its connection-parameter type
+directly instead of inheriting a production import gated by the unrelated
+`connection-params-update` feature. CI and a local reduced-feature build
+reproduced the missing-type compilation error. This changes only test source;
+the production feature boundary and firmware behavior remain unchanged.

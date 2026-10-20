@@ -173,7 +173,7 @@ fn connection_parameter_reply_matches_original_identifier_for_accept_reject_and_
         } else if action == 1 {
             block_on(request.reject(&stack)).unwrap();
         } else {
-            let invalid = RequestedConnParams {
+            let invalid = crate::connection::RequestedConnParams {
                 min_connection_interval: Duration::from_micros(0),
                 ..Default::default()
             };
