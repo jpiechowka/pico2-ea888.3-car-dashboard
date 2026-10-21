@@ -113,7 +113,7 @@ not the whole stack or physical radio/DMA behavior.
 
 ## Verification status
 
-The final source inventory covers **665 Rust files and 21,046 items**, with zero
+The final source inventory covers **665 Rust files and 21,065 items**, with zero
 uncovered item/input/output/safety contracts detected. Eight inventory regressions
 cover parsing, nested items and path admission. Repository-owned macro templates
 are reviewed; the external test-macro limitation is recorded in the policy.
@@ -125,11 +125,26 @@ are reviewed; the external test-macro limitation is recorded in the policy.
 | Studio/helper | Native tests and strict native/Wasm Clippy/docs pass; actual IndexedDB rollback regression verified in a browser. Windows helper tests pass outside the sandbox after sandbox file-lock access failures. |
 | HAL | RP235x and retained RP2040 native suites pass, including release arithmetic. Cortex-M33 and retained M0 documentation/compilation and the DI64 archive link fixture pass. Retained RP235xB is compile-only. |
 | CYW43 | 40 native regressions and strict private documentation pass. |
-| BLE | Final combined native feature configuration passes 278 library tests with `--test-threads=1`, required by its shared packet-pool fixtures. Other documented feature configurations and hardware-free integration tests also pass; physical tests remain opt-in. |
+| BLE | Final combined native feature configuration passes 279 library tests with `--test-threads=1`, required by its shared packet-pool fixtures. Other documented feature configurations and hardware-free integration tests also pass; physical tests remain opt-in. |
 | Packet aliasing | Five actual packet-pool regressions pass under the pinned Miri interpreter. |
 | Optional Cortex crypto | C/assembly backend and private documentation compile for Cortex-M33 using the installed Zig cross-compiler locally; CI uses GNU Arm. No backend execution or link qualification is claimed. |
 | Python | All 175 files pass hash-locked Ruff lint/format and strict Mypy. Target-capture suite: 38 tests run, 37 pass, one platform-specific skip. |
 | Source/render drift | All five workspace formatting checks, provenance checks and normalized non-doc source review pass. Representative private fields, tuples, generated props/intrinsics, async ownership contracts, navigation and search were inspected in a browser. Not every rendered page was visually inspected. |
+
+CI follow-up reproduced two queue fixtures exhausting the explicitly configured
+eight-packet pool before reaching their intended queue-full assertions. Those
+fixtures now use independent bounded storage for queue capacity plus one packet;
+production pool sizes are unchanged. A new unwind/recreation regression checks
+that every packet is recovered. Both default and eight-packet discovery suites
+pass **202 tests each**, and the security/legacy subset passes **266 tests**.
+
+Feature-dependent documentation links now match the enabled central/peripheral
+methods and parameter-request API. Strict private docs pass with both roles,
+central-only discovery and peripheral-only builds; CI retains all three contexts.
+An additional standalone no-security vendor Clippy invocation still reports
+pre-existing `needless_bool` style warnings in identity matching. The supported
+firmware Clippy gates and security-enabled vendor check pass; no runtime rewrite
+was made for this optional style-only finding.
 
 Final linked image checks use the pinned nightly and Cortex-M33 target settings:
 

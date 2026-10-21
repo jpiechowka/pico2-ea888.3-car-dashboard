@@ -79,8 +79,8 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     },
     /// A request to change the connection parameters.
     ///
-    /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
-    /// must be called to respond to the request.
+    /// Respond through [`ConnectionParamsRequest`]; dropping the token sends no reply.
+    /// Acceptance requires `central` or `connection-params-update`; rejection is always available.
     RequestConnectionParams(
         #[doc = "Pending controller parameter request; caller responds through its token."] ConnectionParamsRequest,
     ),

@@ -991,11 +991,17 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
 
     /// Finalize configuration and return the stack.
     ///
-    /// Use the returned [`Stack`] for runtime operations: obtain a [`Runner`] via
-    /// [`Stack::runner()`], and [`Central`] or
-    /// [`Peripheral`] handles via [`Stack::central()`] and
-    /// [`Stack::peripheral()`].
+    /// Use the returned [`Stack`] for runtime operations; [`Stack::runner()`]
+    /// obtains its sole [`Runner`]. Role handles depend on enabled features.
     /// Returns a stack by transferring initialized host state/controller exactly once; no controller I/O starts and runner admission is initially unused.
+    #[cfg_attr(
+        feature = "central",
+        doc = "The `central` feature enables [`Central`] via [`Stack::central()`]."
+    )]
+    #[cfg_attr(
+        feature = "peripheral",
+        doc = "The `peripheral` feature enables [`Peripheral`] via [`Stack::peripheral()`]."
+    )]
     pub fn build(mut self) -> Stack<'stack, C, P> {
         Stack {
             host_state: self.host_state.take().unwrap(),

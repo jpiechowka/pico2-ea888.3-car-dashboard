@@ -371,3 +371,18 @@ References: Bluetooth Core [Security Manager 2.3.5.6.1](https://www.bluetooth.co
 and [Miri's validation scope](https://github.com/rust-lang/miri).
 These software regressions do not identify the cause of a photographed reset or
 disconnect, establish pairing interoperability, or qualify live radio timing.
+
+## Documentation CI follow-up (2026-10-21)
+
+Two queue-saturation tests now use separate bounded packet fixtures sized to the
+queue plus one waiting packet. The production eight-packet configuration remains
+unchanged; the fixtures can reach queue-full rejection and cancellation without
+first exhausting the shared pool. Local manager ownership drains packets during
+unwinding. A regression repeats full-queue unwind and recreation, checking exact
+capacity restoration. Default and eight-packet discovery suites both pass 202 tests.
+
+Role-specific StackBuilder links are emitted only when their methods exist.
+Connection-parameter event documentation links to the shared token and states
+the feature requirement for acceptance. Strict private docs cover both roles,
+central-only discovery and peripheral-only builds. These follow-ups change only
+tests and documentation; no firmware behavior or packet limits change.

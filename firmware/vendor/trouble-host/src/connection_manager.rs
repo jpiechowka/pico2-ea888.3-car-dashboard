@@ -2497,12 +2497,113 @@ pub(crate) mod tests {
 
         assert!(!mgr.is_handle_connected(ConnHandle::new(3)));
     }
+    /// Queue saturation needs one additional packet to reach enqueue rejection or a pending capacity wait.
+    const QUEUE_TEST_PACKET_CAPACITY: usize = config::L2CAP_TX_QUEUE_SIZE + 1;
+
+    /// Independent allocation counts for the transfer, borrowed-storage and unwind fixtures, respectively.
+    static QUEUE_TEST_PACKETS: [core::sync::atomic::AtomicUsize; 3] =
+        [const { core::sync::atomic::AtomicUsize::new(0) }; 3];
+
+    /// Bounded test allocator; ID selects one exclusive fixture counter (0..3), independent of the default pool.
+    struct QueueTestPool<const ID: usize>;
+
+    /// Owned initialized bytes plus one allocation count; moving a packet never aliases another packet's storage.
+    struct QueueTestPacket<const ID: usize> {
+        /// Configured MTU bytes, zeroed on allocation; these tests enqueue only the first byte.
+        bytes: [u8; DefaultPacketPool::MTU],
+    }
+
+    impl<const ID: usize> QueueTestPool<ID> {
+        /// Returns currently free fixture allocations; each test exclusively owns its ID.
+        fn available() -> usize {
+            QUEUE_TEST_PACKET_CAPACITY - QUEUE_TEST_PACKETS[ID].load(core::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl<const ID: usize> PacketPool for QueueTestPool<ID> {
+        /// Affine packet whose Drop releases the fixture allocation count.
+        type Packet = QueueTestPacket<ID>;
+        /// Preserve the configured packet byte capacity while isolating allocation counts.
+        const MTU: usize = DefaultPacketPool::MTU;
+
+        /// Returns the queue capacity plus one, independent of production pool limits.
+        fn capacity() -> usize {
+            QUEUE_TEST_PACKET_CAPACITY
+        }
+
+        /// Returns a zeroed owned packet, or None when this fixture's bounded capacity is exhausted.
+        fn allocate() -> Option<Self::Packet> {
+            QUEUE_TEST_PACKETS[ID]
+                .try_update(
+                    core::sync::atomic::Ordering::SeqCst,
+                    core::sync::atomic::Ordering::SeqCst,
+                    |used| (used < Self::capacity()).then_some(used + 1),
+                )
+                .ok()?;
+            Some(QueueTestPacket {
+                bytes: [0; DefaultPacketPool::MTU],
+            })
+        }
+    }
+
+    impl<const ID: usize> crate::Packet for QueueTestPacket<ID> {}
+
+    impl<const ID: usize> AsRef<[u8]> for QueueTestPacket<ID> {
+        /// Returns the initialized packet bytes, valid while this owner remains borrowed.
+        fn as_ref(&self) -> &[u8] {
+            &self.bytes
+        }
+    }
+
+    impl<const ID: usize> AsMut<[u8]> for QueueTestPacket<ID> {
+        /// Returns exclusive access to this packet's bytes without touching allocation bookkeeping.
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.bytes
+        }
+    }
+
+    impl<const ID: usize> Drop for QueueTestPacket<ID> {
+        /// Releases exactly one allocation after all byte borrows end, including cancellation and unwinding.
+        fn drop(&mut self) {
+            QUEUE_TEST_PACKETS[ID].fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Local backing outlives its borrowed manager; manager Drop drains packets during normal exit or unwinding.
+    struct QueueTestStorage<const ID: usize> {
+        /// Three connection slots, using owned fixture packets rather than the shared default pool.
+        connections: RefCell<[ConnectionStorage<QueueTestPacket<ID>>; 3]>,
+        /// Optional bond backing required by the manager constructor; no pairing runs in these fixtures.
+        #[cfg(feature = "security")]
+        bonds: RefCell<heapless::Vec<crate::BondInformation, 1>>,
+    }
+
+    impl<const ID: usize> QueueTestStorage<ID> {
+        /// Returns empty local connection and optional bond storage.
+        fn new() -> Self {
+            Self {
+                connections: RefCell::new([const { ConnectionStorage::new() }; 3]),
+                #[cfg(feature = "security")]
+                bonds: RefCell::new(heapless::Vec::new()),
+            }
+        }
+
+        /// Returns an empty manager borrowing this backing; destroy it before the backing is released.
+        fn manager(&self) -> ConnectionManager<'_, QueueTestPool<ID>> {
+            ConnectionManager::new(
+                &self.connections,
+                #[cfg(feature = "security")]
+                &self.bonds,
+            )
+        }
+    }
+
     /// Establishes and accepts `handle` on `mgr` for a caller-selected peer `address`; returns its retained owner.
-    fn accepted_link(
-        mgr: &'static ConnectionManager<'static, DefaultPacketPool>,
+    fn accepted_link<'a, P: PacketPool>(
+        mgr: &'a ConnectionManager<'a, P>,
         handle: ConnHandle,
         address: [u8; 6],
-    ) -> Connection<'static, DefaultPacketPool> {
+    ) -> Connection<'a, P> {
         mgr.connect(
             handle,
             Address::new(AddrKind::PUBLIC, BdAddr::new(address)),
@@ -2539,11 +2640,13 @@ pub(crate) mod tests {
     #[test]
     fn outbound_queue_transfer_failure_and_cancellation_balance_leases() {
         use core::{future::Future, pin::pin, task::Waker};
-        let mgr = setup();
-        let connection = accepted_link(mgr, ConnHandle::new(7), ADDR_1);
+        let backing = QueueTestStorage::<0>::new();
+        let mgr = backing.manager();
+        let connection = accepted_link(&mgr, ConnHandle::new(7), ADDR_1);
         let index = connection.index();
+        assert_eq!(QueueTestPool::<0>::available(), QUEUE_TEST_PACKET_CAPACITY);
         for _ in 0..config::L2CAP_TX_QUEUE_SIZE {
-            mgr.try_send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))
+            mgr.try_send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1))
                 .unwrap();
         }
         assert_eq!(
@@ -2551,19 +2654,22 @@ pub(crate) mod tests {
             config::L2CAP_TX_QUEUE_SIZE
         );
         assert_eq!(
-            mgr.try_send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+            mgr.try_send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1)),
             Err(Error::OutOfMemory)
         );
         assert_eq!(
             usize::from(mgr.connection(index).io_refcount.get()),
             config::L2CAP_TX_QUEUE_SIZE
         );
+        assert_eq!(QueueTestPool::<0>::available(), 1);
         {
-            let mut pending = pin!(mgr.send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)));
+            let mut pending = pin!(mgr.send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1)));
             assert!(pending
                 .as_mut()
                 .poll(&mut Context::from_waker(Waker::noop()))
                 .is_pending());
+            assert_eq!(QueueTestPool::<0>::available(), 0);
+            assert!(QueueTestPool::<0>::allocate().is_none());
             assert_eq!(
                 usize::from(mgr.connection(index).io_refcount.get()),
                 config::L2CAP_TX_QUEUE_SIZE + 1
@@ -2573,38 +2679,43 @@ pub(crate) mod tests {
             usize::from(mgr.connection(index).io_refcount.get()),
             config::L2CAP_TX_QUEUE_SIZE
         );
+        assert_eq!(QueueTestPool::<0>::available(), 1);
         for remaining in (0..config::L2CAP_TX_QUEUE_SIZE).rev() {
             let queued = block_on(mgr.outbound());
             assert_eq!(usize::from(mgr.connection(index).io_refcount.get()), remaining + 1);
             drop(queued);
             assert_eq!(usize::from(mgr.connection(index).io_refcount.get()), remaining);
         }
-        block_on(mgr.send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))).unwrap();
+        block_on(mgr.send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1))).unwrap();
         mgr.disconnected(connection.handle(), Status::SUCCESS).unwrap();
         assert_eq!(
-            mgr.try_send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+            mgr.try_send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1)),
             Err(Error::Disconnected)
         );
         assert_eq!(
-            block_on(mgr.send(index, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))),
+            block_on(mgr.send(index, Pdu::new(QueueTestPool::<0>::allocate().unwrap(), 1))),
             Err(Error::Disconnected)
         );
         drop(block_on(mgr.outbound()));
         assert_eq!(mgr.connection(index).io_refcount.get(), 0);
+        assert_eq!(QueueTestPool::<0>::available(), QUEUE_TEST_PACKET_CAPACITY);
     }
 
     /// Already-borrowed enqueue validates origin/state/count and rolls back queue failure without reborrowing the table.
     #[test]
     fn borrowed_storage_enqueue_is_transactional_and_checks_origin() {
-        let mgr = setup();
-        let other = setup();
+        let backing = QueueTestStorage::<1>::new();
+        let other_backing = QueueTestStorage::<1>::new();
+        let mgr = backing.manager();
+        let other = other_backing.manager();
+        assert_eq!(QueueTestPool::<1>::available(), QUEUE_TEST_PACKET_CAPACITY);
         let handle = ConnHandle::new(7);
-        let connection = accepted_link(mgr, handle, ADDR_1);
-        let foreign = accepted_link(other, handle, ADDR_2);
+        let connection = accepted_link(&mgr, handle, ADDR_1);
+        let foreign = accepted_link(&other, handle, ADDR_2);
         other
             .with_connected_handle(handle, |storage| {
                 assert_eq!(
-                    mgr.try_outbound_storage(storage, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+                    mgr.try_outbound_storage(storage, Pdu::new(QueueTestPool::<1>::allocate().unwrap(), 1)),
                     Err(Error::InvalidValue)
                 );
                 assert_eq!(storage.io_refcount.get(), 0);
@@ -2614,20 +2725,21 @@ pub(crate) mod tests {
         mgr.with_connected_handle(handle, |storage| {
             storage.io_refcount.set(u8::MAX);
             assert_eq!(
-                mgr.try_outbound_storage(storage, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+                mgr.try_outbound_storage(storage, Pdu::new(QueueTestPool::<1>::allocate().unwrap(), 1)),
                 Err(Error::NoPermits)
             );
             assert_eq!(storage.io_refcount.get(), u8::MAX);
             storage.io_refcount.set(0);
             for _ in 0..config::L2CAP_TX_QUEUE_SIZE {
-                mgr.try_outbound_storage(storage, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))
+                mgr.try_outbound_storage(storage, Pdu::new(QueueTestPool::<1>::allocate().unwrap(), 1))
                     .unwrap();
             }
             assert_eq!(
-                mgr.try_outbound_storage(storage, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+                mgr.try_outbound_storage(storage, Pdu::new(QueueTestPool::<1>::allocate().unwrap(), 1)),
                 Err(Error::OutOfMemory)
             );
             assert_eq!(usize::from(storage.io_refcount.get()), config::L2CAP_TX_QUEUE_SIZE);
+            assert_eq!(QueueTestPool::<1>::available(), 1);
             Ok(())
         })
         .unwrap();
@@ -2637,12 +2749,36 @@ pub(crate) mod tests {
         mgr.disconnected(handle, Status::SUCCESS).unwrap();
         let storage = mgr.connection_mut(connection.index());
         assert_eq!(
-            mgr.try_outbound_storage(&storage, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1)),
+            mgr.try_outbound_storage(&storage, Pdu::new(QueueTestPool::<1>::allocate().unwrap(), 1)),
             Err(Error::Disconnected)
         );
         assert_eq!(storage.io_refcount.get(), 0);
         drop(storage);
         drop(foreign);
+        assert_eq!(QueueTestPool::<1>::available(), QUEUE_TEST_PACKET_CAPACITY);
+    }
+
+    /// Unwinding with a full queue must release every fixture packet and permit a fresh manager.
+    #[test]
+    fn queue_fixture_unwind_recovers_all_packets() {
+        for _ in 0..2 {
+            assert_eq!(QueueTestPool::<2>::available(), QUEUE_TEST_PACKET_CAPACITY);
+            let failed = std::panic::catch_unwind(|| {
+                let backing = QueueTestStorage::<2>::new();
+                let mgr = backing.manager();
+                let connection = accepted_link(&mgr, ConnHandle::new(7), ADDR_1);
+                for _ in 0..config::L2CAP_TX_QUEUE_SIZE {
+                    mgr.try_send(connection.index(), Pdu::new(QueueTestPool::<2>::allocate().unwrap(), 1))
+                        .unwrap();
+                }
+                let _spare = QueueTestPool::<2>::allocate().unwrap();
+                assert_eq!(QueueTestPool::<2>::available(), 0);
+                panic!("intentional fixture unwind");
+            });
+            let panic = failed.expect_err("fixture must reach its intentional panic");
+            assert_eq!(panic.downcast_ref::<&str>(), Some(&"intentional fixture unwind"));
+            assert_eq!(QueueTestPool::<2>::available(), QUEUE_TEST_PACKET_CAPACITY);
+        }
     }
 
     /// Dropping a manager drains transferred queue counts even when the backing table outlives it.

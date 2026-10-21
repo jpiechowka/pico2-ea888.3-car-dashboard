@@ -277,8 +277,8 @@ pub enum ConnectionEvent {
     },
     /// A request to change the connection parameters.
     ///
-    /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
-    /// must be called to respond to the request.
+    /// Respond through [`ConnectionParamsRequest`]; dropping the token sends no reply.
+    /// Acceptance requires `central` or `connection-params-update`; rejection is always available.
     RequestConnectionParams(
         /// Owned request token; application must accept/reject it or the peer can time out.
         ConnectionParamsRequest,
