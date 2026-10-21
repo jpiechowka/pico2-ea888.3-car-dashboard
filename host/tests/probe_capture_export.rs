@@ -1,3 +1,5 @@
+//! Offline capture stream/export validation, explicit USB candidate selection and create-new publication.
+
 use std::io::{self, Cursor, Read, Write};
 use std::time::Duration;
 
@@ -5,12 +7,17 @@ use dashboard_core::discovery::capture::*;
 use dashboard_core::discovery::capture_wire::{Request, *};
 use dashboard_core::discovery::*;
 use dashboard_host_validation::probe_captures::*;
+/// Fragmented synchronous byte stream with captured writes; no serial port is opened.
 struct Fake {
+    /// Response bytes and current read cursor.
     incoming: Cursor<Vec<u8>>,
+    /// Accepted command bytes in order.
     sent: Vec<u8>,
+    /// Maximum read/write progress per call; zero injects closed/zero-progress behavior.
     chunk: usize,
 }
 impl Read for Fake {
+    /// Copies at most the configured chunk into `b`; returns cursor progress or zero at EOF without blocking.
     fn read(
         &mut self,
         b: &mut [u8],
@@ -20,6 +27,7 @@ impl Read for Fake {
     }
 }
 impl Write for Fake {
+    /// Appends at most the configured chunk of `b`; returns accepted count, including injected zero.
     fn write(
         &mut self,
         b: &[u8],
@@ -29,8 +37,11 @@ impl Write for Fake {
         Ok(n)
     }
 
+    /// Always panics: the bounded exchange must not invoke a potentially blocking serial flush; never returns.
     fn flush(&mut self) -> io::Result<()> { panic!("must not use potentially unbounded serial flush") }
 }
+/// Returns encoded `kind`/`status` frame for zero-based `slot`, `generation` and exact `body` bytes.
+/// Panics on invalid envelope semantics; includes header and payload checksums.
 fn frame(
     kind: FrameKind,
     status: FrameStatus,
@@ -46,6 +57,7 @@ fn frame(
     v.extend_from_slice(body);
     v
 }
+/// Returns an empty-write-capture stream serving `bytes` one byte per read/write call.
 fn fake(bytes: Vec<u8>) -> Fake {
     Fake {
         incoming: Cursor::new(bytes),
@@ -53,7 +65,10 @@ fn fake(bytes: Vec<u8>) -> Fake {
         chunk: 1,
     }
 }
+/// Returns the canonical successful unbound empty End frame; fixture encode failure panics.
 fn end() -> Vec<u8> { frame(FrameKind::End, FrameStatus::Ok, None, 0, &[]) }
+/// Returns a selected-advertisement capture at boot-relative 2ms with stock clocks and synthetic source digest.
+/// Panics if the bounded 8192-byte fixture fails admission; performs no discovery or device I/O.
 fn payload() -> Vec<u8> {
     let mut p = Probe::new();
     p.catalog.observe(Advertisement::new(
@@ -83,6 +98,7 @@ fn payload() -> Vec<u8> {
     b.truncate(n);
     b
 }
+/// Byte-fragmented LIST succeeds only after four distinct slot entries and End, preserving exact command bytes.
 #[test]
 fn list_requires_four_unique_slots_and_end_with_fragmented_io() {
     let mut incoming = Vec::new();
@@ -95,6 +111,7 @@ fn list_requires_four_unique_slots_and_end_with_fragmented_io() {
     assert_eq!(list.len(), 4);
     assert_eq!(io.sent, b"BLECAP LIST\n");
 }
+/// GET binds its requested slot, validates capture bytes and rejects an otherwise complete payload missing End.
 #[test]
 fn get_binds_slot_validates_capture_and_requires_end() {
     let body = payload();
@@ -109,6 +126,7 @@ fn get_binds_slot_validates_capture_and_requires_end() {
     let mut io = fake(frame(FrameKind::Capture, FrameStatus::Ok, Some(2), 9, &body));
     assert!(exchange(&mut io, Request::Get(2), Duration::from_secs(1)).is_err());
 }
+/// JSON preserves raw packet/address display order and boot-relative time without inventing UTC identity.
 #[test]
 fn json_contains_raw_selected_peer_packet_and_truthful_boot_relative_identity() {
     let value = decode_json(&payload()).unwrap();
@@ -122,6 +140,8 @@ fn json_contains_raw_selected_peer_packet_and_truthful_boot_relative_identity() 
     assert!(value.get("utc").is_none());
 }
 
+/// Duplicate/missing response records, unsupported capture schemas, payload corruption and terminal status errors are
+/// rejected.
 #[test]
 fn malformed_response_sequences_and_crc_valid_invalid_capture_are_refused() {
     let valid = payload();
@@ -162,8 +182,10 @@ fn malformed_response_sequences_and_crc_valid_invalid_capture_are_refused() {
     assert!(exchange(&mut fake(incoming), Request::Get(0), Duration::from_secs(1)).is_err());
 }
 
+/// Stream whose writes succeed but every read returns a timeout immediately.
 struct Timeout;
 impl Read for Timeout {
+    /// Returns TimedOut without copying or waiting.
     fn read(
         &mut self,
         _: &mut [u8],
@@ -172,6 +194,7 @@ impl Read for Timeout {
     }
 }
 impl Write for Timeout {
+    /// Accepts all `b` bytes without retaining them and returns their length.
     fn write(
         &mut self,
         b: &[u8],
@@ -179,8 +202,11 @@ impl Write for Timeout {
         Ok(b.len())
     }
 
+    /// Panics if bounded exchange attempts flush; never returns.
     fn flush(&mut self) -> io::Result<()> { panic!() }
 }
+/// Repeated read timeouts obey the overall deadline; invalid requests/zero duration write nothing and zero progress
+/// fails.
 #[test]
 fn deadlines_invalid_requests_and_closed_streams_are_bounded() {
     let start = std::time::Instant::now();
@@ -196,6 +222,7 @@ fn deadlines_invalid_requests_and_closed_streams_are_bounded() {
     assert!(exchange(&mut io, Request::List, Duration::from_secs(1)).is_err());
 }
 
+/// Returns candidate `name` with probe VID/PID and optional `product`; serial/manufacturer metadata is absent.
 fn port(
     name: &str,
     product: Option<&str>,
@@ -211,6 +238,8 @@ fn port(
         }),
     }
 }
+/// Automatic selection needs one exact product; explicit selection still requires matching USB identity and an existing
+/// candidate.
 #[test]
 fn port_selection_requires_known_product_or_explicit_matching_usb_candidate() {
     let ports = vec![port("COM1", Some(USB_PRODUCT))];
@@ -230,6 +259,7 @@ fn port_selection_requires_known_product_or_explicit_matching_usb_candidate() {
     assert!(select_port(&[wrong], Some("COM4")).is_err());
 }
 
+/// Publication validates first, creates binary/JSON/text plus COMPLETE once and never overwrites an existing export.
 #[test]
 fn publication_is_validated_unique_complete_and_never_overwrites() {
     use std::fs;
@@ -273,6 +303,7 @@ fn publication_is_validated_unique_complete_and_never_overwrites() {
     fs::remove_dir(root).unwrap();
 }
 
+/// Invalid slot/generation pairs reject before creating an output directory.
 #[test]
 fn publication_rejects_invalid_or_incomplete_slot_envelopes_before_writing() {
     let output = std::env::temp_dir().join(format!("ble-invalid-envelope-{}", std::process::id()));
@@ -289,6 +320,7 @@ fn publication_rejects_invalid_or_incomplete_slot_envelopes_before_writing() {
     }
 }
 
+/// Structured export retains each GATT row, raw ATT code, elapsed read time, negotiated MTU and cleanup evidence.
 #[test]
 fn structured_export_includes_every_gatt_row_raw_status_link_and_cleanup() {
     let mut p = Probe::new();

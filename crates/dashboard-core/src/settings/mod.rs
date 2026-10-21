@@ -2,24 +2,38 @@
 //! Two sectors, eight records each, separate data/commit program pages. CRC is
 //! corruption detection, not authentication or a guarantee against any brownout.
 use crate::render::FpsMode;
+/// Debounced single-owner persistence intent, immutable tickets and bounded retries.
 pub mod policy;
+/// Checked mapping from journal-relative offsets to reserved physical flash ranges.
 pub mod region;
 
+/// Physical flash program page size in bytes.
 pub const PAGE_SIZE: usize = 256;
+/// Physical flash erase sector size in bytes.
 pub const SECTOR_SIZE: usize = 4096;
+/// Two-sector journal reservation size in bytes.
 pub const STORAGE_SIZE: usize = 2 * SECTOR_SIZE;
+/// Bytes per record: one data page followed by one separately programmed commit page.
 const RECORD_SIZE: usize = 2 * PAGE_SIZE;
+/// Total record slots across both sectors, including empty/corrupt slots.
 const RECORDS: usize = STORAGE_SIZE / RECORD_SIZE;
+/// Record slots per erase sector.
 const PER_SECTOR: usize = SECTOR_SIZE / RECORD_SIZE;
 
+/// Validated legacy-compatible preference payload; boot normalization resets brightness only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
+    /// Legacy persisted brightness percent in 0..=100; current boot always normalizes to 100.
     brightness: u8,
+    /// Legacy nonzero restore brightness percent in 1..=100, normalized to 100 at boot.
     restore_brightness: u8,
+    /// Physical dashboard boost preference: true PSI, false bar; fixed widget units ignore it.
     boost_psi: bool,
+    /// Software-transfer FPS display mode.
     fps: FpsMode,
 }
 impl Default for Settings {
+    /// Returns Full/100% brightness, bar boost preference and FPS display Off.
     fn default() -> Self {
         Self {
             brightness: 100,
@@ -32,6 +46,7 @@ impl Default for Settings {
 impl Settings {
     /// Retain the journal format and durable unit/FPS choices, but always boot
     /// fully lit. Runtime brightness changes no longer schedule flash writes.
+    /// Returns `self` with both legacy brightness fields set to 100, preserving unit/FPS preferences.
     pub const fn for_boot(self) -> Self {
         Self {
             brightness: 100,
@@ -40,6 +55,9 @@ impl Settings {
         }
     }
 
+    /// Returns validated settings from `brightness` percent 0..=100, nonzero
+    /// `restore_brightness` percent 1..=100, `boost_psi` preference and `fps` mode.
+    /// Invalid brightness ranges return `None`; no persistence or boot normalization occurs.
     pub fn new(
         brightness: u8,
         restore_brightness: u8,
@@ -54,14 +72,20 @@ impl Settings {
         })
     }
 
+    /// Returns `self`'s legacy brightness percentage, 0..=100.
     pub const fn brightness(self) -> u8 { self.brightness }
 
+    /// Returns `self`'s legacy nonzero restore percentage, 1..=100.
     pub const fn restore_brightness(self) -> u8 { self.restore_brightness }
 
+    /// Returns whether `self` selects PSI for the dashboard's FollowBoost preference.
     pub const fn boost_psi(self) -> bool { self.boost_psi }
 
+    /// Returns `self`'s software-transfer FPS display mode.
     pub const fn fps(self) -> FpsMode { self.fps }
 
+    /// Returns `self` as the frozen four-byte v1 payload: brightness, restore, canonical
+    /// unit boolean and FPS code 0..3. Does not normalize legacy brightness.
     fn bytes(self) -> [u8; 4] {
         [
             self.brightness,
@@ -76,6 +100,8 @@ impl Settings {
         ]
     }
 
+    /// Returns validated settings from exact four-byte `bytes`, or `None` for wrong
+    /// width, noncanonical unit/FPS codes or brightness outside admitted ranges.
     fn decode(bytes: &[u8]) -> Option<Self> {
         let [brightness, restore, unit, fps] = *bytes else {
             return None;
@@ -97,45 +123,72 @@ impl Settings {
 /// All offsets are relative to the reserved 8192-byte area. A hardware adapter
 /// must enforce this range and exclusive access itself; never expose raw FLASH.
 pub trait Storage {
+    /// Adapter read/program/erase failure retained unchanged by the journal.
     type Error;
+    /// Reads reservation-relative `offset` into all of `out`, returning unit on success.
+    /// `self` must enforce bounds/exclusion; errors may leave a partial untrusted output.
     fn read(
         &mut self,
         offset: u32,
         out: &mut [u8],
     ) -> Result<(), Self::Error>;
+    /// Programs complete `page` at page-aligned reservation-relative `offset`, returning
+    /// unit after adapter completion. Caller erases/verifies separately; errors may leave
+    /// partial programming. `self` owns flash/XIP/core/IRQ exclusion.
     fn program(
         &mut self,
         offset: u32,
         page: &[u8; PAGE_SIZE],
     ) -> Result<(), Self::Error>;
+    /// Erases one sector at aligned reservation-relative `offset`, returning unit after
+    /// adapter completion. Errors may partially erase; `self` owns exclusive flash access.
     fn erase(
         &mut self,
         offset: u32,
     ) -> Result<(), Self::Error>;
 }
 
+/// Journal admission or transaction failure; write errors do not prove no write occurred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error<E> {
-    Storage(E),
+    /// Underlying storage operation failed.
+    Storage(
+        /// Original adapter error, possibly after partial effects.
+        E,
+    ),
+    /// Erase/program/commit readback failed exact equality or envelope admission.
     Readback,
+    /// More than one valid record claims the same generation.
     Ambiguous,
+    /// Structurally intact unsupported envelope blocks reading/mutation through this version.
     Unsupported,
+    /// Latest valid generation cannot be incremented without wrapping.
     Exhausted,
 }
+/// Fully committed journal record with a nonzero generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
+    /// Checked monotonic generation; zero is invalid on storage admission.
     pub generation: u64,
+    /// Validated preference payload, retaining legacy brightness bytes.
     pub settings: Settings,
 }
+/// Complete bounded journal scan, preserving free-slot and corruption evidence for saving.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scan {
+    /// Valid record with greatest generation, or absent if no committed record survives.
     pub latest: Option<Record>,
+    /// Nonempty rejected/torn records, at most sixteen; erased slots do not count.
     pub invalid_records: u8,
+    /// Physical record index of `latest`, absent when no valid record exists.
     latest_slot: Option<usize>,
+    /// One bit per completely erased two-page record slot.
     erased: u16,
 }
 
 /// CRC-32/ISO-HDLC: reflected 0x04C11DB7, init/xorout FFFFFFFF.
+/// Returns the checksum of `bytes`, zero for empty input; this detects corruption
+/// and is not authentication. Implementation uses reflected polynomial 0xEDB88320.
 pub fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for byte in bytes {
@@ -146,10 +199,15 @@ pub fn crc32(bytes: &[u8]) -> u32 {
     }
     !crc
 }
+/// Returns whether every byte in `bytes` is erased 0xFF; empty input is vacuously erased.
 fn erased(bytes: &[u8]) -> bool { bytes.iter().all(|byte| *byte == 255) }
+/// Returns little-endian u32 from exact four-byte `bytes`; panics for any other length.
 fn word(bytes: &[u8]) -> u32 { u32::from_le_bytes(bytes.try_into().unwrap()) }
+/// Returns little-endian generation from exact eight-byte `bytes`; panics for other lengths.
 fn generation(bytes: &[u8]) -> u64 { u64::from_le_bytes(bytes.try_into().unwrap()) }
 
+/// Returns canonical `(data, commit)` pages for `record`, with 0xFF padding and linked
+/// CRC/generation fields. Caller supplies a nonzero generation; this encoder performs no I/O.
 fn encode(record: Record) -> ([u8; PAGE_SIZE], [u8; PAGE_SIZE]) {
     let mut data = [255; PAGE_SIZE];
     data[..4].copy_from_slice(b"EA88");
@@ -172,6 +230,10 @@ fn encode(record: Record) -> ([u8; PAGE_SIZE], [u8; PAGE_SIZE]) {
 
 /// A structurally intact unsupported envelope blocks mutation, so downgrade
 /// cannot silently replace a newer schema. Ordinary corrupt/torn slots are inert.
+/// Returns a committed record from paired `data`/`commit` pages when magic, CRC,
+/// generation, reserved bytes and v1 settings agree; corrupt/torn bytes return `Ok(None)`.
+/// Returns `Err(())` only for an otherwise structurally intact nonzero-generation
+/// envelope whose schema/payload-width marker differs from supported v1/four bytes.
 fn decode(
     data: &[u8; PAGE_SIZE],
     commit: &[u8; PAGE_SIZE],
@@ -199,6 +261,10 @@ fn decode(
     Ok(Settings::decode(&data[16..20]).map(|settings| Record { generation, settings }))
 }
 
+/// Returns a complete scan of sixteen record slots through exclusively owned `storage`.
+/// Selects greatest valid generation, counts nonempty corrupt records and records erased
+/// slots. Any storage error, intact unsupported schema or duplicate valid generation
+/// fails the whole scan. Read-only; no defaults are written and no corruption is erased.
 pub fn load<S: Storage>(storage: &mut S) -> Result<Scan, Error<S::Error>> {
     let mut scan = Scan {
         latest: None,
@@ -238,6 +304,12 @@ pub fn load<S: Storage>(storage: &mut S) -> Result<Scan, Error<S::Error>> {
 
 /// One immutable transaction, including readback. Does not feed the watchdog,
 /// retry a failed operation, or clear an old valid sector before the new commit.
+/// Returns the verified record for `settings` using exclusively owned `storage`.
+/// Equal latest settings return the existing record without mutation. Otherwise uses
+/// an erased record slot, or erases the sector not containing the latest valid record,
+/// then writes/verifies data before commit and reverifies their pairing.
+/// Admission/exhaustion errors precede writes; storage/readback errors can follow partial
+/// writes or an already durable commit. Reinspect before an explicit retry; no automatic retry occurs.
 pub fn save<S: Storage>(
     storage: &mut S,
     settings: Settings,

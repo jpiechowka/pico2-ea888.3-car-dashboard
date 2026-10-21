@@ -11,15 +11,33 @@ use crate::Peri;
 use crate::clocks::clk_sys_freq;
 use crate::gpio::Level;
 use crate::pio::{
-    Common, Config, Direction as PioDirection, FifoJoin, Instance, LoadedProgram, PioPin, ShiftDirection, StateMachine,
+    Common,
+    Config,
+    Direction as PioDirection,
+    FifoJoin,
+    Instance,
+    LoadedProgram,
+    PioPin,
+    ShiftDirection,
+    StateMachine,
 };
 
-fn uart_clock_divider(sys_hz: u32, baud: u32) -> fixed::FixedU32<fixed::types::extra::U8> {
+/// Returns the 1/256 divider for `baud` bits/s using eight instructions per bit at `sys_hz`.
+/// Panics for zero baud, multiplication overflow or divider outside 1..=65536.
+fn uart_clock_divider(
+    sys_hz: u32,
+    baud: u32,
+) -> fixed::FixedU32<fixed::types::extra::U8> {
     let pio_hz = baud.checked_mul(8).expect("UART baud rate is too high");
     calculate_pio_clock_divider_value(sys_hz, pio_hz)
 }
 
-fn stop_bit_duration(sys_hz: u32, divider: fixed::FixedU32<fixed::types::extra::U8>) -> Duration {
+/// Returns a full eight-cycle stop interval for `divider` at nonzero `sys_hz`, rounded up
+/// to microseconds plus one timer tick. Zero `sys_hz` panics; callers supply an admitted divider.
+fn stop_bit_duration(
+    sys_hz: u32,
+    divider: fixed::FixedU32<fixed::types::extra::U8>,
+) -> Duration {
     // Eight PIO cycles, rounding up for the fractional divider's phase.
     let sys_cycles = (u64::from(divider.to_bits()) * 8).div_ceil(256);
     let micros = (sys_cycles * 1_000_000).div_ceil(u64::from(sys_hz));
@@ -30,11 +48,13 @@ fn stop_bit_duration(sys_hz: u32, divider: fixed::FixedU32<fixed::types::extra::
 
 /// This struct represents a uart tx program loaded into pio instruction memory.
 pub struct PioUartTxProgram<'d, PIO: Instance> {
+    /// Relocated 8N1 serial program allocation.
     prg: LoadedProgram<'d, PIO>,
 }
 
 impl<'d, PIO: Instance> PioUartTxProgram<'d, PIO> {
-    /// Load the uart tx program into the given pio
+    /// Loads the 8N1 transmit instructions through `common`; returns their allocation handle.
+    /// Panics if instruction memory cannot fit the program.
     pub fn new(common: &mut Common<'d, PIO>) -> Self {
         let prg = pio::pio_asm!(
             r#"
@@ -64,12 +84,15 @@ impl<'d, PIO: Instance> PioUartTxProgram<'d, PIO> {
 /// a flush leaves transmission running; flushing again waits for completion.
 /// Flushing requires a running Embassy time driver.
 pub struct PioUartTx<'d, PIO: Instance, const SM: usize> {
+    /// Enabled transmitter with joined eight-word transmit FIFO.
     sm_tx: StateMachine<'d, PIO, SM>,
+    /// Conservative final stop-bit wait derived from the configured system clock/divider.
     stop_bit: Duration,
 }
 
 impl<'d, PIO: Instance, const SM: usize> PioUartTx<'d, PIO, SM> {
-    /// Configure a pio state machine to use the loaded tx program.
+    /// Registers `tx_pin` through `common`, configures and starts `sm_tx` with `program`.
+    /// Returns an 8N1 transmitter at requested `baud` bits/s; divider truncation can raise actual baud.
     ///
     /// Panics if `baud` is zero or cannot be represented by the PIO divider.
     pub fn new(
@@ -100,24 +123,36 @@ impl<'d, PIO: Instance, const SM: usize> PioUartTx<'d, PIO, SM> {
         Self { sm_tx, stop_bit }
     }
 
-    /// Write a single u8
-    pub async fn write_u8(&mut self, data: u8) {
+    /// Enqueues `data` when FIFO space is available; completion does not mean wire completion.
+    /// Cancellation while pending enqueues no byte; the transmitter remains running.
+    pub async fn write_u8(
+        &mut self,
+        data: u8,
+    ) {
         self.sm_tx.tx().wait_push(data as u32).await;
     }
 }
 
 impl<PIO: Instance, const SM: usize> ErrorType for PioUartTx<'_, PIO, SM> {
+    /// This adapter exposes no framing/overflow or hardware error reports.
     type Error = Infallible;
 }
 
 impl<PIO: Instance, const SM: usize> Write for PioUartTx<'_, PIO, SM> {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+    /// Enqueues every byte of `buf`; returns Ok(buf.len()), including zero for empty input.
+    /// Cancellation preserves an already queued prefix; no wire-completion guarantee is implied.
+    async fn write(
+        &mut self,
+        buf: &[u8],
+    ) -> Result<usize, Infallible> {
         for byte in buf {
             self.write_u8(*byte).await;
         }
         Ok(buf.len())
     }
 
+    /// Returns Ok after FIFO and shifter drain plus a complete stop-bit interval.
+    /// Waits without timeout; cancellation leaves TX running and a later flush restarts the wait.
     async fn flush(&mut self) -> Result<(), Infallible> {
         wait_tx_idle(&mut self.sm_tx).await;
         // PULL side 1 stalls with TX high, but its [7] delay runs only after
@@ -129,11 +164,13 @@ impl<PIO: Instance, const SM: usize> Write for PioUartTx<'_, PIO, SM> {
 
 /// This struct represents a Uart Rx program loaded into pio instruction memory.
 pub struct PioUartRxProgram<'d, PIO: Instance> {
+    /// Relocated 8N1 serial program allocation.
     prg: LoadedProgram<'d, PIO>,
 }
 
 impl<'d, PIO: Instance> PioUartRxProgram<'d, PIO> {
-    /// Load the uart rx program into the given pio
+    /// Loads the 8N1 receive instructions through `common`; returns their allocation handle.
+    /// Panics if instruction memory cannot fit the program.
     pub fn new(common: &mut Common<'d, PIO>) -> Self {
         let prg = pio::pio_asm!(
             r#"
@@ -169,11 +206,13 @@ impl<'d, PIO: Instance> PioUartRxProgram<'d, PIO> {
 ///
 /// The system clock must remain unchanged while this driver is configured.
 pub struct PioUartRx<'d, PIO: Instance, const SM: usize> {
+    /// Enabled receiver; framing failures set a PIO flag but discard the affected byte.
     sm_rx: StateMachine<'d, PIO, SM>,
 }
 
 impl<'d, PIO: Instance, const SM: usize> PioUartRx<'d, PIO, SM> {
-    /// Configure a pio state machine to use the loaded rx program.
+    /// Registers `rx_pin` through `common`, configures and starts `sm_rx` with `program`.
+    /// Returns an 8N1 receiver at requested `baud` bits/s; divider truncation can raise actual baud.
     ///
     /// Panics if `baud` is zero or cannot be represented by the PIO divider.
     pub fn new(
@@ -204,18 +243,23 @@ impl<'d, PIO: Instance, const SM: usize> PioUartRx<'d, PIO, SM> {
         Self { sm_rx }
     }
 
-    /// Wait for a single u8
-    pub async fn read_u8(&mut self) -> u8 {
-        self.sm_rx.rx().wait_pull().await as u8
-    }
+    /// Returns the next correctly framed byte, waiting indefinitely if none arrives.
+    /// Framing failures are dropped by PIO; cancellation while pending consumes no FIFO word.
+    pub async fn read_u8(&mut self) -> u8 { self.sm_rx.rx().wait_pull().await as u8 }
 }
 
 impl<PIO: Instance, const SM: usize> ErrorType for PioUartRx<'_, PIO, SM> {
+    /// This adapter exposes no framing/overflow or hardware error reports.
     type Error = Infallible;
 }
 
 impl<PIO: Instance, const SM: usize> Read for PioUartRx<'_, PIO, SM> {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
+    /// Fills all of `buf`; returns Ok(buf.len()), or zero immediately for empty input.
+    /// Cancellation can leave a consumed prefix written; framing/overflow are not returned as errors.
+    async fn read(
+        &mut self,
+        buf: &mut [u8],
+    ) -> Result<usize, Infallible> {
         let mut i = 0;
         while i < buf.len() {
             buf[i] = self.read_u8().await;
@@ -226,9 +270,11 @@ impl<PIO: Instance, const SM: usize> Read for PioUartRx<'_, PIO, SM> {
 }
 
 #[cfg(test)]
+/// Baud arithmetic and native register-model flush/cancellation regressions.
 mod tests {
     use super::*;
 
+    /// Preserves fractional baud dividers instead of integer rounding.
     #[test]
     fn uart_retains_fractional_baud_divider() {
         // Eight PIO cycles per bit: 125MHz / 1Mbaud / 8 = 15.625.
@@ -236,6 +282,7 @@ mod tests {
         assert_eq!(uart_clock_divider(128_000_000, 1_000_000).to_bits(), 4096);
     }
 
+    /// Rejects baud values that would alias valid rates through multiplication wraparound.
     #[test]
     #[should_panic]
     fn uart_rejects_baud_multiplication_overflow() {
@@ -243,24 +290,22 @@ mod tests {
         let _ = uart_clock_divider(125_000_000, (1 << 29) + 1_000_000);
     }
 
+    /// Rejects a zero baud denominator.
     #[test]
     #[should_panic]
-    fn uart_rejects_zero_baud() {
-        let _ = uart_clock_divider(125_000_000, 0);
-    }
+    fn uart_rejects_zero_baud() { let _ = uart_clock_divider(125_000_000, 0); }
 
+    /// Rejects rates needing a divider below one.
     #[test]
     #[should_panic]
-    fn uart_rejects_baud_above_system_clock_limit() {
-        let _ = uart_clock_divider(8_000_000, 1_000_001);
-    }
+    fn uart_rejects_baud_above_system_clock_limit() { let _ = uart_clock_divider(8_000_000, 1_000_001); }
 
+    /// Rejects rates needing a divider above 65536.
     #[test]
     #[should_panic]
-    fn uart_rejects_baud_below_divider_range() {
-        let _ = uart_clock_divider(125_000_000, 1);
-    }
+    fn uart_rejects_baud_below_divider_range() { let _ = uart_clock_divider(125_000_000, 1); }
 
+    /// Covers divider endpoints, fractional microseconds and the extra timer tick.
     #[test]
     fn uart_stop_interval_covers_divider_endpoints_and_timer_quantization() {
         let minimum = uart_clock_divider(8_000_000, 1_000_000);
@@ -282,6 +327,7 @@ mod tests {
         );
     }
 
+    /// Models FIFO/shifter/stop-bit completion and cancellation without executing PIO instructions.
     #[cfg(all(target_os = "windows", feature = "_test", not(feature = "time-driver")))]
     #[test]
     fn uart_flush_waits_for_fifo_osr_and_stop_bit_without_aborting_on_cancel() {
@@ -294,16 +340,28 @@ mod tests {
 
         #[link(name = "kernel32")]
         unsafe extern "system" {
+            /// Reserves/commits `size` bytes at `address` with allocation `kind` and page `protect`.
+            /// Returns null on failure; caller must use valid Windows allocation flags and ownership.
             fn VirtualAlloc(
                 address: *mut core::ffi::c_void,
                 size: usize,
                 kind: u32,
                 protect: u32,
             ) -> *mut core::ffi::c_void;
-            fn VirtualFree(address: *mut core::ffi::c_void, size: usize, kind: u32) -> i32;
+            /// Releases `address` with `size`/`kind` matching its allocation. Returns nonzero on success.
+            fn VirtualFree(
+                address: *mut core::ffi::c_void,
+                size: usize,
+                kind: u32,
+            ) -> i32;
         }
-        struct Registers(*mut core::ffi::c_void);
+        /// Owns the native register-model mapping until test completion/unwind.
+        struct Registers(
+            /// Allocation base returned by VirtualAlloc, never a physical device mapping.
+            *mut core::ffi::c_void,
+        );
         impl Drop for Registers {
+            /// Releases the owned mapping; panics if Windows rejects the release.
             fn drop(&mut self) {
                 // SAFETY: This test exclusively owns the allocated register page.
                 assert_ne!(unsafe { VirtualFree(self.0, 0, 0x8000) }, 0);

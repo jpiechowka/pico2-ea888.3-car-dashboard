@@ -10,8 +10,14 @@
 //!
 //! `#[embassy_executor::main(executor = "embassy_rp::executor::Executor",  entry = "cortex_m_rt::entry")]`
 
+#[cfg(feature = "executor-interrupt")]
+#[path = "executor_start.rs"]
+mod executor_start;
+
 #[unsafe(export_name = "__pender")]
 #[cfg(any(feature = "executor-thread", feature = "executor-interrupt"))]
+/// Wakes the executor selected by `context`: thread sentinel sends SEV, otherwise core/IRQ are packed 16:16.
+/// Remote IRQ wake uses the inter-core FIFO and can spin until space is available; never polls tasks inline.
 fn __pender(context: *mut ()) {
     unsafe {
         // Safety: `context` is either `usize::MAX` created by `Executor::run`, or a valid interrupt
@@ -34,11 +40,11 @@ fn __pender(context: *mut ()) {
             use crate::multicore::{PEND_IRQ_TOKEN, current_core, fifo_write};
 
             #[derive(Clone, Copy)]
-            struct Irq(u16);
+            /// Local wrapper for a previously validated Cortex-M interrupt number.
+            struct Irq(#[doc = "NVIC IRQ number, without the core tag."] u16);
             unsafe impl InterruptNumber for Irq {
-                fn number(self) -> u16 {
-                    self.0
-                }
+                /// Returns the stored raw IRQ number.
+                fn number(self) -> u16 { self.0 }
             }
 
             // The context contains the core number in the upper 16 bits.
@@ -67,7 +73,9 @@ fn __pender(context: *mut ()) {
 #[cfg(feature = "executor-thread")]
 pub use thread::*;
 #[cfg(feature = "executor-thread")]
+/// Core-local WFE/SEV executor and its distinguished wake context.
 mod thread {
+    /// Reserved context value selecting SEV instead of an interrupt wake.
     pub(super) const THREAD_PENDER: usize = usize::MAX;
 
     use core::arch::asm;
@@ -86,12 +94,14 @@ mod thread {
     /// triggers low-power sleep without extra steps. If your chip requires extra steps,
     /// you may use [`raw::Executor`] directly to program custom behavior.
     pub struct Executor {
+        /// Raw scheduler polled exclusively by this thread-mode loop.
         inner: raw::Executor,
+        /// Prevents moving/sharing the executor across cores after construction.
         not_send: PhantomData<*mut ()>,
     }
 
     impl Executor {
-        /// Create a new Executor.
+        /// Returns an empty core-local scheduler using the global SEV wake path.
         pub fn new() -> Self {
             Self {
                 inner: raw::Executor::new(THREAD_PENDER as *mut ()),
@@ -114,10 +124,14 @@ mod thread {
         ///
         /// - a [StaticCell](https://docs.rs/static_cell/latest/static_cell/) (safe)
         /// - a `static mut` (unsafe)
-        /// - a local variable in a function you know never returns (like `fn main() -> !`), upgrading its lifetime with `transmute`. (unsafe)
+        /// - a local variable in a function you know never returns (like `fn main() -> !`), upgrading its lifetime with
+        ///   `transmute`. (unsafe)
         ///
         /// This function never returns.
-        pub fn run(&'static mut self, init: impl FnOnce(Spawner)) -> ! {
+        pub fn run(
+            &'static mut self,
+            init: impl FnOnce(Spawner),
+        ) -> ! {
             init(self.inner.spawner());
 
             loop {
@@ -133,6 +147,7 @@ mod thread {
 #[cfg(feature = "executor-interrupt")]
 pub use interrupt::*;
 #[cfg(feature = "executor-interrupt")]
+/// IRQ-owned executors with cross-core wake forwarding and synchronized initialization.
 mod interrupt {
     use core::cell::{Cell, UnsafeCell};
     use core::mem::MaybeUninit;
@@ -166,7 +181,9 @@ mod interrupt {
     /// It is somewhat more complex to use, it's recommended to use the thread-mode
     /// [`Executor`](embassy_executor::Executor) instead, if it works for your use case.
     pub struct InterruptExecutor {
+        /// Published only after executor storage is initialized under the same cross-core critical section.
         started: Mutex<Cell<bool>>,
+        /// Written once before publication; polled only from the configured IRQ on its owning core.
         executor: UnsafeCell<MaybeUninit<raw::Executor>>,
     }
 
@@ -174,7 +191,7 @@ mod interrupt {
     unsafe impl Sync for InterruptExecutor {}
 
     impl InterruptExecutor {
-        /// Create a new, not started `InterruptExecutor`.
+        /// Returns an uninitialized executor; no IRQ or task storage is activated yet.
         #[inline]
         pub const fn new() -> Self {
             Self {
@@ -188,13 +205,15 @@ mod interrupt {
         /// # Safety
         ///
         /// - You MUST call this from the interrupt handler, and from nowhere else.
-        /// - You must not call this before calling `start()`.
+        /// - You must not call this before `start()` completes.
+        /// - Only the selected IRQ on the starting core may poll it; polling must not be reentrant.
         pub unsafe fn on_interrupt(&'static self) {
             let executor = unsafe { (&*self.executor.get()).assume_init_ref() };
             executor.poll();
         }
 
-        /// Start the executor.
+        /// Initializes on the current core and enables `irq`; returns a SendSpawner for cross-core submission.
+        /// Panics on a repeated start. Initialization and readiness publication share one critical section.
         ///
         /// This initializes the executor, enables the interrupt, and returns.
         /// The executor keeps running in the background through the interrupt.
@@ -204,7 +223,8 @@ mod interrupt {
         /// different "thread" (the interrupt), so spawning tasks on it is effectively
         /// sending them.
         ///
-        /// To obtain a [`Spawner`](embassy_executor::Spawner) for this executor, use [`Spawner::for_current_executor()`](embassy_executor::Spawner::for_current_executor()) from
+        /// To obtain a [`Spawner`](embassy_executor::Spawner) for this executor, use
+        /// [`Spawner::for_current_executor()`](embassy_executor::Spawner::for_current_executor()) from
         /// a task running in it.
         ///
         /// # Interrupt requirements
@@ -217,17 +237,18 @@ mod interrupt {
         /// do it after.
         ///
         /// [`SendSpawner`]: embassy_executor::SendSpawner
-        pub fn start(&'static self, irq: impl InterruptNumber) -> embassy_executor::SendSpawner {
-            if critical_section::with(|cs| self.started.borrow(cs).replace(true)) {
-                panic!("InterruptExecutor::start() called multiple times on the same executor.");
-            }
-
-            unsafe {
-                let context = (irq.number() as usize | (current_core() as usize) << 16) as *mut ();
-                (&mut *self.executor.get())
-                    .as_mut_ptr()
-                    .write(raw::Executor::new(context))
-            }
+        pub fn start(
+            &'static self,
+            irq: impl InterruptNumber,
+        ) -> embassy_executor::SendSpawner {
+            let context = (irq.number() as usize | (current_core() as usize) << 16) as *mut ();
+            critical_section::with(|cs| {
+                super::executor_start::initialize_once(self.started.borrow(cs), || unsafe {
+                    (&mut *self.executor.get())
+                        .as_mut_ptr()
+                        .write(raw::Executor::new(context));
+                });
+            });
 
             let executor = unsafe { (&*self.executor.get()).assume_init_ref() };
 
@@ -236,7 +257,7 @@ mod interrupt {
             executor.spawner().make_send()
         }
 
-        /// Get a SendSpawner for this executor
+        /// Returns a SendSpawner for this initialized executor, usable from either core.
         ///
         /// This returns a [`SendSpawner`](embassy_executor::SendSpawner) you can use to spawn tasks on this
         /// executor.

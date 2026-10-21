@@ -1,5 +1,7 @@
+//! Raw extrema initialization, strict extensions, reset and invalid-value rejection.
 use dashboard_host_validation::extrema::Extrema;
 
+/// A negative first sample seeds both bounds without a new peak; later increases/decreases extend only their side.
 #[test]
 fn first_negative_measurement_initializes_both_extrema_without_peak_flash() {
     let mut extrema = Extrema::new();
@@ -16,6 +18,7 @@ fn first_negative_measurement_initializes_both_extrema_without_peak_flash() {
     assert_eq!((extrema.min(), extrema.max()), (Some(-30.0), Some(-19.0)));
 }
 
+/// Equal voltage values do not retrigger extension, while both higher and lower readings do.
 #[test]
 fn range_detects_both_voltage_extremes_without_repeated_peak_flash() {
     let mut extrema = Extrema::new();
@@ -28,6 +31,7 @@ fn range_detects_both_voltage_extremes_without_repeated_peak_flash() {
     assert_eq!((extrema.min(), extrema.max()), (Some(11.9), Some(12.6)));
 }
 
+/// Reset seeds both extrema from a valid current value and clears them for invalid current data.
 #[test]
 fn reset_restarts_extrema_from_a_valid_current_value() {
     let mut extrema = Extrema::new();
@@ -40,6 +44,7 @@ fn reset_restarts_extrema_from_a_valid_current_value() {
     assert_eq!((extrema.min(), extrema.max()), (None, None));
 }
 
+/// Nonfinite and out-of-contract magnitudes cannot mutate existing valid extrema or signal a new peak.
 #[test]
 fn invalid_measurements_cannot_replace_extrema() {
     let mut extrema = Extrema::new();

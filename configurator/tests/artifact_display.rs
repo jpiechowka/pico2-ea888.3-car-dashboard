@@ -1,9 +1,14 @@
+//! Cached artifact display identity compared with fresh real project encoding.
+
 use dashboard_configurator::build_flash::BuildSelection;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::helper_client::*;
 #[path = "support/display_fixture.rs"]
+/// Shared deterministic maximum-size asset fixture, outside timed operations.
 mod fixture;
 
+/// Returns cached identity from `cache` for editor `e` and selection `s`, or None
+/// when admission fails; asserts exact equality with a fresh PreparedBuild capture.
 fn oracle(
     cache: &mut ArtifactDisplayCache,
     e: &Editor,
@@ -15,6 +20,8 @@ fn oracle(
     cached.ok()
 }
 #[test]
+/// Selection preserves content identity while pending drafts/pointers/imports block it;
+/// startup/config/options and editor replacement are checked against uncached encoding.
 fn display_identity_tracks_complete_content_and_live_readiness() {
     let mut e = Editor::default();
     let mut s = BuildSelection::default();
@@ -74,6 +81,8 @@ fn display_identity_tracks_complete_content_and_live_readiness() {
     oracle(&mut c, &Editor::default(), &s);
 }
 #[test]
+/// Recipe label, source identity and converted-pixel changes invalidate hashes; undo and
+/// converted-project import restore the identity dictated by actual serialized content.
 fn artwork_recipe_original_identity_and_undo_never_reuse_old_hashes() {
     let mut e = Editor::default();
     let s = BuildSelection::default();

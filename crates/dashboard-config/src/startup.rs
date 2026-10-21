@@ -3,22 +3,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::Orientation;
 
+/// Splash selection; wire tags are stable and distinct from procedural picker indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StartupTheme {
+    /// Default AEZAKMI procedural artwork, wire tag zero.
     #[default]
     Aezakmi,
+    /// SUTUTU turbo artwork.
     Turbo,
+    /// GOTTA GO FAST artwork.
     Sanic,
+    /// HOW MUCH BOOST BRO artwork.
     BoostBro,
+    /// WHERE LAMBO artwork.
     WhereLambo,
+    /// Separately admitted EASA artwork; not included in the procedural picker.
     Custom,
+    /// BLESS THIS MACHINE SPIRIT artwork.
     MachineSpirit,
+    /// ERROR 404: APPLY INCENSE artwork.
     RitualDiagnostics,
+    /// RED GOES FASTA artwork.
     RedGoesFasta,
+    /// MORE BOOST, YOU NEED artwork.
     BoostPadawan,
+    /// OOGA BOOGA: SMOL SNAIL artwork.
     TurboBrainlet,
 }
 impl StartupTheme {
+    /// Ten procedural choices in UI order, excluding separately supplied custom artwork.
     pub const ALL: [Self; 10] = [
         Self::Aezakmi,
         Self::Turbo,
@@ -32,7 +45,7 @@ impl StartupTheme {
         Self::TurboBrainlet,
     ];
 
-    /// Stable EASP identity, independent of the procedural picker order.
+    /// Return the stable EASP identity, independent of the procedural picker order.
     pub const fn wire_tag(self) -> u8 {
         match self {
             Self::Aezakmi => 0,
@@ -49,6 +62,8 @@ impl StartupTheme {
         }
     }
 
+    /// Decode `tag` in the current zero-through-ten vocabulary; returns `None` for every other byte.
+    /// Version-one admission separately rejects tags above five.
     pub const fn from_wire_tag(tag: u8) -> Option<Self> {
         Some(match tag {
             0 => Self::Aezakmi,
@@ -66,6 +81,7 @@ impl StartupTheme {
         })
     }
 
+    /// Return the static picker label; it is descriptive text, not a serialization key.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Aezakmi => "AEZAKMI",
@@ -83,29 +99,46 @@ impl StartupTheme {
     }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Boot-information presentation before the splash; declaration order is its EASP wire tag.
 pub enum StartupStatus {
+    /// Skip status even when a nonzero status duration is stored.
     Off,
+    /// Compact status presentation.
     #[default]
     Brief,
+    /// Detailed status presentation using the same duration bound.
     Detailed,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Independent startup policy; construction/serde does not validate durations or custom assets.
 pub struct StartupProfile {
+    /// Procedural choice or request for independently validated custom artwork.
     pub theme: StartupTheme,
+    /// Boot-information density; Off suppresses its effective duration.
     pub status: StartupStatus,
+    /// Stored status dwell in milliseconds, zero through 2000 even when status is Off.
     pub status_ms: u16,
+    /// Splash dwell in milliseconds, zero through 10000; zero skips the splash.
     pub duration_ms: u16,
+    /// Repeat animation during the splash; false uses the renderer's non-looping presentation.
     pub loop_animation: bool,
+    /// Permit qualified attention to exit startup early; recovery/fault exits are independent.
     pub interrupt_on_attention: bool,
+    /// Permit dashboard warning LED signaling while startup is presented.
     pub warning_led: bool,
+    /// Status mounting override; None inherits the device orientation.
     pub status_orientation: Option<Orientation>,
+    /// Splash mounting override; None inherits the device orientation independently of Status.
     pub splash_orientation: Option<Orientation>,
 }
 impl Default for StartupProfile {
+    /// Return the same deterministic policy as [`Self::DEFAULT`].
     fn default() -> Self { Self::DEFAULT }
 }
 impl StartupProfile {
+    /// 600 ms brief status then 2500 ms looping AEZAKMI; attention does not interrupt by default.
+    /// Warning LED signaling remains enabled and both screens inherit mounting orientation.
     pub const DEFAULT: Self = Self {
         theme: StartupTheme::Aezakmi,
         status: StartupStatus::Brief,
@@ -118,8 +151,11 @@ impl StartupProfile {
         splash_orientation: None,
     };
 
+    /// Return whether both stored durations meet their limits, including disabled status.
+    /// This does not establish custom-asset presence, geometry or hardware readiness.
     pub const fn valid(self) -> bool { self.status_ms <= 2000 && self.duration_ms <= 10000 }
 
+    /// Return effective status milliseconds, zero for Off; does not perform validation.
     pub const fn status_duration(self) -> u64 {
         if matches!(self.status, StartupStatus::Off) {
             0
@@ -128,8 +164,11 @@ impl StartupProfile {
         }
     }
 
+    /// Return nominal status-plus-splash milliseconds, at most 12000 after admission.
+    /// Actual presentation also depends on completed frames and early-exit policy.
     pub const fn total_duration(self) -> u64 { self.status_duration() + self.duration_ms as u64 }
 
+    /// Return the status override or `default`; splash overrides do not participate.
     pub fn effective_status_orientation(
         self,
         default: Orientation,
@@ -137,6 +176,7 @@ impl StartupProfile {
         self.status_orientation.unwrap_or(default)
     }
 
+    /// Return the splash override or `default`; status overrides do not participate.
     pub fn effective_splash_orientation(
         self,
         default: Orientation,
@@ -146,6 +186,7 @@ impl StartupProfile {
 
     /// Fixed 16-byte v2 profile. Tags 6..10 extend v2; old readers reject them.
     /// Legacy v1 keeps its frozen theme vocabulary 0..5. The last two bytes remain reserved and zero.
+    /// Returns `None` for invalid durations; this format has no checksum or authenticity guarantee.
     pub fn encode(self) -> Option<[u8; 16]> {
         if !self.valid() {
             return None;
@@ -165,6 +206,9 @@ impl StartupProfile {
         Some(bytes)
     }
 
+    /// Admit exactly sixteen `bytes` of EASP v1/v2 and return a valid profile.
+    /// Rejects trailing/truncated data, unknown tags/flags, reserved bytes and out-of-range timing.
+    /// V1 permits only themes zero through five and inherited orientations; no asset is inspected.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != 16
             || &bytes[..4] != b"EASP"
@@ -195,6 +239,7 @@ impl StartupProfile {
     }
 }
 
+/// Return the explicit EASP byte for `orientation`; zero means inheritance, one through four mounting.
 fn encode_orientation(orientation: Option<Orientation>) -> u8 {
     match orientation {
         None => 0,
@@ -205,6 +250,7 @@ fn encode_orientation(orientation: Option<Orientation>) -> u8 {
     }
 }
 
+/// Decode `value`: returns outer None for an invalid byte, inner None for inherited orientation.
 fn decode_orientation(value: u8) -> Option<Option<Orientation>> {
     Some(match value {
         0 => None,

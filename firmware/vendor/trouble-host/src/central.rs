@@ -14,15 +14,21 @@ use crate::{bt_hci_duration, Address, BleHostError, Error, PacketPool};
 
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C, P: PacketPool> {
+    /// Shared host handle; mutable central borrowing serializes callers of this facade.
     pub(crate) host: BleHost<'stack, C, P>,
 }
 
 impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
+    /// Returns a central facade for `host`; does not initialize or command the controller.
     pub(crate) fn new(host: BleHost<'stack, C, P>) -> Self {
         Self { host }
     }
 
-    /// Attempt to create a connection with the provided config.
+    /// Attempts a legacy connection to the nonempty peer allowlist in `config`.
+    /// Returns the accepted central connection or configuration/controller/terminal timeout error.
+    /// A single peer uses direct addressing; multiple peers replace the controller accept list.
+    /// Dropping before create releases admission; after create it requests cancellation and admission
+    /// stays closed until the runner consumes the terminal event. No host deadline is imposed here.
     pub async fn connect(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'stack, P>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
@@ -88,7 +94,11 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         }
     }
 
-    /// Attempt to create a connection with the provided config.
+    /// Attempts an extended connection using `config` PHYs, timing and nonempty peer allowlist.
+    /// Returns the accepted connection or configuration/controller/terminal timeout error.
+    /// A single peer uses direct addressing; multiple peers replace the controller accept list.
+    /// Dropping after create requests cancellation; runner terminal-event cleanup must complete
+    /// before the next attempt. This method does not impose a separate host deadline.
     pub async fn connect_ext(
         &mut self,
         config: &ConnectConfig<'_>,
@@ -164,6 +174,9 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         }
     }
 
+    /// Replaces the controller accept list with `filter_accept_list`, resolving bonded identity
+    /// addresses when security is enabled. Returns the first controller error; failure/cancellation
+    /// may leave a cleared or partially populated list, so the next operation must rebuild it.
     pub(crate) async fn set_accept_filter(
         &mut self,
         filter_accept_list: &[Address],
@@ -191,7 +204,9 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         Ok(())
     }
 
-    /// Set default connection rate parameters for all future ACL connections.
+    /// Applies `conn_rate_params` to future ACL connections using HCI duration conversion.
+    /// Returns success on controller acknowledgment or its command/parameter error; existing
+    /// connection parameters are not changed by this command.
     pub async fn set_default_connection_rate_parameters(
         &self,
         conn_rate_params: &ConnectRateParams,
@@ -225,6 +240,8 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
     }
 }
 
+/// Returns HCI PHY slots selected by `phys`, copying `phy` into each enabled slot.
+/// Unselected slots are `None`; no controller support or timing validation is performed.
 pub(crate) fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
     let phy_params: PhyParams<P> = PhyParams {
         le_1m_phy: match phys {

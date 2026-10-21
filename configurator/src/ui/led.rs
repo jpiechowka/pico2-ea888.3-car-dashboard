@@ -1,6 +1,8 @@
 //! D2 controls retain inactive settings and use shared bounded validation.
 use super::*;
 
+/// Copies current LED settings from `ui`, applies `f`, then submits the whole value
+/// with captured `token`; the typed reducer rejects stale authority or invalid settings.
 fn change(
     ui: Ui,
     token: FieldToken,
@@ -11,9 +13,13 @@ fn change(
     ui.typed(token, Edit::SetLed(settings));
 }
 
+/// Returns `ui`'s pattern controls; `warning` selects warning rather than normal state.
+/// Inactive timing stays stored/bounded and becomes repairable while a draft is invalid.
 #[component]
 fn Pattern(
+    /// Shared accepted/candidate LED policy and guarded editing authority.
     ui: Ui,
+    /// True edits warning policy; false edits normal operation policy.
     warning: bool,
 ) -> impl IntoView {
     let pattern = move || {
@@ -41,8 +47,14 @@ fn Pattern(
     }
 }
 
+/// Returns LED policy controls in `ui`, using shared validation and retained invalid
+/// repairs. Text explains completed-presentation synchronization and off-screen policy;
+/// these controls do not access GPIO or establish physical LED behavior.
 #[component]
-pub fn LedPanel(ui: Ui) -> impl IntoView {
+pub fn LedPanel(
+    /// Shared accepted/candidate LED policy and guarded editing authority.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"An indicator for each moment."</h3>
             <p>"Normal and warning colours, brightness and timing are independent. Warning Off stays dark while that warning is selected."</p>

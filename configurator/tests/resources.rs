@@ -1,9 +1,13 @@
+//! Accepted-resource accounting and identity-bound artifact evidence regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::events::{Category, EventFilter, EventStore, Severity};
 use dashboard_configurator::resources::*;
 
 #[test]
+/// Resource counts match actual JSON/EAV/saved-envelope bytes without changing save state; selection affects only
+/// envelope identity/size.
 fn actual_serializations_and_read_only_saved_envelope_share_bytes() {
     let mut editor = Editor::default();
     let before_status = editor.save_status();
@@ -39,6 +43,7 @@ fn actual_serializations_and_read_only_saved_envelope_share_bytes() {
 }
 
 #[test]
+/// Pending JSON hides current exportability even when editor stamp and cached accepted report remain unchanged.
 fn blocked_json_rechecks_readiness_even_with_unchanged_editor_stamp() {
     let mut editor = Editor::default();
     let mut cache = ResourceCache::default();
@@ -71,6 +76,7 @@ fn blocked_json_rechecks_readiness_even_with_unchanged_editor_stamp() {
 }
 
 #[test]
+/// Invalid draft, active pointer and import block admission; storage failure leaves a valid exportable project.
 fn invalid_pointer_import_and_storage_failure_are_distinct() {
     let mut editor = Editor::default();
     let mut cache = ResourceCache::default();
@@ -108,6 +114,7 @@ fn invalid_pointer_import_and_storage_failure_are_distinct() {
 }
 
 #[test]
+/// Maximum view/widget counts and mixed spans report occupied-cell masks rather than equating widgets with cells.
 fn maximum_counts_and_mixed_spans_use_actual_occupied_cells() {
     let mut config = default_config();
     config.views.clear();
@@ -196,6 +203,7 @@ fn maximum_counts_and_mixed_spans_use_actual_occupied_cells() {
 }
 
 #[test]
+/// Source reports preserve catalogue evidence/unavailability and canonical units without claiming exact ECU support.
 fn source_catalogue_and_unit_basis_are_explicitly_unqualified() {
     let editor = Editor::default();
     let report = ResourceCache::default().inspect(&editor).unwrap().accepted.unwrap();
@@ -234,6 +242,7 @@ fn source_catalogue_and_unit_basis_are_explicitly_unqualified() {
 }
 
 #[test]
+/// Disabled source, requested polling off and unresolved transport route remain distinct resource statuses.
 fn source_status_separates_disabled_poll_off_and_unresolved_route() {
     let mut config = default_config();
     config.sources[Channel::Water.index()] = definition(DefinitionId::Disabled).source(Channel::Water);
@@ -255,6 +264,7 @@ fn source_status_separates_disabled_poll_off_and_unresolved_route() {
 }
 
 #[test]
+/// Resource widget rows retain configured primary/secondary units while canonical channel units remain unchanged.
 fn widget_rows_preserve_configured_readouts_and_secondary_units() {
     let mut config = default_config();
     config.widgets.clear();
@@ -307,22 +317,37 @@ fn widget_rows_preserve_configured_readouts_and_secondary_units() {
     assert_eq!(canonical_unit(report.widgets[2].channel), "λ");
 }
 
+/// Synthetic full option identity; fields independently participate in equality.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Options {
+    /// Vehicle/demo selection label.
     mode: &'static str,
+    /// Named clock profile identity.
     profile: &'static str,
+    /// Requested CPU clock in MHz.
     cpu: u32,
+    /// Requested SPI clock in MHz.
     spi: u32,
+    /// Requested regulator voltage in millivolts.
     voltage_mv: u16,
+    /// Cargo optimization profile label.
     optimization: &'static str,
+    /// Enabled feature names in identity order.
     features: &'static [&'static str],
+    /// Outlined-render feature selection.
     outline: bool,
+    /// Parallel rendering feature selection.
     parallel: bool,
+    /// Forced full-frame transfer feature selection.
     full_frame: bool,
+    /// Frame tracing feature selection.
     frame_trace: bool,
+    /// Tearing-effect observation tracing selection.
     te_trace: bool,
+    /// Explicit Expert-overclock option acknowledgment.
     expert: bool,
 }
+/// Returns a complete synthetic build-option record used only for equality/identity tests.
 fn options() -> Options {
     Options {
         mode: "Vehicle",
@@ -340,6 +365,7 @@ fn options() -> Options {
         expert: false,
     }
 }
+/// Returns populated synthetic provenance identities, not hashes of a measured local build.
 fn ids() -> IdentityView<'static> {
     IdentityView {
         source_inventory: Some("source-a"),
@@ -348,6 +374,7 @@ fn ids() -> IdentityView<'static> {
         tools: Some("tools-a"),
     }
 }
+/// Returns synthetic RAM/flash/stack byte facts for artifact matcher admission tests.
 fn facts() -> TargetMeasurements {
     TargetMeasurements {
         static_ram_bytes: Some(458_296),
@@ -356,6 +383,7 @@ fn facts() -> TargetMeasurements {
         core1_stack_bytes: Some(4_096),
     }
 }
+/// Returns all-required-gates-present-and-passed synthetic evidence for matcher tests.
 fn gates() -> GateEvidence {
     GateEvidence {
         elf: Some(true),
@@ -367,6 +395,8 @@ fn gates() -> GateEvidence {
 }
 
 #[test]
+/// Artifact matching requires live editor/session selection and all target measurements; equal bytes in another editor
+/// are stale.
 fn one_matcher_requires_complete_current_local_and_manifest_identity() {
     let editor = Editor::default();
     let selection = 1_u64;
@@ -438,6 +468,8 @@ fn one_matcher_requires_complete_current_local_and_manifest_identity() {
 }
 
 #[test]
+/// Each changed option/provenance/revision, missing target fact and failed/unknown gate independently invalidates a
+/// match.
 fn every_option_family_and_required_provenance_mismatch_is_stale() {
     let editor = Editor::default();
     let selection = 1_u64;
@@ -668,6 +700,7 @@ fn every_option_family_and_required_provenance_mismatch_is_stale() {
 }
 
 #[test]
+/// Host summaries enter bounded HostTools events with contextual severity, without embedding raw process stdout.
 fn helper_summaries_enter_only_the_existing_bounded_common_event_sink() {
     let mut events = EventStore::default();
     record_host_summary(&mut events, HostSummary::Connected, None, 1, None).unwrap();
@@ -686,6 +719,7 @@ fn helper_summaries_enter_only_the_existing_bounded_common_event_sink() {
 }
 
 #[test]
+/// Resource occupancy tracks each resolved view grid and restores inherited geometry through undo.
 fn occupancy_reports_each_views_resolved_grid_after_override_and_undo() {
     let mut editor = Editor::default();
     let mut cache = ResourceCache::default();

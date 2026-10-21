@@ -1,9 +1,15 @@
 //! Retain Windows deny-write/delete files and deny-delete ancestor directories.
+//! Sharing flags follow [`OpenOptionsExt`](https://doc.rust-lang.org/std/os/windows/fs/trait.OpenOptionsExt.html)
+//! and [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
 use std::collections::BTreeSet;
 use std::fs::File;
 #[cfg(windows)]
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+/// Returns a read handle for `path`, rejecting a final symlink/reparse point first.
+/// Windows permits other readers but denies write/delete sharing until drop;
+/// non-Windows only performs the preliminary link check and ordinary open.
+/// Errors are metadata/open diagnostics. Callers retain ancestor handles separately.
 pub(crate) fn read_file(path: &Path) -> Result<File, String> {
     reject_reparse(path)?;
     #[cfg(windows)]
@@ -20,6 +26,9 @@ pub(crate) fn read_file(path: &Path) -> Result<File, String> {
         File::open(path).map_err(|e| e.to_string())
     }
 }
+/// Returns `Ok(())` if `path` metadata is neither a symlink nor Windows reparse point.
+/// Reports missing/inaccessible metadata or link rejection; this pathname check
+/// alone does not pin identity against replacement between check and open.
 fn reject_reparse(path: &Path) -> Result<(), String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     if metadata.file_type().is_symlink() {
@@ -34,6 +43,10 @@ fn reject_reparse(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+/// Returns held, deduplicated ancestor-directory handles for `paths`, excluding
+/// each supplied path itself. Windows handles permit read/write but deny deletion;
+/// drop releases them. Metadata/open errors release any partially acquired handles.
+/// On non-Windows, validates ancestor links then returns an empty vector with no locks.
 pub(crate) fn ancestors(paths: &[PathBuf]) -> Result<Vec<File>, String> {
     let mut parents = BTreeSet::new();
     for path in paths {
@@ -64,9 +77,11 @@ pub(crate) fn ancestors(paths: &[PathBuf]) -> Result<Vec<File>, String> {
 }
 
 #[cfg(all(test, windows))]
+/// Windows sharing regressions using isolated temporary files and directories.
 mod tests {
     use super::*;
     #[test]
+    /// Assert held file/ancestor handles reject overwrite and directory relocation.
     fn held_file_and_parent_reject_overwrite_and_relocation() {
         let root = std::env::temp_dir().join(format!(
             "studio-file-lock-{}-{}",
@@ -91,13 +106,24 @@ mod tests {
     }
 }
 
-/// A selected regular file retained with DELETE access; disposition targets this handle.
-pub(crate) struct DeleteFile(File);
+/// A selected regular file or directory retained with DELETE access; deletion targets
+/// this handle, not a subsequently resolved path. Construction is Windows-only.
+pub(crate) struct DeleteFile(
+    /// Owned read/delete handle, denying concurrent write/delete sharing.
+    File,
+);
 impl DeleteFile {
+    /// Returns a held regular file for `path`; rejects links, wrong types and open errors.
+    /// Non-Windows returns unsupported. Opening does not delete the file.
     pub(crate) fn open(path: &Path) -> Result<Self, String> { Self::open_kind(path, false) }
 
+    /// Returns a held directory for `path`, rejecting links/wrong types/open errors.
+    /// Non-Windows returns unsupported. Removal later requires an empty directory.
     pub(crate) fn directory(path: &Path) -> Result<Self, String> { Self::open_kind(path, true) }
 
+    /// Open `path` without traversing its final reparse point and validate handle
+    /// metadata against `directory`. Returns owned deletion capability or a platform,
+    /// metadata/type/sharing error. Ancestor pinning remains the caller's responsibility.
     fn open_kind(
         path: &Path,
         directory: bool,
@@ -128,12 +154,20 @@ impl DeleteFile {
         }
     }
 
+    /// Returns the held volume/file identity or its OS query failure.
     pub(crate) fn identity(&self) -> Result<String, String> { file_identity(&self.0) }
 
+    /// Returns held-file length in bytes, or the metadata query error.
     pub(crate) fn len(&self) -> Result<u64, String> { self.0.metadata().map(|m| m.len()).map_err(|e| e.to_string()) }
 
+    /// Returns at most 65,536 bytes from the current file cursor, advancing it.
+    /// Propagates read errors or rejects excess bytes; does not rewind for a second read.
     pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> { self.bytes_bounded(65536) }
 
+    /// Returns bytes from the held handle's current cursor up to `limit`, advancing
+    /// it even on error. Reads at most `limit + 1` to detect excess; errors report
+    /// read failure or oversized records. Internal callers must keep `limit` below
+    /// `usize::MAX` because the sentinel addition is unchecked.
     pub(crate) fn bytes_bounded(
         &self,
         limit: usize,
@@ -150,6 +184,10 @@ impl DeleteFile {
         Ok(bytes)
     }
 
+    /// Mark the held object for deletion and release this handle; returns `Ok(())`
+    /// when Windows accepted disposition, or its OS error. A directory must be empty;
+    /// other handles can defer final deletion. Non-Windows is unsupported.
+    /// Uses [handle disposition](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle).
     pub(crate) fn remove(self) -> Result<(), String> {
         #[cfg(windows)]
         {
@@ -161,6 +199,8 @@ impl DeleteFile {
                 SetFileInformationByHandle,
             };
             let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+            // SAFETY: self owns a live DELETE-capable handle; the matching structure
+            // and byte size remain valid throughout this synchronous Win32 call.
             if unsafe {
                 SetFileInformationByHandle(
                     self.0.as_raw_handle(),
@@ -182,13 +222,17 @@ impl DeleteFile {
 }
 
 /// Stable volume/file identity from a held handle, not a pathname or modification time.
+/// Returns fixed-width hexadecimal volume serial and file index for `file`, or an
+/// OS query error. Non-Windows returns unsupported; identity is not a content hash.
 pub(crate) fn file_identity(file: &File) -> Result<String, String> {
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
 
         use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+        // SAFETY: this Win32 output structure consists only of integer/FILETIME fields.
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: file owns a live handle and info is writable for the synchronous call.
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
@@ -203,7 +247,12 @@ pub(crate) fn file_identity(file: &File) -> Result<String, String> {
         Err("Storage ownership requires Windows".into())
     }
 }
+/// Returns a checked directory identity for `path`, releasing its temporary handle
+/// after the query. Propagates directory admission and identity errors.
 pub(crate) fn directory_identity(path: &Path) -> Result<String, String> { file_identity(&directory_file(path)?) }
+/// Returns a Windows directory handle for `path`, denying delete sharing while held.
+/// Rejects links/reparse points using both pathname and opened-handle metadata,
+/// wrong types and OS failures. Non-Windows returns unsupported.
 pub(crate) fn directory_file(path: &Path) -> Result<File, String> {
     #[cfg(windows)]
     {

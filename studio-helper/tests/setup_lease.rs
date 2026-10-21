@@ -1,8 +1,13 @@
+//! Synthetic setup-peer handshakes and authoritative job-ledger closure regressions.
+
 use dashboard_helper_protocol::setup::*;
 use dashboard_helper_protocol::*;
 use studio_helper::jobs::*;
+/// Returns a deterministic syntactically valid SHA256 fixture, without claiming content provenance.
 fn hash() -> Sha256 { Sha256::new("a".repeat(64)).unwrap() }
 #[test]
+/// Admitted peer work updates one ledger; replay closes the peer while retaining active-step
+/// truth and denying another start or premature event closure.
 fn lease_control_updates_the_only_store_ledger_and_rejection_keeps_active_truth() {
     let context = SetupInputContext {
         workspace_sha256: hash(),
@@ -95,6 +100,8 @@ fn lease_control_updates_the_only_store_ledger_and_rejection_keeps_active_truth(
 }
 
 #[test]
+/// Abnormal peer close skips pending work but cannot claim joined output; fatal disposition
+/// remains fatal through acknowledgment and finalization.
 fn abnormal_lease_close_projects_abort_skips_without_claiming_output_closure() {
     for disposition in [
         SetupCloseDisposition::Failed,
@@ -161,6 +168,7 @@ fn abnormal_lease_close_projects_abort_skips_without_claiming_output_closure() {
 }
 
 #[test]
+/// Fatal rejection closes the peer and refuses ordinary failure finalization without altering the ledger.
 fn cleanup_fatal_rejected_acknowledgement_cannot_be_downgraded() {
     let (mut store, id, mut peer, attempt_id) = idle_lease();
     let frame = |message_no, body| {
@@ -207,6 +215,7 @@ fn cleanup_fatal_rejected_acknowledgement_cannot_be_downgraded() {
         .unwrap();
 }
 
+/// Returns synthetic joined/tree-empty closure with no discarded output.
 fn joined() -> OutputClosure {
     OutputClosure {
         workers_joined: true,
@@ -217,6 +226,8 @@ fn joined() -> OutputClosure {
     }
 }
 
+/// Returns store/job/peer/attempt after a valid Hello/HelloAck exchange with one pending
+/// Peer0 step; fixture construction/handshake failure panics.
 fn idle_lease() -> (JobStore, JobId, SetupLeasePeer, AttemptId) {
     let context = SetupInputContext {
         workspace_sha256: hash(),

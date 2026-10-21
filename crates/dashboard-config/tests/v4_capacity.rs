@@ -1,8 +1,10 @@
+//! Conservative configuration wire/JSON/RAM capacity checks; legacy filename retained.
 #![cfg(feature = "json")]
 use dashboard_config::*;
 
 /// One synthetic builder keeps all 64 instances independent, including hidden
 /// settings. Wider fixtures reduce cells but use full 24-byte labels/legends.
+/// Return a worst-case valid fixture for `span` OneByOne or TwoByTwo; other spans are outside this builder contract.
 fn bound_config(span: Span) -> Config {
     let mut c = default_config();
     c.orientation = Orientation::LandscapeInverted;
@@ -125,6 +127,7 @@ fn bound_config(span: Span) -> Config {
     c
 }
 
+/// Return a synthetic editor JSON wrapper for `c`, including maximum-width selection/version metadata.
 fn saved(c: &Config) -> String {
     serde_json::to_string(
         &serde_json::json!({"editor_version":65535,"selected_view":255,"selected_widget":65535,"config":c}),
@@ -133,6 +136,9 @@ fn saved(c: &Config) -> String {
 }
 
 #[test]
+/// Populated small/large widgets fit binary/JSON/editor ceilings and decode identically; optional fixture output is
+/// Populated small/large widgets fit binary/JSON/editor ceilings and decode identically; optional fixture output is
+/// explicit.
 fn maximum_documents_fit_and_slot_matches_owned() {
     for span in [Span::OneByOne, Span::TwoByTwo] {
         let expected = validate(bound_config(span)).unwrap();
@@ -163,6 +169,7 @@ fn maximum_documents_fit_and_slot_matches_owned() {
 // Structural upper count independent of particular f32 renderings. Every
 // finite f32 fits 24 bytes (including sign/exponent); printable free text can
 // at most double through quote/backslash escaping. Keys are serialized exactly.
+/// Return a conservative compact-size estimate for `value`; `key` selects bounded free-text escaping policy.
 fn count_json(
     value: &serde_json::Value,
     key: &str,
@@ -198,6 +205,7 @@ fn count_json(
 }
 
 #[test]
+/// Independent conservative counters cover maximal floats, text escapes, catalogue unions and fixed RAM budgets.
 fn conservative_wire_and_json_count_covers_float_escape_and_varint_choices() {
     let config = bound_config(Span::OneByOne);
     let value = serde_json::to_value(&config).unwrap();
@@ -207,8 +215,13 @@ fn conservative_wire_and_json_count_covers_float_escape_and_varint_choices() {
     println!("conservative compact saved JSON bound={upper}");
     assert!(upper <= 123_585);
     assert!(upper <= MAX_JSON_BYTES);
-    struct CountWriter(usize);
+    /// Sink counting JSON bytes without allocating the deliberately inflated representation.
+    struct CountWriter(
+        /// Total bytes accepted; bounded by this fixture's serialization size.
+        usize,
+    );
     impl std::io::Write for CountWriter {
+        /// Count all `bytes` and return their length; bounded fixture input prevents usize overflow.
         fn write(
             &mut self,
             bytes: &[u8],
@@ -217,10 +230,13 @@ fn conservative_wire_and_json_count_covers_float_escape_and_varint_choices() {
             Ok(bytes.len())
         }
 
+        /// Return success without output because this writer only counts bytes.
         fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
     }
+    /// Serializer formatter replacing each f32 with its conservative 24-byte allowance.
     struct FloatBound;
     impl serde_json::ser::Formatter for FloatBound {
+        /// Write 24 placeholder bytes to `writer` instead of the ignored float; return any writer failure.
         fn write_f32<W: std::io::Write + ?Sized>(
             &mut self,
             writer: &mut W,
@@ -266,10 +282,16 @@ fn conservative_wire_and_json_count_covers_float_escape_and_varint_choices() {
     // widgets occupy >=2 cells for 24 label bytes. All 64 IDs are >16383;
     // timing fields are at their highest admitted varint widths, and every
     // palette value is a 3-byte u16. f32 always consumes four binary bytes.
-    struct Counter(usize);
+    /// Postcard flavor counting encoded bytes, seeded with the fixed envelope size.
+    struct Counter(
+        /// Accumulated wire bytes, bounded by this fixture's field counts.
+        usize,
+    );
     impl postcard::ser_flavors::Flavor for Counter {
+        /// Final binary byte count rather than an owned encoded buffer.
         type Output = usize;
 
+        /// Count one ignored byte and return success; bounded fixture serialization prevents overflow.
         fn try_push(
             &mut self,
             _: u8,
@@ -278,6 +300,7 @@ fn conservative_wire_and_json_count_covers_float_escape_and_varint_choices() {
             Ok(())
         }
 
+        /// Return the accumulated encoded byte count, including the initial envelope allowance.
         fn finalize(self) -> postcard::Result<usize> { Ok(self.0) }
     }
     let eav = postcard::serialize_with_flavor(&config, Counter(HEADER_BYTES)).unwrap();

@@ -1,3 +1,4 @@
+//! In-place boot admission without a second full-size configuration temporary.
 use super::{ValidatedConfig, validate_ref};
 use crate::BootConfig;
 use crate::codec::decode_current_into;
@@ -24,13 +25,14 @@ use crate::defaults::{empty_config, fill_default_config};
 /// assert_eq!(first.fault, second.fault);
 /// ```
 pub struct ConfigSlot {
-    // This wrapper starts with legally initialized but unvalidated values.
-    // It remains private until load_at_boot has replaced and validated every
-    // field. Failed partial decoding always refills the complete default.
+    /// Legally initialized unpublished storage; failed partial decode refills every field
+    /// before this wrapper is exposed through a validated borrow.
     storage: BootConfig,
 }
 
 impl ConfigSlot {
+    /// Return initialized unpublished storage suitable for a firmware `static` initializer.
+    /// The placeholder is intentionally invalid and has no public accessor until admission.
     pub const fn new() -> Self {
         Self {
             storage: BootConfig {
@@ -45,6 +47,11 @@ impl ConfigSlot {
         }
     }
 
+    /// Admit current-format `bytes` directly into the slot and return a borrow of the result.
+    /// Any decode/canonical/validation failure completely restores reviewed defaults and
+    /// retains the fault. Reload needs exclusive access; old borrows cannot survive it.
+    /// Fresh cache issuance follows success/fallback; exhaustion preserves validity.
+    /// Panics only if reviewed defaults violate validation; no host legacy migration occurs.
     #[inline(never)]
     pub fn load_at_boot(
         &mut self,
@@ -68,9 +75,11 @@ impl ConfigSlot {
 }
 
 impl Default for ConfigSlot {
+    /// Return fresh unpublished storage, equivalent to [`Self::new`].
     fn default() -> Self { Self::new() }
 }
 
 // Config plus proof/fault metadata; whole-image RAM/stack checks run separately.
 #[cfg(target_pointer_width = "32")]
+/// Target slot storage ceiling; stack placement and whole-image headroom need separate checks.
 const _: () = assert!(core::mem::size_of::<ConfigSlot>() <= 14_620);

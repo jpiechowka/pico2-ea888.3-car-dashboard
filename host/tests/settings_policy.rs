@@ -1,9 +1,13 @@
+//! Save debounce, affine in-flight snapshots, retry limits and uncertain persistence state.
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::settings::Settings;
 use dashboard_host_validation::settings::policy::{Policy, PolicyError, Status};
 
+/// Returns valid preferences with brightness percent `n`, 100% restore brightness,
+/// BAR and hidden FPS; panics if `n` violates settings validation.
 fn choice(n: u8) -> Settings { Settings::new(n, 100, false, FpsMode::Off).unwrap() }
 
+/// Equal settings do not extend debounce; only one save ticket exists and clean state never writes periodically.
 #[test]
 fn changes_debounce_without_periodic_rewrites_or_overlapping_tickets() {
     let mut policy = Policy::new(choice(100), 0);
@@ -21,6 +25,7 @@ fn changes_debounce_without_periodic_rewrites_or_overlapping_tickets() {
     assert!(policy.begin(u64::MAX).unwrap().is_none());
 }
 
+/// Completing an old save cannot acknowledge newer/reverted preferences; the next write still obeys rate limiting.
 #[test]
 fn in_flight_snapshot_cannot_mark_newer_settings_saved_even_when_reverting() {
     let mut policy = Policy::new(choice(100), 0);
@@ -36,6 +41,7 @@ fn in_flight_snapshot_cannot_mark_newer_settings_saved_even_when_reverting() {
     assert_eq!(policy.status(), Status::Clean);
 }
 
+/// Uncertain failed writes need persistence even after reversion; three retries exhaust until a new preference edit.
 #[test]
 fn failures_retry_three_times_at_most_and_do_not_assume_flash_unchanged() {
     let mut policy = Policy::new(choice(100), 0);
@@ -56,6 +62,7 @@ fn failures_retry_three_times_at_most_and_do_not_assume_flash_unchanged() {
     assert!(policy.begin(1_002_001).unwrap().is_some());
 }
 
+/// Clock reversal disables further persistence, while explicitly disabled policy still permits live preference changes.
 #[test]
 fn corrupt_clock_and_disabled_persistence_never_start_or_renew_writes() {
     let mut policy = Policy::new(choice(100), 100);

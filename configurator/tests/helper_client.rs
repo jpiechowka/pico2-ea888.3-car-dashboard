@@ -1,8 +1,12 @@
+//! Frozen build/upload identity and bounded helper event-feed admission regressions.
+
 use dashboard_configurator::build_flash::BuildSelection;
 use dashboard_configurator::editor::Editor;
 use dashboard_configurator::helper_client::*;
 use dashboard_helper_protocol::*;
 
+/// Returns a synthetic upload receipt whose component hashes are computed from
+/// `prepared` bytes; invalid frozen project/fixture construction panics.
 fn receipt(prepared: &PreparedBuild) -> ProjectUploadResponse {
     let project = dashboard_config_tools::project::Project::decode(prepared.bytes()).unwrap();
     let hash = |bytes: &[u8]| {
@@ -25,6 +29,8 @@ fn receipt(prepared: &PreparedBuild) -> ProjectUploadResponse {
 }
 
 #[test]
+/// Build authorization rejects changed option revision/content, any component/session digest mismatch,
+/// startup edits and an equal-content replacement editor.
 fn build_upload_binds_editor_options_session_and_all_component_hashes() {
     let mut editor = Editor::default();
     let selection = BuildSelection::default();
@@ -74,6 +80,8 @@ fn build_upload_binds_editor_options_session_and_all_component_hashes() {
 }
 
 #[test]
+/// Artifact content matching does not grant device authority; downloaded bytes independently require
+/// admitted length/SHA256 and reject altered, truncated or oversize metadata.
 fn artifact_identity_and_download_are_independently_checked() {
     let selection = BuildSelection::default();
     let prepared = PreparedBuild::capture(&Editor::default(), &selection, 0).unwrap();
@@ -119,6 +127,7 @@ fn artifact_identity_and_download_are_independently_checked() {
     assert!(verify_artifact_download(&artifact, &bytes).is_err());
 }
 
+/// Returns a valid synthetic protocol2 connection with fixed session/capability; fixture errors panic.
 fn connection() -> Connection {
     Connection::decode(
         format!(
@@ -130,6 +139,7 @@ fn connection() -> Connection {
     )
     .unwrap()
 }
+/// Returns one running prerequisite job with open events and no terminal/write/device evidence.
 fn summary() -> JobSummary {
     JobSummary {
         session_id: connection().session().clone(),
@@ -161,6 +171,9 @@ fn summary() -> JobSummary {
         active_setup_step: None,
     }
 }
+/// Returns `count` contiguous events starting at nonzero `from`, optionally finalizing
+/// the synthetic job when `closed`. Caller must keep count≤128 and arithmetic within u64;
+/// invalid fixture bounds panic.
 fn batch(
     from: u64,
     count: u64,
@@ -212,6 +225,7 @@ fn batch(
     }
 }
 #[test]
+/// Connection admission rejects oversized/unknown schema, unsupported versions and malformed capability bytes.
 fn connection_rejects_wrong_version_oversize_unknown_fields_and_non_hex_capability() {
     assert!(Connection::decode(b"{}").is_err());
     assert!(Connection::decode(&vec![b' '; 1025]).is_err());
@@ -231,6 +245,7 @@ fn connection_rejects_wrong_version_oversize_unknown_fields_and_non_hex_capabili
 }
 
 #[test]
+/// Only protocol2 is admitted; older/newer versions cannot bypass the genuine-Pico-2-W consent contract.
 fn connection_requires_the_pico2w_consent_protocol() {
     for (version, accepted) in [(0, false), (1, false), (2, true), (3, false), (u16::MAX, false)] {
         let input = format!(
@@ -242,6 +257,7 @@ fn connection_requires_the_pico2w_consent_protocol() {
     }
 }
 #[test]
+/// A 512-event feed tracks local eviction plus upstream gaps exactly and refuses replay/foreign-session publication.
 fn job_feed_retains_bounded_events_tracks_gaps_and_rejects_replays() {
     let mut feed = JobFeed::default();
     feed.start(&connection(), summary()).unwrap();
@@ -263,6 +279,7 @@ fn job_feed_retains_bounded_events_tracks_gaps_and_rejects_replays() {
     assert_eq!(feed.after(), 646);
 }
 #[test]
+/// Terminal summary alone is insufficient: feed drains only through final_next, and foreign restart cannot replace it.
 fn closed_summary_is_not_drained_until_last_batch_arrives() {
     let mut feed = JobFeed::default();
     feed.start(&connection(), summary()).unwrap();
@@ -280,6 +297,8 @@ fn closed_summary_is_not_drained_until_last_batch_arrives() {
 }
 
 #[test]
+/// Missing sequence prefixes, empty nonempty ranges and reopening a terminal job fail without changing prior feed
+/// state.
 fn malformed_gaps_and_terminal_regressions_leave_prior_state_intact() {
     let mut feed = JobFeed::default();
     feed.start(&connection(), summary()).unwrap();
@@ -297,6 +316,8 @@ fn malformed_gaps_and_terminal_regressions_leave_prior_state_intact() {
 }
 
 #[test]
+/// An explicit unchecked report differs from completed zero counts; only missing/incompatible checks count as
+/// attention.
 fn prerequisite_summary_distinguishes_unchecked_from_completed_zero_counts() {
     let unchecked = serde_json::json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"});
     assert_eq!(

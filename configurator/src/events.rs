@@ -4,24 +4,37 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+/// Maximum retained event records; eviction removes the oldest record.
 const EVENT_CAPACITY: usize = 512;
+/// Maximum recent warning/error keys considered for exact coalescing.
 const COALESCER_CAPACITY: usize = 64;
+/// Maximum serialized snapshot bytes, including JSONL newlines.
 const JSONL_CAPACITY: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// Stable subsystem tags serialized in diagnostics and mapped explicitly by the optional relay.
 pub enum Category {
+    /// Editor commands, revisions and draft lifecycle.
     Editor,
+    /// Shared schema/acceptance failures and recovery.
     Validation,
+    /// Browser persistence and quota/permission outcomes.
     Storage,
+    /// File, project and conversion input/output lifecycle.
     ImportExport,
+    /// Synthetic playback and simulator controls.
     Simulation,
+    /// Preview rendering, canvas and scheduling.
     Rendering,
+    /// Helper connection, prerequisites and build tools.
     HostTools,
+    /// Selected-device inspection and explicit operation diagnostics.
     Device,
 }
 
 impl Category {
     /// Human UI text; Serialize retains the stable diagnostic tags above.
+    /// Returns the category's display label.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Editor => "Editor",
@@ -37,20 +50,30 @@ impl Category {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+/// Ordered local diagnostic severity, from trace detail through error.
 pub enum Severity {
+    /// Finest optional debugging detail; console emission requires opt-in and rate admission.
     Trace,
+    /// Debugging detail; console emission requires opt-in and rate admission.
     Debug,
+    /// Retained informational state; not emitted by the console policy.
     Info,
+    /// Attention condition; exact bounded repetitions may be coalesced.
     Warn,
+    /// Failed operation; exact bounded repetitions may be coalesced.
     Error,
 }
 
 /// Application-owned tag. Construction rejects user text and oversized keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct EventCode(&'static str);
+pub struct EventCode(
+    /// Application-owned ASCII code of 1–32 lowercase/digit/underscore/hyphen/dot bytes.
+    &'static str,
+);
 
 impl EventCode {
+    /// Returns a checked static `code`, or invalid-code error for empty/oversized/disallowed characters.
     pub fn new(code: &'static str) -> Result<Self, EventError> {
         if code.is_empty()
             || code.len() > 32
@@ -63,23 +86,32 @@ impl EventCode {
         Ok(Self(code))
     }
 
+    /// Returns the exact admitted static code.
     pub fn get(self) -> &'static str { self.0 }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct EventSeq(u64);
+/// Monotonic store-local event identity; coalescing retains the original sequence.
+pub struct EventSeq(
+    /// Issued sequence number; zero is used only before private insertion assigns identity.
+    u64,
+);
 impl EventSeq {
+    /// Returns the store-local numeric sequence; values never wrap or restart on clear.
     pub fn get(self) -> u64 { self.0 }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+/// Saturating diagnostic count with explicit loss-of-exactness evidence.
 pub struct DiagnosticCount {
+    /// Exact count until overflow, then retained `u64::MAX`.
     pub value: u64,
     /// Set only after the actual count can no longer be represented exactly.
     pub saturated: bool,
 }
 impl DiagnosticCount {
+    /// Adds one, marking saturation only when an increment exceeds the representable maximum.
     pub fn increment(&mut self) {
         if let Some(value) = self.value.checked_add(1) {
             self.value = value;
@@ -90,82 +122,128 @@ impl DiagnosticCount {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+/// Lifetime accounting retained when visible records are cleared.
 pub struct EventCounters {
+    /// Records allocated, including internal suppression summaries.
     pub inserted: DiagnosticCount,
+    /// Old records evicted by retention capacity.
     pub dropped: DiagnosticCount,
+    /// Repeats merged into retained events, including suppression summary repetitions.
     pub repeated: DiagnosticCount,
+    /// Debug/Trace console emissions denied by the rolling rate gate.
     pub console_suppressed: DiagnosticCount,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// Whether another event identity can be allocated.
 pub enum EventStatus {
+    /// At least one remaining sequence value is available.
     Accepting,
+    /// Final sequence was issued; all further recording, including repeats, is rejected.
     Exhausted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Recording admission failure; rejected input changes no clocks, counters or console slots.
 pub enum EventError {
+    /// Static code violates its bounded ASCII syntax.
     InvalidCode,
+    /// All sequence identities have been issued.
     SequenceExhausted,
 }
 
+/// Borrowed local diagnostic input; caller excludes credentials/private payloads before recording.
 pub struct EventInput<'a> {
+    /// Subsystem responsible for the event.
     pub category: Category,
+    /// Retention/coalescing/console severity.
     pub severity: Severity,
+    /// Static application tag validated by [`EventCode::new`].
     pub code: &'static str,
+    /// Optional local correlation text, retained up to 128 UTF-8 bytes.
     pub subject: Option<&'a str>,
+    /// Local diagnostic text, retained up to 512 UTF-8 bytes.
     pub message: &'a str,
+    /// Monotonic elapsed milliseconds; backwards input is clamped to the store high-water mark.
     pub elapsed_ms: u64,
     /// Unix milliseconds, serialized by Rust; never used for admission/order.
     pub wall_clock_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
+/// Owned bounded event record, possibly representing repeated exact Warn/Error inputs.
 pub struct Event {
+    /// First-insertion identity, unchanged by repetition.
     pub seq: EventSeq,
+    /// Originating subsystem.
     pub category: Category,
+    /// Original severity used by filters and console policy.
     pub severity: Severity,
+    /// Validated application-owned tag.
     pub code: EventCode,
+    /// Optional UTF-8-safe bounded local correlation text.
     pub subject: Option<String>,
+    /// Original subject exceeded the 128-byte retention cap; prevents coalescing.
     pub subject_truncated: bool,
+    /// UTF-8-safe local message prefix, at most 512 bytes.
     pub message: String,
+    /// Original message exceeded its cap; prevents coalescing.
     pub message_truncated: bool,
+    /// First insertion's clamped monotonic elapsed milliseconds.
     pub elapsed_ms: u64,
+    /// Latest repetition's clamped monotonic elapsed milliseconds.
     pub last_elapsed_ms: u64,
+    /// Optional first insertion Unix milliseconds; never an ordering authority.
     pub wall_clock_ms: Option<i64>,
+    /// Optional latest repetition Unix milliseconds, including unavailable `None`.
     pub last_wall_clock_ms: Option<i64>,
+    /// Number of merged inputs, with explicit overflow evidence.
     pub count: DiagnosticCount,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Whether recording allocated a new event identity or merged an exact repeat.
 pub enum RecordKind {
+    /// A new record was retained, possibly evicting the oldest.
     Inserted,
+    /// Existing retained warning/error count was incremented.
     Repeated,
 }
 
 /// The sole console policy decision. Adapters emit only Emit outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleDisposition {
+    /// Adapter should emit this event to the browser console.
     Emit,
+    /// Retain locally without console output.
     RetainedOnly,
+    /// Repeated warning/error was merged without another console message.
     Coalesced,
+    /// Opted-in Debug/Trace exceeded ten emissions per rolling second.
     RateLimited,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Recording result separating retained identity from the sole console-emission decision.
 pub struct RecordOutcome {
+    /// Inserted or repeated event identity.
     pub seq: EventSeq,
+    /// Allocation versus coalescing result.
     pub kind: RecordKind,
+    /// Adapter action; emit only [`ConsoleDisposition::Emit`].
     pub console: ConsoleDisposition,
 }
 
+/// Boundary accepting local diagnostics without requiring a browser console.
 pub trait EventSink {
+    /// Records borrowed `input`; returns retained identity/kind/console decision or admission failure.
     fn record(
         &mut self,
         input: EventInput<'_>,
     ) -> Result<RecordOutcome, EventError>;
 }
 
+/// Returns the longest valid UTF-8 prefix of `text` within `capacity` bytes and whether any suffix was omitted.
 fn bounded(
     text: &str,
     capacity: usize,
@@ -177,18 +255,26 @@ fn bounded(
     (&text[..end], end < text.len())
 }
 
+/// Bounded case-insensitive text/category/severity query over an immutable snapshot.
 pub struct EventFilter {
+    /// Exact subsystem restriction; `None` permits every category.
     category: Option<Category>,
+    /// Inclusive severity floor.
     minimum: Severity,
+    /// Unicode lowercase query derived from an at-most-128-byte input prefix.
     query: String,
+    /// Input query lost a suffix before lowercase conversion.
     query_truncated: bool,
+    /// Maximum oldest-first matching records, at most retention capacity.
     limit: usize,
 }
 
 impl Default for EventFilter {
+    /// Returns an unrestricted filter over all retained records.
     fn default() -> Self { Self::new("") }
 }
 impl EventFilter {
+    /// Returns a filter searching `query` in message/code/subject, truncating to 128 UTF-8 bytes before lowercasing.
     pub fn new(query: &str) -> Self {
         let (query, query_truncated) = bounded(query, 128);
         Self {
@@ -200,6 +286,7 @@ impl EventFilter {
         }
     }
 
+    /// Returns this filter with inclusive severity floor `minimum`.
     pub fn minimum(
         mut self,
         minimum: Severity,
@@ -208,6 +295,7 @@ impl EventFilter {
         self
     }
 
+    /// Returns this filter restricted to `category`.
     pub fn category(
         mut self,
         category: Category,
@@ -216,6 +304,7 @@ impl EventFilter {
         self
     }
 
+    /// Returns this filter with oldest-first record `limit`, clamped to 512; zero returns no records.
     pub fn limit(
         mut self,
         limit: usize,
@@ -224,8 +313,10 @@ impl EventFilter {
         self
     }
 
+    /// Returns whether the original query exceeded its UTF-8 input byte cap.
     pub fn query_truncated(&self) -> bool { self.query_truncated }
 
+    /// Returns whether `event` satisfies severity, category and case-insensitive text predicates.
     fn matches(
         &self,
         event: &Event,
@@ -244,20 +335,30 @@ impl EventFilter {
 
 /// Immutable data for filtering/export. It carries no recording authority.
 pub struct EventSnapshot {
+    /// Cloned matching records in insertion order, limited by the filter.
     records: Vec<Event>,
+    /// Store issuance availability at snapshot time.
     pub status: EventStatus,
+    /// Lifetime counters at snapshot time, independent of filter.
     pub counters: EventCounters,
     /// Oldest/newest of the whole retained store, independent of the filter.
     pub oldest: Option<EventSeq>,
+    /// Newest identity of the whole retained store, or `None` when empty.
     pub newest: Option<EventSeq>,
+    /// Total records in the whole retained store.
     pub retained: usize,
+    /// Records satisfying the filter before its result limit.
     pub matching: usize,
+    /// Matching records excluded only by the filter result limit.
     pub omitted: usize,
 }
 
 impl EventSnapshot {
+    /// Returns the snapshot's oldest-first matching retained records.
     pub fn records(&self) -> &[Event] { &self.records }
 
+    /// Returns newline-terminated JSON for snapshot records, bounded to 2 MiB; empty snapshots return empty bytes.
+    /// Size/serialization failure returns no partial export, leaving the snapshot unchanged.
     pub fn jsonl(&self) -> Result<Vec<u8>, JsonlError> {
         let mut writer = JsonlWriter::new();
         for event in &self.records {
@@ -274,16 +375,23 @@ impl EventSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Bounded local event export failure.
 pub enum JsonlError {
+    /// Encoded records and newlines exceed 2 MiB.
     TooLarge,
+    /// JSON serialization or another writer failure occurred.
     Serialization,
 }
 
+/// In-memory writer enforcing the export cap before every append.
 struct JsonlWriter {
+    /// Successfully appended prefix, never longer than [`JSONL_CAPACITY`].
     bytes: Vec<u8>,
+    /// Sticky evidence that an attempted append exceeded the byte cap.
     too_large: bool,
 }
 impl JsonlWriter {
+    /// Returns an empty writer with capacity reserved for the entire bounded export.
     fn new() -> Self {
         Self {
             bytes: Vec::with_capacity(JSONL_CAPACITY),
@@ -292,6 +400,7 @@ impl JsonlWriter {
     }
 }
 impl Write for JsonlWriter {
+    /// Appends all `bytes` and returns their count, or marks overflow and errors without appending any of this chunk.
     fn write(
         &mut self,
         bytes: &[u8],
@@ -304,22 +413,32 @@ impl Write for JsonlWriter {
         Ok(bytes.len())
     }
 
+    /// Returns success; all writes already reside in memory and require no flush operation.
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
 /// One store also owns the coalescing and rolling console policy.
 pub struct EventStore {
+    /// At most 512 owned records in insertion order.
     records: VecDeque<Event>,
+    /// At most 64 coalescible retained sequence identities, evicted independently of records.
     keys: VecDeque<EventSeq>,
+    /// Next allocatable sequence, or `None` after the final identity is issued.
     next_seq: Option<u64>,
+    /// Lifetime accounting retained across visible clears.
     counters: EventCounters,
+    /// Maximum observed elapsed milliseconds, clamping backwards timestamps.
     high_water_ms: u64,
+    /// Explicit opt-in for rate-limited Debug/Trace console messages.
     debug_console: bool,
+    /// Last admitted Debug/Trace console timestamps; at most ten per rolling second.
     emitted: VecDeque<u64>,
+    /// Retained suppression summary identity, or `None` when absent/evicted/cleared.
     rate_summary: Option<EventSeq>,
 }
 
 impl Default for EventStore {
+    /// Returns an empty store issuing from sequence one, with debug console opt-in disabled.
     fn default() -> Self {
         Self {
             records: VecDeque::with_capacity(EVENT_CAPACITY),
@@ -335,6 +454,7 @@ impl Default for EventStore {
 }
 
 impl EventStore {
+    /// Returns whether sequence issuance remains available; exhaustion also blocks coalescing.
     pub fn status(&self) -> EventStatus {
         if self.next_seq.is_some() {
             EventStatus::Accepting
@@ -343,8 +463,10 @@ impl EventStore {
         }
     }
 
+    /// Returns lifetime insertion/eviction/repeat/console-suppression accounting.
     pub fn counters(&self) -> EventCounters { self.counters }
 
+    /// Sets Debug/Trace console opt-in to `enabled`; retained records and rolling admission history remain unchanged.
     pub fn set_debug_console(
         &mut self,
         enabled: bool,
@@ -352,6 +474,7 @@ impl EventStore {
         self.debug_console = enabled;
     }
 
+    /// Returns retained event `seq`, or `None` after eviction/clear or for an unknown identity.
     pub fn get(
         &self,
         seq: EventSeq,
@@ -359,6 +482,7 @@ impl EventStore {
         self.records.iter().find(|e| e.seq == seq)
     }
 
+    /// Returns whether event `seq` remains retained.
     pub fn contains(
         &self,
         seq: EventSeq,
@@ -366,12 +490,16 @@ impl EventStore {
         self.get(seq).is_some()
     }
 
+    /// Clears records/coalescing keys/summary; preserves identity exhaustion, lifetime counters, clocks and rate
+    /// history.
     pub fn clear(&mut self) {
         self.records.clear();
         self.keys.clear();
         self.rate_summary = None;
     }
 
+    /// Returns cloned oldest-first records admitted by `filter`, with whole-store and prelimit matching counts.
+    /// Snapshot construction does not alter recording, coalescing or console policy.
     pub fn snapshot(
         &self,
         filter: &EventFilter,
@@ -396,6 +524,8 @@ impl EventStore {
         }
     }
 
+    /// Allocates identity for `event`, ignoring its placeholder sequence, and returns the issued sequence.
+    /// Evicts oldest record/key/summary at capacity; exhaustion returns an error before mutation.
     fn insert(
         &mut self,
         mut event: Event,
@@ -417,6 +547,8 @@ impl EventStore {
         Ok(EventSeq(seq))
     }
 
+    /// Increments retained `seq` and updates its last monotonic time plus optional Unix `wall_clock_ms`.
+    /// Missing identities do nothing; exactness flags propagate independently for event and lifetime counts.
     fn repeat(
         &mut self,
         seq: EventSeq,
@@ -430,6 +562,8 @@ impl EventStore {
         }
     }
 
+    /// Inserts/repeats the local console-suppression summary using optional Unix `wall_clock_ms`.
+    /// Allocation failure at sequence exhaustion is ignored; summary never re-enters console policy.
     fn suppression_summary(
         &mut self,
         wall_clock_ms: Option<i64>,
@@ -462,6 +596,10 @@ impl EventStore {
 }
 
 impl EventSink for EventStore {
+    /// Validates `input`, clamps monotonic time, retains bounded text, and returns identity/console policy outcome.
+    /// Exact untruncated Warn/Error repeats among the last 64 keys coalesce; other records allocate identity.
+    /// Debug/Trace console output requires opt-in and at most ten emissions per rolling 1000 ms.
+    /// Invalid codes/exhausted identity return errors before mutation; no browser I/O occurs here.
     fn record(
         &mut self,
         input: EventInput<'_>,
@@ -558,10 +696,12 @@ impl EventSink for EventStore {
 
 #[cfg(test)]
 mod tests {
+    //! Exhaustion, saturated count evidence and exact JSONL byte boundary regressions.
     use std::io::Write;
 
     use super::*;
 
+    /// Returns one stable coalescible editor error at monotonic millisecond one.
     fn error() -> EventInput<'static> {
         EventInput {
             category: Category::Editor,
@@ -575,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    /// Issuing the final sequence disables even repeats and clearing cannot restore issuance authority.
     fn event_final_sequence_stops_all_admission_and_survives_clear() {
         let mut store = EventStore {
             next_seq: Some(u64::MAX),
@@ -590,6 +731,7 @@ mod tests {
     }
 
     #[test]
+    /// Reaching the maximum remains exact; only a subsequent increment marks count saturation.
     fn event_counts_flag_actual_overflow_instead_of_claiming_exactness() {
         let mut count = DiagnosticCount {
             value: u64::MAX - 1,
@@ -611,6 +753,7 @@ mod tests {
     }
 
     #[test]
+    /// An exact 2 MiB write succeeds and a subsequent newline fails without extending the retained prefix.
     fn jsonl_writer_checks_exact_two_mib_boundary_before_appending() {
         let mut writer = JsonlWriter::new();
         writer.write_all(&vec![b'x'; 2 * 1024 * 1024]).unwrap();

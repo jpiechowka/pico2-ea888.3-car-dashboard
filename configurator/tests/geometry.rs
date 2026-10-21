@@ -1,7 +1,10 @@
+//! Pointer coordinate, grid footprint and reducer authority regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::PointerTarget;
 use dashboard_configurator::geometry::*;
 
+/// Fractionally offset CSS rectangle representing a landscape canvas at 2× scale.
 const RECT: ContentRect = ContentRect {
     left: 37.5,
     top: 91.25,
@@ -9,6 +12,7 @@ const RECT: ContentRect = ContentRect {
     height: 480.0,
 };
 
+/// Returns placement at zero-based `column`/`row` with `span`, without validating bounds.
 fn place(
     column: u8,
     row: u8,
@@ -17,6 +21,7 @@ fn place(
     Placement { column, row, span }
 }
 
+/// Returns CSS viewport coordinates mapping landscape panel pixels `x`/`y` into `rect`.
 fn client(
     rect: ContentRect,
     x: f64,
@@ -26,6 +31,7 @@ fn client(
 }
 
 #[test]
+/// Fractional offsets and nonuniform CSS scaling map back to exact panel coordinates.
 fn content_rect_scales_fractional_and_nonuniform_canvas_coordinates() {
     for rect in [
         RECT,
@@ -46,6 +52,7 @@ fn content_rect_scales_fractional_and_nonuniform_canvas_coordinates() {
 }
 
 #[test]
+/// Grid cells use half-open edges below the 26-pixel header; canvas and header exclusion remain distinct.
 fn every_cell_has_exact_half_open_boundaries_below_the_header() {
     for row in 0..2 {
         for column in 0..4 {
@@ -71,6 +78,7 @@ fn every_cell_has_exact_half_open_boundaries_below_the_header() {
 }
 
 #[test]
+/// Zero/negative/nonfinite/overflowing rectangles and nonfinite pointers produce specific geometry errors.
 fn nonfinite_and_degenerate_rectangles_and_pointers_are_rejected() {
     for rect in [
         ContentRect { width: 0.0, ..RECT },
@@ -102,6 +110,7 @@ fn nonfinite_and_degenerate_rectangles_and_pointers_are_rejected() {
 }
 
 #[test]
+/// Resized canvases retain panel-space grab offsets and snap only after crossing the nearest-origin midpoint.
 fn dragging_preserves_grab_offset_across_canvas_resize_and_snaps_nearest_origin() {
     let start = place(1, 0, Span::TwoByOne);
     let (x, y) = client(RECT, 213.0, 98.0);
@@ -132,6 +141,7 @@ fn dragging_preserves_grab_offset_across_canvas_resize_and_snaps_nearest_origin(
 }
 
 #[test]
+/// Out-of-widget grabs and reusing a large footprint offset on a smaller span are rejected.
 fn grab_must_be_within_the_original_widget_and_offsets_must_fit_the_drop_span() {
     let placement = place(1, 0, Span::TwoByTwo);
     for (x, y) in [(79.0, 30.0), (240.0, 30.0), (80.0, 25.0)] {
@@ -147,6 +157,7 @@ fn grab_must_be_within_the_original_widget_and_offsets_must_fit_the_drop_span() 
 }
 
 #[test]
+/// Every supported footprint must fit wholly inside the grid; centered and header-edge cases retain bounds.
 fn every_span_requires_its_full_snapped_area_inside_the_grid() {
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
         for row in 0..2 {
@@ -179,6 +190,7 @@ fn every_span_requires_its_full_snapped_area_inside_the_grid() {
 }
 
 #[test]
+/// Self-occupancy is legal, but another widget/library collision fails without mutating validated input.
 fn shared_validation_allows_self_occupancy_and_rejects_collisions_without_mutation() {
     let config = validate(default_config()).unwrap();
     let before = config.clone();
@@ -206,6 +218,7 @@ fn shared_validation_allows_self_occupancy_and_rejects_collisions_without_mutati
 }
 
 #[test]
+/// Drop admission checks resized labels, sparse IDs, view/widget references and global 64-widget capacity.
 fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
     let mut config = default_config();
     config.widgets.clear();
@@ -275,6 +288,7 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
 }
 
 #[test]
+/// Canvas reflow below the CSS drag threshold persists selection without layout mutation or undo entry.
 fn stationary_and_jittered_release_after_canvas_reflow_only_keeps_selection() {
     use dashboard_configurator::editor::{Editor, PointerTarget, Selection};
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
@@ -335,6 +349,7 @@ fn stationary_and_jittered_release_after_canvas_reflow_only_keeps_selection() {
 }
 
 #[test]
+/// A real widget drag preserves its grab anchor after resizing; library insertion uses the pointed cell.
 fn real_drag_uses_original_anchor_and_library_uses_pointed_cell() {
     use dashboard_configurator::editor::Editor;
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
@@ -381,6 +396,7 @@ fn real_drag_uses_original_anchor_and_library_uses_pointed_cell() {
 }
 
 #[test]
+/// Four CSS pixels activate a latched gesture independent of panel scaling; nonfinite samples cannot activate it.
 fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
     for (dx, dy, active) in [
         (3.99, 0.0, false),
@@ -433,6 +449,7 @@ fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
 }
 
 #[test]
+/// Mapped placement still requires the original live pointer/token after cancellation or another editor edit.
 fn moved_gesture_does_not_bypass_wrong_pointer_cancel_or_stale_token() {
     use dashboard_configurator::editor::{Edit, Editor, EditorError};
     let mut editor = Editor::new(default_config()).unwrap();

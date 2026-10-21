@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+//! Linux two-adapter hardware-test setup and host-only supervision/drain regressions.
+use std::path::{Path, PathBuf};
 use std::{fmt::Debug, io};
 
 use bt_hci::controller::ExternalController;
@@ -10,11 +11,14 @@ use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 
 #[allow(dead_code)]
+/// HCI serial transport with ten in-flight command slots, polled on one Tokio local executor.
 pub type Controller = ExternalController<
     SerialTransport<NoopRawMutex, FromTokio<ReadHalf<SerialStream>>, FromTokio<WriteHalf<SerialStream>>>,
     10,
 >;
 
+/// Returns sorted Zephyr HCI UART device paths from /dev/serial/by-id.
+/// Panics on directory/entry/name errors or fewer than two matches; opens no serial ports.
 pub fn find_controllers() -> Vec<PathBuf> {
     let folder = "/dev/serial/by-id";
     let mut paths = Vec::new();
@@ -35,12 +39,15 @@ pub fn find_controllers() -> Vec<PathBuf> {
     paths
 }
 
+/// Panics with task `name` if outer join `result` or its inner operation failed; otherwise returns normally.
 pub fn assert_task_result<E: Debug, J: Debug>(name: &str, result: Result<Result<(), E>, J>) {
     result
         .unwrap_or_else(|error| panic!("{name} task failed: {error:?}"))
         .unwrap_or_else(|error| panic!("{name} operation failed: {error:?}"));
 }
 
+/// Discards bytes from `read` until WouldBlock, returning Ok only for that drained condition.
+/// Returns EOF/invalid-count/I/O errors, or TimedOut after 65536 bytes or 1024 attempts (including interruptions).
 fn drain_input(mut read: impl FnMut(&mut [u8]) -> io::Result<usize>) -> io::Result<()> {
     let mut remaining = 65536;
     let mut buffer = [0; 256];
@@ -62,8 +69,10 @@ fn drain_input(mut read: impl FnMut(&mut [u8]) -> io::Result<usize>) -> io::Resu
 }
 
 #[allow(unused)]
+/// Opens `port` at 1000000 baud, 8N1, waits one second, drains stale input and returns an HCI controller.
+/// Port/drain failures panic. Cancellation drops the opened stream; no controller reset is sent here.
 pub(crate) async fn create_controller(
-    port: &PathBuf,
+    port: &Path,
 ) -> ExternalController<
     SerialTransport<NoopRawMutex, FromTokio<ReadHalf<SerialStream>>, FromTokio<WriteHalf<SerialStream>>>,
     10,
@@ -93,10 +102,12 @@ pub(crate) async fn create_controller(
 }
 
 #[cfg(test)]
+/// Hardware-free nested-result and bounded-input-drain checks.
 mod tests {
     use super::*;
 
     #[test]
+    /// Both task-join errors and operation errors fail the supervising test.
     fn task_errors_cannot_be_reported_as_success() {
         assert_task_result("success", Ok::<_, &str>(Ok::<_, &str>(())));
         for result in [Err("join"), Ok(Err("operation"))] {
@@ -105,6 +116,7 @@ mod tests {
     }
 
     #[test]
+    /// WouldBlock terminates successfully; malformed reads, EOF, I/O failures and unbounded input remain failures.
     fn input_drain_bounds_volume_and_interrupts_and_preserves_errors() {
         let mut calls = 0;
         drain_input(|bytes| {

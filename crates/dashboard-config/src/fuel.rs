@@ -1,14 +1,22 @@
+//! Stoichiometric assumption validation and bounded mass-fraction arithmetic.
+//! Volume composition is converted using the supplied component densities; this
+//! calculation neither measures fuel nor compensates densities for temperature.
 use core::ops::ControlFlow;
 
 use crate::validate::in_range;
 use crate::*;
 
-/// Independent inputs are all inspected; arithmetic runs only after their proof.
+/// Validate `fuel`, reporting each independent error through `emit` until it breaks.
+/// Returns `Break(())` on visitor cancellation, `Continue(None)` for any invalid input,
+/// or `Continue(Some(ratio))` for a finite 5..=25 air/fuel mass ratio. No identity is issued.
+/// Blend arithmetic runs only after finite input/range/order/reference checks; admitted
+/// positive density bounds prevent a zero denominator, including pure-component endpoints.
 pub(crate) fn visit_stoichiometry(
     fuel: Fuel,
     mut emit: impl FnMut(ValidationError) -> ControlFlow<()>,
 ) -> ControlFlow<(), Option<f32>> {
     let mut valid = true;
+    /// Mark invalid finite/range inputs, emit field context and propagate visitor cancellation.
     macro_rules! bounded {
         ($value:expr, $low:expr, $high:expr, $field:expr) => {
             if !in_range($value, $low, $high) {

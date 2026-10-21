@@ -3,6 +3,11 @@ use core::future::Future;
 
 use embassy_futures::select::{Either, select};
 
+/// Runs `startup`, then `run` with its successful client, while polling `events`
+/// throughout. Returns the work result or the first event error; work wins when
+/// both are ready in the same poll. The losing future is dropped before return.
+/// Callers must make losing futures cancellation-safe and perform connection
+/// cleanup afterward; a returned success does not acknowledge disconnection.
 pub async fn inspect_with_events<C, T, E, R: Future<Output = Result<T, E>>>(
     startup: impl Future<Output = Result<C, E>>,
     run: impl FnOnce(C) -> R,
@@ -22,6 +27,10 @@ pub async fn inspect_with_events<C, T, E, R: Future<Output = Result<T, E>>>(
 
 /// Sample local/terminal evidence after cleanup, even when inventory succeeded.
 /// Return acknowledgment only; the model separately classifies termination quality.
+/// Awaits `wait`, samples `now_ms` and `context` afterward, and uses `emit` to
+/// publish context before the end event under `revision`. Returns the wait's bool,
+/// including false on incomplete cleanup; event publication is awaited reliably.
+/// Do not cancel between messages if the model must receive a terminal end event.
 pub async fn finish_cleanup(
     revision: u32,
     wait: impl Future<Output = bool>,

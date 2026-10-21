@@ -1,8 +1,15 @@
 //! Synthetic bench values, evaluated from acquisition time rather than frames.
+/// Returns synthetic values at `elapsed_ms` milliseconds since the demo origin,
+/// in sensor order: boost bar, oil/coolant/DSG/IAT/EGT degrees Celsius, battery
+/// volts, lambda ratio. Nominal ranges are respectively `0.3..=2`, `5..=115`,
+/// `81..=95`, `35..=115`, `-10..=70`, `200..=1200`, `9.5..=14.5`, `0.75..=1.25`.
+/// Integer phase reduction preserves short-step motion at long uptimes; this
+/// stateless approximate sine model supplies no vehicle qualification.
 pub fn values(elapsed_ms: u64) -> [f32; 8] {
     // Reduce integer micro-radian phases before converting to f32. Uptime
     // therefore never consumes the precision needed for a 10 ms step.
     // Tau is rounded to one micro-radian for synthetic values only (~0.049 ppm).
+    /// Rounded full-turn phase in microradians; also the synthetic time-reduction period in ms.
     const TAU_MICRORADIANS: u64 = 6_283_185;
     let reduced_ms = elapsed_ms % TAU_MICRORADIANS;
     let wave = |rate_milliradians_per_second: u64| {

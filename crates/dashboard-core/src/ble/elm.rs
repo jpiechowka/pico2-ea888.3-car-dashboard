@@ -3,34 +3,56 @@ use heapless::Vec;
 
 use crate::diagnostics::CanFrame;
 
+/// Maximum printable bytes in one ELM line, excluding CR/LF and prompt.
 pub const LINE_CAPACITY: usize = 64;
+/// Maximum reassembled diagnostic payload bytes, including positive/negative reply prefix.
 pub const PAYLOAD_CAPACITY: usize = 64;
+/// Owned bounded printable line without its terminator.
 pub type Line = Vec<u8, LINE_CAPACITY>;
+/// Owned bounded ISO-TP diagnostic payload, without CAN/PCI framing.
 pub type Payload = Vec<u8, PAYLOAD_CAPACITY>;
 
+/// Bounded framing/reassembly classification shared by the parser and session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// Line, notification or reassembly capacity was exceeded.
     Overflow,
+    /// Stream contained a byte outside permitted printable ASCII/control delimiters.
     Ascii,
+    /// Prompt placement, CAN grammar or terminal parser state is invalid.
     Frame,
+    /// ISO-TP consecutive-frame ordering disagrees with the expected nibble.
     Sequence,
+    /// A CAN reply came from an identifier other than the expected engine source.
     Foreign,
+    /// Prompt arrived before a complete acceptable reply.
     Incomplete,
 }
 
+/// Result of consuming one ASCII stream byte.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Event {
+    /// No complete line or prompt yet, including empty CR/LF separators.
     None,
-    Line(Line),
+    /// Nonempty line completed by CR or LF.
+    Line(
+        /// Owned line bytes with no terminator.
+        Line,
+    ),
+    /// Prompt at an empty line boundary; session still validates reply completeness.
     Prompt,
 }
 
+/// Incremental ASCII line/prompt parser that permanently poisons itself after an error.
 #[derive(Default)]
 pub struct Parser {
+    /// Current printable line prefix, at most 64 bytes.
     line: Line,
+    /// Any previous parse/capacity error; only replacing the parser clears it.
     failed: bool,
 }
 impl Parser {
+    /// Returns an empty unfailed parser without stream state from an earlier transaction.
     pub const fn new() -> Self {
         Self {
             line: Line::new(),
@@ -38,6 +60,10 @@ impl Parser {
         }
     }
 
+    /// Consumes `byte` into `self`, returning a complete Line, boundary Prompt or None.
+    /// Only ASCII 0x20..=0x7E plus CR/LF delimiters is accepted; `>` requires an empty
+    /// line. Overflow, misplaced prompt or non-ASCII clears the line and poisons the
+    /// parser; subsequent calls return Frame until a fresh parser replaces it.
     pub fn push(
         &mut self,
         byte: u8,
@@ -61,6 +87,11 @@ impl Parser {
     }
 }
 
+/// Returns a validated 11-bit classic CAN frame parsed from bounded `line`: three hex
+/// identifier digits, one hex DLC digit 0..8, and exactly DLC two-digit octets separated
+/// by ASCII spaces. Repeated/leading/trailing spaces are allowed; hex case is ignored.
+/// Length above 64 returns Overflow; missing/extra tokens, invalid hex, DLC or identifier
+/// returns Frame. This requires the session's explicitly configured headers/DLC/raw mode.
 pub fn frame(line: &[u8]) -> Result<CanFrame, Error> {
     if line.len() > LINE_CAPACITY {
         return Err(Error::Overflow);
@@ -93,6 +124,8 @@ pub fn frame(line: &[u8]) -> Result<CanFrame, Error> {
     CanFrame::new(id, &data[..dlc]).map_err(|_| Error::Frame)
 }
 
+/// Returns nibble 0..15 for ASCII hex `byte`, accepting either letter case;
+/// all other bytes return Frame without fallback conversion.
 fn hex(byte: u8) -> Result<u8, Error> {
     match byte {
         b'0'..=b'9' => Ok(byte - b'0'),
@@ -103,10 +136,13 @@ fn hex(byte: u8) -> Result<u8, Error> {
 }
 
 #[cfg(test)]
+/// Stream poison, prompt-boundary and strict raw-CAN grammar regressions.
 mod tests {
     use super::*;
 
     #[test]
+    /// Returns unit after checking line buffering, CRLF handling and separate prompt
+    /// publication; panics if incomplete lines publish or framing bytes enter CAN data.
     fn stream_waits_for_line_boundaries_and_preserves_prompt() {
         let mut parser = Parser::new();
         for byte in b"7E8 8 03 41 05 82 00 00 00 00" {
@@ -121,6 +157,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking exact line capacity and non-ASCII poison retention;
+    /// panics if a delimiter can recover a failed transaction parser.
     fn overflow_and_non_ascii_poison_parser() {
         let mut parser = Parser::new();
         for _ in 0..64 {
@@ -134,6 +172,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after rejecting absent headers/DLC, extended identifiers, width/count
+    /// errors and bad hex while admitting lowercase; panics on grammar drift.
     fn headers_dlc_and_exact_octets_are_mandatory() {
         for line in [
             b"41 05 82".as_slice(),
@@ -149,6 +189,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after confirming the standalone CAN parser rejects oversized input
+    /// before scanning its whitespace; panics if stream-level bounds are required externally.
     fn standalone_frame_decoder_also_bounds_input_work() {
         let mut line = [b' '; 1024];
         line[..17].copy_from_slice(b"7E8 4 03 41 05 82");

@@ -1,3 +1,4 @@
+//! Per-page overlay precedence, timed feedback and input attribution through warning transitions.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
@@ -10,6 +11,7 @@ use dashboard_host_validation::samples::SensorId;
 use dashboard_host_validation::vehicle_status::VehicleStatus;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Returns a demo acquisition model with qualified sustained temperature/voltage/lambda alarms at 1000ms.
 fn alarm_model() -> AcquisitionModel<'static> {
     let mut model = AcquisitionModel::demo();
     for at in [0, 500, 1000] {
@@ -18,6 +20,7 @@ fn alarm_model() -> AcquisitionModel<'static> {
     model
 }
 
+/// Logs suppress all overlays, Debug accepts only its percent slider, and Dashboard retains warning priority.
 #[test]
 fn diagnostics_never_inherit_a_warning_or_dashboard_feedback() {
     let alerts = alarm_model().snapshot().alerts_at(1000);
@@ -47,6 +50,7 @@ fn diagnostics_never_inherit_a_warning_or_dashboard_feedback() {
     }
 }
 
+/// Feedback expiry restores warning blinking exactly at elapsed-time deadlines, including reversal and u64 edges.
 #[test]
 fn feedback_expiration_resumes_warning_at_wall_clock_deadline() {
     let mut model = alarm_model();
@@ -100,6 +104,7 @@ fn feedback_expiration_resumes_warning_at_wall_clock_deadline() {
     assert!(Popup::Reset(u64::MAX - 3000).is_expired_at(u64::MAX));
 }
 
+/// Diagnostic pages remain free of warnings; explicit cache invalidation restores both Dashboard buffers on return.
 #[test]
 fn warning_feedback_and_page_round_trip_repair_both_buffers() {
     let snapshot = alarm_model().snapshot();
@@ -141,6 +146,7 @@ fn warning_feedback_and_page_round_trip_repair_both_buffers() {
     }
 }
 
+/// Visible feedback and diagnostic navigation retain input provenance when no warning overlay obscures the result.
 #[test]
 fn visible_feedback_and_page_changes_remain_correlated_with_input() {
     let alerts = alarm_model().snapshot().alerts_at(1000);

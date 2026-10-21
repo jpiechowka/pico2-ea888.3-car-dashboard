@@ -1,3 +1,4 @@
+//! Legacy cell mapping and opaque-overlay restoration through the shared scene.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardScene, Overlay};
@@ -5,6 +6,7 @@ use dashboard_host_validation::display::St7789Renderer;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Every overlay changes pixels; removing it restores a fresh frame and the fixed eight-channel cell order.
 #[test]
 fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
     let mut model = AcquisitionModel::demo();

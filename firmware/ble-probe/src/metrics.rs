@@ -11,13 +11,20 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::Instant;
 
+/// Cross-core counters and sampled windows; all fields share one lock.
 struct Observations {
+    /// Wrapping successful HAL frame-transfer count.
     completed: u32,
+    /// Per-core bounded wall-time polling-work windows, not DWT cycle counts.
     work: [WorkWindow; 2],
+    /// Per-core admitted stack ranges and maximum observed samples.
     stacks: [Option<StackSamples>; 2],
+    /// Total admitted stack-region bytes for each core.
     stack_bytes: [u32; 2],
+    /// Latest RAM/stack observations; work/fps are resolved at snapshot use.
     values: ProbeDiagnostics,
 }
+/// Short-lock shared telemetry; polling and rendering never occur inside it.
 static OBSERVATIONS: Mutex<CriticalSectionRawMutex, RefCell<Observations>> = Mutex::new(RefCell::new(Observations {
     completed: 0,
     work: [WorkWindow::new(); 2],
@@ -31,6 +38,9 @@ static OBSERVATIONS: Mutex<CriticalSectionRawMutex, RefCell<Observations>> = Mut
     },
 }));
 
+/// Initializes telemetry on core0 before task polling. `core1_bottom` and
+/// `core1_bytes` describe the actual stack allocation; invalid/overflowing bounds
+/// remain unavailable. Static RAM and core0 bounds come from linker symbols.
 pub fn init(
     core1_bottom: u32,
     core1_bytes: u32,
@@ -38,7 +48,9 @@ pub fn init(
     // Core0 invokes this after HAL init and before either executor starts work.
     let ram = MemoryStats::collect();
     unsafe extern "C" {
+        /// End of linked static main-SRAM allocations.
         static __sheap: u8;
+        /// Linker-selected initial core0 stack top.
         static _stack_start: u8;
     }
     let bottom = core::ptr::addr_of!(__sheap) as u32;
@@ -65,13 +77,20 @@ pub fn frame_completed() {
         data.completed = data.completed.wrapping_add(1);
     });
 }
+/// Returns the wrapping successful transfer count under the observation lock.
 pub fn completed() -> u32 { OBSERVATIONS.lock(|cell| cell.borrow().completed) }
 
+/// Coherent completion-count/time pair and the latest bounded telemetry values.
 pub struct Snapshot {
+    /// Boot-relative microseconds sampled under the same lock as completed count.
     pub at_us: u64,
+    /// Wrapping successful HAL transfer count at this snapshot time.
     pub completed: u32,
+    /// RAM/stack samples and age-checked polling work fractions; FPS is caller-derived.
     pub values: ProbeDiagnostics,
 }
+/// Returns values and completion count timestamped under one lock; resolves work
+/// freshness at that time without treating missing/stale windows as zero.
 pub fn snapshot() -> Snapshot {
     OBSERVATIONS.lock(|cell| {
         let data = cell.borrow();
@@ -87,6 +106,10 @@ pub fn snapshot() -> Snapshot {
     })
 }
 
+/// Returns a wrapper polling `future` and recording each poll duration/stack
+/// sample for `core` (0 or 1). Propagates its output unchanged; suspended time is
+/// excluded. Panics for an out-of-range core index when a poll is recorded.
+/// Stack observations sample poll returns, not continuous physical high-water.
 pub fn measure<F: Future>(
     core: usize,
     future: F,

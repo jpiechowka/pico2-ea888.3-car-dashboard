@@ -1,8 +1,11 @@
+//! Build environment admission and generated clock/sidecar consistency.
+
 use std::ffi::OsString;
 
 use dashboard_build_profiles::{ClockSelection, ProfileId, catalogue};
 use dashboard_config_tools::clocks::{custom_clock, generate, selection};
 
+/// Partial triples and non-decimal values fail; all typed voltages and full triples parse.
 #[test]
 fn all_presence_subsets_and_invalid_decimal_inputs_fail_closed() {
     for mask in 0..8 {
@@ -60,6 +63,7 @@ fn all_presence_subsets_and_invalid_decimal_inputs_fail_closed() {
     }
 }
 
+/// Generated literals and metadata match an independent PLL/SPI table for all profiles.
 #[test]
 fn literal_generation_matches_independent_pll_and_spi_fixtures() {
     let cases = [
@@ -91,6 +95,7 @@ fn literal_generation_matches_independent_pll_and_spi_fixtures() {
     }
 }
 
+/// Every pair of distinct clock features conflicts; absent or explicit stock agrees.
 #[test]
 fn pair_conflicts_and_stock_default_identity_are_exact() {
     let rows = catalogue();
@@ -113,6 +118,7 @@ fn pair_conflicts_and_stock_default_identity_are_exact() {
     );
 }
 
+/// Non-Unicode environment bytes fail explicitly rather than silently selecting defaults.
 #[cfg(unix)]
 #[test]
 fn non_unicode_clock_is_not_ignored() {

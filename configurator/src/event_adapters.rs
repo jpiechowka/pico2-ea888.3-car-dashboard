@@ -10,7 +10,9 @@ use crate::editor::{AcceptedConfigKey, Editor, EditorError, Revision, StorageFai
 use crate::events::*;
 use crate::simulator::ControlSimulator;
 
+/// Console output boundary invoked only after the event store's policy admits emission.
 pub trait ConsoleSink {
+    /// Writes already-formatted bounded `text` at `severity`; adapters must treat text as data, not a format string.
     fn write(
         &mut self,
         severity: Severity,
@@ -18,6 +20,7 @@ pub trait ConsoleSink {
     );
 }
 
+/// Returns `text` with Unicode control characters escaped so local diagnostics cannot inject console control sequences.
 fn console_text(text: &str) -> String {
     text.chars()
         .flat_map(|c| {
@@ -30,6 +33,9 @@ fn console_text(text: &str) -> String {
         .collect()
 }
 
+/// Records `input` in `store` and returns its retention/console outcome or recording-admission error.
+/// `console` receives escaped text only when `console_enabled` and the store explicitly requests emission.
+/// Sink panics propagate after recording; console delivery is not transactional with local retention.
 pub fn emit(
     store: &mut EventStore,
     console: &mut impl ConsoleSink,
@@ -62,13 +68,19 @@ pub fn emit(
 /// No raw configuration, browser exception or helper input enters this DTO.
 #[derive(Debug)]
 pub struct Notice {
+    /// Subsystem associated with the typed outcome.
     pub category: Category,
+    /// Local policy severity.
     pub severity: Severity,
+    /// Static application code, validated when recorded.
     pub code: &'static str,
+    /// Optional static correlation label, never user payload.
     pub subject: Option<&'static str>,
+    /// Application-formatted diagnostic text; event retention applies byte bounds.
     pub message: String,
 }
 impl Notice {
+    /// Returns borrowed event input using monotonic `elapsed_ms` and optional Unix `wall_clock_ms`.
     pub fn input(
         &self,
         elapsed_ms: u64,
@@ -85,6 +97,8 @@ impl Notice {
         }
     }
 
+    /// Returns an informational notice from `category`, static `code`/`subject` and sanitized `message`.
+    /// Code syntax and retained text bounds are enforced later by the event store.
     pub fn info(
         category: Category,
         code: &'static str,
@@ -102,12 +116,17 @@ impl Notice {
 }
 
 #[derive(Clone, Copy)]
+/// Independent browser persistence areas whose read/write recovery histories must not cross.
 pub enum StorageArea {
+    /// Accepted project/draft persistence.
     Draft,
+    /// Workspace and UI preferences.
     Preferences,
+    /// Named portable appearance values.
     Presets,
 }
 impl StorageArea {
+    /// Returns the bounded static storage-area display label.
     pub fn label(self) -> &'static str {
         match self {
             Self::Draft => "Draft",
@@ -116,6 +135,7 @@ impl StorageArea {
         }
     }
 
+    /// Returns the stable zero-based adapter-state slot in `0..3`.
     fn index(self) -> usize {
         match self {
             Self::Draft => 0,
@@ -125,22 +145,37 @@ impl StorageArea {
     }
 }
 #[derive(Clone, Copy)]
+/// Sanitized persistence outcome without stored text or raw browser exceptions.
 pub enum StorageIssue {
-    Failure(StorageFailure),
+    /// Browser storage operation failed.
+    Failure(
+        /// Classified quota, denial or unavailable outcome.
+        StorageFailure,
+    ),
+    /// Saved bytes/schema cannot be admitted.
     Corrupt,
+    /// Another context changed the observed saved value.
     Conflict,
+    /// Persistent owner/revision/request identity cannot advance safely.
     Exhausted,
 }
 
 /// The checked outcome of this save attempt, independent of an earlier UI conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DraftSaveAttempt {
+    /// Compare-before-write detected changed storage; no write was attempted.
     Conflict,
-    Completed(Result<(), StorageFailure>),
+    /// Actual read/write outcome after conflict admission.
+    Completed(
+        /// Success only after write callback succeeds; errors include failed prior read.
+        Result<(), StorageFailure>,
+    ),
 }
 impl DraftSaveAttempt {
+    /// Returns whether this specific attempt detected a cross-tab conflict.
     pub fn is_conflict(self) -> bool { matches!(self, Self::Conflict) }
 
+    /// Returns editor acknowledgment outcome, mapping conflict to denial without claiming a completed write.
     pub fn acknowledgment(self) -> Result<(), StorageFailure> {
         match self {
             Self::Conflict => Err(StorageFailure::Denied),
@@ -149,6 +184,7 @@ impl DraftSaveAttempt {
     }
 
     /// Conflict is reported by the existing conflict hook exactly once.
+    /// Returns classified read/write outcome, or `None` when the conflict hook owns reporting.
     pub fn storage_result(self) -> Option<Result<(), StorageIssue>> {
         match self {
             Self::Conflict => None,
@@ -158,6 +194,8 @@ impl DraftSaveAttempt {
 }
 
 /// Called inside the draft lock, after token currentness has been checked.
+/// Compares actual `current` storage with trusted `saved` unless explicit `replace` is set.
+/// Returns read failure/conflict without calling `write`, otherwise its actual outcome; no retry occurs.
 pub fn attempt_draft_save(
     replace: bool,
     current: Result<Option<String>, StorageFailure>,
@@ -173,6 +211,8 @@ pub fn attempt_draft_save(
 
 /// Reload consumes the actual observation and reports this read's result only.
 /// A prior failed write remains independent in AdapterState.
+/// Returns both `store` reload admission and the classified read outcome for actual storage `observation`.
+/// Failed reload preserves records according to PresetStore's contract; no browser I/O is performed here.
 pub fn reload_preset_attempt(
     store: &mut PresetStore,
     observation: Result<Option<String>, StorageFailure>,
@@ -188,20 +228,34 @@ pub fn reload_preset_attempt(
     (result, read)
 }
 #[derive(Clone, Copy)]
+/// Independent render/recovery channels with separate diagnostic state.
 pub enum RenderLane {
+    /// Static accepted/diagnostic appearance canvas.
     Appearance,
+    /// Stateful synthetic controls and completed-frame preview.
     Simulation,
+    /// Explicit performance-timing render workload.
     Timing,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Typed rendering failure retained without raw browser exceptions.
 pub enum RenderIssue {
+    /// Unclassified renderer or scheduler failure.
     Generic,
+    /// Browser ImageData allocation failed.
     CanvasAllocation,
+    /// Canvas 2D rendering context is unavailable.
     CanvasContext,
+    /// Browser rejected pixel publication.
     CanvasDraw,
-    Preview(crate::preview::PreviewError),
+    /// Shared preview admission/render/completion failed.
+    Preview(
+        /// Exact bounded preview failure.
+        crate::preview::PreviewError,
+    ),
 }
 impl std::fmt::Display for RenderIssue {
+    /// Writes bounded diagnostic text to `f`; returns any formatter failure.
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -216,6 +270,7 @@ impl std::fmt::Display for RenderIssue {
     }
 }
 impl RenderLane {
+    /// Returns the stable zero-based render-state slot in `0..3`.
     fn index(self) -> usize {
         match self {
             Self::Appearance => 0,
@@ -224,6 +279,7 @@ impl RenderLane {
         }
     }
 
+    /// Returns the static lane label for diagnostic subjects.
     fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
@@ -233,11 +289,16 @@ impl RenderLane {
     }
 }
 #[derive(Default)]
+/// Transition memory preventing repeated render notices and keeping storage read/write recovery independent.
 pub struct AdapterState {
+    /// Failure latches by storage area and operation (`0` read, `1` write).
     storage_failed: [[bool; 2]; 3],
+    /// Last failure per render lane; `None` means success/unfailed.
     render_failed: [Option<RenderIssue>; 3],
 }
 impl AdapterState {
+    /// Records write `result` for `area`; returns every failure or its first subsequent recovery notice, otherwise
+    /// `None`.
     pub fn storage(
         &mut self,
         area: StorageArea,
@@ -246,6 +307,8 @@ impl AdapterState {
         self.storage_at(area, result, true)
     }
 
+    /// Records read `result` for `area`; returns every failure or its first subsequent recovery notice, otherwise
+    /// `None`.
     pub fn storage_read(
         &mut self,
         area: StorageArea,
@@ -254,6 +317,8 @@ impl AdapterState {
         self.storage_at(area, result, false)
     }
 
+    /// Updates `area`'s read/write latch selected by `write` from actual `result`.
+    /// Returns typed failure/recovery notice, or `None` for repeated success; reads never clear write failures.
     fn storage_at(
         &mut self,
         area: StorageArea,
@@ -307,6 +372,7 @@ impl AdapterState {
         }
     }
 
+    /// Records generic `success`/failure for `lane`; returns a notice only when its retained outcome changes.
     pub fn render(
         &mut self,
         lane: RenderLane,
@@ -315,6 +381,7 @@ impl AdapterState {
         self.render_result(lane, if success { Ok(()) } else { Err(RenderIssue::Generic) })
     }
 
+    /// Records typed `result` for `lane`; returns first/changed failure or recovery, and `None` for identical outcomes.
     pub fn render_result(
         &mut self,
         lane: RenderLane,
@@ -339,6 +406,7 @@ impl AdapterState {
     }
 }
 
+/// Returns a validation/recovery notice only when `was_invalid` differs from current `invalid`.
 pub fn validation_transition(
     was_invalid: bool,
     invalid: bool,
@@ -363,11 +431,22 @@ pub fn validation_transition(
     })
 }
 
+/// Import stage failure without file contents or raw exceptions.
 pub enum ImportFailure {
-    TooLarge { limit_bytes: usize },
+    /// Input exceeded its route-specific byte cap before reading/admission.
+    TooLarge {
+        /// Maximum permitted file bytes for this import format.
+        limit_bytes: usize,
+    },
+    /// Browser read did not produce usable bytes.
     Read,
-    Rejected(EditorError),
+    /// Reducer refused decoded/imported content or its authority.
+    Rejected(
+        /// Exact typed admission failure.
+        EditorError,
+    ),
 }
+/// Returns one sanitized import outcome notice from actual `result`, without embedding file text or paths.
 pub fn import_outcome(result: Result<(), ImportFailure>) -> Notice {
     let message = match result {
         Ok(()) => "Configuration imported and accepted".into(),
@@ -392,11 +471,16 @@ pub fn import_outcome(result: Result<(), ImportFailure>) -> Notice {
     }
 }
 #[derive(Clone, Copy)]
+/// Local export destination or serialization failure.
 pub enum TransferFailure {
+    /// Clipboard API was unavailable/denied/rejected.
     Clipboard,
+    /// Browser download could not be started.
     Download,
+    /// Export encoding failed or exceeded its checked size limit.
     Serialization,
 }
+/// Returns a typed actionable notice for `failure`, preserving the retained source data.
 pub fn transfer_failure(failure: TransferFailure) -> Notice {
     Notice {
         category: Category::ImportExport,
@@ -415,6 +499,7 @@ pub fn transfer_failure(failure: TransferFailure) -> Notice {
         .into(),
     }
 }
+/// Returns the bounded notice for rejected synthetic frame completion; prior completed state stays authoritative.
 pub fn frame_completion_error() -> Notice {
     Notice {
         category: Category::Rendering,
@@ -425,6 +510,8 @@ pub fn frame_completion_error() -> Notice {
     }
 }
 
+/// Acknowledges completed frame `token` in `sim`; returns success or a typed notice when ownership rejects completion.
+/// This is synthetic presentation acknowledgment, not a hardware transfer/scanout observation.
 pub fn complete_simulation_frame(
     sim: &mut ControlSimulator,
     token: dashboard_core::display::pipeline::FrameToken,
@@ -437,6 +524,8 @@ pub fn complete_simulation_frame(
 }
 
 /// Invoke the actual canvas consumer only for this source's exact retained candidate.
+/// Returns `consume`'s result for `preview` pixels bound to `sim` and `token`; invalid/foreign/missing candidates
+/// return an error without invoking `consume`. No frame completion or pixel ownership transfer occurs here.
 pub fn consume_simulation_pixels(
     sim: &ControlSimulator,
     preview: &crate::preview::Preview,
@@ -453,6 +542,8 @@ pub fn consume_simulation_pixels(
 }
 
 /// Restoration must succeed before completion; failure retains old metadata and bytes.
+/// Calls `consume` on pixels bound to `sim`, `preview` and `token`, then acknowledges synthetic completion and
+/// finishes preview ownership. Returns consumer/admission/completion errors; consumer side effects are not rolled back.
 pub fn complete_simulation_pixels(
     sim: &mut ControlSimulator,
     preview: &mut crate::preview::Preview,
@@ -466,20 +557,33 @@ pub fn complete_simulation_pixels(
     Ok(())
 }
 
+/// Small typed simulator state snapshot for transition diagnostics, excluding sample payloads and per-frame noise.
 pub struct SimulationObservation {
+    /// Current logical control page.
     page: ControlPage,
+    /// Selected named dashboard view ID.
     view: u8,
+    /// Current session backlight level.
     brightness: Brightness,
+    /// Requested diagnostic FPS display mode, not measured physical FPS.
     fps: dashboard_core::render::FpsMode,
+    /// Physical-equivalent boost unit toggle (`true` means PSI).
     psi: bool,
+    /// Pending statistics reset token, or `None` when no reset awaits acknowledgment.
     reset: Option<u64>,
+    /// Visible warning-popup acknowledgment feedback, or `None` for other/no popup.
     warning: Option<WarningFeedback>,
+    /// Qualified sample quality in SensorId order at the captured simulator time.
     quality: [Quality; 8],
+    /// Last per-sensor input admission outcomes in SensorId order.
     inputs: [Option<crate::simulator::InputOutcome>; 8],
+    /// Latest bounded invalid-inspection outcome, if present.
     inspection: Option<&'static str>,
+    /// Latest bounded control-rejection outcome, if present.
     control_outcome: Option<&'static str>,
 }
 impl SimulationObservation {
+    /// Returns typed current state from `sim`, resolving sample quality at its monotonic simulation time.
     pub fn capture(sim: &ControlSimulator) -> Self {
         let session = sim.session();
         let snapshot = sim.snapshot();
@@ -501,6 +605,8 @@ impl SimulationObservation {
         }
     }
 }
+/// Returns notices for relevant differences from `before` to `after`, including quality/recovery and control outcomes.
+/// Unchanged state and disappearing optional outcomes are quiet; no raw sample values or per-frame events are emitted.
 pub fn simulation_changes(
     before: &SimulationObservation,
     after: &SimulationObservation,
@@ -609,6 +715,7 @@ pub fn simulation_changes(
 }
 
 /// Browser Date.now is an integer; the positive i64 bound is exclusive in f64.
+/// Returns integer Unix milliseconds for finite integral `value` inside i64 range, otherwise `None` without saturation.
 pub fn checked_wall_clock(value: f64) -> Option<i64> {
     if value.is_finite() && value.fract() == 0. && value >= i64::MIN as f64 && value < -(i64::MIN as f64) {
         Some(value as i64)
@@ -619,10 +726,13 @@ pub fn checked_wall_clock(value: f64) -> Option<i64> {
 
 /// Only the field's own accepted keystrokes may produce its later blur record.
 pub struct FieldCommit {
+    /// Accepted dashboard lineage when this field first gained commit tracking.
     initial: AcceptedConfigKey,
+    /// Latest accepted lineage produced by this field's observed keystrokes.
     latest: Option<AcceptedConfigKey>,
 }
 impl FieldCommit {
+    /// Returns fresh field tracking anchored to `editor`'s accepted dashboard content.
     pub fn begin(editor: &Editor) -> Self {
         Self {
             initial: editor.accepted_config_key(),
@@ -630,6 +740,8 @@ impl FieldCommit {
         }
     }
 
+    /// Records this field's accepted content change when prior `before` differs from clean `editor` lineage.
+    /// Unchanged or rejected keystrokes do not replace the latest accepted lineage.
     pub fn observe(
         &mut self,
         before: AcceptedConfigKey,
@@ -640,6 +752,8 @@ impl FieldCommit {
         }
     }
 
+    /// Consumes tracked keystroke evidence and returns `editor`'s accepted revision only if that exact changed
+    /// lineage remains current and clean; returns `None` after unrelated edits, rejection or no accepted change.
     pub fn finish(
         &mut self,
         editor: &Editor,
@@ -652,20 +766,31 @@ impl FieldCommit {
 }
 
 #[derive(Default, Clone, Copy)]
+/// Event-log display pause anchored to retained identity; recording continues independently.
 pub struct PauseState {
+    /// Whether display follows a fixed anchor instead of live newest records.
     paused: bool,
+    /// Store-wide newest event at pause, or `None` for an empty store.
     anchor: Option<EventSeq>,
+    /// Lifetime insertion count captured at pause for later new-record accounting.
     inserted: DiagnosticCount,
 }
+/// Read-only pause status with explicit eviction gaps and inexact insertion counts.
 pub struct PauseReport {
+    /// Whether display is currently paused.
     pub paused: bool,
+    /// Original anchor, or current oldest retained identity after an eviction gap.
     pub anchor: Option<EventSeq>,
+    /// Paused nonempty anchor was evicted or cleared.
     pub gap: bool,
+    /// Insertions since pause, zero while live; saturation records uncertain subtraction.
     pub new_events: DiagnosticCount,
 }
 impl PauseState {
+    /// Returns whether the display is paused; event recording is unaffected.
     pub fn is_paused(&self) -> bool { self.paused }
 
+    /// Captures `snapshot`'s store-wide newest identity and insertion count, replacing any previous pause anchor.
     pub fn pause(
         &mut self,
         snapshot: &EventSnapshot,
@@ -675,8 +800,11 @@ impl PauseState {
         self.inserted = snapshot.counters.inserted;
     }
 
+    /// Resumes live display without clearing the retained anchor or changing the event store.
     pub fn resume(&mut self) { self.paused = false; }
 
+    /// Returns current pause/gap/insertion accounting against `store` without mutating either owner.
+    /// After anchor eviction, uses the oldest retained identity or `None` if the store is empty.
     pub fn report(
         &self,
         store: &EventStore,

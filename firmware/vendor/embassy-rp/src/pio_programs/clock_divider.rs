@@ -12,7 +12,9 @@ use crate::clocks::clk_sys_freq;
 ///
 /// # Returns
 ///
-/// A fixed-point divider value suitable for use in a PIO state machine configuration
+/// A divider truncated to 1/256, so the achieved rate can exceed the requested rate.
+/// Panics for zero target or a computed divider outside 1..=65536.
+/// The maximum is encoded as zero only when written to the hardware register.
 pub fn calculate_pio_clock_divider(target_hz: u32) -> fixed::FixedU32<U8> {
     calculate_pio_clock_divider_value(clk_sys_freq(), target_hz)
 }
@@ -26,8 +28,13 @@ pub fn calculate_pio_clock_divider(target_hz: u32) -> fixed::FixedU32<U8> {
 ///
 /// # Returns
 ///
-/// A fixed-point divider value suitable for use in a PIO state machine configuration
-pub const fn calculate_pio_clock_divider_value(sys_hz: u32, target_hz: u32) -> fixed::FixedU32<U8> {
+/// A divider truncated to 1/256, so the achieved rate can exceed the requested rate.
+/// Panics for zero target or a computed divider outside 1..=65536.
+/// The maximum is encoded as zero only when written to the hardware register.
+pub const fn calculate_pio_clock_divider_value(
+    sys_hz: u32,
+    target_hz: u32,
+) -> fixed::FixedU32<U8> {
     // Requires a non-zero frequency
     core::assert!(target_hz > 0);
 
@@ -43,24 +50,31 @@ pub const fn calculate_pio_clock_divider_value(sys_hz: u32, target_hz: u32) -> f
 }
 
 #[cfg(test)]
+/// Exact fixed-point arithmetic and overflow boundary regressions.
 mod tests {
     use fixed::traits::ToFixed;
 
     use super::*;
 
+    /// Retains large fractional remainders and the 65536 divider endpoint.
     #[test]
     fn large_remainders_do_not_wrap_and_maximum_divider_is_representable() {
-        assert_eq!(calculate_pio_clock_divider_value(150_000_000, 80_000_000).to_bits(), 480);
+        assert_eq!(
+            calculate_pio_clock_divider_value(150_000_000, 80_000_000).to_bits(),
+            480
+        );
         assert_eq!(calculate_pio_clock_divider_value(u32::MAX, 1 << 24).to_bits(), 65535);
         assert_eq!(calculate_pio_clock_divider_value(65_536_000, 1000).to_bits(), 1 << 24);
     }
 
+    /// Rejects out-of-range division before narrowing the wide intermediate.
     #[test]
     #[should_panic]
     fn oversized_divider_is_rejected_before_integer_shift_wraps() {
         let _ = calculate_pio_clock_divider_value(16_777_217, 1);
     }
 
+    /// Checks fractional precision and wide system-clock arithmetic.
     #[test]
     fn clock_divider_math() {
         // A simple divider that must have a fractional part.

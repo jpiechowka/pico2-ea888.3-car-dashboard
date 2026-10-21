@@ -3,6 +3,9 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage, PllConfig};
 
 include!(concat!(env!("OUT_DIR"), "/clock_profile.rs"));
 
+/// Returns the generated PLL/voltage profile on the board's 12 MHz crystal
+/// reference. Panics if PLL constraints fail; does not apply clocks or establish
+/// electrical/thermal safety of an Expert profile.
 pub fn clock_config() -> ClockConfig {
     assert!(
         PLL.is_valid(12_000_000),

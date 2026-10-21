@@ -1,5 +1,8 @@
+//! Coherent raw sensor ingestion, mode-specific peak indication and statistics reset.
 use dashboard_host_validation::sensor_state::{PeakMode, SensorState};
 
+/// Valid new timestamps publish current/extrema together; duplicate, backward and invalid samples leave state
+/// unchanged.
 #[test]
 fn accepted_measurement_updates_current_history_and_extrema_together() {
     let mut state = SensorState::new();
@@ -22,6 +25,7 @@ fn accepted_measurement_updates_current_history_and_extrema_together() {
     assert_eq!(state.maximum(), Some(-19.0));
 }
 
+/// A decreasing voltage extends the raw range in every mode, but only Range mode signals its new lower peak.
 #[test]
 fn peak_modes_distinguish_upper_extremum_range_and_disabled_highlight() {
     for (mode, should_flash) in [
@@ -38,6 +42,8 @@ fn peak_modes_distinguish_upper_extremum_range_and_disabled_highlight() {
     }
 }
 
+/// Reset preserves current value while clearing history/trend; the last accepted timestamp cannot refill statistics
+/// twice.
 #[test]
 fn statistic_reset_preserves_current_and_rejects_duplicate_repopulation() {
     let mut state = SensorState::new();

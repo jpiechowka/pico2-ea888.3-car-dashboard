@@ -13,8 +13,12 @@ use leptos::leptos_dom::helpers::set_timeout_with_handle;
 use super::*;
 
 #[derive(Clone, Copy)]
+/// Browser-owned textarea/cache/timer handles; the editor alone owns draft text and authority.
 pub(super) struct State {
+    /// Single mounted textarea retained to preserve native undo across reactive updates.
     area: NodeRef<leptos::html::Textarea>,
+    /// Exact projection/parse token plus optional 250 ms timer; a missing handle
+    /// retains authority for explicit Apply after browser scheduling failure.
     timer: StoredValue<
         Option<(
             JsonProjection,
@@ -22,21 +26,33 @@ pub(super) struct State {
             Option<leptos::leptos_dom::helpers::TimeoutHandle>,
         )>,
     >,
+    /// Draft identity currently represented by the mounted textarea.
     binding: StoredValue<Option<JsonDraftHandle>>,
+    /// Last pre-input selection/scroll snapshot for rejected input restoration.
     caret: StoredValue<Caret>,
+    /// Local browser/admission error, separate from editor syntax/semantic diagnostics.
     error: RwSignal<String>,
+    /// Shared immutable proof cached only for an exact current projection.
     proof: StoredValue<Option<JsonPreviewProof>>,
+    /// JSON projection whose canvas pixels were published; absent before successful drawing.
     pub(super) pixels: RwSignal<Option<JsonProjection>>,
 }
 #[derive(Clone, Copy, Default)]
+/// Browser selection snapshot applicable only to its captured draft identity.
 struct Caret {
+    /// Draft bound when selection was captured; absence cannot restore a live draft.
     handle: Option<JsonDraftHandle>,
+    /// Selection start in DOM UTF-16 code units; unreadable selection defaults to zero.
     start: u32,
+    /// Selection end in DOM UTF-16 code units.
     end: u32,
+    /// Browser selection direction: forward, backward or none.
     direction: &'static str,
+    /// Textarea vertical scroll offset in CSS pixels.
     scroll: i32,
 }
 impl State {
+    /// Returns empty owner-local handles, no timer/draft/proof and no published JSON pixels.
     pub fn new() -> Self {
         Self {
             area: NodeRef::new(),
@@ -51,6 +67,9 @@ impl State {
 
     /// Cache only an immutable shared validation proof of this exact owned
     /// candidate. It is a draw cache, never an editable/accepted config owner.
+    /// Calls `render` with `editor`'s exact current proof and returns its output; absent
+    /// drafts or unavailable proof return editor errors before rendering. Panics only if
+    /// the private cache invariant is broken (or `render` itself panics).
     pub(super) fn with_candidate<T>(
         self,
         editor: &Editor,
@@ -69,6 +88,7 @@ impl State {
             .with_value(|proof| render(proof.as_ref().expect("current checked draw proof"))))
     }
 
+    /// Removes parse authority and clears its timer if installed; disposed storage is ignored.
     fn cancel(self) {
         let _ = self.timer.try_update_value(|timer| {
             if let Some((_, _, Some(handle))) = timer.take() {
@@ -77,6 +97,8 @@ impl State {
         });
     }
 
+    /// Captures mounted textarea selection/scroll before input; selection API failures
+    /// fall back to zero offsets and no direction. Missing textarea leaves the old snapshot.
     fn remember(self) {
         let Some(area) = self.area.get_untracked() else {
             return;
@@ -95,6 +117,8 @@ impl State {
         });
     }
 
+    /// Replaces mounted textarea text from `ui`'s current draft and restores selection/scroll
+    /// only for the same captured draft handle; unavailable nodes/drafts are ignored.
     fn restore(
         self,
         ui: Ui,
@@ -115,11 +139,14 @@ impl State {
     }
 }
 
+/// Returns `ui`'s current draft projection, or `None` without a draft; subscribes to editor changes.
 pub(super) fn projection(ui: Ui) -> Option<JsonProjection> {
     ui.editor.with(|e| e.json_draft().map(|d| d.projection()))
 }
+/// Returns `ui`'s current JSON phase label, or an empty string without a draft.
 pub(super) fn label(ui: Ui) -> &'static str { projection(ui).map_or("", |p| p.phase().label()) }
 
+/// Opens/reuses an editor-owned JSON draft in `ui` and focuses it; admission errors show a notice.
 pub(super) fn open(ui: Ui) {
     let mut outcome = Err(EditorError::StaleToken);
     ui.editor.update(|editor| outcome = editor.open_json());
@@ -128,6 +155,7 @@ pub(super) fn open(ui: Ui) {
         Err(error) => ui.notice.set(error_text(error)),
     }
 }
+/// Opens Diagnostics/Files in `ui` and schedules focus guarded by exact draft `handle`.
 pub(super) fn focus(
     ui: Ui,
     handle: JsonDraftHandle,
@@ -136,6 +164,11 @@ pub(super) fn focus(
     command_palette::focus_json(ui, handle);
 }
 
+/// Admits the mounted text into `ui`'s exact bound draft, rejecting oversized UTF-16
+/// length before copying and enforcing UTF-8 bounds in the reducer. Rejection restores
+/// text/selection; success replaces a 250 ms parse timer. Scheduling failure retains
+/// the admitted token for Apply; stale/disposed callbacks do nothing. Panics only if
+/// successful text admission fails to retain the editor-owned draft invariant.
 fn input(ui: Ui) {
     let state = ui.json;
     let Some(area) = state.area.get_untracked() else {
@@ -201,6 +234,9 @@ fn input(ui: Ui) {
     }
 }
 
+/// Parses any retained pending token and applies `ui`'s exact current JSON as one undo
+/// entry. Failure preserves the draft and reports its error; success clears timer,
+/// local error and inspection and emits an accepted-apply event.
 fn apply(ui: Ui) {
     if let Some(token) = ui
         .json
@@ -228,6 +264,8 @@ fn apply(ui: Ui) {
         ));
     }
 }
+/// Cancels `ui`'s parse timer, requests draft discard and clears local error/inspection.
+/// Emits a discard event even if no draft exists; accepted configuration stays unchanged.
 fn discard(ui: Ui) {
     ui.json.cancel();
     ui.editor.update(|editor| {
@@ -244,6 +282,8 @@ fn discard(ui: Ui) {
     ));
 }
 
+/// Returns display rows for bounded `report`, labelling pointer sides, ambiguity,
+/// missing values and truncated summaries; omitted differences remain an explicit count.
 fn diff_view(report: DiffReport) -> impl IntoView {
     let omitted = report.omitted;
     let count = report.changes.len();
@@ -258,8 +298,15 @@ fn diff_view(report: DiffReport) -> impl IntoView {
     }
 }
 
+/// Returns `ui`'s single retained textarea, parse diagnostics, Apply/Discard and
+/// bounded structural diff. Reactive updates invalidate stale proof/timers and rewrite
+/// DOM text only when needed, preserving native undo during ordinary input. Cleanup
+/// cancels the timer; phase logging excludes keystrokes and document payloads.
 #[component]
-pub(super) fn JsonEditor(ui: Ui) -> impl IntoView {
+pub(super) fn JsonEditor(
+    /// Shared JSON draft, parser scheduling and read-only inspection state.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.json;
     let wrap_lines = RwSignal::new(true);
     let key = Memo::new(move |_| projection(ui));

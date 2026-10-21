@@ -1,3 +1,7 @@
+//! Transactional accepted project, repairable drafts and owner/revision-bound callbacks.
+//! Accepted bytes/history change only after shared validation; rejected candidates
+//! remain inspectable. Action, accepted-project and accepted-configuration revisions
+//! are distinct. Browser adapters own scheduling/storage and return original tokens.
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,24 +21,36 @@ use crate::appearance_presets::{
 use crate::json_draft::{JsonDraft, JsonState};
 pub use crate::json_draft::{JsonDraftHandle, JsonParseToken};
 
+/// Applicability checks and raw-text parsing without accepted-state publication.
 mod raw;
 pub(crate) use raw::apply_raw;
 use raw::{check_raw_available, check_raw_target};
 
+/// Maximum snapshots retained independently in Undo and Redo histories.
 pub const HISTORY_LIMIT: usize = 32;
+/// Maximum UTF-8 bytes accepted for an ordinary raw field edit.
 pub const MAX_RAW_TEXT_BYTES: usize = 1024;
+/// Maximum simultaneously retained raw field entries.
 pub const MAX_RAW_FIELDS: usize = 64;
+/// Browser selection/configuration envelope version, independent of project/config versions.
 pub const SAVED_STATE_VERSION: u16 = 1;
+/// Maximum serialized browser envelope bytes, shared with configuration JSON admission.
 pub const MAX_SAVED_BYTES: usize = MAX_JSON_BYTES;
 
 // A replacement Editor must never accidentally accept an earlier instance's
 // callbacks, even if both happen to have the same local revision/request.
+/// Nonwrapping process-local editor-owner issuer; exhaustion refuses new editors.
 static NEXT_EDITOR: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Revision(u64);
+/// Editor-local checked generation, not wall time and never restored from history.
+pub struct Revision(
+    /// Monotonically issued generation; zero is initial state.
+    u64,
+);
 
 impl Revision {
+    /// Returns the exact generation for diagnostics/protocol transport.
     pub const fn get(self) -> u64 { self.0 }
 }
 
@@ -45,7 +61,9 @@ impl Revision {
 /// stamp.owner = 1;
 /// ```
 pub struct EditorStamp {
+    /// Private editor instance identity; replacement editors never reuse it.
     owner: usize,
+    /// Action revision, including rejected edits and selection changes.
     revision: Revision,
 }
 
@@ -53,21 +71,31 @@ pub struct EditorStamp {
 /// canonical configuration changes; it is never restored from undo history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AcceptedConfigKey {
+    /// Owning editor identity, preventing cache/acquisition reuse across replacement.
     owner: usize,
+    /// Last canonical-configuration transition, independent of selection/startup changes.
     revision: Revision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Highest-priority reason snapshot/history UI actions are presently unavailable.
 pub enum ActionBlock {
+    /// Raw/rejected edits or required artwork geometry repair remain unresolved.
     InvalidDraft,
+    /// Changed inline JSON awaits Apply/Discard.
     JsonPending,
+    /// Startup timing text awaits Apply/Discard.
     StartupPending,
+    /// A pointer gesture still owns layout interaction.
     PointerActive,
+    /// An asynchronous import owns a pending request.
     ImportPending,
+    /// A checked revision/request counter cannot issue another identity.
     IdentityExhausted,
 }
 
 impl From<ActionBlock> for EditorError {
+    /// Returns the corresponding reducer error for readiness `block`.
     fn from(block: ActionBlock) -> Self {
         match block {
             ActionBlock::InvalidDraft => Self::InvalidDraft,
@@ -81,8 +109,11 @@ impl From<ActionBlock> for EditorError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Snapshot of action provenance and its optional current admission blocker.
 pub struct ActionReadiness {
+    /// Editor owner/action revision at inspection time.
     pub stamp: EditorStamp,
+    /// `None` means presently ready; adapters still recheck immediately before action.
     pub block: Option<ActionBlock>,
 }
 
@@ -90,42 +121,82 @@ pub struct ActionReadiness {
 /// never the owner of an indexed semantic inspection target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InspectionTarget {
+    /// Editor action identity at minting time.
     stamp: EditorStamp,
+    /// JSON `(draft_epoch, text_epoch, has_candidate)` identity, if JSON is open.
     candidate_epoch: Option<(u64, u64, bool)>,
+    /// Exact indexed semantic/raw/object target, never resolved by ambiguous IDs alone.
     key: InspectionKey,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Private target coordinates carried by an editor-issued inspection capability.
 enum InspectionKey {
-    Semantic(ValidationLocation),
-    Raw { index: usize, field: RawField },
-    Object(InspectionOwner),
+    /// Shared validation visitor's indexed location.
+    Semantic(
+        /// Exact schema location, including optional owner indices.
+        ValidationLocation,
+    ),
+    /// Existing raw-entry position plus identity, preventing retargeting after reorder.
+    Raw {
+        /// Zero-based retained raw-input index.
+        index: usize,
+        /// Field expected at that index.
+        field: RawField,
+    },
+    /// Explicit read-only object coordinates.
+    Object(
+        /// Indexed object requested by the inspector.
+        InspectionOwner,
+    ),
 }
 
 /// Requested browser inspection coordinates; only Editor can mint authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InspectionOwner {
+    /// Configuration-level controls without a view/widget owner.
     Root,
-    View { index: usize },
-    Widget { index: usize },
-    Channel(Channel),
+    /// View at an indexed candidate position, not its potentially duplicated ID.
+    View {
+        /// Zero-based view-vector position.
+        index: usize,
+    },
+    /// Widget at an indexed candidate position.
+    Widget {
+        /// Zero-based widget-vector position.
+        index: usize,
+    },
+    /// Fixed channel catalogue entry.
+    Channel(
+        /// Channel whose source/history settings are inspected.
+        Channel,
+    ),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Checked inspection coordinates for navigation; mutation requires a separate reducer gate.
 pub struct ResolvedInspection {
+    /// Indexed view owner, absent for targets without one.
     pub view_index: Option<usize>,
+    /// Indexed widget owner, absent for targets without one.
     pub widget_index: Option<usize>,
+    /// Fixed source-channel index, absent for targets without one.
     pub channel_index: Option<usize>,
+    /// Shared semantic field when targeting a validation issue.
     pub field: Option<Field>,
+    /// Retained raw field when targeting existing text repair.
     pub raw_field: Option<RawField>,
+    /// Exact retained raw-entry index, absent for semantic/object navigation.
     pub raw_index: Option<usize>,
     /// False for duplicate/missing widget or view ID owners. Even when true,
     /// mutation must use normal reducer admission and field capability checks.
     pub id_lookup_unambiguous: bool,
+    /// Indexed JSON pointer for semantic/object targets; raw-entry targets have no path.
     pub json_path: Option<String>,
 }
 
 impl ResolvedInspection {
+    /// Returns human-readable JSON/index coordinates, or `Configuration` for a root target.
     pub fn display_location(&self) -> String {
         let mut parts = Vec::new();
         if let Some(path) = self.json_path.as_deref().filter(|path| !path.is_empty()) {
@@ -152,323 +223,665 @@ impl ResolvedInspection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Selected named view and optional widget within that view; IDs are not vector indices.
 pub struct Selection {
+    /// Existing unique view ID.
     pub view: u8,
+    /// Existing unique widget ID belonging to the view, or no widget selection.
     pub widget: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Field callback capability bound to editor instance and action revision.
 pub struct FieldToken {
+    /// Issuing editor identity.
     owner: usize,
+    /// Action revision when the control callback was bound.
     revision: Revision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Existing widget movement or a new library-channel placement.
 pub enum PointerTarget {
-    Widget(u16),
-    Library(Channel),
+    /// Move/resize an existing widget.
+    Widget(
+        /// Unique widget ID, not vector index.
+        u16,
+    ),
+    /// Add a widget using shared channel defaults.
+    Library(
+        /// Channel whose default widget will be inserted.
+        Channel,
+    ),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One active gesture's immutable editor/request/pointer/target identity.
 pub struct PointerToken {
+    /// Issuing editor identity.
     owner: usize,
+    /// Checked asynchronous-request sequence.
     request: u64,
+    /// Action revision after any pointer-start selection.
     revision: Revision,
+    /// Browser pointer ID captured at gesture start, including its signed representation.
     pointer_id: i32,
+    /// Original widget/library target; later events cannot replace it.
     target: PointerTarget,
+    /// View selected at gesture start, used for library insertion.
     view: u8,
 }
 
 impl PointerToken {
+    /// Returns the exact captured browser pointer ID for capture/release matching.
     pub fn pointer_id(self) -> i32 { self.pointer_id }
 
+    /// Returns the original gesture target without granting a fresh callback identity.
     pub fn target(self) -> PointerTarget { self.target }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Capability for one asynchronous import; later edits or replacement retire it.
 pub struct ImportToken {
+    /// Issuing editor identity.
     owner: usize,
+    /// Checked import request sequence.
     request: u64,
+    /// Action revision at import start.
     revision: Revision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Explicit import codec selection; complete projects retain startup/artwork.
 pub enum ImportFormat {
+    /// Complete versioned project archive.
     Project,
+    /// Dashboard JSON, with supported legacy migration through the shared codec.
     Json,
+    /// Dashboard-only compact binary.
     Binary,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Prepared save identity; an old successful write can affect stored revision evidence.
 pub struct SaveToken {
+    /// Issuing editor identity.
     owner: usize,
+    /// Checked save request sequence.
     request: u64,
+    /// Action revision whose bytes were captured.
     revision: Revision,
 }
 
+/// Immutable browser-save payload whose actual storage completion must be acknowledged.
 pub struct SaveRequest {
+    /// Original save capability checked immediately before the adapter writes.
     token: SaveToken,
+    /// Bounded versioned selection/configuration envelope.
     json: String,
+    /// Complete accepted project sharing immutable artwork allocations.
     project: Project,
 }
 
 impl SaveRequest {
+    /// Returns the original save capability; adapters must not refresh it after waiting.
     pub fn token(&self) -> SaveToken { self.token }
 
+    /// Returns the exact serialized envelope bytes the adapter must write.
     pub fn json(&self) -> &str { &self.json }
 
+    /// Returns the captured complete project paired with the selection envelope.
     pub fn project(&self) -> &Project { &self.project }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Sanitized browser persistence failure; raw exceptions stay outside the reducer.
 pub enum StorageFailure {
+    /// Permission/lock/conflict policy denied the operation.
     Denied,
+    /// Browser storage quota prevented completion.
     Quota,
+    /// Storage unavailable or completion could not be established.
     Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Derived save indicator; only acknowledged actual writes can produce Saved.
 pub enum SaveStatus {
+    /// Current action revision differs from the last known stored revision.
     Dirty,
+    /// Unresolved drafts or artwork mismatch block a current snapshot.
     InvalidDraft,
+    /// A prepared save request is awaiting its real completion.
     Saving,
+    /// Last acknowledged stored revision equals current action revision.
     Saved,
-    Failed(StorageFailure),
+    /// The latest current save failed.
+    Failed(
+        /// Sanitized storage failure category.
+        StorageFailure,
+    ),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Raw editable widget property; quantities remain in the channel's canonical units.
 pub enum WidgetField {
+    /// Widget's bounded user-visible label.
     Label,
+    /// Number of decimal places in rendered numeric values.
     Decimals,
+    /// Fixed history graph lower bound, available only in fixed-range mode.
     GraphMinimum,
+    /// Fixed history graph upper bound, available only in fixed-range mode.
     GraphMaximum,
+    /// Configured gauge lower bound in canonical channel units.
     GaugeMinimum,
+    /// Configured gauge upper bound in canonical channel units.
     GaugeMaximum,
-    Color(ColorRole),
+    /// One widget palette role, parsed through the shared colour parser.
+    Color(
+        /// Palette member being edited.
+        ColorRole,
+    ),
+    /// Bounded warning popup text.
     WarningMessage,
+    /// Primary warning trigger threshold in canonical channel units.
     WarningTrigger,
+    /// Primary hysteresis clear threshold in canonical channel units.
     WarningClear,
+    /// Minimum qualified load percentage for warning evaluation.
     WarningLoad,
+    /// Warning blink on duration in milliseconds.
     WarningOn,
+    /// Warning blink off duration in milliseconds.
     WarningOff,
+    /// Display smoothing duration in milliseconds; does not delay raw warnings.
     SmoothingMilliseconds,
+    /// Peak indicator hold duration in milliseconds.
     PeakHoldMilliseconds,
+    /// Manual/reference value in canonical channel units.
     Reference,
-    BandMinimum(u8),
-    BandMaximum(u8),
-    BandLabel(u8),
-    BandColor(u8),
+    /// Existing gauge-band lower endpoint in canonical units.
+    BandMinimum(
+        /// Zero-based band index.
+        u8,
+    ),
+    /// Existing gauge-band upper endpoint in canonical units.
+    BandMaximum(
+        /// Zero-based band index.
+        u8,
+    ),
+    /// Existing band's bounded display label.
+    BandLabel(
+        /// Zero-based band index.
+        u8,
+    ),
+    /// Existing band's colour.
+    BandColor(
+        /// Zero-based band index.
+        u8,
+    ),
+    /// Upper trigger endpoint for window warning modes, in canonical units.
     WarningTriggerHigh,
+    /// Upper hysteresis-clear endpoint for window modes, in canonical units.
     WarningClearHigh,
+    /// Warning acknowledgement snooze duration in seconds.
     WarningSnoozeSeconds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Raw BLE peer/timing controls; edits configure the prototype without generating traffic.
 pub enum BleField {
+    /// Colon-separated six-byte address in displayed/stored order.
     Address,
+    /// Connection-attempt timeout in milliseconds.
     ConnectTimeout,
+    /// Adapter response timeout in milliseconds.
     ResponseTimeout,
+    /// Gap between permitted adapter requests in milliseconds.
     PollGap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Raw normal/warning RGB-pattern controls, validated by the shared configuration rules.
 pub enum LedField {
+    /// Pattern RGB565 colour parsed from user text.
     Color,
+    /// Pattern brightness percentage.
     Brightness,
+    /// Pattern period in milliseconds.
     Period,
+    /// Blink on-duty percentage.
     OnPercent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Fuel-assumption inputs used for derived AFR; none measures actual fuel composition.
 pub enum FuelField {
+    /// Explicit stoichiometric air/fuel mass ratio.
     Ratio,
+    /// Declared ethanol blend percentage under the selected blend basis.
     Percent,
+    /// Assumed gasoline stoichiometric air/fuel mass ratio.
     GasolineRatio,
+    /// Assumed ethanol stoichiometric air/fuel mass ratio.
     EthanolRatio,
+    /// Assumed gasoline density in kg/L at the declared reference temperature.
     GasolineDensity,
+    /// Assumed ethanol density in kg/L at the declared reference temperature.
     EthanolDensity,
+    /// Common density reference temperature in degrees Celsius.
     ReferenceCelsius,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Raw diagnostic source routing/timing controls; acceptance does not qualify ECU support.
 pub enum SourceField {
+    /// Physical 11-bit CAN request identifier, decimal or `0x` hexadecimal text.
     Request,
+    /// Physical 11-bit CAN response identifier, decimal or `0x` hexadecimal text.
     Response,
+    /// Requested polling interval in milliseconds when polling is enabled.
     PollMilliseconds,
+    /// Sample freshness limit in milliseconds.
     FreshnessMilliseconds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Stable identity for one retained raw text input, with variant-dependent applicability.
 pub enum RawField {
-    Ble(BleField),
-    HistorySeconds(Channel),
-    Led { warning: bool, field: LedField },
+    /// BLE prototype peer/timing input.
+    Ble(
+        /// Concrete BLE control.
+        BleField,
+    ),
+    /// Shared channel history duration in seconds.
+    HistorySeconds(
+        /// Channel whose widgets share this history window.
+        Channel,
+    ),
+    /// One property of the normal or warning RGB pattern.
+    Led {
+        /// True selects warning pattern, false selects normal pattern.
+        warning: bool,
+        /// Concrete RGB-pattern control.
+        field: LedField,
+    },
+    /// Ordinary configurable button-hold threshold in milliseconds, excluding fixed Y recovery.
     ControlHoldMilliseconds,
-    ViewName(u8),
-    Widget(u16, WidgetField),
-    Fuel(FuelField),
-    Source(Channel, SourceField),
+    /// Name of the selected view.
+    ViewName(
+        /// Unique view ID.
+        u8,
+    ),
+    /// Property of the selected or explicitly inspected widget.
+    Widget(
+        /// Unique widget ID.
+        u16,
+        /// Concrete widget property.
+        WidgetField,
+    ),
+    /// Input supported by the current declared fuel-assumption variant.
+    Fuel(
+        /// Concrete assumption input.
+        FuelField,
+    ),
+    /// One diagnostic channel source control.
+    Source(
+        /// Fixed channel catalogue entry.
+        Channel,
+        /// Concrete routing/timing property.
+        SourceField,
+    ),
+    /// Duration of each warning page in milliseconds.
     WarningPageMilliseconds,
-    WarningColor { foreground: bool },
+    /// Shared warning-overlay colour.
+    WarningColor {
+        /// True selects text, false selects background.
+        foreground: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Original user text retained for repair until its complete candidate validates.
 pub struct RawInput {
+    /// Applicable input identity in the current accepted/rejected candidate.
     pub field: RawField,
+    /// At most `MAX_RAW_TEXT_BYTES` UTF-8 bytes, including incomplete/invalid syntax.
     pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Typed reducer command; [`Editor::apply`] validates the complete resulting candidate.
+/// IDs identify objects, indices identify ordering/bands, and measurements use canonical units.
 pub enum Edit {
-    SetOrientation(Orientation),
+    /// Change device orientation and deterministically repack affected views.
+    SetOrientation(
+        /// New device default including mounting flip.
+        Orientation,
+    ),
+    /// Set/clear a named view's orientation override and repack changed geometry.
     SetViewOrientation {
+        /// Unique view ID.
         id: u8,
+        /// Override or `None` to inherit device orientation.
         orientation: Option<Orientation>,
     },
-    ApplyAppearance(AppearanceRequest),
+    /// Apply an already captured scoped appearance request atomically.
+    ApplyAppearance(
+        /// Snapshot and exact editor/target authority to recheck.
+        AppearanceRequest,
+    ),
+    /// Change a channel's shared history window.
     SetHistory {
+        /// Channel whose widgets share this duration.
         channel: Channel,
+        /// History window length in seconds, checked by shared validation.
         seconds: u16,
     },
-    SetReducedMotion(bool),
-    SetLed(LedSettings),
-    SetBle(BleSettings),
+    /// Select reduced-motion rendering behavior.
+    SetReducedMotion(
+        /// Whether reduced motion is enabled.
+        bool,
+    ),
+    /// Replace the complete RGB policy candidate.
+    SetLed(
+        /// Normal/warning patterns and off-screen policy.
+        LedSettings,
+    ),
+    /// Replace BLE prototype settings without sending traffic.
+    SetBle(
+        /// Disabled/enabled peer/profile/timing configuration to validate.
+        BleSettings,
+    ),
+    /// Remove a band and its raw fields, reindexing later retained band inputs.
     RemoveBand {
+        /// Unique widget ID.
         id: u16,
+        /// Zero-based existing band index.
         index: u8,
     },
-    SetControls(ControlMap),
+    /// Replace control mappings; retained hold-duration text still takes precedence.
+    SetControls(
+        /// Complete mapping candidate checked for protected/reachable routes.
+        ControlMap,
+    ),
+    /// Add an empty named view with a fresh ID and select it.
     AddView {
+        /// New bounded display name.
         name: String,
     },
+    /// Rename an existing view.
     RenameView {
+        /// Unique view ID.
         id: u8,
+        /// Replacement bounded display name.
         name: String,
     },
-    DeleteView(u8),
+    /// Delete a nonfinal view and its widgets, repairing boot/selected view as needed.
+    DeleteView(
+        /// Unique view ID to remove.
+        u8,
+    ),
+    /// Clone view settings/widgets with fresh IDs and select the new adjacent view.
     DuplicateView {
+        /// Unique source view ID.
         id: u8,
+        /// New bounded display name.
         name: String,
     },
+    /// Move a named view within display/rotation order.
     ReorderView {
+        /// Unique view ID to move.
         id: u8,
+        /// Destination zero-based index in the existing view vector.
         index: usize,
     },
-    SetBootView(u8),
+    /// Choose the view selected by a new device boot.
+    SetBootView(
+        /// Existing unique view ID.
+        u8,
+    ),
+    /// Add a default channel widget with fresh ID and select it.
     AddWidget {
+        /// Destination view ID.
         view: u8,
+        /// Channel supplying shared widget defaults.
         channel: Channel,
+        /// Requested grid origin/span, validated for fit/collision.
         placement: Placement,
     },
-    DeleteWidget(u16),
+    /// Delete an existing widget, clearing selection when it was selected.
+    DeleteWidget(
+        /// Unique widget ID.
+        u16,
+    ),
+    /// Clone a widget with fresh ID into a specified view/placement and select it.
     DuplicateWidget {
+        /// Unique source widget ID.
         id: u16,
+        /// Destination view ID.
         view: u8,
+        /// New grid origin/span, validated for fit/collision.
         placement: Placement,
     },
+    /// Move an existing widget, preserving its span and selecting the destination.
     MoveWidget {
+        /// Unique widget ID.
         id: u16,
+        /// Destination view ID.
         view: u8,
+        /// Zero-based destination grid column.
         column: u8,
+        /// Zero-based destination grid row.
         row: u8,
     },
+    /// Change an existing widget's span at its retained grid origin.
     ResizeWidget {
+        /// Unique widget ID.
         id: u16,
+        /// Requested supported grid span.
         span: Span,
     },
+    /// Replace grid origin/span in the widget's existing view and select it.
     PlaceWidget {
+        /// Unique widget ID.
         id: u16,
+        /// Full requested grid placement.
         placement: Placement,
     },
+    /// Move a widget in configuration order without changing its position.
     ReorderWidget {
+        /// Unique widget ID.
         id: u16,
+        /// Destination zero-based index in the complete widget vector.
         index: usize,
     },
-    UpdateWidget(Widget),
+    /// Replace the widget matching the candidate's ID, preserving raw field repairs.
+    UpdateWidget(
+        /// Full unvalidated widget candidate.
+        Widget,
+    ),
+    /// Change warning mode with coherent default/swap handling for its endpoints.
     SetWarningMode {
+        /// Unique widget ID.
         id: u16,
+        /// Requested threshold/window mode.
         mode: LimitMode,
     },
+    /// Replace a diagnostic source definition without qualifying or issuing ECU requests.
     SetSource {
+        /// Fixed channel catalogue entry.
         channel: Channel,
+        /// Complete routing/scaling/timing candidate.
         source: ChannelSource,
     },
-    SetFuel(Fuel),
-    SetWarningPresentation(WarningPresentation),
+    /// Replace explicit fuel assumptions used for derived AFR.
+    SetFuel(
+        /// New model variant and its declared parameters.
+        Fuel,
+    ),
+    /// Replace shared warning popup behavior.
+    SetWarningPresentation(
+        /// New warning presentation settings.
+        WarningPresentation,
+    ),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Reducer rejection; methods document whether a failed operation retains a repair draft.
 pub enum EditorError {
-    Project(ProjectError),
-    Validation(ValidationError),
-    Codec(ConfigError),
-    MissingView(u8),
-    MissingWidget(u16),
+    /// Complete project/startup/artwork admission failed.
+    Project(
+        /// Exact project validation/encoding failure.
+        ProjectError,
+    ),
+    /// Shared configuration validation failed.
+    Validation(
+        /// Field/location-specific shared validation error.
+        ValidationError,
+    ),
+    /// Configuration or saved-envelope encoding/parsing failed.
+    Codec(
+        /// Shared format/size/schema error.
+        ConfigError,
+    ),
+    /// Required view ID is absent.
+    MissingView(
+        /// Requested view ID.
+        u8,
+    ),
+    /// Required widget ID is absent.
+    MissingWidget(
+        /// Requested widget ID.
+        u16,
+    ),
+    /// Attempted to remove the last remaining view.
     LastView,
+    /// Bounded view collection cannot admit another view.
     ViewCapacity,
+    /// Bounded widget collection cannot admit the requested insertion/copy.
     WidgetCapacity,
+    /// Text exceeds the destination bounded string capacity.
     TextCapacity,
+    /// Vector/band/inspection index is outside its current collection.
     InvalidIndex,
-    LayoutCannotFit(u8),
+    /// Complete orientation repacking found no valid placement.
+    LayoutCannotFit(
+        /// View ID that cannot fit its widgets.
+        u8,
+    ),
+    /// Widget/field ownership does not match the current selected view/widget.
     SelectionMismatch,
+    /// Undo history is empty.
     NoUndo,
+    /// Redo history is empty.
     NoRedo,
+    /// Checked editor/request/draft identity would overflow.
     CounterExhausted,
+    /// Retained invalid edits block this operation.
     InvalidDraft,
+    /// Pending inline JSON requires Apply/Discard.
     JsonPending,
+    /// Pending startup timing requires Apply/Discard, or no draft exists to Apply.
     StartupPending,
+    /// Inline JSON exceeds the shared byte bound.
     JsonTooLong,
+    /// A pointer gesture blocks snapshot/project editing.
     PointerActive,
+    /// An import request blocks snapshot/project editing.
     ImportPending,
+    /// Duplicate object IDs prevent unique mutation targeting.
     AmbiguousTarget,
+    /// Callback owner/revision/request/target no longer matches current state.
     StaleToken,
+    /// Raw input exceeds its retention bound.
     RawTooLong,
+    /// Too many independent raw inputs are retained simultaneously.
     RawCapacity,
+    /// Field does not apply to the current owner/variant or no retained entry exists.
     FieldUnavailable,
-    RepairFieldFirst(RawField),
-    Parse(RawField),
+    /// Requested option change would hide/remove an unresolved raw control.
+    RepairFieldFirst(
+        /// Existing field that must be repaired first.
+        RawField,
+    ),
+    /// Raw text cannot parse as the destination type.
+    Parse(
+        /// Field whose retained text failed parsing.
+        RawField,
+    ),
+    /// Stored editor envelope version is unsupported.
     SavedVersion,
-    Storage(StorageFailure),
+    /// Actual browser write acknowledgement reported failure.
+    Storage(
+        /// Sanitized persistence failure.
+        StorageFailure,
+    ),
 }
 
 #[derive(Clone)]
+/// Immutable-by-publication project snapshot shared by accepted state and history.
 struct Accepted {
+    /// Fully validated canonical dashboard configuration.
     preview: ValidatedConfig,
+    /// Valid view/widget selection belonging to this snapshot.
     selection: Selection,
+    /// Accepted startup profile; artwork mismatch may remain repairable.
     startup: StartupProfile,
+    /// Shared immutable converted/source artwork, absent for procedural startup.
     artwork: Option<Arc<Artwork>>,
 }
 
+/// Typed failed candidate retained for visual repair without entering accepted history.
 struct Rejected {
+    /// Unvalidated configuration after the rejected operation and raw-field replay.
     config: Config,
+    /// Inspectable candidate selection, repaired when an operation removed its target.
     selection: Selection,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Bounded browser envelope; raw JSON `C` permits strict nested schema decoding on restore.
 struct SavedEnvelope<C> {
+    /// Independent editor envelope version.
     editor_version: u16,
+    /// Selected named view ID.
     selected_view: u8,
+    /// Selected widget ID in that view, or absent.
     selected_widget: Option<u16>,
+    /// Dashboard configuration or its raw JSON during restore validation.
     config: C,
+    /// Accepted startup profile; missing legacy field defaults through serde.
     #[serde(default)]
     startup: StartupProfile,
+    /// Converted artwork identity paired with the atomically stored project, if present.
     #[serde(default)]
     artwork: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Raw startup timing control; both numbers are applied together.
 pub enum StartupNumber {
+    /// Status scene duration in milliseconds.
     StatusMilliseconds,
+    /// Splash scene duration in milliseconds.
     SplashMilliseconds,
 }
 #[derive(Clone)]
+/// Pending startup times, preserving rejected input apart from the accepted profile.
 struct StartupTimingDraft {
+    /// Raw decimal status milliseconds, at most 32 retained Unicode scalars.
     status: String,
+    /// Raw decimal splash milliseconds, at most 32 retained Unicode scalars.
     splash: String,
+    /// Per-field original input exceeded 32 UTF-8 bytes; prefix cannot be admitted.
     oversized: [bool; 2],
 }
 impl StartupTimingDraft {
+    /// Returns `profile` with both times parsed and shared validity checked; oversized,
+    /// parse/range failures return an error without changing retained text or caller state.
     fn profile(
         &self,
         mut profile: StartupProfile,
@@ -491,33 +904,57 @@ impl StartupTimingDraft {
     }
 }
 
+/// Accepted project reducer with bounded histories, repair drafts and private callback identities.
 pub struct Editor {
+    /// Nonreused editor instance identity.
     owner: usize,
+    /// Current accepted project and selection; raw/rejected state never replaces it directly.
     accepted: Box<Accepted>,
+    /// Current action generation, also advanced by rejected text/layout interactions.
     revision: Revision,
+    /// Last accepted project/selection publication generation.
     accepted_revision: Revision,
+    /// Last canonical dashboard configuration transition generation.
     accepted_config_revision: Revision,
+    /// Pending status/splash raw times, absent when applied/discarded.
     startup_timing: Option<StartupTimingDraft>,
+    /// Current editable or inspection-only JSON transaction.
     json: Option<JsonDraft>,
+    /// Last issued JSON draft generation, never restored by Undo.
     json_epoch: u64,
+    /// At most 32 previous accepted snapshots, oldest first.
     undo: VecDeque<Box<Accepted>>,
+    /// At most 32 undone accepted snapshots, next redo at the back.
     redo: VecDeque<Box<Accepted>>,
+    /// At most 64 retained raw field inputs; valid transactions clear them together.
     raw: Vec<RawInput>,
+    /// Latest typed rejected candidate, if any.
     rejected: Option<Box<Rejected>>,
+    /// Parse/validation reason paired with retained invalid draft state.
     draft_error: Option<EditorError>,
+    /// Last issued pointer/import/save request generation.
     request: u64,
+    /// Current pointer gesture capability, absent after cancellation/retirement.
     pointer: Option<PointerToken>,
+    /// Current import capability, absent after completion/cancellation/retirement.
     import: Option<ImportToken>,
+    /// Current prepared save capability; its real write still needs acknowledgement.
     save: Option<SaveToken>,
+    /// Revision last known to have actually reached browser storage, even if older.
     saved_revision: Option<Revision>,
+    /// Latest current-write failure; cleared by a new interaction or successful write.
     save_failure: Option<StorageFailure>,
 }
 
 impl Default for Editor {
+    /// Returns a fresh default editor; panics if reviewed defaults fail validation or
+    /// the process-wide checked owner issuer is exhausted.
     fn default() -> Self { Self::new(default_config()).expect("reviewed default") }
 }
 
 impl Editor {
+    /// Validates `config` and returns an unsaved editor selecting its boot view.
+    /// Returns validation or global owner-counter exhaustion errors before constructing state.
     pub fn new(config: Config) -> Result<Self, EditorError> {
         let preview = validate(config).map_err(EditorError::Validation)?;
         let selection = Selection {
@@ -555,10 +992,13 @@ impl Editor {
         })
     }
 
+    /// Returns accepted startup settings, excluding unapplied timing text.
     pub fn startup_profile(&self) -> StartupProfile { self.accepted.startup }
 
+    /// Returns whether either startup timing control belongs to an unapplied draft.
     pub fn has_startup_draft(&self) -> bool { self.startup_timing.is_some() }
 
+    /// Returns retained text for `field`, or the accepted millisecond value when no draft exists.
     pub fn startup_timing_text(
         &self,
         field: StartupNumber,
@@ -571,12 +1011,14 @@ impl Editor {
         }
     }
 
+    /// Returns true only when a draft exists and both numbers pass shared startup validation.
     pub fn startup_draft_valid(&self) -> bool {
         self.startup_timing
             .as_ref()
             .is_some_and(|d| d.profile(self.accepted.startup).is_ok())
     }
 
+    /// Returns the unapplied/invalid timing banner, or `None` when no timing draft exists.
     pub fn startup_draft_label(&self) -> Option<&'static str> {
         self.startup_timing.as_ref().map(|_| {
             if self.startup_draft_valid() {
@@ -588,6 +1030,9 @@ impl Editor {
     }
 
     /// Own raw text without publishing it; revision changes retire pending imports and writes.
+    /// `stamp` must be current; `field` selects the millisecond control. `text` retains at
+    /// most 32 characters, with original UTF-8 length over 32 bytes marked invalid.
+    /// Returns the advanced revision even for invalid text; stale/draft/counter errors leave state intact.
     pub fn set_startup_number(
         &mut self,
         stamp: EditorStamp,
@@ -628,7 +1073,9 @@ impl Editor {
         Ok(revision)
     }
 
-    /// Validate both numbers with the shared profile validator and publish one history entry.
+    /// Validates both numbers for current `stamp`; returns the advanced revision.
+    /// A changed profile creates one history entry; equal settings still retire callbacks.
+    /// Missing/invalid drafts, stale stamps and admission errors retain the draft.
     pub fn apply_startup_timing(
         &mut self,
         stamp: EditorStamp,
@@ -654,6 +1101,8 @@ impl Editor {
         }
     }
 
+    /// Discards timing text for current `stamp`; returns the current or advanced revision.
+    /// Stale/counter errors preserve state. No history entry is created.
     pub fn discard_startup_timing(
         &mut self,
         stamp: EditorStamp,
@@ -668,9 +1117,11 @@ impl Editor {
         Ok(self.revision)
     }
 
+    /// Returns shared accepted artwork, including artwork retained during geometry repair, or `None`.
     pub fn startup_artwork(&self) -> Option<&Arc<Artwork>> { self.accepted.artwork.as_ref() }
 
     /// Retain source and converted bytes while an orientation edit awaits reconversion.
+    /// Returns whether retained artwork differs from effective splash geometry.
     pub fn artwork_geometry_mismatch(&self) -> bool {
         // Artwork admission already checked its immutable bytes against this geometry.
         self.accepted.artwork.as_ref().is_some_and(|art| {
@@ -683,6 +1134,8 @@ impl Editor {
         })
     }
 
+    /// Returns success for clean, idle editing; rejects drafts, active pointers and imports.
+    /// Retained artwork geometry mismatch is deliberately repairable here.
     fn ensure_project_edit_ready(&self) -> Result<(), EditorError> {
         // Artwork mismatch blocks snapshots, while conversion and orientation repair remain available.
         self.ensure_clean()?;
@@ -696,11 +1149,14 @@ impl Editor {
     }
 
     /// A cheap immutable snapshot; artwork byte allocations are shared with history.
+    /// Returns a validated project or an action-admission/project error without changing state.
     pub fn accepted_project(&self) -> Result<Project, EditorError> {
         self.ensure_snapshot_ready()?;
         Project::new(self.preview(), self.accepted.startup, self.accepted.artwork.clone()).map_err(EditorError::Project)
     }
 
+    /// Returns encoded accepted-project bytes with omissions controlled by `mode`.
+    /// Pending/invalid state, identity exhaustion and project encoding errors block export.
     pub fn export_project(
         &self,
         mode: ExportMode,
@@ -708,6 +1164,10 @@ impl Editor {
         self.accepted_project()?.encode(mode).map_err(EditorError::Project)
     }
 
+    /// Applies `profile` as one undoable project edit; returns its revision or the unchanged revision.
+    /// Non-custom themes remove artwork; custom geometry mismatches retain it for repair.
+    /// Orientation changes may retire active operations; other changes require idle editing.
+    /// Validation/admission/counter errors preserve accepted state.
     pub fn set_startup_profile(
         &mut self,
         profile: StartupProfile,
@@ -732,6 +1192,8 @@ impl Editor {
         self.accept_project(self.preview().clone(), self.accepted.selection, profile, artwork)
     }
 
+    /// Admits immutable `artwork` for current `stamp`, selects Custom, and returns the project revision.
+    /// Stale, busy, geometry/project and counter errors preserve the accepted project.
     pub fn set_artwork_if_current(
         &mut self,
         stamp: EditorStamp,
@@ -748,6 +1210,8 @@ impl Editor {
     }
 
     /// Finish an admitted artwork import before allowing snapshot actions again.
+    /// `token` must still own the import; `artwork` must match current splash geometry.
+    /// Returns the accepted revision. After token admission, failure consumes the import but retains the project.
     pub fn complete_artwork_import(
         &mut self,
         token: ImportToken,
@@ -761,6 +1225,9 @@ impl Editor {
         self.set_artwork_if_current(self.stamp(), artwork)
     }
 
+    /// Publishes already-admitted `preview`, `selection`, `startup` and shared `artwork`.
+    /// Returns the current revision for canonical equality, otherwise advances once and records history.
+    /// Codec/counter errors precede mutation; callers must validate selection and project compatibility.
     fn accept_project(
         &mut self,
         preview: ValidatedConfig,
@@ -797,6 +1264,8 @@ impl Editor {
         Ok(revision)
     }
 
+    /// Consumes current `token`, decodes project `bytes`, and returns the publication revision.
+    /// Stale/dirty admission retains the token; later decode/admission failures consume it but retain accepted state.
     pub fn complete_project_import(
         &mut self,
         token: ImportToken,
@@ -812,6 +1281,8 @@ impl Editor {
     }
 
     /// Browser backing preparation finishes before this final token-checked commit.
+    /// Consumes current `token` and returns the revision after accepting `project`.
+    /// Stale/dirty admission leaves state intact; later admission errors retain the previous project.
     pub fn complete_prepared_project_import(
         &mut self,
         token: ImportToken,
@@ -825,6 +1296,8 @@ impl Editor {
         self.accept_imported_project(project)
     }
 
+    /// Decodes `project`'s dashboard and returns its accepted revision, selecting its boot view.
+    /// Decode/project/counter errors preserve accepted state; artwork allocations remain shared.
     fn accept_imported_project(
         &mut self,
         project: Project,
@@ -837,8 +1310,10 @@ impl Editor {
         self.accept_project(preview, selection, project.profile(), project.artwork().cloned())
     }
 
+    /// Returns the last accepted dashboard proof, excluding all diagnostic candidates.
     pub fn preview(&self) -> &ValidatedConfig { &self.accepted.preview }
 
+    /// Returns rejected-candidate selection when present, otherwise accepted selection.
     pub fn selection(&self) -> Selection {
         self.rejected
             .as_ref()
@@ -847,12 +1322,15 @@ impl Editor {
 
     /// Editable geometry, including rejected structural changes. This is not a
     /// validation proof and must never be used for saving or firmware export.
+    /// Returns the retained rejected configuration or accepted configuration; this borrow is not a validation proof.
     pub fn editing_config(&self) -> &Config {
         self.rejected
             .as_ref()
             .map_or(self.preview().config(), |draft| &draft.config)
     }
 
+    /// Returns whether raw drafts are absent or fully parse to a placement-only validation failure.
+    /// Callers separately gate pending JSON/startup text and gesture ownership.
     pub fn can_edit_layout(&self) -> bool {
         if self.raw.is_empty() {
             return true;
@@ -862,8 +1340,10 @@ impl Editor {
             && validate(candidate).is_err_and(|e| matches!(e.field, Field::Placement))
     }
 
+    /// Returns the action revision, which also advances for retained rejected edits.
     pub fn revision(&self) -> Revision { self.revision }
 
+    /// Returns editor-instance and action-revision identity for delayed callbacks.
     pub fn stamp(&self) -> EditorStamp {
         EditorStamp {
             owner: self.owner,
@@ -871,10 +1351,11 @@ impl Editor {
         }
     }
 
-    /// Revision of last accepted config/selection publication. Raw/rejected
+    /// Returns the revision of last accepted project/selection publication. Raw/rejected
     /// activity advances ordinary revision without publishing accepted state.
     pub fn accepted_revision(&self) -> Revision { self.accepted_revision }
 
+    /// Returns owner and dashboard-content lineage; selection/startup/artwork changes do not advance it.
     pub fn accepted_config_key(&self) -> AcceptedConfigKey {
         AcceptedConfigKey {
             owner: self.owner,
@@ -882,14 +1363,19 @@ impl Editor {
         }
     }
 
+    /// Returns whether owned JSON text remains unapplied, regardless of parse success.
     pub fn has_pending_json(&self) -> bool { self.json.as_ref().is_some_and(|draft| draft.pending) }
 
+    /// Returns current identity and the first snapshot/action blocker, including artwork mismatch and exhausted
+    /// counters.
     pub fn action_readiness(&self) -> ActionReadiness { self.readiness(true) }
 
     /// History can repair retained artwork with a different splash geometry.
     /// UI commands still wait for pending drafts, gestures and imports.
+    /// Returns current identity and the first history-command blocker.
     pub fn history_readiness(&self) -> ActionReadiness { self.readiness(false) }
 
+    /// Returns identity plus ordered state/counter admission; `require_artwork_match` enables the geometry gate.
     fn readiness(
         &self,
         require_artwork_match: bool,
@@ -905,8 +1391,11 @@ impl Editor {
 
     /// Data/lifecycle admission shared by new snapshots and already-issued
     /// writes. Exhausted issuance cannot invalidate an existing save token.
+    /// Returns the first lifecycle/data blocker, or `None` for an admissible existing snapshot.
     fn snapshot_state_block(&self) -> Option<ActionBlock> { self.state_block(true) }
 
+    /// Returns the first JSON, startup, invalid, pointer or import blocker, or `None`.
+    /// `require_artwork_match` additionally treats retained geometry mismatch as invalid.
     fn state_block(
         &self,
         require_artwork_match: bool,
@@ -926,8 +1415,11 @@ impl Editor {
         }
     }
 
+    /// Returns the owned JSON workspace, or `None` while closed.
     pub fn json_draft(&self) -> Option<&JsonDraft> { self.json.as_ref() }
 
+    /// Returns an existing handle or opens bounded JSON without advancing action revision.
+    /// Invalid visual state opens read-only diagnostic JSON. Startup, codec/size and epoch errors leave state intact.
     pub fn open_json(&mut self) -> Result<JsonDraftHandle, EditorError> {
         if self.has_startup_draft() {
             return Err(EditorError::StartupPending);
@@ -975,6 +1467,8 @@ impl Editor {
         Ok(handle)
     }
 
+    /// Replaces owned JSON `text` under current `handle`; returns a debounce parse capability.
+    /// Bounds/read-only/identity errors preserve state. Success retires I/O and pointers without publishing a revision.
     pub fn set_json_text(
         &mut self,
         handle: JsonDraftHandle,
@@ -993,6 +1487,8 @@ impl Editor {
 
     /// Debounce completion parses the actual owned text, never caller-supplied
     /// Config/result data. Check every identity component before doing work.
+    /// `token` must match the current pending editable text. Returns success even for invalid JSON;
+    /// syntax/validation diagnostics live in the draft. Stale tokens return an error without parsing.
     pub fn finish_json_parse(
         &mut self,
         token: JsonParseToken,
@@ -1006,6 +1502,9 @@ impl Editor {
         Ok(())
     }
 
+    /// Re-parses and validates owned pending JSON; returns the publication revision or current revision if unchanged
+    /// text. A pending application records one history entry even for equal content. Invalid/stale/counter/codec
+    /// errors preserve accepted state and draft; missing selection falls back to the imported boot view.
     pub fn apply_json(&mut self) -> Result<Revision, EditorError> {
         let draft = self.json.as_ref().ok_or(EditorError::StaleToken)?;
         self.check_json_handle(draft.handle)?;
@@ -1044,11 +1543,13 @@ impl Editor {
         Ok(revision)
     }
 
+    /// Closes owned JSON without changing revision/history. Returns success, including when already closed.
     pub fn discard_json(&mut self) -> Result<(), EditorError> {
         self.json = None;
         Ok(())
     }
 
+    /// Returns a syntax/invalid/unapplied candidate banner, or `None` for closed/unparsed/nonpending clean JSON.
     pub fn json_preview_label(&self) -> Option<&'static str> {
         let draft = self.json.as_ref()?;
         match &draft.state {
@@ -1066,6 +1567,7 @@ impl Editor {
         }
     }
 
+    /// Returns success only if `handle` matches owned draft, action stamp and accepted revision; otherwise stale.
     fn check_json_handle(
         &self,
         handle: JsonDraftHandle,
@@ -1080,6 +1582,7 @@ impl Editor {
         }
     }
 
+    /// Returns a current candidate capability for semantic `location`; rejects unresolved or ambiguous targets.
     pub fn inspection_target(
         &self,
         location: ValidationLocation,
@@ -1093,6 +1596,7 @@ impl Editor {
         Ok(target)
     }
 
+    /// Returns a current candidate capability for indexed `owner`, or an unresolved-target error.
     pub fn object_inspection_target(
         &self,
         owner: InspectionOwner,
@@ -1107,6 +1611,8 @@ impl Editor {
     }
 
     /// One shared, borrowed candidate selection for bounded browser discovery.
+    /// Calls `inspect` with parsed JSON, diagnostic visual state or accepted configuration in that order;
+    /// returns its result. The borrowed configuration may be invalid and is never published here.
     pub(crate) fn with_inspection_config<R>(
         &self,
         inspect: impl FnOnce(&Config) -> R,
@@ -1118,6 +1624,7 @@ impl Editor {
         inspect(visual.as_ref().map_or(self.preview().config(), |draft| &draft.config))
     }
 
+    /// Returns an inspection capability for retained raw `index`; rejects missing or no-longer-resolvable fields.
     pub fn raw_inspection_target(
         &self,
         index: usize,
@@ -1134,6 +1641,8 @@ impl Editor {
 
     /// Pure navigation. No selection, revision, text, I/O or acceptance state
     /// changes; consumers open their workspace/group before focusing details.
+    /// Returns resolved indices/path for current `target`; errors identify stale identity, missing/ambiguous
+    /// semantic owners, invalid indices or unavailable fields. Indexed duplicate objects remain navigable.
     pub fn inspect(
         &self,
         target: InspectionTarget,
@@ -1235,6 +1744,7 @@ impl Editor {
         })
     }
 
+    /// Returns JSON workspace/text epochs and candidate availability, or `None` outside JSON inspection.
     fn inspection_epoch(&self) -> Option<(u64, u64, bool)> {
         self.json.as_ref().map(|draft| {
             (
@@ -1245,8 +1755,10 @@ impl Editor {
         })
     }
 
+    /// Returns `(undo, redo)` entry counts, each bounded by [`HISTORY_LIMIT`].
     pub fn history_len(&self) -> (usize, usize) { (self.undo.len(), self.redo.len()) }
 
+    /// Returns current editor/action/selection authority for ordinary raw controls.
     pub fn field_token(&self) -> FieldToken {
         FieldToken {
             owner: self.owner,
@@ -1254,11 +1766,13 @@ impl Editor {
         }
     }
 
+    /// Returns retained raw controls in replay order; successful complete validation clears this slice.
     pub fn raw_fields(&self) -> &[RawInput] { &self.raw }
 
     /// Inspector reveal seam for inactive preferences. Raw drafts and precise
     /// shared errors both keep their actual controls visible, including future
     /// candidate adapters that have not constructed per-field raw text.
+    /// Returns whether widget `id` owns any retained `fields` or the precise `validation_field` error.
     pub fn widget_fields_need_repair(
         &self,
         id: u16,
@@ -1270,12 +1784,16 @@ impl Editor {
         ) || matches!(self.draft_error, Some(EditorError::Validation(error)) if error.widget == Some(id) && error.field == validation_field)
     }
 
+    /// Returns the retained visual/raw failure, or `None` when no such draft needs repair.
     pub fn draft_error(&self) -> Option<EditorError> { self.draft_error }
 
+    /// Returns whether raw or rejected visual state exists; JSON/startup drafts have separate gates.
     pub fn has_invalid_draft(&self) -> bool { !self.raw.is_empty() || self.rejected.is_some() }
 
     /// Inspection-only candidate. It never replaces the accepted document or
     /// enters serialization, acquisition, history, or firmware configuration.
+    /// Returns a replayed candidate retaining all raw strings, or `None` without a visual/raw draft.
+    /// Panics only if the internal invariant that invalid drafts retain an error is violated.
     pub fn diagnostic(&self) -> Option<crate::diagnostic::Draft> {
         if !self.has_invalid_draft() {
             return None;
@@ -1293,8 +1811,10 @@ impl Editor {
         })
     }
 
+    /// Returns current gesture ownership, or `None` after cancellation, completion or a retiring edit.
     pub fn active_pointer(&self) -> Option<PointerToken> { self.pointer }
 
+    /// Returns whether `token` owns the current revision's import with no invalid visual or pending JSON draft.
     pub fn import_is_current(
         &self,
         token: ImportToken,
@@ -1305,10 +1825,12 @@ impl Editor {
             && !self.has_pending_json()
     }
 
+    /// Returns the last acknowledged persisted revision, including late writes, or `None` before one is known.
     pub fn last_saved_revision(&self) -> Option<Revision> { self.saved_revision }
 
     /// Check immediately before a prepared write. Serialize browser writes;
     /// never interpret a cancelled timer as a successful storage completion.
+    /// Returns whether `token` still owns this revision's write and lifecycle/data gates permit it.
     pub fn save_is_current(
         &self,
         token: SaveToken,
@@ -1316,6 +1838,7 @@ impl Editor {
         self.save == Some(token) && token.revision == self.revision && self.snapshot_state_block().is_none()
     }
 
+    /// Returns invalid, saving, failed, saved or dirty status in that priority order; no storage I/O occurs.
     pub fn save_status(&self) -> SaveStatus {
         if self.has_invalid_draft()
             || self.has_pending_json()
@@ -1336,6 +1859,8 @@ impl Editor {
 
     /// Return the exact versioned bytes to write. This does not claim that any
     /// storage operation succeeded; the adapter must acknowledge its result.
+    /// Returns frozen envelope/project and a newly issued write token; admission/encoding/counter errors
+    /// leave issuance and existing save state unchanged.
     pub fn begin_save(&mut self) -> Result<SaveRequest, EditorError> {
         self.ensure_snapshot_ready()?;
         let request = self.next_request()?;
@@ -1354,11 +1879,14 @@ impl Editor {
 
     /// Exact browser-storage bytes without issuing a request or changing save
     /// status. Resource inspection uses this only after the same admission gate.
+    /// Returns bounded JSON or a snapshot-admission/serialization error.
     pub fn saved_envelope_json(&self) -> Result<String, EditorError> {
         self.ensure_snapshot_ready()?;
         self.serialize_saved_envelope()
     }
 
+    /// Returns bounded selection/config/startup/artwork-identity JSON; serialization/size errors retain state.
+    /// Caller must enforce snapshot admission before using these bytes for persistence.
     fn serialize_saved_envelope(&self) -> Result<String, EditorError> {
         let envelope = SavedEnvelope {
             editor_version: SAVED_STATE_VERSION,
@@ -1378,6 +1906,9 @@ impl Editor {
     /// `Ok(())` means these bytes were actually written. If an older write
     /// completed late, remember its revision without accepting its stale token
     /// as current. This prevents a newer document falsely remaining "Saved".
+    /// `token` identifies the actual write and `result` its storage outcome. Returns success for a current
+    /// successful write, or stale/draft/storage failure. A successful stale same-owner write still updates
+    /// the recorded persisted revision; it never publishes editor content.
     pub fn acknowledge_save(
         &mut self,
         token: SaveToken,
@@ -1407,6 +1938,8 @@ impl Editor {
 
     /// Restore at application initialization. Imported files use the tokened
     /// import methods so a delayed read cannot replace an already edited app.
+    /// Returns an editor restored from bounded `bytes`, marked saved at revision zero.
+    /// Rejects envelope/schema/selection errors, custom/artwork-dependent state and owner exhaustion.
     pub fn from_saved_state(bytes: &[u8]) -> Result<Self, EditorError> {
         if bytes.len() > MAX_SAVED_BYTES {
             return Err(EditorError::Codec(ConfigError::Length));
@@ -1437,6 +1970,8 @@ impl Editor {
     }
 
     /// Restore the atomically stored complete project and its bounded selection envelope.
+    /// Returns a saved editor from project `bytes` and matching `envelope`; decode, identity,
+    /// schema/selection and owner-counter failures reject the complete restore.
     pub fn from_project_saved(
         bytes: &[u8],
         envelope: &str,
@@ -1445,6 +1980,8 @@ impl Editor {
         Self::from_prepared_project_saved(project, envelope)
     }
 
+    /// Returns a saved editor from prepared `project` and bounded `envelope` only when dashboard bytes,
+    /// startup and artwork identity agree exactly. Schema/project/selection/counter errors reject restoration.
     pub fn from_prepared_project_saved(
         project: Project,
         envelope: &str,
@@ -1480,6 +2017,9 @@ impl Editor {
         Ok(editor)
     }
 
+    /// Returns a new gesture capability binding DOM `pointer_id` to `target` and current view/revision.
+    /// Existing widgets are selected first; library additions require clean state. Draft/target/counter errors
+    /// reject issuance, while successful issuance replaces previous pointer ownership.
     pub fn begin_pointer(
         &mut self,
         pointer_id: i32,
@@ -1515,6 +2055,9 @@ impl Editor {
         Ok(token)
     }
 
+    /// Consumes current `token` only for matching DOM `pointer_id`, then applies grid `placement`.
+    /// Returns the edit revision or stale/edit error. A failed placement may remain as a rejected candidate;
+    /// the consumed gesture is never automatically resumed.
     pub fn commit_pointer(
         &mut self,
         token: PointerToken,
@@ -1538,6 +2081,7 @@ impl Editor {
         self.apply(edit)
     }
 
+    /// Clears gesture ownership if `token` is current; returns success or stale-token error without changing history.
     pub fn cancel_pointer(
         &mut self,
         token: PointerToken,
@@ -1549,6 +2093,8 @@ impl Editor {
         Ok(())
     }
 
+    /// Returns a new import capability for clean state, replacing prior import and cancelling pointer ownership.
+    /// Draft/counter errors preserve state; this method performs no file read or worker operation.
     pub fn begin_import(&mut self) -> Result<ImportToken, EditorError> {
         self.ensure_clean()?;
         self.request = self.next_request()?;
@@ -1564,6 +2110,8 @@ impl Editor {
 
     /// Check the token before parsing. A failed import consumes its request but
     /// leaves the accepted document, history, selection, and revision intact.
+    /// `token` owns the read; `format` selects decoding of bounded `bytes`. Returns the publication revision
+    /// or stale/draft/codec/project/counter error. Dashboard-only imports retain startup and artwork.
     pub fn complete_import(
         &mut self,
         token: ImportToken,
@@ -1595,6 +2143,8 @@ impl Editor {
         Ok(self.revision)
     }
 
+    /// Clears current `token` ownership; returns success or stale-token error. Adapters must cancel their I/O
+    /// separately.
     pub fn cancel_import(
         &mut self,
         token: ImportToken,
@@ -1610,6 +2160,8 @@ impl Editor {
     /// invalid draft. Render `diagnostic` with a prominent invalid label.
     /// Inputs beyond the explicit editor bound are rejected without accepting
     /// the keystroke; controls should display state read back from this reducer.
+    /// `token` binds current selection, `field` selects an applicable control, and `text` is UTF-8 bounded.
+    /// Returns the new action revision; stale/draft/target/capacity/counter errors reject the keystroke.
     pub fn set_raw(
         &mut self,
         token: FieldToken,
@@ -1633,6 +2185,8 @@ impl Editor {
     /// Repair only the actual retained raw entry authorized by a current
     /// inspection capability. This does not select its owner or permit new
     /// arbitrary fields; ordinary set_raw retains its selection guard.
+    /// `target` must resolve a retained raw entry; `text` replaces its bounded contents.
+    /// Returns the action revision even if still invalid, or an admission/identity/target/capacity error.
     pub fn set_inspected_raw(
         &mut self,
         target: InspectionTarget,
@@ -1647,6 +2201,9 @@ impl Editor {
 
     /// Explicit clean accepted-object editing without changing persisted selection.
     /// Invalid repair remains restricted to a genuine retained Raw capability.
+    /// `target` must name an unambiguous accepted object owning `field`; `text` is bounded replacement text.
+    /// Returns the action revision even if validation then retains a draft; admission/target/counter errors precede
+    /// mutation.
     pub fn set_located_raw(
         &mut self,
         target: InspectionTarget,
@@ -1685,6 +2242,10 @@ impl Editor {
         self.set_raw_transaction(field, text)
     }
 
+    /// Replaces/adds bounded `text` for already-authorized `field`, then replays all retained raw controls.
+    /// Returns the advanced revision whether accepted or retained invalid; capacity/counter errors reject the
+    /// keystroke. Only fully validated content enters history. Raw replay stops at its first error in this
+    /// transaction.
     fn set_raw_transaction(
         &mut self,
         field: RawField,
@@ -1731,6 +2292,8 @@ impl Editor {
         Ok(self.revision)
     }
 
+    /// Clears visual/raw rejection without history; returns the advanced revision, or unchanged revision if clean.
+    /// Pending JSON/startup and counter errors preserve the draft.
     pub fn discard_raw(&mut self) -> Result<Revision, EditorError> {
         self.ensure_no_json()?;
         if self.has_invalid_draft() {
@@ -1744,11 +2307,14 @@ impl Editor {
         Ok(self.revision)
     }
 
+    /// Returns accepted dashboard-only JSON; admission/codec errors block export. Startup/artwork are omitted.
     pub fn export_json(&self) -> Result<String, EditorError> {
         self.ensure_snapshot_ready()?;
         to_json(self.preview()).map_err(EditorError::Codec)
     }
 
+    /// Returns exact-length accepted dashboard binary, bounded by [`MAX_FILE_BYTES`]; startup/artwork are omitted.
+    /// Snapshot-admission or codec errors return no export.
     pub fn export_binary(&self) -> Result<Vec<u8>, EditorError> {
         self.ensure_snapshot_ready()?;
         let mut bytes = vec![0; MAX_FILE_BYTES];
@@ -1757,6 +2323,8 @@ impl Editor {
         Ok(bytes)
     }
 
+    /// Returns the selected widget's appearance for current `stamp`; stale, snapshot or selection errors reject
+    /// capture.
     pub fn selected_appearance(
         &self,
         stamp: EditorStamp,
@@ -1770,6 +2338,8 @@ impl Editor {
         Ok(AppearanceSnapshot::from_widget(&self.preview().config().widgets[index]))
     }
 
+    /// Returns immutable appearance intent binding validated `snapshot` and `scope` to current `stamp` and selection.
+    /// Stale, snapshot-admission, appearance-validation and target errors reject issuance without mutation.
     pub fn appearance_request(
         &self,
         scope: AppearanceScope,
@@ -1806,6 +2376,8 @@ impl Editor {
         })
     }
 
+    /// Returns resolved ownership for `request` after rechecking stamp, admission, snapshot and target uniqueness.
+    /// Any stale, blocked, invalid or ambiguous request returns an error without mutation.
     pub fn check_appearance_request(
         &self,
         request: AppearanceRequest,
@@ -1822,6 +2394,8 @@ impl Editor {
         Ok(resolved)
     }
 
+    /// Returns a disposable configuration and affected/skipped counts for checked `request`.
+    /// Admission/target errors abort; the candidate is not a validation proof and is never published here.
     fn appearance_candidate(
         &self,
         request: AppearanceRequest,
@@ -1846,6 +2420,8 @@ impl Editor {
         Ok((config, preview))
     }
 
+    /// Returns affected/skipped counts and first shared validation error for `request` without publishing state.
+    /// Invalid candidate content is reported inside the preview; request-admission failures return `Err`.
     pub fn appearance_preview(
         &self,
         request: AppearanceRequest,
@@ -1860,6 +2436,10 @@ impl Editor {
         Ok(preview)
     }
 
+    /// Applies `edit` to a disposable candidate and returns its accepted revision (or unchanged revision for equality).
+    /// Ordinary validation failure retains an inspectable rejected candidate and advances action identity while
+    /// preserving accepted state/history. Preflight, capacity and counter failures do not publish that candidate.
+    /// Appearance application is atomic on failure. Option changes cannot silently discard unrelated raw repairs.
     pub fn apply(
         &mut self,
         edit: Edit,
@@ -2208,6 +2788,8 @@ impl Editor {
 
     /// Inspector callbacks capture a field token. Synchronous commands that
     /// deliberately operate on current state can use `apply` directly.
+    /// Returns the result of `edit` only if `token` still binds current selection/revision; otherwise stale without
+    /// mutation.
     pub fn apply_if_current(
         &mut self,
         token: FieldToken,
@@ -2219,6 +2801,8 @@ impl Editor {
         self.apply(edit)
     }
 
+    /// Changes to valid candidate `selection` without a history entry; returns current or advanced revision.
+    /// JSON/startup, non-placement raw repair, missing/mismatched targets and exhausted counters reject navigation.
     pub fn select(
         &mut self,
         selection: Selection,
@@ -2241,6 +2825,8 @@ impl Editor {
         Ok(self.revision)
     }
 
+    /// Restores one accepted project from undo and returns its new revision, retiring pending operations.
+    /// Draft, empty-history, codec and counter errors preserve both histories; UI additionally uses history readiness.
     pub fn undo(&mut self) -> Result<Revision, EditorError> {
         self.ensure_clean()?;
         if self.undo.is_empty() {
@@ -2260,6 +2846,8 @@ impl Editor {
         Ok(revision)
     }
 
+    /// Restores one accepted project from redo and returns its new revision, retiring pending operations.
+    /// Draft, empty-history, codec and counter errors preserve both histories; UI additionally uses history readiness.
     pub fn redo(&mut self) -> Result<Revision, EditorError> {
         self.ensure_clean()?;
         if self.redo.is_empty() {
@@ -2279,6 +2867,7 @@ impl Editor {
         Ok(revision)
     }
 
+    /// Returns the next action revision without reserving it, or exhaustion instead of wrapping.
     fn next_revision(&self) -> Result<Revision, EditorError> {
         self.revision
             .0
@@ -2287,10 +2876,13 @@ impl Editor {
             .ok_or(EditorError::CounterExhausted)
     }
 
+    /// Returns the next asynchronous request identity without reserving it, or exhaustion instead of wrapping.
     fn next_request(&self) -> Result<u64, EditorError> {
         self.request.checked_add(1).ok_or(EditorError::CounterExhausted)
     }
 
+    /// Publishes `preview` with valid `selection`, retaining startup/artwork; returns current revision for equality
+    /// or a new revision with one history entry. Selection/codec/counter errors precede mutation.
     fn accept_validated(
         &mut self,
         preview: ValidatedConfig,
@@ -2319,6 +2911,8 @@ impl Editor {
         Ok(revision)
     }
 
+    /// Installs reserved `revision` and retires JSON/startup drafts, pointers, imports and save requests/errors.
+    /// Caller owns accepted-content/history/raw-draft updates; persisted-revision evidence is retained.
     fn changed(
         &mut self,
         revision: Revision,
@@ -2332,6 +2926,7 @@ impl Editor {
         self.save_failure = None;
     }
 
+    /// Returns success without pending JSON/startup or invalid visual/raw drafts; does not gate gestures/imports.
     fn ensure_clean(&self) -> Result<(), EditorError> {
         self.ensure_no_json()?;
         if self.has_invalid_draft() {
@@ -2341,6 +2936,7 @@ impl Editor {
         }
     }
 
+    /// Returns success without pending JSON or startup timing, otherwise the first corresponding draft error.
     fn ensure_no_json(&self) -> Result<(), EditorError> {
         if self.has_pending_json() {
             Err(EditorError::JsonPending)
@@ -2351,11 +2947,14 @@ impl Editor {
         }
     }
 
+    /// Returns success only when action readiness permits a new snapshot, mapping its first blocker to an error.
     fn ensure_snapshot_ready(&self) -> Result<(), EditorError> {
         self.action_readiness().block.map_or(Ok(()), |block| Err(block.into()))
     }
 }
 
+/// Returns whether `before` and `after` encode identically, preserving distinctions such as signed zero.
+/// Shared binary codec failure returns an error; no editor state is changed.
 fn same_canonical_config(
     before: &ValidatedConfig,
     after: &ValidatedConfig,
@@ -2366,6 +2965,7 @@ fn same_canonical_config(
         == encode(after, &mut after_bytes).map_err(EditorError::Codec)?)
 }
 
+/// Returns the sole index of view `id` in `config`; missing and duplicate IDs produce distinct errors.
 fn unique_view_index(
     config: &Config,
     id: u8,
@@ -2382,6 +2982,7 @@ fn unique_view_index(
     Ok(index)
 }
 
+/// Returns the sole index of widget `id` in `config`; missing and duplicate IDs produce distinct errors.
 fn unique_widget_index(
     config: &Config,
     id: u16,
@@ -2398,6 +2999,7 @@ fn unique_widget_index(
     Ok(index)
 }
 
+/// Returns a bounded codec diagnostic retaining `error`'s line/column without embedding source text.
 fn json_error(error: serde_json::Error) -> EditorError {
     EditorError::Codec(ConfigError::Json {
         line: error.line(),
@@ -2405,6 +3007,8 @@ fn json_error(error: serde_json::Error) -> EditorError {
     })
 }
 
+/// Appends accepted `value` to `history`, evicting its oldest entry at [`HISTORY_LIMIT`].
+/// Caller maintains the invariant that history never already exceeds the limit; artwork remains shared.
 fn push_history(
     history: &mut VecDeque<Box<Accepted>>,
     value: Box<Accepted>,
@@ -2415,10 +3019,12 @@ fn push_history(
     history.push_back(value);
 }
 
+/// Returns owned UTF-8 `text` within `N` bytes, or text-capacity error without truncation.
 fn bounded<const N: usize>(text: &str) -> Result<heapless::String<N>, EditorError> {
     text.try_into().map_err(|_| EditorError::TextCapacity)
 }
 
+/// Returns the unique view `id` index in `config`, rejecting missing or duplicate IDs.
 fn view_index(
     config: &Config,
     id: u8,
@@ -2426,6 +3032,7 @@ fn view_index(
     unique_view_index(config, id)
 }
 
+/// Returns the unique widget `id` index in `config`, rejecting missing or duplicate IDs.
 fn widget_index(
     config: &Config,
     id: u16,
@@ -2433,6 +3040,8 @@ fn widget_index(
     unique_widget_index(config, id)
 }
 
+/// Returns success if `selection` resolves uniquely in `config` and any widget belongs to its view.
+/// Missing/duplicate IDs and cross-view widget ownership are errors.
 fn check_selection(
     config: &Config,
     selection: Selection,
@@ -2446,6 +3055,7 @@ fn check_selection(
     Ok(())
 }
 
+/// Returns the first unused positive view ID in bounded `config`, or capacity error when no slot/ID remains.
 fn fresh_view(config: &Config) -> Result<u8, EditorError> {
     if config.views.len() == MAX_VIEWS {
         return Err(EditorError::ViewCapacity);
@@ -2455,6 +3065,7 @@ fn fresh_view(config: &Config) -> Result<u8, EditorError> {
         .ok_or(EditorError::ViewCapacity)
 }
 
+/// Returns the first unused positive widget ID in bounded `config`, or capacity error when no slot/ID remains.
 fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
     if config.widgets.len() == MAX_WIDGETS {
         return Err(EditorError::WidgetCapacity);
@@ -2466,8 +3077,10 @@ fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
 
 #[cfg(test)]
 mod transaction_tests {
+    //! Atomicity and stale-capability regressions at exhausted counters and retained repairs.
     use super::*;
 
+    /// A cached resource result cannot bypass newly exhausted request issuance at the same action stamp.
     #[test]
     fn resource_cache_rechecks_identity_exhaustion_with_an_unchanged_stamp() {
         use crate::resources::{ResourceAvailability, ResourceCache};
@@ -2484,6 +3097,7 @@ mod transaction_tests {
         assert_eq!(editor.saved_envelope_json(), Err(EditorError::CounterExhausted));
     }
 
+    /// Appearance admission failure preserves an already-issued save and every editor state component.
     #[test]
     fn appearance_issuance_exhaustion_preserves_existing_save_and_all_state() {
         let mut editor = Editor::default();
@@ -2527,6 +3141,7 @@ mod transaction_tests {
         assert_eq!(editor.save_status(), SaveStatus::Saved);
     }
 
+    /// Exhausted located editing cannot publish a raw field or mutate accepted/history state.
     #[test]
     fn located_object_exhaustion_never_publishes_raw_or_history() {
         for request_exhausted in [false, true] {
@@ -2561,6 +3176,7 @@ mod transaction_tests {
         }
     }
 
+    /// The final issued save can complete after further issuance becomes impossible.
     #[test]
     fn final_save_request_remains_current_and_completes_while_next_issuance_is_exhausted() {
         let mut editor = Editor {
@@ -2595,6 +3211,7 @@ mod transaction_tests {
         assert_eq!(editor.save_status(), SaveStatus::Saved);
     }
 
+    /// Retained-raw authority rechecks identity, index, unique ownership and applicability before mutation.
     #[test]
     fn inspected_raw_authority_rechecks_index_ambiguity_missing_owner_applicability_and_exhaustion() {
         for case in 0..5 {
@@ -2658,6 +3275,7 @@ mod transaction_tests {
         }
     }
 
+    /// JSON counter exhaustion preserves text, identities, history and existing callback ownership.
     #[test]
     fn json_exhaustion_leaves_owned_text_identity_history_and_callbacks_unchanged() {
         let mut editor = Editor::default();
@@ -2690,6 +3308,7 @@ mod transaction_tests {
         assert!(!editor.has_pending_json());
     }
 
+    /// History command readiness rejects exhausted revision and request counters independently.
     #[test]
     fn history_commands_keep_revision_and_request_exhaustion_blocked() {
         use crate::workspace::Command;
@@ -2713,6 +3332,7 @@ mod transaction_tests {
         }
     }
 
+    /// Apply/undo/redo preflight counter capacity before changing accepted configuration or either history.
     #[test]
     fn accepted_configuration_exhaustion_is_atomic_for_apply_undo_and_redo() {
         let mut editor = Editor::default();
@@ -2740,6 +3360,7 @@ mod transaction_tests {
         assert_eq!(editor.history_len(), history);
     }
 
+    /// Band deletion preserves the full failed transaction and remaps retained repair fields only on admitted edits.
     #[test]
     fn rejected_band_removal_preserves_the_complete_transaction() {
         // Both a successful repair and a still-invalid partial repair must

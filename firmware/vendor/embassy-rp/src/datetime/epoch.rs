@@ -1,24 +1,36 @@
 //! Unix epoch conversion (milliseconds since 1970-01-01 00:00:00 UTC)
 
 #[cfg(any(not(feature = "chrono"), feature = "_rp235x"))]
+/// First supported Unix calendar year.
 pub(crate) const EPOCH_YEAR: u16 = 1970;
 
 #[cfg(not(feature = "chrono"))]
+/// Whole-second Gregorian conversion without Chrono.
 mod no_deps {
     use super::super::{DateTime, DayOfWeek, Error};
     use super::EPOCH_YEAR;
+    /// Common-year month lengths indexed by month-1.
     const DAYS_IN_MONTH: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    /// Milliseconds per civil second.
     const MS_PER_SECOND: u64 = 1000;
+    /// Milliseconds per civil minute, excluding leap-second extensions.
     const MS_PER_MINUTE: u64 = 60 * MS_PER_SECOND;
+    /// Milliseconds per civil hour.
     const MS_PER_HOUR: u64 = 60 * MS_PER_MINUTE;
+    /// Milliseconds per 24-hour Unix calendar day.
     const MS_PER_DAY: u64 = 24 * MS_PER_HOUR;
+    /// Sunday-zero weekday code for 1970-01-01 (Thursday).
     const EPOCH_DAY_OF_WEEK: u8 = 4; // Thursday
 
-    const fn is_leap_year(year: u16) -> bool {
-        (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
-    }
+    /// Returns whether Gregorian `year` adds February 29, including century exceptions.
+    const fn is_leap_year(year: u16) -> bool { (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0)) }
 
-    fn days_in_month(year: u16, month: u8) -> u8 {
+    /// Returns the day count for Gregorian `year` and one-based `month`.
+    /// Requires month 1..=12; invalid month can underflow or panic on indexing.
+    fn days_in_month(
+        year: u16,
+        month: u8,
+    ) -> u8 {
         if month == 2 && is_leap_year(year) {
             29
         } else {
@@ -26,6 +38,8 @@ mod no_deps {
         }
     }
 
+    /// Returns days before January 1 of `year`; years<=1970 produce zero.
+    /// Linear in elapsed years; all u16 years fit the u32 accumulator.
     const fn days_from_epoch_to_year(year: u16) -> u32 {
         let mut days = 0u32;
         let mut y = EPOCH_YEAR;
@@ -36,10 +50,11 @@ mod no_deps {
         days
     }
 
-    fn day_of_week_from_days(days_since_epoch: u32) -> u8 {
-        ((days_since_epoch + EPOCH_DAY_OF_WEEK as u32) % 7) as u8
-    }
+    /// Returns Sunday-zero weekday for `days_since_epoch`; input must leave room for adding 4.
+    fn day_of_week_from_days(days_since_epoch: u32) -> u8 { ((days_since_epoch + EPOCH_DAY_OF_WEEK as u32) % 7) as u8 }
 
+    /// Returns Unix milliseconds for `dt` after validating supported year/calendar/time fields.
+    /// Treats fields as UTC; no-dependency mode ignores the supplied weekday.
     pub(crate) fn datetime_to_millis(dt: &DateTime) -> Result<u64, Error> {
         if dt.year > 4095 {
             return Err(Error::InvalidYear);
@@ -79,7 +94,10 @@ mod no_deps {
     }
 
     #[cfg(not(feature = "chrono"))]
+    /// Returns calendar fields for UTC epoch `millis`, or an invalid-timestamp/year error.
+    /// Non-Chrono mode drops subsecond remainder; Chrono retains milliseconds.
     pub(crate) fn millis_to_datetime(millis: u64) -> Result<DateTime, Error> {
+        /// Exclusive supported date bound at 4096-01-01, checked before narrowing the day count.
         const END_DAYS: u64 = days_from_epoch_to_year(4096) as u64;
         if millis / MS_PER_DAY >= END_DAYS {
             return Err(Error::InvalidTimestamp);
@@ -148,10 +166,13 @@ mod no_deps {
 pub(crate) use no_deps::{datetime_to_millis, millis_to_datetime};
 
 #[cfg(all(feature = "chrono", feature = "_rp235x"))]
+/// Chrono-based conversion preserving millisecond precision for RP235x timers.
 mod chrono_rp235x {
     use super::super::{DateTime, Error};
     use super::EPOCH_YEAR;
 
+    /// Returns Unix milliseconds for `dt` after validating supported year/calendar/time fields.
+    /// Treats fields as UTC; no-dependency mode ignores the supplied weekday.
     pub(crate) fn datetime_to_millis(dt: &DateTime) -> Result<u64, Error> {
         use chrono::Datelike;
 
@@ -170,6 +191,8 @@ mod chrono_rp235x {
         Ok(timestamp_millis as u64)
     }
 
+    /// Returns calendar fields for UTC epoch `millis`, or an invalid-timestamp/year error.
+    /// Non-Chrono mode drops subsecond remainder; Chrono retains milliseconds.
     pub(crate) fn millis_to_datetime(millis: u64) -> Result<DateTime, Error> {
         use chrono::Datelike;
 
@@ -190,10 +213,12 @@ mod chrono_rp235x {
 pub(crate) use chrono_rp235x::{datetime_to_millis, millis_to_datetime};
 
 #[cfg(all(test, not(feature = "chrono")))]
+/// Boundary/calendar regressions for the independent integer conversion implementation.
 mod tests {
     use super::*;
     use crate::datetime::{DateTime, DayOfWeek, Error};
 
+    /// Returns 1970-01-01 Thursday midnight as a valid mutation baseline.
     fn epoch() -> DateTime {
         DateTime {
             year: 1970,
@@ -207,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    /// Rejects bad month/day/time fields, including non-leap century February 29.
     fn invalid_calendar_fields_return_errors() {
         for month in [0, 13, 255] {
             let mut dt = epoch();
@@ -234,6 +260,7 @@ mod tests {
     }
 
     #[test]
+    /// Large timestamp/day counts cannot wrap into an accepted date; years stay bounded.
     fn timestamp_bounds_are_checked_before_narrowing() {
         for millis in [u64::MAX, (1u64 << 32) * 86_400_000] {
             assert!(millis_to_datetime(millis).is_err());
@@ -246,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    /// Covers epoch, leap 2000, final supported second and deliberate subsecond truncation.
     fn leap_day_and_last_supported_second_round_trip() {
         assert_eq!(datetime_to_millis(&epoch()), Ok(0));
         let leap = millis_to_datetime(951_782_400_000).unwrap();

@@ -1,3 +1,4 @@
+//! Seeded project mutation and maximum-capacity codec regressions; no hardware or source-image decoding.
 #[path = "../../../test-support/generated.rs"]
 mod generated;
 use dashboard_config::startup::StartupProfile;
@@ -5,7 +6,11 @@ use dashboard_config::{default_config, validate};
 use dashboard_config_tools::project::{ExportMode, Project};
 
 #[test]
+/// Mutate headers and resealed nested inputs; accepted values must be canonical and every prefix must fail.
+///
+/// `DASHBOARD_FORMAT_CASES` defaults to 512 and clamps to 1..=8192; a nonnumeric value fails the test.
 fn seeded_project_descriptor_and_nested_profile_mutations() {
+    /// Fixed xorshift seed recorded in failure diagnostics for exact replay.
     const SEED: u32 = 0x17EA_7002;
     let mut rng = SEED;
     let count = std::env::var("DASHBOARD_FORMAT_CASES").map_or(512, |v| v.parse::<usize>().unwrap().clamp(1, 8192));
@@ -68,6 +73,7 @@ fn seeded_project_descriptor_and_nested_profile_mutations() {
 }
 
 #[test]
+/// All mountings admit eight views/64 widgets within the reduced limit and round-trip byte-for-byte.
 fn full_capacity_projects_roundtrip_in_every_orientation() {
     use dashboard_config::*;
     for orientation in Orientation::ALL {

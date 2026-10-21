@@ -1,7 +1,16 @@
 //! Flash driver.
+//!
+//! `FLASH_SIZE` is declared byte capacity, not detected physical capacity. Mutating operations
+//! require application maintenance ownership of both cores, DMA and XIP clients. RP235x CS0
+//! restoration failures park in SRAM; an independently armed watchdog supplies the recovery bound.
 #[cfg(feature = "_rp235x")]
 #[path = "flash_probe.rs"]
+/// Bounded QMI direct-mode JEDEC transaction shared with host regression tests.
 mod probe;
+/// Length admission for the RP2040 assembly receive loop.
+#[cfg(feature = "rp2040")]
+#[path = "flash_read.rs"]
+mod read_layout;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
@@ -9,7 +18,14 @@ use core::task::{Context, Poll};
 
 use embassy_hal_internal::{Peri, PeripheralType};
 use embedded_storage::nor_flash::{
-    ErrorType, MultiwriteNorFlash, NorFlash, NorFlashError, NorFlashErrorKind, ReadNorFlash, check_erase, check_read,
+    ErrorType,
+    MultiwriteNorFlash,
+    NorFlash,
+    NorFlashError,
+    NorFlashErrorKind,
+    ReadNorFlash,
+    check_erase,
+    check_read,
     check_write,
 };
 
@@ -21,7 +37,7 @@ pub const FLASH_BASE: *const u32 = 0x10000000 as _;
 
 /// Address for xip setup function set up by the 235x bootrom.
 #[cfg(feature = "_rp235x")]
-pub const BOOTRAM_BASE: *const u32 = 0x400e0000 as _;
+pub const BOOTRAM_BASE: *const u32 = 0x400E0000 as _;
 
 /// If running from RAM, we might have no boot2. Use bootrom `flash_enter_cmd_xip` instead.
 // TODO: when run-from-ram is set, completely skip the "pause cores and jumpp to RAM" dance.
@@ -43,7 +59,7 @@ pub const ERASE_SIZE: usize = 4096;
 /// Flash DMA read size.
 pub const ASYNC_READ_SIZE: usize = 4;
 
-/// Error type for NVMC operations.
+/// Validation/core-admission errors; ROM calls do not report program/erase status here.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
@@ -58,6 +74,7 @@ pub enum Error {
 }
 
 impl From<NorFlashErrorKind> for Error {
+    /// Returns local bounds/alignment classification for `e`, collapsing other kinds to Other.
     fn from(e: NorFlashErrorKind) -> Self {
         match e {
             NorFlashErrorKind::NotAligned => Self::Unaligned,
@@ -68,6 +85,7 @@ impl From<NorFlashErrorKind> for Error {
 }
 
 impl NorFlashError for Error {
+    /// Returns the storage-trait category; wrong-core failures map to Other.
     fn kind(&self) -> NorFlashErrorKind {
         match self {
             Self::OutOfBounds => NorFlashErrorKind::OutOfBounds,
@@ -77,21 +95,31 @@ impl NorFlashError for Error {
     }
 }
 
-/// Future that waits for completion of a background read
+/// Already-started streaming read retaining flash/channel/output borrows.
+/// Drop stops the XIP stream, orders outstanding reads, then synchronously aborts DMA.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct BackgroundRead<'a, 'd, T: Instance, const FLASH_SIZE: usize> {
+    /// Exclusive flash ownership through stream shutdown.
     flash: PhantomData<&'a mut Flash<'d, T, Async, FLASH_SIZE>>,
+    /// Active receiver; its destructor aborts DMA after the stream is stopped.
     transfer: dma::Transfer<'a>,
 }
 
 impl<'a, 'd, T: Instance, const FLASH_SIZE: usize> Future for BackgroundRead<'a, 'd, T, FLASH_SIZE> {
+    /// DMA completion without a separate byte count or controller status.
     type Output = ();
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+
+    /// Polls `self`'s DMA using `cx`; returns ready when its BUSY bit clears.
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         Pin::new(&mut self.transfer).poll(cx)
     }
 }
 
 impl<'a, 'd, T: Instance, const FLASH_SIZE: usize> Drop for BackgroundRead<'a, 'd, T, FLASH_SIZE> {
+    /// Stops stream requests and synchronizes an in-flight XIP read before the DMA field drops.
     fn drop(&mut self) {
         if pac::XIP_CTRL.stream_ctr().read().0 == 0 {
             return;
@@ -104,8 +132,10 @@ impl<'a, 'd, T: Instance, const FLASH_SIZE: usize> Drop for BackgroundRead<'a, '
         // flight that might effect an address written to start a new transfer.  This stalls
         // until after any transfer is complete, so the address will not change anymore.
         #[cfg(feature = "rp2040")]
+        /// Uncached flash alias used as a stream-shutdown ordering barrier.
         const XIP_NOCACHE_NOALLOC_BASE: *const u32 = 0x13000000 as *const _;
         #[cfg(feature = "_rp235x")]
+        /// Uncached flash alias used as a stream-shutdown ordering barrier.
         const XIP_NOCACHE_NOALLOC_BASE: *const u32 = 0x14000000 as *const _;
         unsafe {
             core::ptr::read_volatile(XIP_NOCACHE_NOALLOC_BASE);
@@ -114,19 +144,23 @@ impl<'a, 'd, T: Instance, const FLASH_SIZE: usize> Drop for BackgroundRead<'a, '
     }
 }
 
-/// Flash driver.
+/// Exclusive flash owner; construction does not probe physical capacity or safe write regions.
 pub struct Flash<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> {
+    /// Async-mode DMA receiver; absent in blocking mode.
     dma: Option<dma::Channel<'d>>,
+    /// Retains peripheral ownership and compile-time mode selection.
     phantom: PhantomData<(&'d mut T, M)>,
 }
 
 impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SIZE> {
-    /// Blocking read.
-    ///
-    /// The offset and buffer must be aligned.
-    ///
-    /// NOTE: `offset` is an offset from the flash start, NOT an absolute address.
-    pub fn blocking_read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
+    /// Copies XIP bytes at flash-relative byte `offset` into `bytes`.
+    /// Returns validation errors before copying; byte alignment suffices. Declared capacity must
+    /// match the physical mapping and no concurrent flash mutation may invalidate the read.
+    pub fn blocking_read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> Result<(), Error> {
         trace!(
             "Reading from 0x{:x} to 0x{:x}",
             FLASH_BASE as u32 + offset,
@@ -140,15 +174,17 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
         Ok(())
     }
 
-    /// Flash capacity.
-    pub fn capacity(&self) -> usize {
-        FLASH_SIZE
-    }
+    /// Returns declared `FLASH_SIZE` in bytes; no chip-capacity probe is performed.
+    pub fn capacity(&self) -> usize { FLASH_SIZE }
 
-    /// Blocking erase.
-    ///
-    /// NOTE: `offset` is an offset from the flash start, NOT an absolute address.
-    pub fn blocking_erase(&mut self, from: u32, to: u32) -> Result<(), Error> {
+    /// Erases flash-relative byte range from `from` (inclusive) to `to` (exclusive), with sector-aligned endpoints.
+    /// Returns bounds/alignment/wrong-core errors. Blocks with peer parked and interrupts masked;
+    /// ROM completion has no reported device status, verification or power-loss rollback.
+    pub fn blocking_erase(
+        &mut self,
+        from: u32,
+        to: u32,
+    ) -> Result<(), Error> {
         check_erase(self, from, to)?;
 
         trace!(
@@ -164,12 +200,15 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
         Ok(())
     }
 
-    /// Blocking write.
-    ///
-    /// The offset and buffer must be aligned.
-    ///
-    /// NOTE: `offset` is an offset from the flash start, NOT an absolute address.
-    pub fn blocking_write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Error> {
+    /// Programs `bytes` at flash-relative byte `offset`, padding partial pages with 0xFF.
+    /// Returns validation/wrong-core errors; earlier programmed pages are not rolled back.
+    /// Does not erase: callers must obey chip programming rules. Flash-backed input is copied
+    /// through SRAM pages; addresses at/above 0x20000000 are assumed safe to use directly.
+    pub fn blocking_write(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
         check_write(self, offset, bytes.len())?;
 
         trace!("Writing {:?} bytes to 0x{:x}", bytes.len(), FLASH_BASE as u32 + offset);
@@ -233,14 +272,21 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
         Ok(())
     }
 
-    /// Read SPI flash unique ID
+    /// Fills `uid` with bytes from optional chip command 0x4B. Returns admission/length errors.
+    /// Command support and requested identifier length must match the physical flash part.
+    /// Empty buffers succeed without hardware access or core admission checks; lengths above65532 return OutOfBounds
+    /// because the SSI counter must also receive four dummy bytes.
     #[cfg(feature = "rp2040")]
-    pub fn blocking_unique_id(&mut self, uid: &mut [u8]) -> Result<(), Error> {
-        unsafe { in_ram(|| ram_helpers::flash_unique_id(uid))? };
-        Ok(())
+    pub fn blocking_unique_id(
+        &mut self,
+        uid: &mut [u8],
+    ) -> Result<(), Error> {
+        read_layout::read_unique_id(uid, Error::OutOfBounds, |uid| unsafe {
+            in_ram(|| ram_helpers::flash_unique_id(uid))
+        })
     }
 
-    /// Read SPI flash JEDEC ID
+    /// Returns the 24-bit JEDEC manufacturer/type/capacity ID, or wrong-core admission error.
     ///
     /// The local RP2350 implementation is limited to CS0 flash with no CS1
     /// memory and the boot-ROM XIP format. The application checks this contract
@@ -257,7 +303,7 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
 }
 
 impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Blocking, FLASH_SIZE> {
-    /// Create a new flash driver in blocking mode.
+    /// Returns a blocking driver consuming `_flash`; chip/maintenance safety is not probed.
     pub fn new_blocking(_flash: Peri<'d, T>) -> Self {
         Self {
             dma: None,
@@ -267,7 +313,8 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Blocking, FLASH_SIZE
 }
 
 impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
-    /// Create a new flash driver in async mode.
+    /// Returns an async driver consuming `_flash` and `dma`; `irq` binds DMA completion handling.
+    /// Enables that channel interrupt without reading flash-chip metadata.
     pub fn new<D: dma::ChannelInstance>(
         _flash: Peri<'d, T>,
         dma: Peri<'d, D>,
@@ -279,11 +326,9 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
         }
     }
 
-    /// Start a background read operation.
-    ///
-    /// The offset and buffer must be aligned.
-    ///
-    /// NOTE: `offset` is an offset from the flash start, NOT an absolute address.
+    /// Starts a stream at flash-relative byte `offset` into aligned `data` words.
+    /// Returns the already-active DMA lease or bounds/alignment error before starting.
+    /// Offset must be four-byte aligned; the output stays borrowed through completion or abort.
     pub fn background_read<'a>(
         &'a mut self,
         offset: u32,
@@ -319,8 +364,10 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
         // pac::XIP_CTRL.stream_fifo().as_ptr()) to avoid DMA stalling on
         // general XIP access.
         #[cfg(feature = "rp2040")]
+        /// Dedicated stream bus port avoids contention on the ordinary XIP register bus.
         const XIP_AUX_BASE: *const u32 = 0x50400000 as *const _;
         #[cfg(feature = "_rp235x")]
+        /// Dedicated stream bus port avoids contention on the ordinary XIP register bus.
         const XIP_AUX_BASE: *const u32 = 0x50500000 as *const _;
         let transfer = unsafe {
             self.dma
@@ -335,12 +382,15 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
         })
     }
 
-    /// Async read.
-    ///
-    /// The offset and buffer must be aligned.
-    ///
-    /// NOTE: `offset` is an offset from the flash start, NOT an absolute address.
-    pub async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
+    /// Reads flash-relative byte `offset` into `bytes`; returns bounds/alignment errors.
+    /// Offset/length require four-byte alignment; an unaligned destination uses 256-byte stack
+    /// chunks. Bounds are checked per chunk, so errors/cancellation can leave a prefix copied.
+    /// Dropping an in-flight read stops the XIP stream and aborts its DMA receiver.
+    pub async fn read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> Result<(), Error> {
         use core::mem::MaybeUninit;
 
         // Checked early to simplify address validity checks
@@ -358,6 +408,7 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
         }
 
         // Destination address is unaligned, so use an intermediate buffer
+        /// Maximum bytes copied through the aligned stack scratch buffer.
         const REALIGN_CHUNK: usize = PAGE_SIZE;
         // Safety: MaybeUninit requires no initialization
         let mut buf: [MaybeUninit<u32>; REALIGN_CHUNK / 4] = unsafe { MaybeUninit::uninit().assume_init() };
@@ -382,19 +433,25 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> Flash<'d, T, Async, FLASH_SIZE> {
 }
 
 impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> ErrorType for Flash<'d, T, M, FLASH_SIZE> {
+    /// Validation/core-admission error used by the storage traits.
     type Error = Error;
 }
 
 impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> ReadNorFlash for Flash<'d, T, M, FLASH_SIZE> {
+    /// Blocking reads accept byte-aligned offsets and lengths.
     const READ_SIZE: usize = READ_SIZE;
 
-    fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+    /// Reads `bytes` at flash-relative `offset`; returns blocking validation errors.
+    fn read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_read(offset, bytes)
     }
 
-    fn capacity(&self) -> usize {
-        self.capacity()
-    }
+    /// Returns declared byte capacity without probing the chip.
+    fn capacity(&self) -> usize { self.capacity() }
 }
 
 impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> MultiwriteNorFlash for Flash<'d, T, M, FLASH_SIZE> {}
@@ -405,15 +462,26 @@ impl<'d, T: Instance, const FLASH_SIZE: usize> embedded_storage_async::nor_flash
 }
 
 impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> NorFlash for Flash<'d, T, M, FLASH_SIZE> {
+    /// Erase endpoints use 4096-byte sectors.
+    const ERASE_SIZE: usize = ERASE_SIZE;
+    /// Byte-aligned public writes are internally padded to ROM pages.
     const WRITE_SIZE: usize = WRITE_SIZE;
 
-    const ERASE_SIZE: usize = ERASE_SIZE;
-
-    fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+    /// Erases sector-aligned range `from` to `to` (exclusive); returns blocking validation/core errors.
+    fn erase(
+        &mut self,
+        from: u32,
+        to: u32,
+    ) -> Result<(), Self::Error> {
         self.blocking_erase(from, to)
     }
 
-    fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+    /// Programs `bytes` at `offset`; returns blocking validation/core errors.
+    fn write(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(offset, bytes)
     }
 }
@@ -421,51 +489,80 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> NorFlash for Flash<'d, T
 impl<'d, T: Instance, const FLASH_SIZE: usize> embedded_storage_async::nor_flash::ReadNorFlash
     for Flash<'d, T, Async, FLASH_SIZE>
 {
+    /// DMA offsets and lengths are multiples of four bytes.
     const READ_SIZE: usize = ASYNC_READ_SIZE;
 
-    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+    /// Reads `bytes` at `offset`; returns DMA read validation errors, possibly after a copied prefix.
+    async fn read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.read(offset, bytes).await
     }
 
-    fn capacity(&self) -> usize {
-        self.capacity()
-    }
+    /// Returns declared byte capacity without probing the chip.
+    fn capacity(&self) -> usize { self.capacity() }
 }
 
 impl<'d, T: Instance, const FLASH_SIZE: usize> embedded_storage_async::nor_flash::NorFlash
     for Flash<'d, T, Async, FLASH_SIZE>
 {
+    /// Erase endpoints use 4096-byte sectors.
+    const ERASE_SIZE: usize = ERASE_SIZE;
+    /// Byte-aligned public writes are internally padded to ROM pages.
     const WRITE_SIZE: usize = WRITE_SIZE;
 
-    const ERASE_SIZE: usize = ERASE_SIZE;
-
-    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+    /// Erases `from` to `to` (exclusive) synchronously on polling; returns blocking validation/core errors.
+    async fn erase(
+        &mut self,
+        from: u32,
+        to: u32,
+    ) -> Result<(), Self::Error> {
         self.blocking_erase(from, to)
     }
 
-    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+    /// Programs `bytes` at `offset` synchronously on polling; returns blocking validation/core errors.
+    async fn write(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(offset, bytes)
     }
 }
 
 #[allow(dead_code)]
+/// ROM call tables, RAM-only XIP-off bodies and checked QMI restoration.
 mod ram_helpers {
     use super::*;
     use crate::rom_data;
 
     #[repr(C)]
+    /// ROM/RAM callees resolved before XIP is disabled; C field order matches RP2040 assembly.
     struct FlashFunctionPointers<'a> {
+        /// ROM flash pad/peripheral initialization entry.
         connect_internal_flash: unsafe extern "C" fn() -> (),
+        /// ROM transition from XIP to direct flash command mode.
         flash_exit_xip: unsafe extern "C" fn() -> (),
+        /// Optional erase entry; None skips erasing in the combined RAM body.
         flash_range_erase: Option<unsafe extern "C" fn(addr: u32, count: usize, block_size: u32, block_cmd: u8) -> ()>,
+        /// Optional program entry; None skips programming in the combined RAM body.
         flash_range_program: Option<unsafe extern "C" fn(addr: u32, data: *const u8, count: usize) -> ()>,
+        /// ROM cache flush after command completion.
         flash_flush_cache: unsafe extern "C" fn() -> (),
+        /// ROM fallback or borrowed SRAM boot setup restoring XIP access.
         flash_enter_cmd_xip: unsafe extern "C" fn() -> (),
+        /// Keeps copied SRAM boot code alive while its function pointer is used.
         phantom: PhantomData<&'a ()>,
     }
 
     #[allow(unused)]
-    fn flash_function_pointers(erase: bool, write: bool) -> FlashFunctionPointers<'static> {
+    /// Returns ROM entries, enabling erase/program only when `erase`/`write` is true.
+    fn flash_function_pointers(
+        erase: bool,
+        write: bool,
+    ) -> FlashFunctionPointers<'static> {
         FlashFunctionPointers {
             connect_internal_flash: rom_data::connect_internal_flash::ptr(),
             flash_exit_xip: rom_data::flash_exit_xip::ptr(),
@@ -489,6 +586,7 @@ mod ram_helpers {
     /// # Safety
     ///
     /// `boot2` must contain a valid 2nd stage boot loader which can be called to re-initialize XIP mode
+    /// Returns ROM entries selected by `erase`/`write`, using borrowed `boot2` for XIP restoration.
     unsafe fn flash_function_pointers_with_boot2(
         erase: bool,
         write: bool,
@@ -531,7 +629,10 @@ mod ram_helpers {
     ///   - DMA must not access flash memory
     ///
     /// `addr` and `len` parameters must be valid and are not checked.
-    pub unsafe fn flash_range_erase(addr: u32, len: u32) {
+    pub unsafe fn flash_range_erase(
+        addr: u32,
+        len: u32,
+    ) {
         let mut boot2 = [0u32; 256 / 4];
         let ptrs = if USE_BOOT2 {
             #[cfg(feature = "rp2040")]
@@ -563,8 +664,11 @@ mod ram_helpers {
     ///   - 2nd core must be running code from RAM or ROM with interrupts disabled
     ///   - DMA must not access flash memory
     ///
-    /// `addr` and `len` parameters must be valid and are not checked.
-    pub unsafe fn flash_range_erase_and_program(addr: u32, data: &[u8]) {
+    /// `addr` and SRAM `data` must cover valid ranges; neither is checked.
+    pub unsafe fn flash_range_erase_and_program(
+        addr: u32,
+        data: &[u8],
+    ) {
         let mut boot2 = [0u32; 256 / 4];
         let ptrs = if USE_BOOT2 {
             #[cfg(feature = "rp2040")]
@@ -601,8 +705,11 @@ mod ram_helpers {
     ///   - 2nd core must be running code from RAM or ROM with interrupts disabled
     ///   - DMA must not access flash memory
     ///
-    /// `addr` and `len` parameters must be valid and are not checked.
-    pub unsafe fn flash_range_program(addr: u32, data: &[u8]) {
+    /// `addr` and SRAM `data` must cover valid ranges; neither is checked.
+    pub unsafe fn flash_range_program(
+        addr: u32,
+        data: &[u8],
+    ) {
         let mut boot2 = [0u32; 256 / 4];
         let ptrs = if USE_BOOT2 {
             #[cfg(feature = "rp2040")]
@@ -631,12 +738,18 @@ mod ram_helpers {
     ///   - interrupts must be disabled
     ///   - 2nd core must be running code from RAM or ROM with interrupts disabled
     ///   - DMA must not access flash memory
-    /// Length of data must be a multiple of 4096
-    /// addr must be aligned to 4096
+    /// `addr` is flash-relative bytes, `len` is the count, `data` is optional SRAM input and `ptrs`
+    /// an SRAM call table. Erase requires 4096-byte alignment; program requires 256-byte alignment.
+    /// Enabled program calls require `data` covering `len`; all addresses/callees must remain valid.
     #[inline(never)]
     #[unsafe(link_section = ".data.ram_func")]
     #[cfg(feature = "rp2040")]
-    unsafe fn write_flash_inner(addr: u32, len: u32, data: Option<&[u8]>, ptrs: *const FlashFunctionPointers) {
+    unsafe fn write_flash_inner(
+        addr: u32,
+        len: u32,
+        data: Option<&[u8]>,
+        ptrs: *const FlashFunctionPointers,
+    ) {
         #[cfg(target_arch = "arm")]
         core::arch::asm!(
             "mov r8, r0",
@@ -696,12 +809,18 @@ mod ram_helpers {
     ///   - interrupts must be disabled
     ///   - 2nd core must be running code from RAM or ROM with interrupts disabled
     ///   - DMA must not access flash memory
-    /// Length of data must be a multiple of 4096
-    /// addr must be aligned to 4096
+    /// `addr` is flash-relative bytes, `len` is the count, `data` is optional SRAM input and `ptrs`
+    /// an SRAM call table. Erase requires 4096-byte alignment; program requires 256-byte alignment.
+    /// Enabled program calls require `data` covering `len`; all addresses/callees must remain valid.
     #[inline(never)]
     #[unsafe(link_section = ".data.ram_func")]
     #[cfg(feature = "_rp235x")]
-    unsafe fn write_flash_inner(addr: u32, len: u32, data: Option<&[u8]>, ptrs: *const FlashFunctionPointers) {
+    unsafe fn write_flash_inner(
+        addr: u32,
+        len: u32,
+        data: Option<&[u8]>,
+        ptrs: *const FlashFunctionPointers,
+    ) {
         let saved = XipState::capture();
         let data = data.map(|d| d.as_ptr()).unwrap_or(core::ptr::null());
         ((*ptrs).connect_internal_flash)();
@@ -721,22 +840,33 @@ mod ram_helpers {
     // Inline these helpers into RAM functions; final instruction bytes and
     // transitive calls are verified in every deployable optimized artifact.
     #[cfg(feature = "_rp235x")]
+    /// CS0 QMI and six pad settings retained in SRAM across ROM flash operations.
     struct XipState {
+        /// Original CS0 divisor/delay timing.
         timing: pac::qmi::regs::Timing,
+        /// Expected boot-restored CS0 read format.
         rfmt: pac::qmi::regs::Rfmt,
+        /// Expected boot-restored CS0 read opcode.
         rcmd: pac::qmi::regs::Rcmd,
+        /// Preserved high control bits; direct-mode enables/chip selects remain clear.
         direct: pac::qmi::regs::DirectCsr,
+        /// Original six QSPI electrical pad control words.
         pads: [pac::pads::regs::GpioCtrl; 6],
     }
     #[cfg(feature = "_rp235x")]
     impl XipState {
         #[inline(always)]
+        /// Returns the current CS0/read/pad state before command-mode entry.
         fn capture() -> Self {
             Self {
+                // Original CS0 divisor/delay timing.
                 timing: pac::QMI.mem(0).timing().read(),
+                // Expected boot-restored CS0 read format.
                 rfmt: pac::QMI.mem(0).rfmt().read(),
+                // Expected boot-restored CS0 read opcode.
                 rcmd: pac::QMI.mem(0).rcmd().read(),
-                direct: pac::qmi::regs::DirectCsr(pac::QMI.direct_csr().read().0 & 0xffc0_0000),
+                // Preserved high control bits; direct-mode enables/chip selects remain clear.
+                direct: pac::qmi::regs::DirectCsr(pac::QMI.direct_csr().read().0 & 0xFFC0_0000),
                 // Keep all six accesses explicit. Every supported optimization
                 // still requires a current-byte RAM dependency review.
                 pads: [
@@ -751,6 +881,8 @@ mod ram_helpers {
         }
 
         #[inline(always)]
+        /// Restores timing/pads from `self` after matching boot read format/opcode.
+        /// Mismatch/readback failure parks in SRAM without returning to uncertain XIP.
         fn restore(self) {
             // Never apply fast timing to a different read command/format.
             // No panic/return into flash on an unexpected boot2 restoration.
@@ -769,8 +901,9 @@ mod ram_helpers {
             cortex_m::asm::dsb();
             let direct = pac::QMI.direct_csr().read();
             if pac::QMI.mem(0).timing().read() != self.timing
-                || direct.0 & 0xffc0_00cf != self.direct.0
-                || !direct.txempty() || !direct.rxempty()
+                || direct.0 & 0xFFC0_00CF != self.direct.0
+                || !direct.txempty()
+                || !direct.rxempty()
             {
                 fail_stop();
             }
@@ -791,27 +924,52 @@ mod ram_helpers {
 
     #[cfg(feature = "_rp235x")]
     #[inline(always)]
+    /// Never returns; SRAM-only WFE leaves recovery to the independently armed watchdog.
     fn fail_stop() -> ! {
         // No panic, logging or flash access. The armed watchdog is the bound.
-        loop { cortex_m::asm::wfe(); }
+        loop {
+            cortex_m::asm::wfe();
+        }
     }
 
     #[cfg(feature = "_rp235x")]
+    /// Direct QMI adapter for the bounded read-only JEDEC transaction.
     struct Probe;
     #[cfg(feature = "_rp235x")]
     impl super::probe::Io for Probe {
         #[inline(always)]
-        fn control(&mut self, value: u32) { pac::QMI.direct_csr().write_value(pac::qmi::regs::DirectCsr(value)); }
+        /// Writes direct-mode control `value` under exclusive XIP-off ownership.
+        fn control(
+            &mut self,
+            value: u32,
+        ) {
+            pac::QMI.direct_csr().write_value(pac::qmi::regs::DirectCsr(value));
+        }
+
         #[inline(always)]
+        /// Returns the current QMI direct-mode status/control word.
         fn status(&mut self) -> u32 { pac::QMI.direct_csr().read().0 }
+
         #[inline(always)]
-        fn write(&mut self, byte: u8) { pac::QMI.direct_tx().write_value(pac::qmi::regs::DirectTx(u32::from(byte))); }
+        /// Queues eight-bit `byte` in the direct transmit FIFO.
+        fn write(
+            &mut self,
+            byte: u8,
+        ) {
+            pac::QMI
+                .direct_tx()
+                .write_value(pac::qmi::regs::DirectTx(u32::from(byte)));
+        }
+
         #[inline(always)]
+        /// Returns and removes the low byte of the direct receive FIFO.
         fn read(&mut self) -> u8 { pac::QMI.direct_rx().read().0 as u8 }
     }
 
     /// Fixed read-only 9F transaction. Resolve ROM functions and copy the boot
-    /// setup into SRAM before entering the non-inlined XIP-off function.
+    /// setup into SRAM before entering the non-inlined XIP-off function. Returns the 24-bit ID.
+    /// # Safety
+    /// Caller must quiesce all other XIP users and preserve the CS0-only boot-XIP contract.
     #[cfg(feature = "_rp235x")]
     pub unsafe fn flash_jedec_id() -> u32 {
         let mut boot2 = [0u32; 64];
@@ -824,6 +982,9 @@ mod ram_helpers {
     #[cfg(feature = "_rp235x")]
     #[inline(never)]
     #[unsafe(link_section = ".data.ram_func")]
+    /// Returns the 24-bit JEDEC value using SRAM `ptrs`; timeout/restoration failure parks.
+    /// # Safety
+    /// Callees/data must remain SRAM/ROM accessible; all other XIP users must be quiescent.
     unsafe fn jedec_id_inner(ptrs: &FlashFunctionPointers<'_>) -> u32 {
         let saved = XipState::capture();
         (ptrs.connect_internal_flash)();
@@ -839,20 +1000,26 @@ mod ram_helpers {
     }
 
     #[repr(C)]
+    /// RP2040 SSI descriptor whose C field layout is consumed by inline assembly.
     struct FlashCommand {
+        /// SRAM command/address bytes; requires nonzero length.
         cmd_addr: *const u8,
+        /// Number of bytes emitted before dummy/data reads.
         cmd_addr_len: u32,
+        /// Received dummy bytes discarded before output.
         dummy_len: u32,
+        /// SRAM output pointer, writable for data_len bytes.
         data: *mut u8,
+        /// Positive receive byte count; assembly loop is not zero-safe.
         data_len: u32,
     }
 
-    /// Return SPI flash unique ID
+    /// Fills `out` with unique-ID bytes using command 0x4B.
     ///
     /// Not all SPI flashes implement this command, so check the JEDEC
     /// ID before relying on it. The Winbond parts commonly seen on
     /// RP2040 devboards (JEDEC=0xEF7015) support an 8-byte unique ID;
-    /// https://forums.raspberrypi.com/viewtopic.php?t=331949 suggests
+    /// <https://forums.raspberrypi.com/viewtopic.php?t=331949> suggests
     /// that LCSC (Zetta) parts have a 16-byte unique ID (which is
     /// *not* unique in just its first 8 bytes),
     /// JEDEC=0xBA6015. Macronix and Spansion parts do not have a
@@ -863,6 +1030,8 @@ mod ram_helpers {
     /// addresses).
     ///
     /// # Safety
+    /// `out` must contain 1..=65532 bytes; assembly RX stores before decrementing its counter,
+    /// and the16-bit SSI receive count also includes four dummy bytes.
     ///
     /// Nothing must access flash while this is running.
     /// Usually this means:
@@ -886,7 +1055,7 @@ mod ram_helpers {
         read_flash(&cmd[..], 4, out, &ptrs as *const FlashFunctionPointers);
     }
 
-    /// Return SPI flash JEDEC ID
+    /// Returns the 24-bit JEDEC identifier using command 0x9F.
     ///
     /// This is the three-byte manufacturer-and-model identifier
     /// commonly used to check before using manufacturer-specific SPI
@@ -919,7 +1088,16 @@ mod ram_helpers {
     }
 
     #[cfg(feature = "rp2040")]
-    unsafe fn read_flash(cmd_addr: &[u8], dummy_len: u32, out: &mut [u8], ptrs: *const FlashFunctionPointers) {
+    /// Sends SRAM `cmd_addr`, skips `dummy_len` bytes, fills `out`, then restores XIP via `ptrs`.
+    /// # Safety
+    /// XIP users must be quiescent; `ptrs` and buffers must be SRAM/ROM resident. Command/output
+    /// must be nonempty and total receive count fit SSI CTRLR1. No timeout is implemented.
+    unsafe fn read_flash(
+        cmd_addr: &[u8],
+        dummy_len: u32,
+        out: &mut [u8],
+        ptrs: *const FlashFunctionPointers,
+    ) {
         read_flash_inner(
             FlashCommand {
                 cmd_addr: cmd_addr.as_ptr(),
@@ -939,11 +1117,18 @@ mod ram_helpers {
     /// * `cmd` - `FlashCommand` structure
     /// * `ptrs` - Flash function pointers as per `write_flash_inner`
     ///
+    /// # Safety
+    /// All pointers/callees must remain SRAM/ROM accessible with other XIP users quiescent.
+    /// `cmd` requires nonzero command/data lengths and a receive count fitting SSI CTRLR1.
+    ///
     /// Credit: taken from `rp2040-flash` (also licensed Apache+MIT)
     #[inline(never)]
     #[unsafe(link_section = ".data.ram_func")]
     #[cfg(feature = "rp2040")]
-    unsafe fn read_flash_inner(cmd: FlashCommand, ptrs: *const FlashFunctionPointers) {
+    unsafe fn read_flash_inner(
+        cmd: FlashCommand,
+        ptrs: *const FlashFunctionPointers,
+    ) {
         #[cfg(target_arch = "arm")]
         core::arch::asm!(
             "mov r10, r0", // cmd
@@ -1061,9 +1246,14 @@ mod ram_helpers {
     }
 }
 
-/// Make sure to uphold the contract points with rp2040-flash.
-/// - interrupts must be disabled
-/// - DMA must not access flash memory
+/// Runs `operation` after pausing core1, entering a critical section and draining observed XIP DMA.
+/// Returns InvalidCore without side effects off core0, otherwise success after resuming core1.
+/// Waits have no timeout; panic/nonreturning operation leaves core1 parked.
+///
+/// # Safety
+/// `operation` must enter SRAM/ROM code before disabling XIP and restore it before returning.
+/// Caller must exclude new DMA/XIP consumers; the address scan is not a general DMA lock.
+/// Call with peer FIFO interrupts serviceable and outside locks needed for peer pause.
 pub(crate) unsafe fn in_ram(operation: impl FnOnce()) -> Result<(), Error> {
     // Make sure we're running on CORE0
     let core_id: u32 = pac::SIO.cpuid().read();
@@ -1076,6 +1266,7 @@ pub(crate) unsafe fn in_ram(operation: impl FnOnce()) -> Result<(), Error> {
 
     critical_section::with(|_| {
         // Wait for all DMA channels in flash to finish before ram operation
+        /// Lower SRAM address; active DMA reads below this boundary are awaited.
         const SRAM_LOWER: u32 = 0x2000_0000;
         for n in 0..crate::dma::CHANNEL_COUNT {
             let ch = crate::pac::DMA.ch(n);
@@ -1093,7 +1284,9 @@ pub(crate) unsafe fn in_ram(operation: impl FnOnce()) -> Result<(), Error> {
     Ok(())
 }
 
+/// Restricts flash ownership to the HAL flash singleton.
 trait SealedInstance {}
+/// Restricts mode markers to the two implemented driver modes.
 trait SealedMode {}
 
 /// Flash instance.
@@ -1106,6 +1299,7 @@ pub trait Mode: SealedMode {}
 impl SealedInstance for FLASH {}
 impl Instance for FLASH {}
 
+/// Implements sealed mode traits for an existing marker type.
 macro_rules! impl_mode {
     ($name:ident) => {
         impl SealedMode for $name {}

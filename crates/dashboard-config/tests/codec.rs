@@ -1,7 +1,9 @@
+//! Independent EAV envelope vectors, malformed payloads and canonical cross-target admission.
 use dashboard_config::*;
 
 // Construct the envelope independently. This non-reflected CRC uses bit-reversed
 // bytes and the normal polynomial instead of the production reflected routine.
+/// Return an independently CRC-sealed current envelope for `payload`; panics if its length exceeds u16.
 fn envelope(payload: &[u8]) -> Vec<u8> {
     let mut result = b"EAV1".to_vec();
     result.extend_from_slice(&VERSION.to_le_bytes());
@@ -18,11 +20,13 @@ fn envelope(payload: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Return a sealed serialization of unvalidated `config` for negative admission tests; panics on buffer overflow.
 fn raw_config(config: &Config) -> Vec<u8> {
     let mut out = [0; MAX_FILE_BYTES];
     envelope(postcard::to_slice(config, &mut out).unwrap())
 }
 
+/// Return a valid one-view, zero-widget candidate with all sources disabled for stable wire fixtures.
 fn minimal() -> Config {
     let mut config = default_config();
     config.views[0].name = "A".try_into().unwrap();
@@ -34,6 +38,7 @@ fn minimal() -> Config {
 }
 
 #[test]
+/// Independent CRC vectors and a manually generated v6 fixture match both decoder and encoder bytes.
 fn crc_known_answers_and_independently_built_golden_v6() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
@@ -56,6 +61,7 @@ fn crc_known_answers_and_independently_built_golden_v6() {
 }
 
 #[test]
+/// Resealed malformed payloads, over-capacity collections and invalid settings still fail admission.
 fn valid_checksum_does_not_bypass_payload_or_semantic_checks() {
     let mutations: &[fn(&mut Config)] = &[
         |c| c.version = VERSION + 1,
@@ -136,6 +142,7 @@ fn valid_checksum_does_not_bypass_payload_or_semantic_checks() {
 }
 
 #[test]
+/// Signature, version, length, checksum and exact size limits retain distinct failure categories.
 fn envelope_fields_have_distinct_failure_paths_and_size_bound() {
     let valid = raw_config(&minimal());
     let mut bad = valid.clone();
@@ -161,6 +168,7 @@ fn envelope_fields_have_distinct_failure_paths_and_size_bound() {
 }
 
 #[test]
+/// Overlong collection varints reject consistently despite native versus 32-bit pointer-width differences.
 fn noncanonical_varints_cannot_pass_host_validation_then_fail_on_pico() {
     let bytes = raw_config(&minimal());
     let payload = &bytes[12..];
@@ -177,6 +185,7 @@ fn noncanonical_varints_cannot_pass_host_validation_then_fail_on_pico() {
 }
 
 #[test]
+/// Seeded malformed bytes never escape semantic admission; generated nonoverlapping layouts roundtrip.
 fn deterministic_random_inputs_and_generated_layouts_never_escape_validation() {
     let mut seed = 0xBAA511E5_u32;
     let mut next = || {
@@ -222,6 +231,7 @@ fn deterministic_random_inputs_and_generated_layouts_never_escape_validation() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Strict JSON rejects duplicate/unknown fields, bad enum/text/numeric values and oversized collections.
 fn json_nested_unknown_duplicate_enum_and_collection_overflow_are_rejected() {
     let json = to_json(&validate(default_config()).unwrap()).unwrap();
     for bad in [
@@ -257,6 +267,7 @@ fn json_nested_unknown_duplicate_enum_and_collection_overflow_are_rejected() {
 }
 
 #[test]
+/// Distinct runtime cache identities are excluded from both binary and JSON wire representations.
 fn cache_publication_does_not_change_current_bytes() {
     let first = validate(default_config()).unwrap();
     let second = validate(default_config()).unwrap();

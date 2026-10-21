@@ -1,10 +1,14 @@
+//! Configured per-widget rules retain independent channel qualification, dwell and hysteresis.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::{RuleAlerts, RuleEngine, RuleIndex, Status};
 use dashboard_host_validation::samples::{Quality, SensorId};
 use dashboard_host_validation::view_config::*;
 
+/// Returns bounded rule index `n`; panics outside 0..64.
 fn index(n: usize) -> RuleIndex { RuleIndex::new(n).unwrap() }
 
+/// Returns eight full views with 64 boost rules, including disabled duplicates and a distinct final threshold.
+/// Activation/clear dwell is 500/250 ms; panics if the maximal fixture fails shared validation.
 fn maximum() -> ValidatedConfig {
     let mut config = default_config();
     config.views.clear();
@@ -40,6 +44,7 @@ fn maximum() -> ValidatedConfig {
     validate(config).unwrap()
 }
 
+/// Ingests boost `boost` in bar with fixed companion values into `model` at `at` ms; panics on rejection.
 fn sample(
     model: &mut AcquisitionModel<'_>,
     boost: f32,
@@ -48,6 +53,7 @@ fn sample(
     assert!(model.ingest_batch([boost, 90., 95., 80., 30., 700., 13.8, 1.], at));
 }
 
+/// Rule 63 remains independent of channel zero and disabled duplicates within fixed rule-storage bounds.
 #[test]
 fn rule63_is_independent_from_channel0_and_disabled_duplicate() {
     let config = maximum();
@@ -68,6 +74,7 @@ fn rule63_is_independent_from_channel0_and_disabled_duplicate() {
     assert!(core::mem::size_of::<RuleAlerts>() <= 680);
 }
 
+/// Faults and stale gaps restart dwell; statistics reset preserves an already qualified active warning.
 #[test]
 fn faults_gaps_and_statistics_resets_do_not_reuse_dwell() {
     let config = maximum();
@@ -95,6 +102,7 @@ fn faults_gaps_and_statistics_resets_do_not_reuse_dwell() {
     assert_eq!(model.snapshot().rule_status_at(index(63), 2501), Status::Normal);
 }
 
+/// Vehicle applicability cannot qualify absent sources or missing context needed by a voltage warning.
 #[test]
 fn vehicle_applicability_does_not_enable_unknown_sources_or_contexts() {
     let mut config = default_config();
@@ -134,6 +142,7 @@ fn vehicle_applicability_does_not_enable_unknown_sources_or_contexts() {
     );
 }
 
+/// All 64 rules use their configured channel, so a lambda fault invalidates only lambda rules.
 #[test]
 fn every_rule_uses_its_channel_for_context_metadata_expiry_and_faults() {
     let mut cfg = maximum().config().clone();
@@ -169,6 +178,7 @@ fn every_rule_uses_its_channel_for_context_metadata_expiry_and_faults() {
     }
 }
 
+/// Time-only expiry changes neither sample sequence nor sensors and prevents later backdated dwell reuse.
 #[test]
 fn time_only_ticks_invalidate_expired_dwell_without_sampling_or_rebinding() {
     let config = maximum();
@@ -199,6 +209,7 @@ fn time_only_ticks_invalidate_expired_dwell_without_sampling_or_rebinding() {
     }
 }
 
+/// Inclusive window thresholds require measurement-driven activation/clear dwell; ticks cannot qualify them.
 #[test]
 fn v4_windows_use_inclusive_endpoints_and_measurement_dwell() {
     for mode in [LimitMode::InsideWindow, LimitMode::OutsideWindow] {
@@ -233,6 +244,7 @@ fn v4_windows_use_inclusive_endpoints_and_measurement_dwell() {
     }
 }
 
+/// Both ends of inside/outside windows are inclusive, with adjacent hysteresis preserving prior state.
 #[test]
 fn v4_window_high_endpoints_and_adjacent_hysteresis_are_inclusive() {
     for mode in [LimitMode::InsideWindow, LimitMode::OutsideWindow] {

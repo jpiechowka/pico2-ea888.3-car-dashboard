@@ -3,44 +3,74 @@
 //! through 31; compact instances keep an explicit overflow bucket.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Inclusive bucket interval in the recorded values' units; not an exact quantile.
 pub struct Bounds {
+    /// Smallest value assigned to this bucket.
     pub lower: u64,
+    /// Largest value assigned to this bucket, including `u64::MAX` for overflow.
     pub upper: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Immutable counts, exact extrema and bounded nearest-rank quantiles.
 pub struct Distribution {
+    /// Accepted observations, including overflow; freezes at `u32::MAX`.
     pub samples: u32,
+    /// Accepted observations beyond the configured ordinary bins.
     pub overflow: u32,
+    /// Saturating count of observations rejected after sample-count exhaustion.
     pub rejected: u32,
+    /// Exact accepted minimum, including overflow values; `None` when empty.
     pub min: Option<u64>,
+    /// Exact accepted maximum, including overflow values; `None` when empty.
     pub max: Option<u64>,
+    /// Bucket containing rank `ceil(samples * 50 / 100)`, or `None` when empty.
     pub p50: Option<Bounds>,
+    /// Bucket containing rank `ceil(samples * 95 / 100)`, or `None` when empty.
     pub p95: Option<Bounds>,
+    /// Bucket containing rank `ceil(samples * 99 / 100)`, or `None` when empty.
     pub p99: Option<Bounds>,
 }
 
+/// Packed fixed-memory distribution with `N` ordinary bins and one overflow bin.
+///
+/// `N` must be a multiple of 16 in `32..=976`; 976 covers all `u64` values,
+/// while 160 covers `0..=8191` before overflow. Recording never allocates.
 pub struct Histogram<const N: usize> {
+    /// Least significant 16 bits of each ordinary bin's count.
     low: [u16; N],
+    /// Count bits 16 through 23 for each ordinary bin.
     middle: [u8; N],
     // Unary high bytes: one zero terminates each bin's run of ones.
     // sum(high) <= floor(u32::MAX / 2^24) = 255, so N + 255 <= 1231 bits.
+    /// Count bits 24 through 31 encoded as unary runs, each terminated by zero.
     high: [u32; 39],
+    /// Number of unary one bits, at most 255 under the total-count bound.
     high_total: u8,
+    /// Total accepted observations across ordinary and overflow bins.
     count: u32,
+    /// Accepted observations whose index is at least `N`.
     overflow: u32,
+    /// Saturating rejected-observation count after `count` reaches `u32::MAX`.
     rejected: u32,
+    /// Exact minimum across accepted values; absent before the first record.
     min: Option<u64>,
+    /// Exact maximum across accepted values; absent before the first record.
     max: Option<u64>,
 }
 
 #[derive(Default)]
+/// Forward-only decoder reused for nondecreasing nearest-rank queries.
 struct Cursor {
+    /// First ordinary bin not yet accumulated.
     next_bin: usize,
+    /// Bit offset of the next unary high-count run.
     high_bit: usize,
+    /// Accepted observations in all previously decoded ordinary bins.
     cumulative: u64,
 }
 
+/// Returns the full histogram index `0..=975` containing `value` in caller units.
 fn index(value: u64) -> usize {
     if value < 16 {
         return value as usize;
@@ -50,6 +80,8 @@ fn index(value: u64) -> usize {
     16 + (exponent as usize - 4) * 16 + sub as usize
 }
 
+/// Returns the inclusive interval for `index` in `0..976`.
+/// Out-of-range indices violate this internal contract and may overflow shifts.
 fn bounds(index: usize) -> Bounds {
     if index < 16 {
         return Bounds {
@@ -67,9 +99,11 @@ fn bounds(index: usize) -> Bounds {
 }
 
 impl<const N: usize> Default for Histogram<N> {
+    /// Returns an empty histogram; panics for the same invalid `N` as [`Self::new`].
     fn default() -> Self { Self::new() }
 }
 impl<const N: usize> Histogram<N> {
+    /// Returns an empty histogram. Panics unless `N` is a multiple of 16 in `32..=976`.
     pub const fn new() -> Self {
         assert!(N >= 32 && N <= 976 && N.is_multiple_of(16));
         Self {
@@ -85,7 +119,9 @@ impl<const N: usize> Histogram<N> {
         }
     }
 
-    /// Freeze the distribution at counter exhaustion, with explicit rejection.
+    /// Records `value` in caller-selected units, updating its bin and exact extrema.
+    /// Returns `true` on acceptance, including overflow-bin acceptance. At `u32::MAX`
+    /// samples, returns `false` and only saturating-increments the rejection count.
     pub fn record(
         &mut self,
         value: u64,
@@ -117,6 +153,9 @@ impl<const N: usize> Histogram<N> {
     // Insert a one before this bin's terminating zero. Only a 24-bit carry
     // reaches here, at most 255 times between clears. Work is bounded by 39
     // word scans, 31 zero selections and 39 word shifts; no allocation.
+    /// Inserts one unary high-count unit for `slot` in `0..N` after a 24-bit carry.
+    /// Caller must retain room under the total-count limit; at most 255 such
+    /// insertions occur between clears. Shifts the fixed suffix without allocation.
     fn increment_high(
         &mut self,
         slot: usize,
@@ -144,6 +183,9 @@ impl<const N: usize> Histogram<N> {
         self.high_total += 1;
     }
 
+    /// Returns inclusive bounds around nearest rank `ceil(count * percentile / 100)`.
+    /// `percentile` outside `1..=100`, or an empty histogram, returns `None`.
+    /// Bounds retain bin width and may extend beyond the exact observed extrema.
     pub fn quantile(
         &self,
         percentile: u8,
@@ -157,6 +199,9 @@ impl<const N: usize> Histogram<N> {
 
     // Reuse a cursor only for nondecreasing, nonzero ranks. Summary decodes
     // each counter once; individual quantile queries start at the first bin.
+    /// Returns the bucket containing one-based `rank` in `1..=count`.
+    /// Advances `cursor`; reuse requires nondecreasing ranks on this unchanged
+    /// histogram. Violating these private preconditions can underflow or misidentify a bin.
     fn bounds_at_rank(
         &self,
         rank: u64,
@@ -185,6 +230,8 @@ impl<const N: usize> Histogram<N> {
         }
     }
 
+    /// Returns current counts, exact extrema and p50/p95/p99 bounds in one forward
+    /// decode. Empty histograms retain `None` extrema/quantiles, not valid zero samples.
     pub fn summary(&self) -> Distribution {
         let mut cursor = Cursor::default();
         let [p50, p95, p99] = [50, 95, 99].map(|p| {
@@ -205,6 +252,7 @@ impl<const N: usize> Histogram<N> {
         }
     }
 
+    /// Clears every bin, extrema and rejection counter, restoring empty admission.
     pub fn clear(&mut self) {
         self.low.fill(0);
         self.middle.fill(0);
@@ -219,9 +267,12 @@ impl<const N: usize> Histogram<N> {
 }
 
 #[cfg(test)]
+/// Packed-counter regressions against the independently frozen dense implementation.
 mod tests {
     use super::*;
 
+    /// Returns equivalent packed/dense states from `bins`, using each occupied bin's
+    /// lower edge as its extrema representative. Panics for invalid `N` or total > `u32::MAX`.
     fn seeded<const N: usize>(bins: [u32; N]) -> (Histogram<N>, dense::Histogram<N>) {
         let mut packed = Histogram::new();
         let mut original = dense::Histogram::new();
@@ -249,6 +300,8 @@ mod tests {
         (packed, original)
     }
 
+    /// Asserts `packed` and `original` agree on summaries and all valid/adjacent-invalid
+    /// percentile queries; panics on any mismatch without modifying either state.
     fn same<const N: usize>(
         packed: &Histogram<N>,
         original: &dense::Histogram<N>,
@@ -260,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks both packed carry boundaries at every bin against differently positioned high runs.
     fn every_bin_carries_without_changing_dense_distribution() {
         // A carry before, within or after another run moves a different suffix.
         // Exhaust all 976 positions, both low-counter boundaries and existing
@@ -282,6 +336,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks high-run exhaustion, rejection saturation and clear/reuse against dense counts.
     fn exhausted_high_capacity_and_rejection_saturation_match_dense() {
         for slot in 0..976 {
             let mut carry_bins = [0; 976];
@@ -326,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies the last accepted overflow sample freezes compact counts and exact extrema coherently.
     fn compact_overflow_exhaustion_preserves_all_bins_and_extrema() {
         let mut bins = [0; 160];
         bins[159] = u32::MAX - 1;
@@ -338,6 +394,8 @@ mod tests {
         same(&packed, &original);
     }
 
+    /// Checks 96 deterministic distributions at valid capacity `N`, including boundary
+    /// inserts and every percentile; panics on any packed/dense disagreement.
     fn random_distributions<const N: usize>() {
         let mut seed = 9181u64;
         for round in 0..96 {
@@ -360,6 +418,7 @@ mod tests {
     }
 
     #[test]
+    /// Exercises exact-only, compact-overflow and full-range capacities with sparse/dense seeds.
     fn seeded_sparse_dense_and_overflow_distributions_match_all_percentiles() {
         random_distributions::<32>();
         random_distributions::<160>();
@@ -367,6 +426,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks every full-range bucket edge and 20,000 deterministic streaming samples against the oracle.
     fn all_value_bin_edges_and_random_streams_match_frozen_dense() {
         let mut packed = Histogram::<976>::new();
         let mut original = dense::Histogram::<976>::new();
@@ -389,17 +449,26 @@ mod tests {
     }
     // Frozen dense implementation from 168cb0d7. Only output types and test
     // field visibility differ; keep its arithmetic independent of production.
+    /// Frozen dense arithmetic from commit `168cb0d7`; intentionally independent of packed helpers.
     mod dense {
         use super::{Bounds, Distribution};
+        /// Reference histogram with one full-width counter per ordinary bin.
         pub struct Histogram<const N: usize> {
+            /// Ordinary counts, exposed only for test seeding.
             pub bins: [u32; N],
+            /// Accepted samples, including overflow.
             pub count: u32,
+            /// Samples outside the first `N` bins.
             pub overflow: u32,
+            /// Saturating rejected count after sample exhaustion.
             pub rejected: u32,
+            /// Exact minimum or `None` when empty.
             pub min: Option<u64>,
+            /// Exact maximum or `None` when empty.
             pub max: Option<u64>,
         }
 
+        /// Returns the independently computed full-range bucket `0..=975` for `value`.
         fn index(value: u64) -> usize {
             if value < 16 {
                 return value as usize;
@@ -409,6 +478,8 @@ mod tests {
             16 + (exponent as usize - 4) * 16 + sub as usize
         }
 
+        /// Returns independently computed inclusive bounds for valid `index` in `0..976`.
+        /// Invalid indices may overflow shift arithmetic.
         fn bounds(index: usize) -> Bounds {
             if index < 16 {
                 return Bounds {
@@ -426,9 +497,11 @@ mod tests {
         }
 
         impl<const N: usize> Default for Histogram<N> {
+            /// Returns an empty reference histogram; panics for invalid capacity like [`Self::new`].
             fn default() -> Self { Self::new() }
         }
         impl<const N: usize> Histogram<N> {
+            /// Returns empty reference state; panics unless `N` is a multiple of 16 in `32..=976`.
             pub const fn new() -> Self {
                 assert!(N >= 32 && N <= 976 && N.is_multiple_of(16));
                 Self {
@@ -441,7 +514,8 @@ mod tests {
                 }
             }
 
-            /// Freeze the distribution at counter exhaustion, with explicit rejection.
+            /// Records `value` and its exact extrema. Returns `true` when accepted,
+            /// including overflow; returns `false` at count exhaustion and only increments rejections.
             pub fn record(
                 &mut self,
                 value: u64,
@@ -462,6 +536,8 @@ mod tests {
                 true
             }
 
+            /// Returns the dense nearest-rank bin for `percentile` in `1..=100`;
+            /// invalid percentiles or empty state return `None`. Overflow extends to `u64::MAX`.
             pub fn quantile(
                 &self,
                 percentile: u8,
@@ -483,6 +559,7 @@ mod tests {
                 })
             }
 
+            /// Returns counts, exact extrema and three independently scanned quantiles.
             pub fn summary(&self) -> Distribution {
                 Distribution {
                     samples: self.count,
@@ -496,6 +573,7 @@ mod tests {
                 }
             }
 
+            /// Resets all reference bins, counters and extrema to empty admission state.
             pub fn clear(&mut self) {
                 self.bins.fill(0);
                 self.count = 0;
@@ -507,6 +585,7 @@ mod tests {
         }
     }
     #[test]
+    /// Verifies exhausted packed counts reject new extremes without corrupting quantile decoding.
     fn exhausted_counts_do_not_corrupt_quantiles() {
         let mut histogram = Histogram::<32>::new();
         histogram.low[0] = u16::MAX;

@@ -1,8 +1,12 @@
 //! Explicit BOOTSEL information reads; no persistent programming or reboot.
+//! Raw grammar follows [picotool 2.3.1](https://github.com/raspberrypi/picotool/blob/2.3.1/main.cpp),
+//! with conservative local chip/security/partition admission rather than free-form diagnostic interpretation.
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use dashboard_helper_protocol::*;
+/// Returns nonempty borrowed lines from <=65,536 UTF-8 `raw` bytes, permitting only CR/LF controls.
+/// Rejects malformed text, more than 128 nonempty lines or any line above 1024 bytes; no lossy sanitization is used.
 fn lines(raw: &[u8]) -> Result<Vec<&str>, String> {
     if raw.len() > 65536 {
         return Err("Information output bound".into());
@@ -17,12 +21,17 @@ fn lines(raw: &[u8]) -> Result<Vec<&str>, String> {
     }
     Ok(lines)
 }
+/// Returns whether `value` is exactly `n` lowercase hexadecimal ASCII bytes; uppercase and prefixes fail.
 fn hex(
     value: &str,
     n: usize,
 ) -> bool {
     value.len() == n && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+/// Returns conservative BOOTSEL facts from raw picotool `info` and `partition` output, or strict grammar/policy errors.
+/// Requires one RP2350 A2/A3/A4 group, exact chip/boot identifiers, ARM availability, secure boot off, debug enabled,
+/// and no partition table with admitted ordered UF2 families including secure ARM. Unknown/duplicate fields fail.
+/// Optional flash-size text is a positive KiB count checked through 16 MiB, not measured device capacity.
 pub(crate) fn parse(
     info: &[u8],
     partition: &[u8],
@@ -165,6 +174,9 @@ pub(crate) fn parse(
         flash_size_estimate: estimate,
     })
 }
+/// Returns success only when a fresh `process` scan in `repo`/`session` is complete, every descriptor is selectable,
+/// and exactly one matches `selected` digest/serial. Scan failure, ambiguity, disappearance or replacement returns
+/// error.
 fn same_descriptor(
     process: &mut crate::process::ProcessContext,
     repo: &Path,
@@ -185,6 +197,11 @@ fn same_descriptor(
     }
     Ok(())
 }
+/// Returns an inspection of explicit `selected` device for `session`, using pinned tooling under `repo` and owned
+/// `process`. A 30-second shared probe budget covers before/after descriptor scans and separate information/partition
+/// reads. Failures return bounded incomplete reports; success hashes admitted facts but leaves capacity and flash
+/// readiness unverified. It does not establish continuous attachment, board model, physical flash size or running
+/// firmware.
 pub(crate) fn inspect(
     process: &mut crate::process::ProcessContext,
     repo: &Path,
@@ -269,19 +286,24 @@ pub(crate) fn inspect(
 }
 #[cfg(test)]
 mod tests {
+    //! Strict information/partition parsing fixtures; tests perform no USB operations.
     use super::*;
+    /// Complete supported information group with a separately interpreted flash-size estimate.
     const INFO: &str = "Device Information\n type: RP2350\n revision: A3\n chipid: 0x0123456789abcdef\n flash \
                         devinfo: 0x1234\n available cpus: ARM, RISC-V\n secure boot: 0\n debug enable: 1\n secure \
                         debug enable: 1\n boot_random: 00000001:00000002:00000003:00000004\n flash size: 4096K\n";
+    /// Exact admitted unpartitioned permission/family observation.
     const PART: &str = "there is no partition table\nun-partitioned_space :  S(rw) NSBOOT(rw) NS(rw), uf2 { \
                         rp2350-arm-s, rp2350-arm-ns }\n";
     #[test]
+    /// Chip identity and content-derived capacity estimate remain distinct parsed facts.
     fn exact_separate_identity_and_capacity_observation() {
         let facts = parse(INFO.as_bytes(), PART.as_bytes()).unwrap();
         assert_eq!(facts.chip_id.as_str(), "0x0123456789abcdef");
         assert_eq!(facts.flash_size_estimate, Some(4194304));
     }
     #[test]
+    /// Missing/duplicate identity, unsupported model/security and partition-policy changes fail strict parsing.
     fn duplicates_missing_security_and_partitions_fail() {
         for bad in [
             INFO.replace(" revision: A3\n", ""),

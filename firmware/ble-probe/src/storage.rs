@@ -14,49 +14,108 @@ use static_cell::StaticCell;
 use crate::{bridge, capture_reply, maintenance, radio};
 
 #[path = "capture_admission.rs"]
+/// Full capture-format checks layered over the journal's opaque payload integrity.
 mod admission;
 
 pub use capture_reply::{Buffer, Reply as UiReply};
+/// Explicit local UI journal operations; only Save/Reset can mutate persistent bytes.
 pub enum UiOperation {
+    /// Inspect four slot states and decode supported saved identities.
     List,
-    Load(u8),
-    Save { slot: u8, length: usize, overwrite: bool },
-    Reset(u8),
+    /// Load and fully decode one selected supported capture.
+    Load(
+        /// Logical slot index 0..4; the journal rejects other indices.
+        u8,
+    ),
+    /// Persist an already frozen bounded payload after rechecking both copies.
+    Save {
+        /// Logical slot index, checked again by journal admission.
+        slot: u8,
+        /// Initialized prefix of the supplied byte lease; oversized lengths reject.
+        length: usize,
+        /// Explicit authorization to replace known occupied data, never unknown formats.
+        overwrite: bool,
+    },
+    /// Explicit local destructive reset of both copies in a slot.
+    Reset(
+        /// Logical slot selected by the UI's separate Reset confirmation.
+        u8,
+    ),
 }
+/// Owned UI request with an optional affine payload allocation.
 pub struct UiRequest {
+    /// Capture UI request identity echoed even on failure.
     pub id: ui::RequestId,
+    /// Frozen operation selected before storage admission.
     pub operation: UiOperation,
+    /// Exclusive UI buffer; returned through the response on every ordinary path.
     pub buffer: Option<&'static mut Buffer>,
 }
+/// Read-only USB journal requests; no erase/program operation exists here.
 pub enum UsbRequest {
+    /// Return opaque journal metadata for all four slots.
     List,
-    Get { slot: u8, buffer: &'static mut Buffer },
-}
-pub enum UsbReply {
-    Listed([Result<Option<journal::StoredCapture>, ui::UiError>; 4]),
-    Loaded {
-        result: Result<journal::StoredCapture, ui::UiError>,
+    /// Load an integrity-checked raw payload into the USB-owned allocation.
+    Get {
+        /// Logical slot index checked by the journal.
+        slot: u8,
+        /// Exclusive destination lease returned on both success and failure.
         buffer: &'static mut Buffer,
     },
 }
+/// USB result that releases storage ownership before endpoint transmission.
+pub enum UsbReply {
+    /// Metadata, empty state or independent error for each physical logical slot.
+    Listed(
+        /// Four entries in slot order; payload decoding is not implied.
+        [Result<Option<journal::StoredCapture>, ui::UiError>; 4],
+    ),
+    /// Loaded metadata/result paired with the returned affine byte allocation.
+    Loaded {
+        /// Journal result; success identifies the valid prefix length and CRC.
+        result: Result<journal::StoredCapture, ui::UiError>,
+        /// Original USB destination lease even if the load failed.
+        buffer: &'static mut Buffer,
+    },
+}
+/// Capacity-one local UI operation queue.
 pub static UI_REQUEST: Channel<CriticalSectionRawMutex, UiRequest, 1> = Channel::new();
+/// Affine result envelope exchange; storage waits until core1 returns the record.
 pub static UI_REPLY: capture_reply::Mailbox = capture_reply::Mailbox::new();
+/// Capacity-one read-only USB request queue.
 pub static USB_REQUEST: Channel<CriticalSectionRawMutex, UsbRequest, 1> = Channel::new();
+/// USB response queue returning the payload lease before any host wait.
 pub static USB_REPLY: Channel<CriticalSectionRawMutex, UsbReply, 1> = Channel::new();
+/// Single payload allocation exclusively circulated between UI and storage.
 static UI_BYTES: StaticCell<Buffer> = StaticCell::new();
+/// Returns the zeroed UI payload lease once; panics on repeated initialization.
 pub fn ui_buffer() -> &'static mut Buffer { UI_BYTES.init_with(|| [0; journal::PAYLOAD_MAX]) }
 
+/// Sole journal backend; no concurrent owner may interleave inspection and mutation.
 struct Storage {
+    /// Capture-only checked physical flash handle.
     flash: CheckedFlash,
 }
 #[derive(Debug)]
+/// Hardware admission failure or mutation barrier/operation failure.
 enum Error {
-    Flash(dashboard_pico2::flash_guard::Error),
-    Maintenance(maintenance::Error<dashboard_pico2::flash_guard::Error>),
+    /// Direct read or qualification failure from the checked handle.
+    Flash(
+        /// Original flash guard error.
+        dashboard_pico2::flash_guard::Error,
+    ),
+    /// One erase/page operation failed before or during its maintenance ticket.
+    Maintenance(
+        /// Original barrier or nested flash failure.
+        maintenance::Error<dashboard_pico2::flash_guard::Error>,
+    ),
 }
 impl journal::Storage for Storage {
+    /// Physical flash or owner/deadline failure retained by the journal.
     type Error = Error;
 
+    /// Reads physical `offset` into `out`, then yields. Returns the checked flash
+    /// result; the synchronous copy ends before yielding and never spans an await.
     async fn read(
         &mut self,
         offset: u32,
@@ -67,6 +126,8 @@ impl journal::Storage for Storage {
         result
     }
 
+    /// Erases one sector at physical `offset` under its own maintenance ticket.
+    /// Returns checked mutation/barrier failure; never cancel during restoration.
     async fn erase_sector(
         &mut self,
         offset: u32,
@@ -76,6 +137,8 @@ impl journal::Storage for Storage {
             .map_err(Error::Maintenance)
     }
 
+    /// Programs SRAM `page` at physical `offset` under its own maintenance ticket.
+    /// Returns checked mutation/barrier failure and resumes owners between pages.
     async fn program_page(
         &mut self,
         offset: u32,
@@ -86,6 +149,8 @@ impl journal::Storage for Storage {
             .map_err(Error::Maintenance)
     }
 }
+/// Returns current write permission for `request` plus display/radio quiescence;
+/// the flash handle independently rechecks physical peripheral and SRAM bounds.
 fn conditions(request: dashboard_core::maintenance::Request) -> WriteConditions {
     WriteConditions {
         maintenance_valid: maintenance::writing(request),
@@ -93,6 +158,8 @@ fn conditions(request: dashboard_core::maintenance::Request) -> WriteConditions 
         radio_idle: radio::bus_idle(),
     }
 }
+/// Returns the UI classification of journal `error`, latching Storage except for
+/// expected Empty. Logs detailed hardware/barrier failures without payload bytes.
 fn error(error: journal::Error<Error>) -> ui::UiError {
     if !matches!(error, journal::Error::Empty) {
         bridge::STATUS.record(crate::status::Fault::Storage);
@@ -122,6 +189,8 @@ fn error(error: journal::Error<Error>) -> ui::UiError {
         _ => ui::UiError::Storage,
     }
 }
+/// Returns the UI classification of admission `e`, preserving version/corrupt/
+/// changed distinctions and publishing only actual capture fault categories.
 fn admission_error(e: admission::Error<Error>) -> ui::UiError {
     let error = match e {
         admission::Error::Journal(e) => error(e),
@@ -132,6 +201,9 @@ fn admission_error(e: admission::Error<Error>) -> ui::UiError {
     bridge::STATUS.capture_error(error);
     error
 }
+/// Fills `slots` in index order using exclusive `storage`, independently retaining
+/// each slot's metadata/error. Reads opaque journal integrity, not capture bodies;
+/// supported old copies remain readable beside unsupported/damaged siblings.
 async fn listing(
     storage: &mut Storage,
     slots: &mut [Result<Option<journal::StoredCapture>, ui::UiError>; 4],
@@ -162,6 +234,9 @@ async fn listing(
         }
     }
 }
+/// Fills `slots` and `identities` using `storage`, reusable `bytes`, and `decoder`.
+/// Each label requires full capture decoding; failed entries clear their identity
+/// and become unavailable/corrupt/unsupported without discarding other slots.
 async fn ui_listing(
     storage: &mut Storage,
     decoder: &mut capture::Decoder,
@@ -193,12 +268,17 @@ async fn ui_listing(
     }
 }
 #[embassy_executor::task]
+/// Owns `flash` indefinitely and serializes UI/USB requests. Returns every byte
+/// lease on ordinary errors and awaits UI envelope return before accepting work.
+/// Never cancel: a request may be in a flash mutation, restoration or affine reply
+/// exchange. This task cannot send BLE traffic or flash outside the capture region.
 pub async fn probe_storage_task(flash: CheckedFlash) {
     crate::metrics::measure(
         0,
         pin!(async {
             let mut storage = Storage { flash };
             let mut decoder = capture::Decoder::new();
+            /// Single response envelope filled in place to avoid large future copies.
             static REPLY: StaticCell<UiReply> = StaticCell::new();
             let mut reply = REPLY.init_with(UiReply::new);
             loop {
@@ -226,6 +306,10 @@ pub async fn probe_storage_task(flash: CheckedFlash) {
     )
     .await;
 }
+/// Executes owned `request` against `storage` with reusable `decoder`, filling
+/// `reply` in place. The incoming lease always moves into the reply; errors set a
+/// failure completion and latch status. Panics if the previous reply still owns
+/// a buffer. No response publication occurs until the operation/restoration ends.
 async fn handle_ui(
     storage: &mut Storage,
     decoder: &mut capture::Decoder,

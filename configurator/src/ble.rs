@@ -1,4 +1,7 @@
 //! Browser address presentation only. Validation and stored bytes are shared.
+/// Returns six address bytes in displayed order from exact `XX:XX:XX:XX:XX:XX`
+/// `text`, accepting either hex case. Returns `None` for wrong length/separators,
+/// non-ASCII digits or whitespace. This syntax check does not qualify a peer.
 pub fn parse_address(text: &str) -> Option<[u8; 6]> {
     let bytes = text.as_bytes();
     if bytes.len() != 17 {
@@ -18,6 +21,7 @@ pub fn parse_address(text: &str) -> Option<[u8; 6]> {
     }
     Some(address)
 }
+/// Returns uppercase colon-separated hexadecimal for `address` in its stored order.
 pub fn format_address(address: [u8; 6]) -> String {
     format!(
         "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",

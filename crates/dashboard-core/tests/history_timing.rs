@@ -1,7 +1,10 @@
+//! Delayed-event versus presentation-clock regression tests for canonical history.
 use dashboard_core::acquisition::AcquisitionModel;
 use dashboard_core::history::History;
 use dashboard_core::samples::{Quantity, Sample, SensorId, Source};
 
+/// Returns unit after a newly received but delayed sample updates its original
+/// bucket without erasing earlier acquisition history; panics on accidental reanchor.
 #[test]
 fn accepted_delayed_sample_preserves_earlier_acquisition_history() {
     let mut model = AcquisitionModel::demo();
@@ -37,6 +40,8 @@ fn accepted_delayed_sample_preserves_earlier_acquisition_history() {
     );
 }
 
+/// Returns unit after checking delayed insertion, fault-gap duplicate rejection,
+/// recovery and actual clock-reversal clearing; panics on chronology drift.
 #[test]
 fn delayed_history_events_preserve_window_and_fault_gap_until_real_clock_reversal() {
     let mut history = History::new(10);
@@ -70,6 +75,8 @@ fn delayed_history_events_preserve_window_and_fault_gap_until_real_clock_reversa
     assert_eq!(history.view().iter().collect::<Vec<_>>(), [(0, Some(6.0))]);
 }
 
+/// Returns unit after confirming expired samples/faults cannot alias live circular
+/// slots and the oldest retained fault only removes its own point; panics on aliasing.
 #[test]
 fn events_outside_history_window_cannot_alias_live_ring_slots() {
     let mut history = History::new(60);

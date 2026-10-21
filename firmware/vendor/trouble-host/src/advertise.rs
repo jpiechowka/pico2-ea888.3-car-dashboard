@@ -11,31 +11,50 @@ use crate::{bt_hci_duration, codec, Address};
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[repr(i8)]
-#[allow(missing_docs)]
 pub enum TxPower {
+    /// Requested -40 dBm; controller support and actual selected power are separate.
     Minus40dBm = -40,
+    /// Requested -20 dBm; controller support and actual selected power are separate.
     Minus20dBm = -20,
+    /// Requested -16 dBm; controller support and actual selected power are separate.
     Minus16dBm = -16,
+    /// Requested -12 dBm; controller support and actual selected power are separate.
     Minus12dBm = -12,
+    /// Requested -8 dBm; controller support and actual selected power are separate.
     Minus8dBm = -8,
+    /// Requested -4 dBm; controller support and actual selected power are separate.
     Minus4dBm = -4,
+    /// Requested 0 dBm; controller may select a supported value.
     ZerodBm = 0,
+    /// Requested +2 dBm; controller support and actual selected power are separate.
     Plus2dBm = 2,
+    /// Requested +3 dBm; controller support and actual selected power are separate.
     Plus3dBm = 3,
+    /// Requested +4 dBm; controller support and actual selected power are separate.
     Plus4dBm = 4,
+    /// Requested +5 dBm; controller support and actual selected power are separate.
     Plus5dBm = 5,
+    /// Requested +6 dBm; controller support and actual selected power are separate.
     Plus6dBm = 6,
+    /// Requested +7 dBm; controller support and actual selected power are separate.
     Plus7dBm = 7,
+    /// Requested +8 dBm; controller support and actual selected power are separate.
     Plus8dBm = 8,
+    /// Requested +10 dBm; controller support and actual selected power are separate.
     Plus10dBm = 10,
+    /// Requested +12 dBm; controller support and actual selected power are separate.
     Plus12dBm = 12,
+    /// Requested +14 dBm; controller support and actual selected power are separate.
     Plus14dBm = 14,
+    /// Requested +16 dBm; controller support and actual selected power are separate.
     Plus16dBm = 16,
+    /// Requested +18 dBm; controller support and actual selected power are separate.
     Plus18dBm = 18,
+    /// Requested +20 dBm; controller support and actual selected power are separate.
     Plus20dBm = 20,
 }
 
-/// Configuriation for a single advertisement set.
+/// Configuration and borrowed payloads for one extended advertising set.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisementSet<'d> {
@@ -49,8 +68,11 @@ pub struct AdvertisementSet<'d> {
 }
 
 impl<'d> AdvertisementSet<'d> {
-    /// Create a new advertisement set that can be passed to advertisement functions.
+    /// Returns N sequential handle descriptors from `sets`, with timeouts/events copied from each set.
+    /// The advertiser admits at most63 sets; this helper alone casts indices to u8 without checking N.
+    /// Durations floor to10 ms ticks and panic above the u16 tick range; None/zero means no duration limit.
     pub fn handles<const N: usize>(sets: &[AdvertisementSet<'d>; N]) -> [AdvSet; N] {
+        /// Zero-duration, unlimited-event descriptor overwritten for each input set.
         const NEW_SET: AdvSet = AdvSet {
             adv_handle: AdvHandle::new(0),
             duration: bt_hci::param::Duration::from_u16(0),
@@ -71,34 +93,34 @@ impl<'d> AdvertisementSet<'d> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Copy, Clone, Debug)]
 pub struct AdvertisementParameters {
-    /// Phy selection
+    /// Primary advertising PHY for extended advertising; legacy API ignores it.
     pub primary_phy: PhyKind,
 
-    /// Secondary phy selection
+    /// Secondary advertising PHY for extended advertising.
     pub secondary_phy: PhyKind,
 
-    /// Transmission power
+    /// Requested extended-advertising TX power in dBm; actual controller choice can differ.
     pub tx_power: TxPower,
 
-    /// Timeout duration
+    /// Extended-set duration, floored to10 ms ticks; None/zero means unlimited. Legacy API does not enforce it.
     pub timeout: Option<Duration>,
 
-    /// Max advertising events
+    /// Extended-set event count limit; None/zero means unlimited. Legacy API ignores it.
     pub max_events: Option<u8>,
 
-    /// Minimum advertising interval
+    /// Lower interval bound, floored to625 us ticks; legacy uses16 bits, extended24 bits.
     pub interval_min: Duration,
 
-    /// Maximum advertising interval
+    /// Upper interval bound in625 us ticks after conversion; hardware validates ordering/range.
     pub interval_max: Duration,
 
-    /// Which advertising channels to use
+    /// Enabled primary channels; None selects all three.
     pub channel_map: Option<AdvChannelMap>,
 
-    /// Filtering policy
+    /// Controller filter policy for scan/connection requests; list contents are configured separately.
     pub filter_policy: AdvFilterPolicy,
 
-    /// Fragmentation preference
+    /// Extended controller fragmentation preference; does not enable multi-command HCI uploads.
     pub fragment: bool,
 
     /// Override the own address type for this advertising set.
@@ -107,6 +129,7 @@ pub struct AdvertisementParameters {
 }
 
 impl Default for AdvertisementParameters {
+    /// Returns160 ms intervals, LE1M PHYs,0 dBm, all channels and no duration/event/address override.
     fn default() -> Self {
         Self {
             primary_phy: PhyKind::Le1M,
@@ -126,14 +149,20 @@ impl Default for AdvertisementParameters {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Borrowed normalized HCI properties and payloads; conversion alone does not validate lengths.
 pub(crate) struct RawAdvertisement<'d> {
+    /// PDU property bits selecting legacy/extended, direction, scan and connection behavior.
     pub(crate) props: AdvEventProps,
+    /// Complete advertising-data payload, without HCI framing.
     pub(crate) adv_data: &'d [u8],
+    /// Complete scan-response payload, empty when the PDU cannot carry it.
     pub(crate) scan_data: &'d [u8],
+    /// Target address for directed advertising, None otherwise.
     pub(crate) peer: Option<Address>,
 }
 
 impl Default for RawAdvertisement<'_> {
+    /// Returns empty legacy connectable/scannable undirected fields; flags still require admission validation.
     fn default() -> Self {
         Self {
             props: AdvEventProps::new()
@@ -223,6 +252,8 @@ pub enum Advertisement<'d> {
 }
 
 impl<'d> Advertisement<'d> {
+    /// Returns whether applicable connectable payloads start with Flags containing BR_EDR_NOT_SUPPORTED.
+    /// Other variants pass here; this is not full AD validation or a length/controller-capability check.
     pub(crate) fn is_valid(&self) -> bool {
         match self {
             Advertisement::ConnectableScannableUndirected { adv_data, .. }
@@ -236,6 +267,7 @@ impl<'d> Advertisement<'d> {
     }
 }
 impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
+    /// Returns HCI properties and borrowed fields for `val`; performs no payload/length validation.
     fn from(val: Advertisement<'d>) -> RawAdvertisement<'d> {
         match val {
             Advertisement::ConnectableScannableUndirected { adv_data, scan_data } => RawAdvertisement {
@@ -350,10 +382,10 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
     }
 }
 
-/// Le advertisement.
+/// Flags AD bit for limited LE discoverability.
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
 
-/// Discoverable flag.
+/// Flags AD bit for general LE discoverability.
 pub const LE_GENERAL_DISCOVERABLE: u8 = 0b00000010;
 
 /// BR/EDR not supported.
@@ -383,34 +415,34 @@ pub enum AdStructure<'a> {
     /// 0), this may be omitted.
     ///
     /// Must not be used in scan response data.
-    Flags(u8),
+    Flags(#[doc = "Flags bitset; no reserved-bit validation is performed."] u8),
 
     /// Incomplete List of 16-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    IncompleteServiceUuids16(&'a [[u8; 2]]),
+    IncompleteServiceUuids16(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 2]]),
 
     /// Complete List of 16-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    CompleteServiceUuids16(&'a [[u8; 2]]),
+    CompleteServiceUuids16(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 2]]),
 
     /// Incomplete List of 32-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    IncompleteServiceUuids32(&'a [[u8; 4]]),
+    IncompleteServiceUuids32(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 4]]),
 
     /// Complete List of 32-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    CompleteServiceUuids32(&'a [[u8; 4]]),
+    CompleteServiceUuids32(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 4]]),
 
     /// Incomplete List of 128-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    IncompleteServiceUuids128(&'a [[u8; 16]]),
+    IncompleteServiceUuids128(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 16]]),
 
     /// Complete List of 128-bit service UUIDs.
     /// The UUID data matches the ble network's endian order (should be little endian).
-    CompleteServiceUuids128(&'a [[u8; 16]]),
+    CompleteServiceUuids128(#[doc = "Borrowed little-endian UUID arrays, without a count prefix."] &'a [[u8; 16]]),
 
     /// Sets the Tx Power Level in dBm.
-    TxPowerLevel(i8),
+    TxPowerLevel(#[doc = "Signed transmit power in dBm."] i8),
 
     /// Service data with 16-bit service UUID.
     /// The UUID data matches the ble network's endian order (should be little endian).
@@ -424,10 +456,10 @@ pub enum AdStructure<'a> {
     /// Sets the full (unabbreviated) device name.
     ///
     /// This will be shown to the user when this device is found.
-    CompleteLocalName(&'a [u8]),
+    CompleteLocalName(#[doc = "Borrowed name bytes; this codec does not validate UTF-8 or append NUL."] &'a [u8]),
 
     /// Sets the shortened device name.
-    ShortenedLocalName(&'a [u8]),
+    ShortenedLocalName(#[doc = "Borrowed name bytes; this codec does not validate UTF-8 or append NUL."] &'a [u8]),
 
     /// Set manufacturer specific data
     ManufacturerSpecificData {
@@ -447,7 +479,8 @@ pub enum AdStructure<'a> {
 }
 
 impl AdStructure<'_> {
-    /// Encode a slice of advertisement structures into a buffer.
+    /// Encodes `data` in order into `dest`; returns bytes used or capacity/one-byte-length error.
+    /// Failure may leave earlier structures and part of the failing structure written; no rollback.
     pub fn encode_slice(data: &[AdStructure<'_>], dest: &mut [u8]) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(dest);
         for item in data.iter() {
@@ -456,6 +489,8 @@ impl AdStructure<'_> {
         Ok(w.len())
     }
 
+    /// Appends this AD structure to `w`; returns Ok or checked-length/cursor-capacity error.
+    /// The type plus payload must fit255 bytes even in extended advertising; partial writes are retained.
     pub(crate) fn encode(&self, w: &mut WriteCursor<'_>) -> Result<(), codec::Error> {
         // The AD length remains one octet even inside extended advertising.
         let length = |count: usize, width: usize, overhead: usize| {
@@ -537,9 +572,12 @@ impl AdStructure<'_> {
         Ok(())
     }
 
-    /// Decode a slice of advertisement structures from a buffer.
+    /// Returns a borrowing iterator over `data`; errors are yielded per attempted structure.
+    /// Zero terminators and type-only fields are errors here; flags/power use the first payload byte.
+    /// Malformed/truncated input may consume a prefix, so callers should stop on the first error.
     pub fn decode(data: &[u8]) -> impl Iterator<Item = Result<AdStructure<'_>, codec::Error>> {
         AdStructureIter {
+            // Remaining input and byte position.
             cursor: ReadCursor::new(data),
         }
     }
@@ -547,10 +585,13 @@ impl AdStructure<'_> {
 
 /// Iterator over advertisement structures.
 pub struct AdStructureIter<'d> {
+    /// Remaining input and byte position; failed reads can advance the position.
     cursor: ReadCursor<'d>,
 }
 
 impl<'d> AdStructureIter<'d> {
+    /// Returns the next borrowed structure or an error after any already-consumed prefix.
+    /// UUID-list widths must divide the payload; short manufacturer data is retained as Unknown.
     fn read(&mut self) -> Result<AdStructure<'d>, codec::Error> {
         let len: u8 = self.cursor.read()?;
         if len < 2 {
@@ -679,7 +720,9 @@ impl<'d> AdStructureIter<'d> {
 }
 
 impl<'d> Iterator for AdStructureIter<'d> {
+    /// Borrowed decoded structure or malformed/truncated-field error.
     type Item = Result<AdStructure<'d>, codec::Error>;
+    /// Returns None only at the byte-stream end, otherwise the next decode result; errors do not fuse the iterator.
     fn next(&mut self) -> Option<Self::Item> {
         if self.cursor.available() == 0 {
             return None;
@@ -689,9 +732,11 @@ impl<'d> Iterator for AdStructureIter<'d> {
 }
 
 #[cfg(test)]
+/// Regressions for AD byte limits, directed properties and destination exhaustion.
 mod tests {
     use super::*;
 
+    /// AD length overflow is rejected independently of available destination space.
     #[test]
     fn oversized_fields_are_rejected_even_when_the_destination_is_large() {
         let data = [0x55; 255];
@@ -721,6 +766,7 @@ mod tests {
         }
     }
 
+    /// All directed variants retain their target address and directed HCI property.
     #[test]
     fn every_directed_variant_sets_directed_property_and_retains_peer() {
         let peer = Address::random([1, 2, 3, 4, 5, 0xc6]);
@@ -744,6 +790,7 @@ mod tests {
         }
     }
 
+    /// The maximum one-byte AD length round-trips and undersized output returns an error.
     #[test]
     fn maximum_length_field_round_trips_and_tiny_buffer_returns_error() {
         let name = [b'x'; 254];
@@ -758,6 +805,7 @@ mod tests {
         assert!(AdStructure::encode_slice(&[AdStructure::Flags(4)], &mut [0; 2]).is_err());
     }
 
+    /// A name that exceeds the remaining31-byte advertising capacity is rejected rather than truncated.
     #[test]
     fn adv_name_truncate() {
         let mut adv_data = [0; 31];

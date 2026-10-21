@@ -1,27 +1,42 @@
 //! Bounded capture controls. Effects carry non-reused identities; firmware owns bytes and I/O.
 use super::names::SavedIdentity;
 
+/// Raw X hold duration in milliseconds, shared with the hardware input contract.
 pub const HOLD_MS: u64 = crate::input_model::BUTTON_HOLD_MS;
+/// Milliseconds before visible operation feedback times out; does not cancel owner I/O.
 pub const OPERATION_TIMEOUT_MS: u64 = 30_000;
+/// Milliseconds before an overwrite/reset confirmation expires.
 pub const CONFIRM_TIMEOUT_MS: u64 = 10_000;
+/// Nonzero checked-increment operation identity; exhaustion never wraps.
 pub type RequestId = u32;
 
+/// User-visible admission state of both journal copies for one capture slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
+    /// Directory has not yet been read.
     Unknown,
+    /// Both journal copies are erased.
     Empty,
+    /// Readable capture that can be replaced after explicit confirmation.
     Saved {
+        /// Selected nonzero journal generation.
         generation: u64,
     },
     /// A readable copy exists, but replacement requires destructive reset.
     SavedBlocked {
+        /// Readable generation; may be exhausted or accompanied by an unsupported copy.
         generation: u64,
     },
+    /// No readable selected copy and at least one nonempty invalid copy.
     Corrupt,
+    /// Unsupported schema prevents interpretation and ordinary replacement.
     Unsupported,
+    /// Storage/directory state cannot currently be read.
     Unavailable,
 }
 
+/// Returns the readable slot class for `generation`; `replacement_blocked` or maximum
+/// generation requires reset before replacement. This projection does not validate generation zero.
 fn readable_slot(
     generation: u64,
     replacement_blocked: bool,
@@ -35,6 +50,9 @@ fn readable_slot(
 
 /// Preserve both-copy admission status when projecting a journal directory.
 /// Do not reduce SlotInfo to its selected capture before this decision.
+/// Returns UI state from `info`, retaining unsupported-copy protection even with a
+/// selected readable capture. With no selected copy, unsupported takes precedence
+/// over all-empty, then corrupt. Performs no journal I/O.
 pub fn slot_from_journal(info: &super::capture_store::SlotInfo) -> Slot {
     use super::capture_store::CopyState;
     let unsupported = info.copies.iter().any(|v| matches!(v, CopyState::UnsupportedSchema(_)));
@@ -48,131 +66,234 @@ pub fn slot_from_journal(info: &super::capture_store::SlotInfo) -> Slot {
         Slot::Corrupt
     }
 }
+/// Producer's current ability to freeze live evidence for saving.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveAvailability {
+    /// Stable selected-peer evidence can be frozen now.
     Ready,
+    /// No selected peer can supply capture identity.
     NoPeer,
+    /// Live owner is transitioning or otherwise cannot freeze evidence.
     Busy,
 }
+/// Live-source snapshot used to bind save and confirmation to a discovery generation.
 #[derive(Clone, Copy, Debug)]
 pub struct Context {
+    /// Current producer permission to freeze a live capture.
     pub save: SaveAvailability,
+    /// Discovery revision that the save must use; rechecked after overwrite confirmation.
     pub revision: u32,
 }
+/// Capture UI inputs; use either debounced semantic X events or raw replay X edges.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     /// Hardware should send semantic events after producer-side debounce.
     XShort,
+    /// Debounced completed X hold; requests a slot-directory refresh.
     XHold,
     /// Raw model/replay events; do not mix these with semantic events.
     XDown,
+    /// Raw X release; emits short action only if no hold was recognized.
     XUp,
-    Turn(i16),
+    /// Wrap slot/page selection without issuing I/O.
+    Turn(
+        /// Signed normalized encoder steps.
+        i16,
+    ),
+    /// Load selected readable slot or accept the current overwrite/reset confirmation.
     Click,
+    /// Leave the current screen, hiding any pending operation without cancelling it.
     Back,
+    /// Return to live state and request outer recovery, retaining pending I/O fencing.
     Recover,
 }
+/// Mutually exclusive storage operations tracked by the UI fence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
+    /// Read all four slot directory entries.
     Refresh,
+    /// Load selected frozen capture for browsing.
     Load,
+    /// Freeze live evidence and journal it to the selected slot.
     Save,
+    /// Explicitly erase/reset the selected slot's two-copy journal.
     Reset,
 }
+/// Bounded UI failure classification; each error preserves the pending I/O fence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiError {
+    /// Save requested without a live peer.
     NoPeer,
+    /// Existing I/O or live-source state prevents starting the operation.
     Busy,
+    /// Load requested for an empty slot.
     Empty,
+    /// Storage owner reported an I/O failure.
     Storage,
+    /// Slot contents fail admission.
     Corrupt,
+    /// Slot contains an unsupported schema requiring explicit reset.
     Unsupported,
+    /// Slot state has not been read or cannot be accessed.
     Unavailable,
+    /// Visible operation or confirmation deadline expired; I/O may still be pending.
     Timeout,
+    /// Confirmed slot/generation/live-source revision no longer matches.
     Changed,
+    /// Raw button timing moved backwards.
     Clock,
+    /// Request identity counter reached its maximum and cannot safely restart at zero.
     Exhausted,
 }
+/// Capture overlay navigation independent of the live probe screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
+    /// Live probe controls are shown.
     Live,
+    /// Four-slot catalogue and selection are shown.
     Slots,
-    Busy(Operation),
+    /// Visible feedback for storage work still in flight.
+    Busy(
+        /// Operation whose progress is shown.
+        Operation,
+    ),
+    /// Loaded frozen capture pages are shown.
     Saved,
+    /// Explicit click is required to replace a readable capture.
     ConfirmOverwrite,
+    /// Explicit click is required to reset protected/corrupt slot contents.
     ConfirmReset,
-    Error(UiError),
+    /// Error feedback; does not itself cancel pending owner work.
+    Error(
+        /// Bounded failure presented to the operator.
+        UiError,
+    ),
 }
+/// Effect for the firmware owner; the pure UI never performs storage or BLE operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    /// Request the four-slot directory.
     Refresh {
+        /// Unique operation identity echoed by completion.
         id: RequestId,
     },
+    /// Request a frozen capture from a readable slot.
     Load {
+        /// Unique operation identity echoed by completion.
         id: RequestId,
+        /// Zero-based slot index in 0..4.
         slot: u8,
     },
+    /// Request a live-source freeze and journal write.
     Save {
+        /// Unique operation identity echoed by completion.
         id: RequestId,
+        /// Zero-based destination slot index in 0..4.
         slot: u8,
+        /// Live discovery generation whose evidence must be frozen.
         revision: u32,
+        /// Explicit overwrite confirmation was accepted for this operation.
         overwrite: bool,
     },
+    /// Request destructive reset after explicit confirmation.
     Reset {
+        /// Unique operation identity echoed by completion.
         id: RequestId,
+        /// Zero-based slot index in 0..4.
         slot: u8,
     },
+    /// Forward short X to the live probe's details action.
     LiveDetails,
+    /// Forward protected recovery to the outer probe owner.
     Recover,
 }
+/// Storage-owner outcome, checked against both request identity and expected operation.
 #[derive(Clone, Copy, Debug)]
 pub enum Completion {
+    /// Directory read completed for all four slots.
     Listed {
+        /// Both-copy admission state per zero-based slot.
         slots: [Slot; 4],
+        /// Frozen peer/name identity per slot; discarded for nonreadable states.
         identities: [Option<SavedIdentity>; 4],
     },
+    /// Capture loaded into owner-controlled immutable browse storage.
     Loaded {
+        /// Nonzero number of rendered pages; zero is rejected without releasing the fence.
         pages: usize,
     },
+    /// Journal save succeeded with a new nonzero generation.
     Saved {
+        /// Published journal generation; maximum makes future replacement reset-only.
         generation: u64,
+        /// Peer/name identity of the actual saved capture.
         identity: SavedIdentity,
     },
+    /// Requested slot reset completed.
     Reset,
-    Failed(UiError),
+    /// Owner finished with a failure and released its I/O ownership.
+    Failed(
+        /// Failure to show only if the operation is still visible.
+        UiError,
+    ),
 }
+/// Affine UI operation fence retained until a matching valid owner completion.
 #[derive(Clone, Copy)]
 struct Pending {
+    /// Nonreused completion correlation identity.
     id: RequestId,
+    /// Expected completion variant.
     operation: Operation,
+    /// Selected slot at operation start, independent of later navigation.
     slot: u8,
+    /// Boot-relative start time in milliseconds.
     at_ms: u64,
+    /// Completion may still navigate the UI; cleared by back/recovery/timeout.
     visible: bool,
 }
+/// Frozen overwrite/reset intent, expiring without performing any I/O.
 #[derive(Clone, Copy)]
 struct Confirmation {
+    /// Live-source generation at confirmation creation.
     revision: u32,
+    /// Exact selected slot state, including its generation.
     slot: Slot,
+    /// Boot-relative creation time in milliseconds.
     at_ms: u64,
 }
 
+/// Bounded capture UI state machine with one pending owner operation and four slots.
 pub struct CaptureUi {
+    /// Current live/slot/browse/confirmation/error presentation.
     screen: Screen,
+    /// Last directory or matching mutation result for each slot.
     slots: [Slot; 4],
+    /// Frozen display identities, invalidated when corresponding evidence becomes uncertain.
     identities: [Option<SavedIdentity>; 4],
+    /// Zero-based selected slot, always below four.
     selected: u8,
+    /// Zero-based loaded-capture page, always below `pages`.
     page: usize,
+    /// Nonzero loaded-capture page count; one before a capture loads.
     pages: usize,
+    /// Last allocated request identity; zero before the first request.
     next_id: RequestId,
+    /// Storage-operation fence, including hidden or timed-out work.
     pending: Option<Pending>,
+    /// Current explicit overwrite/reset confirmation, if any.
     confirmation: Option<Confirmation>,
+    /// Boot-relative raw X press time in milliseconds; absent outside raw press tracking.
     x_down: Option<u64>,
+    /// Raw X hold already emitted, suppressing the release tap.
     x_held: bool,
 }
 impl Default for CaptureUi {
+    /// Returns live-screen state with unknown slots and no pending operation.
     fn default() -> Self { Self::new() }
 }
 impl CaptureUi {
+    /// Returns live-screen state, four unknown slots, selection/page zero and no pending
+    /// operation; the first allocated identity will be one. Performs no I/O.
     pub const fn new() -> Self {
         Self {
             screen: Screen::Live,
@@ -189,18 +310,26 @@ impl CaptureUi {
         }
     }
 
+    /// Returns `self`'s current presentation state without changing pending work.
     pub fn screen(&self) -> Screen { self.screen }
 
+    /// Returns `self`'s four slot-admission states by reference.
     pub fn slots(&self) -> &[Slot; 4] { &self.slots }
 
+    /// Returns `self`'s four optional frozen identities; absence does not imply an empty slot.
     pub fn identities(&self) -> &[Option<SavedIdentity>; 4] { &self.identities }
 
+    /// Returns `self`'s selected zero-based slot index in 0..4.
     pub fn selected(&self) -> u8 { self.selected }
 
+    /// Returns `self`'s zero-based loaded-capture page index.
     pub fn page(&self) -> usize { self.page }
 
+    /// Returns `self`'s outstanding operation identity, including hidden/timed-out work,
+    /// or `None` once a matching valid completion has released the fence.
     pub fn pending(&self) -> Option<RequestId> { self.pending.map(|p| p.id) }
 
+    /// Shows `error` in `self` and clears confirmation, returning unit; does not release I/O fencing.
     fn fail(
         &mut self,
         error: UiError,
@@ -209,6 +338,8 @@ impl CaptureUi {
         self.screen = Screen::Error(error);
     }
 
+    /// Clears `self`'s cached identities affected by `pending`: all for refresh, otherwise
+    /// its start-time slot. Returns unit; slot admission states are retained.
     fn invalidate_identity(
         &mut self,
         pending: Pending,
@@ -220,6 +351,11 @@ impl CaptureUi {
         }
     }
 
+    /// Starts `operation` for `self`'s selected slot at boot-relative `now_ms` milliseconds,
+    /// using `context`'s live revision and `overwrite` authorization for a save.
+    /// Returns an owner action after allocating a checked identity and fence; returns
+    /// `None` with Busy/Exhausted feedback if work is pending or identities are exhausted.
+    /// Caller validates operation-specific availability/confirmation before entering here.
     fn start(
         &mut self,
         operation: Operation,
@@ -271,6 +407,10 @@ impl CaptureUi {
     }
 
     /// Call every input/render tick, including while X remains pressed.
+    /// At boot-relative `now_ms` milliseconds, expires visible operation/confirmation
+    /// feedback and recognizes a raw X hold in `self`. Returns a refresh action once per
+    /// hold, otherwise `None`. Reversed time expires visible deadlines and faults raw
+    /// press timing. Timed-out I/O remains fenced until the owner completes it.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -314,6 +454,11 @@ impl CaptureUi {
         )
     }
 
+    /// Applies `input` to `self` at boot-relative `now_ms` milliseconds with live-source
+    /// `context`. Returns an owner effect for accepted refresh/load/save/reset or live
+    /// forwarding; otherwise `None`. Back/recovery hide pending work without cancelling it.
+    /// Slot/page turns wrap; overwrite confirmation rechecks live revision, readiness
+    /// and exact slot state before allocating a new operation.
     pub fn input(
         &mut self,
         input: Input,
@@ -435,6 +580,10 @@ impl CaptureUi {
         None
     }
 
+    /// Handles a short X in `self` at boot-relative `now_ms` milliseconds with live
+    /// `context`. Returns live-details or an immediate empty-slot save action; otherwise
+    /// returns `None` after navigation, error feedback or opening a bounded confirmation.
+    /// Protected/corrupt slots require reset confirmation, independently of live save readiness.
     fn short_x(
         &mut self,
         now_ms: u64,
@@ -485,6 +634,8 @@ impl CaptureUi {
 
     /// Back/recovery/timeout only hide an operation: retain its fence until the
     /// actual owner completes. Never cancel a flash write or overlap new I/O.
+    /// Applies owned `completion` for `id` to `self`; returns true only for a matching
+    /// pending identity and operation-compatible outcome. See [`Self::complete_ref`].
     pub fn complete(
         &mut self,
         id: RequestId,
@@ -494,6 +645,10 @@ impl CaptureUi {
     }
 
     /// Apply the mailbox record without another full directory copy on stack.
+    /// Borrows `completion` for `id`, returning true after applying a matching outcome
+    /// and releasing `self`'s pending fence; hidden completions update data without navigation.
+    /// Wrong identity/variant, zero loaded pages or zero saved generation return false
+    /// without releasing the fence. Any matched Failed outcome invalidates affected identities.
     pub fn complete_ref(
         &mut self,
         id: RequestId,
@@ -543,9 +698,12 @@ impl CaptureUi {
 }
 
 #[cfg(test)]
+/// Identity-exhaustion regression for storage effects.
 mod tests {
     use super::*;
     #[test]
+    /// Returns unit after verifying maximum request identity produces Exhausted feedback
+    /// without an effect or pending fence; panics if an identity can wrap/recur.
     fn request_identity_exhaustion_never_reuses_an_effect() {
         let mut ui = CaptureUi::new();
         ui.next_id = u32::MAX;

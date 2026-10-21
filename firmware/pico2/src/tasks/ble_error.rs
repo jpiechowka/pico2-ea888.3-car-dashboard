@@ -3,8 +3,14 @@ use core::fmt;
 
 use trouble_host::{BleHostError, Error};
 
-pub struct RunnerFault<'a, E>(pub &'a Result<(), BleHostError<E>>);
+/// Borrowed host-runner outcome formatted without losing hardware/decode detail.
+pub struct RunnerFault<'a, E>(
+    /// Runner return or failure retained for bounded log formatting.
+    pub &'a Result<(), BleHostError<E>>,
+);
 impl<E: fmt::Debug> fmt::Display for RunnerFault<'_, E> {
+    /// Writes this outcome into `f`, preserving HCI hardware/decode details;
+    /// returns the formatter result without changing radio or host state.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,

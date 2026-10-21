@@ -1,6 +1,11 @@
 #![cfg_attr(feature = "defmt", allow(deprecated))] // Suppress warnings for defmt::Format using Error::AddressReserved
 
-//! I2C driver.
+//! Seven-bit I2C controller with blocking and interrupt-driven operations.
+//!
+//! Operations have no timeout. Async cancellation leaves queued commands, partial
+//! receive bytes and IRQ state intact; it is not a transaction rollback. Consecutive
+//! operations share the bus until the final STOP; a later invalid buffer can leave
+//! earlier commands sent. See the [RP2040 I2C register contract](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf).
 use core::future;
 use core::marker::PhantomData;
 use core::task::Poll;
@@ -24,9 +29,15 @@ pub enum AbortReason {
     /// The arbitration was lost, e.g. electrical problems with the clock signal
     ArbitrationLoss,
     /// Transmit ended with data still in fifo
-    TxNotEmpty(u16),
+    TxNotEmpty(
+        /// Bytes discarded from the transmit FIFO.
+        u16,
+    ),
     /// Other reason.
-    Other(u32),
+    Other(
+        /// Raw IC_TX_ABRT_SOURCE bits.
+        u32,
+    ),
 }
 
 /// I2C error
@@ -34,16 +45,25 @@ pub enum AbortReason {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// I2C abort with error
-    Abort(AbortReason),
+    Abort(
+        /// Decoded cause, with NACK checked before arbitration loss.
+        AbortReason,
+    ),
     /// User passed in a read buffer that was 0 length
     InvalidReadBufferLength,
     /// User passed in a write buffer that was 0 length
     InvalidWriteBufferLength,
     /// Target i2c address is out of range
-    AddressOutOfRange(u16),
+    AddressOutOfRange(
+        /// Rejected address, at least 0x80.
+        u16,
+    ),
     /// Target i2c address is reserved
     #[deprecated = "embassy_rp no longer prevents accesses to reserved addresses."]
-    AddressReserved(u16),
+    AddressReserved(
+        /// Legacy rejected address; current driver does not emit this variant.
+        u16,
+    ),
 }
 
 /// I2C Config error
@@ -54,7 +74,7 @@ pub enum ConfigError {
     FrequencyTooHigh,
     /// The sys clock is too slow to support given frequency
     ClockTooSlow,
-    /// The sys clock is too fast to support given frequency
+    /// No representable divider for the requested frequency, including zero Hz.
     ClockTooFast,
 }
 
@@ -62,7 +82,7 @@ pub enum ConfigError {
 #[non_exhaustive]
 #[derive(Copy, Clone)]
 pub struct Config {
-    /// Frequency.
+    /// Requested bus frequency in Hz, 1..=1_000_000, subject to peripheral-clock divisor bounds.
     pub frequency: u32,
     /// Enable internal pullup on SDA.
     ///
@@ -76,6 +96,7 @@ pub struct Config {
     pub scl_pullup: bool,
 }
 impl Default for Config {
+    /// Returns 100 kHz with both internal pullups enabled.
     fn default() -> Self {
         Self {
             frequency: 100_000,
@@ -90,11 +111,13 @@ pub const FIFO_SIZE: u8 = 16;
 /// I2C driver.
 #[derive(Debug)]
 pub struct I2c<'d, T: Instance, M: Mode> {
+    /// Exclusive peripheral lifetime and blocking/async mode; construction consumes the token.
     phantom: PhantomData<(&'d mut T, M)>,
 }
 
 impl<'d, T: Instance> I2c<'d, T, Blocking> {
-    /// Create a new driver instance in blocking mode.
+    /// Returns a blocking controller owning `peri`, `scl` and `sda`, configured by `config`.
+    /// Resets the peripheral and sets pin mux/pullups; panics for unsupported frequency/divisors.
     pub fn new_blocking(
         peri: Peri<'d, T>,
         scl: Peri<'d, impl SclPin<T>>,
@@ -106,7 +129,9 @@ impl<'d, T: Instance> I2c<'d, T, Blocking> {
 }
 
 impl<'d, T: Instance> I2c<'d, T, Async> {
-    /// Create a new driver instance in async mode.
+    /// Returns a controller owning `peri`, `scl` and `sda`, configured by `config`.
+    /// `_irq` proves its handler binding; resets the peripheral, sets pins and enables the IRQ.
+    /// Panics for unsupported frequency/divisors.
     pub fn new_async(
         peri: Peri<'d, T>,
         scl: Peri<'d, impl SclPin<T>>,
@@ -126,10 +151,13 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
         i2c
     }
 
-    /// Calls `f` to check if we are ready or not.
-    /// If not, `g` is called once(to eg enable the required interrupts).
-    /// The waker will always be registered prior to calling `f`.
-    async fn wait_on<F, U, G>(&mut self, mut f: F, mut g: G) -> U
+    /// Returns the ready value from `f`, registering the waiter before each poll.
+    /// Calls `g` after each pending check to arm interrupts; dropping the future does not reset hardware.
+    async fn wait_on<F, U, G>(
+        &mut self,
+        mut f: F,
+        mut g: G,
+    ) -> U
     where
         F: FnMut(&mut Self) -> Poll<U>,
         G: FnMut(&mut Self),
@@ -147,7 +175,14 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
         .await
     }
 
-    async fn read_async_internal(&mut self, buffer: &mut [u8], restart: bool, send_stop: bool) -> Result<(), Error> {
+    /// Fills nonempty `buffer`; `restart` marks the first command and `send_stop` marks the last. Returns after the
+    /// requested STOP, or buffer/abort errors; cancellation preserves partial effects.
+    async fn read_async_internal(
+        &mut self,
+        buffer: &mut [u8],
+        restart: bool,
+        send_stop: bool,
+    ) -> Result<(), Error> {
         if buffer.is_empty() {
             return Err(Error::InvalidReadBufferLength);
         }
@@ -229,14 +264,15 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
         self.wait_stop_det(abort_reason, send_stop).await
     }
 
+    /// Queues nonempty `bytes`, marking the last command with STOP when `send_stop`. Returns after that STOP or on
+    /// buffer/abort error; cancellation does not withdraw FIFO commands.
     async fn write_async_internal(
         &mut self,
         bytes: impl IntoIterator<Item = u8>,
         send_stop: bool,
     ) -> Result<(), Error> {
+        let mut bytes = checked_write_iter(bytes)?;
         let p = T::regs();
-
-        let mut bytes = bytes.into_iter().peekable();
 
         let res = 'xmit: loop {
             let tx_fifo_space = Self::tx_fifo_capacity();
@@ -293,7 +329,13 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
     /// we're expecting it.
     ///
     /// Also handles an abort which arises while processing the tx fifo.
-    async fn wait_stop_det(&mut self, had_abort: Result<(), Error>, do_stop: bool) -> Result<(), Error> {
+    /// Returns `had_abort` combined with any later abort, awaiting STOP when `do_stop` or an earlier abort requires it.
+    /// Clears STOP status on completion; has no timeout.
+    async fn wait_stop_det(
+        &mut self,
+        had_abort: Result<(), Error>,
+        do_stop: bool,
+    ) -> Result<(), Error> {
         if had_abort.is_err() || do_stop {
             let p = T::regs();
 
@@ -327,13 +369,19 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
         }
     }
 
-    /// Read from address into buffer asynchronously.
-    pub async fn read_async(&mut self, addr: impl Into<u16>, buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills nonempty `buffer` from seven-bit `addr`, returning `Ok(())` after STOP.
+    /// Returns address/buffer errors or a hardware abort; errors/cancellation may leave partial bytes.
+    pub async fn read_async(
+        &mut self,
+        addr: impl Into<u16>,
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
         Self::setup(addr.into())?;
         self.read_async_internal(buffer, true, true).await
     }
 
-    /// Write to address from buffer asynchronously.
+    /// Sends nonempty `bytes` to seven-bit `addr`, returning `Ok(())` after STOP.
+    /// Returns invalid address/empty iterator or hardware abort; cancellation can leave queued bytes.
     pub async fn write_async(
         &mut self,
         addr: impl Into<u16>,
@@ -343,7 +391,9 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
         self.write_async_internal(bytes, true).await
     }
 
-    /// Write to address from bytes and read from address into buffer asynchronously.
+    /// Sends nonempty `bytes` to seven-bit `addr`, then fills nonempty `buffer` after repeated START.
+    /// Returns `Ok(())` after STOP, or address/buffer/abort errors. Read validation occurs after writing;
+    /// an empty read or cancellation can leave an unfinished transaction.
     pub async fn write_read_async(
         &mut self,
         addr: impl Into<u16>,
@@ -358,11 +408,15 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
 
 /// Interrupt handler.
 pub struct InterruptHandler<T: Instance> {
+    /// Identifies the I2C register block and its single waiter.
     _uart: PhantomData<T>,
 }
 
 impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
     // Mask interrupts and wake any task waiting for this interrupt
+    /// Masks all peripheral interrupt sources and wakes the registered task.
+    /// # Safety
+    /// Must run only for this owned instance's interrupt with initialized shared state.
     unsafe fn on_interrupt() {
         let i2c = T::regs();
         i2c.ic_intr_mask().write_value(pac::i2c::regs::IcIntrMask::default());
@@ -371,8 +425,12 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
     }
 }
 
-pub(crate) fn set_up_i2c_pin<P, T>(pin: &P, pullup: bool)
-where
+/// Routes `pin` to I2C with input Schmitt trigger, slow slew and optional `pullup`; clears pulldown and releases RP235x
+/// isolation.
+pub(crate) fn set_up_i2c_pin<P, T>(
+    pin: &P,
+    pullup: bool,
+) where
     P: core::ops::Deref<Target = T>,
     T: crate::gpio::Pin,
 {
@@ -390,7 +448,14 @@ where
 }
 
 impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
-    fn new_inner(_peri: Peri<'d, T>, scl: Peri<'d, AnyPin>, sda: Peri<'d, AnyPin>, config: Config) -> Self {
+    /// Returns a reset controller owning `_peri`, `scl`, `sda`, applying `config` pins/timing. Panics on invalid timing
+    /// after reset/pin setup.
+    fn new_inner(
+        _peri: Peri<'d, T>,
+        scl: Peri<'d, AnyPin>,
+        sda: Peri<'d, AnyPin>,
+        config: Config,
+    ) -> Self {
         let reset = T::reset();
         crate::reset::reset(reset);
         crate::reset::unreset_wait(reset);
@@ -408,10 +473,13 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         me
     }
 
-    fn set_config_inner(&mut self, config: &Config) -> Result<(), ConfigError> {
-        if config.frequency > 1_000_000 {
-            return Err(ConfigError::FrequencyTooHigh);
-        }
+    /// Applies the requested frequency from `config`, returning `Ok(())` or unsupported-frequency/divisor errors.
+    /// Pullup settings are not reapplied; divisor errors after initial admission leave the peripheral disabled.
+    fn set_config_inner(
+        &mut self,
+        config: &Config,
+    ) -> Result<(), ConfigError> {
+        validate_frequency(config.frequency)?;
 
         let p = T::regs();
 
@@ -429,7 +497,7 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         let hcnt = period - lcnt; // and 2/5 (40%) of the period high
 
         // Check for out-of-range divisors:
-        if hcnt > 0xffff || lcnt > 0xffff {
+        if hcnt > 0xFFFF || lcnt > 0xFFFF {
             return Err(ConfigError::ClockTooFast);
         }
         if hcnt < 8 || lcnt < 8 {
@@ -473,6 +541,8 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         Ok(())
     }
 
+    /// Selects seven-bit `addr` by disabling/re-enabling the controller; returns `AddressOutOfRange` before MMIO for
+    /// values >=0x80. Reserved addresses are allowed.
     fn setup(addr: u16) -> Result<(), Error> {
         if addr >= 0x80 {
             return Err(Error::AddressOutOfRange(addr));
@@ -486,22 +556,25 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
     }
 
     #[inline]
-    fn tx_fifo_full() -> bool {
-        Self::tx_fifo_capacity() == 0
-    }
+    /// Returns whether all 16 TX FIFO command slots are occupied.
+    fn tx_fifo_full() -> bool { Self::tx_fifo_capacity() == 0 }
 
     #[inline]
+    /// Returns available TX FIFO command slots, 0..=16, from the hardware occupancy.
     fn tx_fifo_capacity() -> u8 {
         let p = T::regs();
         FIFO_SIZE - p.ic_txflr().read().txflr()
     }
 
     #[inline]
+    /// Returns received FIFO bytes available now, 0..=16.
     fn rx_fifo_len() -> u8 {
         let p = T::regs();
         p.ic_rxflr().read().rxflr()
     }
 
+    /// Returns `Ok(())` without an abort; otherwise reads and clears its latched cause and returns NACK, arbitration
+    /// loss or raw status, in that priority.
     fn read_and_clear_abort_reason(&mut self) -> Result<(), Error> {
         let p = T::regs();
         let abort_reason = p.ic_tx_abrt_source().read();
@@ -528,7 +601,14 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         }
     }
 
-    fn read_blocking_internal(&mut self, read: &mut [u8], restart: bool, send_stop: bool) -> Result<(), Error> {
+    /// Fills nonempty `read`; `restart` marks the first command and `send_stop` marks the last. Returns after data
+    /// arrival or buffer/abort error, without awaiting STOP. Waits are unbounded.
+    fn read_blocking_internal(
+        &mut self,
+        read: &mut [u8],
+        restart: bool,
+        send_stop: bool,
+    ) -> Result<(), Error> {
         if read.is_empty() {
             return Err(Error::InvalidReadBufferLength);
         }
@@ -559,7 +639,13 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         Ok(())
     }
 
-    fn write_blocking_internal(&mut self, write: &[u8], send_stop: bool) -> Result<(), Error> {
+    /// Sends nonempty `write`, requesting and awaiting STOP when `send_stop`. Returns `Ok(())` or empty-buffer/abort
+    /// error; FIFO/STOP waits are unbounded.
+    fn write_blocking_internal(
+        &mut self,
+        write: &[u8],
+        send_stop: bool,
+    ) -> Result<(), Error> {
         if write.is_empty() {
             return Err(Error::InvalidWriteBufferLength);
         }
@@ -604,21 +690,39 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
     // Blocking public API
     // =========================
 
-    /// Read from address into buffer blocking caller until done.
-    pub fn blocking_read(&mut self, address: impl Into<u16>, read: &mut [u8]) -> Result<(), Error> {
+    /// Fills nonempty `read` from seven-bit `address`, returning `Ok(())` after the last byte.
+    /// STOP is requested but not explicitly awaited. Returns address/buffer/abort errors;
+    /// partial bytes remain on error and hardware waits have no timeout.
+    pub fn blocking_read(
+        &mut self,
+        address: impl Into<u16>,
+        read: &mut [u8],
+    ) -> Result<(), Error> {
         Self::setup(address.into())?;
         self.read_blocking_internal(read, true, true)
         // Automatic Stop
     }
 
-    /// Write to address from buffer blocking caller until done.
-    pub fn blocking_write(&mut self, address: impl Into<u16>, write: &[u8]) -> Result<(), Error> {
+    /// Sends nonempty `write` to seven-bit `address`, returning `Ok(())` after STOP.
+    /// Returns address/buffer/abort errors; hardware waits have no timeout.
+    pub fn blocking_write(
+        &mut self,
+        address: impl Into<u16>,
+        write: &[u8],
+    ) -> Result<(), Error> {
         Self::setup(address.into())?;
         self.write_blocking_internal(write, true)
     }
 
-    /// Write to address from bytes and read from address into buffer blocking caller until done.
-    pub fn blocking_write_read(&mut self, address: impl Into<u16>, write: &[u8], read: &mut [u8]) -> Result<(), Error> {
+    /// Sends nonempty `write` to seven-bit `address`, then fills `read` after repeated START.
+    /// Returns after the final byte with STOP requested, or address/buffer/abort errors.
+    /// Read validation occurs after writing; an empty `read` can leave the bus unfinished.
+    pub fn blocking_write_read(
+        &mut self,
+        address: impl Into<u16>,
+        write: &[u8],
+        read: &mut [u8],
+    ) -> Result<(), Error> {
         Self::setup(address.into())?;
         self.write_blocking_internal(write, false)?;
         self.read_blocking_internal(read, true, true)
@@ -627,32 +731,57 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::i2c::Read for I2c<'d, T, M> {
+    /// Validation and decoded hardware transfer failure.
     type Error = Error;
 
-    fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `buffer`, propagating address/buffer/abort errors and
+    /// partial effects.
+    fn read(
+        &mut self,
+        address: u8,
+        buffer: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_read(address, buffer)
     }
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::i2c::Write for I2c<'d, T, M> {
+    /// Validation and decoded hardware transfer failure.
     type Error = Error;
 
-    fn write(&mut self, address: u8, bytes: &[u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `bytes`, propagating address/buffer/abort errors and partial
+    /// effects.
+    fn write(
+        &mut self,
+        address: u8,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(address, bytes)
     }
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::i2c::WriteRead for I2c<'d, T, M> {
+    /// Validation and decoded hardware transfer failure.
     type Error = Error;
 
-    fn write_read(&mut self, address: u8, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `buffer`, `bytes`, propagating address/buffer/abort errors
+    /// and partial effects.
+    fn write_read(
+        &mut self,
+        address: u8,
+        bytes: &[u8],
+        buffer: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write_read(address, bytes, buffer)
     }
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::i2c::Transactional for I2c<'d, T, M> {
+    /// Validation and decoded hardware transfer failure.
     type Error = Error;
 
+    /// Executes `operations` at seven-bit `address`, requesting STOP on the final operation. Returns `Ok(())` or
+    /// address/buffer/abort errors; earlier operations are not rolled back.
     fn exec(
         &mut self,
         address: u8,
@@ -673,6 +802,8 @@ impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::i2c::Transactional for
 }
 
 impl embedded_hal_1::i2c::Error for Error {
+    /// Returns the embedded-hal error class; this driver reports decoded NACK as Address and maps validation/raw aborts
+    /// to Other.
     fn kind(&self) -> embedded_hal_1::i2c::ErrorKind {
         match *self {
             Self::Abort(AbortReason::ArbitrationLoss) => embedded_hal_1::i2c::ErrorKind::ArbitrationLoss,
@@ -691,22 +822,44 @@ impl embedded_hal_1::i2c::Error for Error {
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_1::i2c::ErrorType for I2c<'d, T, M> {
+    /// Validation and decoded hardware transfer failure.
     type Error = Error;
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_1::i2c::I2c for I2c<'d, T, M> {
-    fn read(&mut self, address: u8, read: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `read`, propagating address/buffer/abort errors and partial
+    /// effects.
+    fn read(
+        &mut self,
+        address: u8,
+        read: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_read(address, read)
     }
 
-    fn write(&mut self, address: u8, write: &[u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `write`, propagating address/buffer/abort errors and partial
+    /// effects.
+    fn write(
+        &mut self,
+        address: u8,
+        write: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(address, write)
     }
 
-    fn write_read(&mut self, address: u8, write: &[u8], read: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the blocking transfer result for `address`, `read`, `write`, propagating address/buffer/abort errors and
+    /// partial effects.
+    fn write_read(
+        &mut self,
+        address: u8,
+        write: &[u8],
+        read: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write_read(address, write, read)
     }
 
+    /// Executes `operations` at seven-bit `address`, requesting STOP on the final operation. Returns `Ok(())` or
+    /// address/buffer/abort errors; earlier operations are not rolled back.
     fn transaction(
         &mut self,
         address: u8,
@@ -729,18 +882,39 @@ where
     A: embedded_hal_async::i2c::AddressMode + Into<u16> + 'static,
     T: Instance + 'd,
 {
-    async fn read(&mut self, address: A, read: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the async transfer result for `address`, `read`, propagating address/buffer/abort errors and partial
+    /// effects.
+    async fn read(
+        &mut self,
+        address: A,
+        read: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.read_async(address, read).await
     }
 
-    async fn write(&mut self, address: A, write: &[u8]) -> Result<(), Self::Error> {
+    /// Returns the async transfer result for `address`, `write`, propagating address/buffer/abort errors and partial
+    /// effects.
+    async fn write(
+        &mut self,
+        address: A,
+        write: &[u8],
+    ) -> Result<(), Self::Error> {
         self.write_async(address, write.iter().copied()).await
     }
 
-    async fn write_read(&mut self, address: A, write: &[u8], read: &mut [u8]) -> Result<(), Self::Error> {
+    /// Returns the async transfer result for `address`, `read`, `write`, propagating address/buffer/abort errors and
+    /// partial effects.
+    async fn write_read(
+        &mut self,
+        address: A,
+        write: &[u8],
+        read: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.write_read_async(address, write.iter().copied(), read).await
     }
 
+    /// Executes `operations` at seven-bit `address`, requesting STOP on the final operation. Returns `Ok(())` or
+    /// address/buffer/abort errors; earlier operations are not rolled back.
     async fn transaction(
         &mut self,
         address: A,
@@ -772,26 +946,39 @@ where
 }
 
 impl<'d, T: Instance, M: Mode> embassy_embedded_hal::SetConfig for I2c<'d, T, M> {
+    /// Bus frequency and constructor pin settings.
     type Config = Config;
+    /// Unsupported rate or hardware divisor.
     type ConfigError = ConfigError;
 
-    fn set_config(&mut self, config: &Self::Config) -> Result<(), Self::ConfigError> {
+    /// Applies timing from `config`, returning divisor/frequency errors; pin pullups remain unchanged and a late error
+    /// leaves the peripheral disabled.
+    fn set_config(
+        &mut self,
+        config: &Self::Config,
+    ) -> Result<(), Self::ConfigError> {
         self.set_config_inner(config)
     }
 }
 
+/// Register, reset and single-waiter mapping for an owned I2C instance.
 pub(crate) trait SealedInstance {
+    /// Returns the fixed register block for this peripheral token.
     fn regs() -> crate::pac::i2c::I2c;
+    /// Returns the reset bitmask selecting only this I2C instance.
     fn reset() -> crate::pac::resets::regs::Peripherals;
+    /// Returns the static single-task waiter used by this instance's interrupt.
     fn waker() -> &'static AtomicWaker;
 }
 
+/// Prevents external driver modes with unsupported waiting semantics.
 trait SealedMode {}
 
 /// Driver mode.
 #[allow(private_bounds)]
 pub trait Mode: SealedMode {}
 
+/// Implements the sealed blocking/async marker for `$name`.
 macro_rules! impl_mode {
     ($name:ident) => {
         impl SealedMode for $name {}
@@ -814,15 +1001,16 @@ pub trait Instance: SealedInstance + PeripheralType {
     type Interrupt: interrupt::typelevel::Interrupt;
 }
 
+/// Maps `$type` to its IRQ, reset bit and one static waiter.
 macro_rules! impl_instance {
     ($type:ident, $irq:ident, $reset:ident) => {
         impl SealedInstance for peripherals::$type {
             #[inline]
-            fn regs() -> pac::i2c::I2c {
-                pac::$type
-            }
+            /// Returns the fixed register block for this peripheral token.
+            fn regs() -> pac::i2c::I2c { pac::$type }
 
             #[inline]
+            /// Returns the reset bitmask selecting only this I2C instance.
             fn reset() -> pac::resets::regs::Peripherals {
                 let mut ret = pac::resets::regs::Peripherals::default();
                 ret.$reset(true);
@@ -830,13 +1018,16 @@ macro_rules! impl_instance {
             }
 
             #[inline]
+            /// Returns the static single-task waiter used by this instance's interrupt.
             fn waker() -> &'static AtomicWaker {
+                /// Single pending task for this I2C instance.
                 static WAKER: AtomicWaker = AtomicWaker::new();
 
                 &WAKER
             }
         }
         impl Instance for peripherals::$type {
+            /// IRQ line bound to this I2C register block.
             type Interrupt = crate::interrupt::typelevel::$irq;
         }
     };
@@ -850,6 +1041,7 @@ pub trait SdaPin<T: Instance>: crate::gpio::Pin {}
 /// SCL pin.
 pub trait SclPin<T: Instance>: crate::gpio::Pin {}
 
+/// Restricts pin/controller routing to the hardware alternate-function table.
 macro_rules! impl_pin {
     ($pin:ident, $instance:ident, $function:ident) => {
         impl $function<peripherals::$instance> for peripherals::$pin {}
@@ -922,3 +1114,56 @@ impl_pin!(PIN_45, I2C0, SclPin);
 impl_pin!(PIN_46, I2C1, SdaPin);
 #[cfg(feature = "rp235xb")]
 impl_pin!(PIN_47, I2C1, SclPin);
+
+/// Returns whether requested `frequency` in Hz can enter divisor calculation.
+/// Zero returns `ClockTooFast` (no finite divisor); above 1 MHz returns
+/// `FrequencyTooHigh`. Hardware-dependent divisor bounds are checked later.
+fn validate_frequency(frequency: u32) -> Result<(), ConfigError> {
+    if frequency == 0 {
+        Err(ConfigError::ClockTooFast)
+    } else if frequency > 1_000_000 {
+        Err(ConfigError::FrequencyTooHigh)
+    } else {
+        Ok(())
+    }
+}
+
+/// Returns nonempty `bytes` peeked once for last-command STOP scheduling.
+/// Empty input returns `InvalidWriteBufferLength` before any FIFO access.
+fn checked_write_iter<I: IntoIterator<Item = u8>>(bytes: I) -> Result<core::iter::Peekable<I::IntoIter>, Error> {
+    let mut bytes = bytes.into_iter().peekable();
+    if bytes.peek().is_none() {
+        Err(Error::InvalidWriteBufferLength)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Boundary admission tests avoid MMIO and exercise the production helpers.
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    /// Zero must be rejected before divisor arithmetic; valid endpoints remain accepted.
+    #[test]
+    fn frequency_zero_and_endpoints() {
+        assert_eq!(validate_frequency(0), Err(ConfigError::ClockTooFast));
+        assert_eq!(validate_frequency(1), Ok(()));
+        assert_eq!(validate_frequency(1_000_000), Ok(()));
+        assert_eq!(validate_frequency(1_000_001), Err(ConfigError::FrequencyTooHigh));
+    }
+
+    /// An empty iterator cannot schedule STOP, while nonempty admission preserves bytes.
+    #[test]
+    fn empty_write_cannot_enter_stop_wait() {
+        assert!(matches!(
+            checked_write_iter(core::iter::empty()),
+            Err(Error::InvalidWriteBufferLength)
+        ));
+        let mut bytes = checked_write_iter([0xA5, 0x5A]).unwrap();
+        assert_eq!(bytes.next(), Some(0xA5));
+        assert_eq!(bytes.peek(), Some(&0x5A));
+        assert_eq!(bytes.next(), Some(0x5A));
+        assert_eq!(bytes.next(), None);
+    }
+}

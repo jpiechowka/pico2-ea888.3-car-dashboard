@@ -1,8 +1,12 @@
+//! Candidate diagnostics and shared-renderer pixel regressions; no physical display qualification.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
 #[test]
+/// Ambiguous widget IDs reject raw repair ownership and preserve each widget label instead of borrowing the first
+/// match.
 fn raw_labels_and_repairs_never_choose_the_first_duplicate_id_owner() {
     use dashboard_configurator::diagnostic::Draft;
     let mut config = default_config();
@@ -30,6 +34,7 @@ fn raw_labels_and_repairs_never_choose_the_first_duplicate_id_owner() {
 }
 
 #[test]
+/// Duplicate view IDs report ambiguity and cannot borrow a raw name from an arbitrary owner.
 fn ambiguous_view_name_inspection_never_claims_the_first_owner_or_its_raw_name() {
     use dashboard_configurator::diagnostic::Draft;
     let mut config = default_config();
@@ -48,6 +53,7 @@ fn ambiguous_view_name_inspection_never_claims_the_first_owner_or_its_raw_name()
 }
 
 #[test]
+/// Collecting validation retains 128 issues in validator order and counts the omitted remainder exactly.
 fn collecting_report_is_bounded_with_an_exact_omitted_count() {
     let mut config = default_config();
     config.views.clear();
@@ -91,6 +97,7 @@ fn collecting_report_is_bounded_with_an_exact_omitted_count() {
 }
 
 #[test]
+/// Raw parse, text-capacity and unavailable-field failures retain their own indices alongside semantic issues.
 fn raw_parse_capacity_and_unavailable_errors_are_separate_from_semantic_errors() {
     use dashboard_configurator::diagnostic::{Draft, RawDiagnosticCategory};
     let mut config = default_config();
@@ -128,6 +135,7 @@ fn raw_parse_capacity_and_unavailable_errors_are_separate_from_semantic_errors()
 }
 
 #[test]
+/// Raw failures consume the same 128-item report budget and contribute exact omitted counts.
 fn raw_errors_share_the_retained_issue_budget() {
     use dashboard_configurator::diagnostic::Draft;
     let field = RawField::ControlHoldMilliseconds;
@@ -150,6 +158,8 @@ fn raw_errors_share_the_retained_issue_budget() {
 }
 
 #[test]
+/// Zero reference rendering ignores an unused retained manual value without rewriting the rejected candidate or
+/// accepted project.
 fn review_diagnostic_zero_ignores_a_finite_out_of_domain_manual_reference() {
     let mut c = default_config();
     c.widgets.truncate(1);
@@ -193,6 +203,7 @@ fn review_diagnostic_zero_ignores_a_finite_out_of_domain_manual_reference() {
 }
 
 #[test]
+/// A rejected shared history duration marks dependent widgets and preserves the attempted seconds in diagnostics.
 fn invalid_typed_shared_history_marks_associated_widgets_and_lists_the_attempt() {
     let mut e = selected();
     assert!(
@@ -212,6 +223,7 @@ fn invalid_typed_shared_history_marks_associated_widgets_and_lists_the_attempt()
 }
 
 #[test]
+/// Invalid reference, readout, timing and band settings retain visible tile content beneath the invalid banner.
 fn invalid_advanced_fields_keep_the_rejected_tile_inspectable() {
     let mut editor = selected();
     let mut w = editor.preview().config().widgets[0].clone();
@@ -241,6 +253,7 @@ fn invalid_advanced_fields_keep_the_rejected_tile_inspectable() {
     assert!(nonblack, "rejected advanced widget disappeared");
 }
 
+/// Returns the default editor with widget 1 selected in view 1; panics if fixture selection fails.
 fn selected() -> Editor {
     let mut editor = Editor::default();
     editor
@@ -253,6 +266,8 @@ fn selected() -> Editor {
 }
 
 #[test]
+/// Rejected band colours remain visible, while nonfinite sample rendering preserves both previously published pixel
+/// buffers.
 fn invalid_band_contrast_bounds_and_overlap_keep_exact_raw_colour_and_failed_render_keeps_both_buffers() {
     let mut config = default_config();
     config.widgets.truncate(1);
@@ -297,6 +312,7 @@ fn invalid_band_contrast_bounds_and_overlap_keep_exact_raw_colour_and_failed_ren
 }
 
 #[test]
+/// An off-grid 2x1 candidate is projected within the screen for inspection without changing accepted geometry.
 fn rejected_out_of_grid_size_is_inspectable_at_a_bounded_projected_position() {
     let mut config = default_config();
     config.widgets.truncate(1);
@@ -320,6 +336,8 @@ fn rejected_out_of_grid_size_is_inspectable_at_a_bounded_projected_position() {
 }
 
 #[test]
+/// Oversized/control-character labels and invalid numbers stay inspectable, block export and cannot paint outside their
+/// tile.
 fn raw_overflow_and_unrenderable_numbers_remain_visible_and_never_serialize() {
     let mut editor = selected();
     let accepted = editor.export_binary().unwrap();
@@ -386,6 +404,7 @@ fn raw_overflow_and_unrenderable_numbers_remain_visible_and_never_serialize() {
 }
 
 #[test]
+/// Rejected overlap retains attempted size, marks all affected tiles, retires pending saves and clears on discard.
 fn rejected_overlap_shows_attempt_and_marks_both_cells_then_discard_restores_pixels() {
     let mut editor = selected();
     let saved = editor.begin_save().unwrap();
@@ -419,6 +438,7 @@ fn rejected_overlap_shows_attempt_and_marks_both_cells_then_discard_restores_pix
 }
 
 #[test]
+/// Offscreen positions and invalid raw values remain diagnosable; out-of-range render time preserves prior pixels.
 fn offscreen_geometry_and_invalid_settings_are_bounded_and_explicit() {
     let mut editor = selected();
     assert!(
@@ -481,6 +501,7 @@ fn offscreen_geometry_and_invalid_settings_are_bounded_and_explicit() {
 }
 
 #[test]
+/// Only complete raw-field repair clears diagnostics and restores export, retiring earlier field authority.
 fn correcting_all_raw_fields_atomically_removes_diagnostics_and_retires_old_tokens() {
     let mut editor = selected();
     editor
@@ -519,6 +540,7 @@ fn correcting_all_raw_fields_atomically_removes_diagnostics_and_retires_old_toke
 }
 
 #[test]
+/// Invalid polling and fuel assumptions identify their dependent widgets and retain the attempted values.
 fn rejected_global_choices_mark_dependent_widgets_and_list_attempted_values() {
     let mut editor = selected();
     let mut source = definition(DefinitionId::Disabled).source(Channel::Oil);
@@ -557,6 +579,7 @@ fn rejected_global_choices_mark_dependent_widgets_and_list_attempted_values() {
 }
 
 #[test]
+/// Rejected label clipping and oversized placement match independently constructed text and border pixel expectations.
 fn rejected_label_and_placement_pixels_match_independent_geometry() {
     use dashboard_core::colors::{BLACK, GRAY, WHITE};
     use dashboard_core::display::{FrameBuffer, St7789Renderer};
@@ -631,6 +654,7 @@ fn rejected_label_and_placement_pixels_match_independent_geometry() {
 }
 
 #[test]
+/// Rejected low-contrast widget and warning colours remain visible beneath the invalid watermark until discarded.
 fn invisible_widget_and_warning_colours_remain_inspectable_under_invalid_banner() {
     let mut editor = selected();
     let mut preview = Preview::new();
@@ -680,6 +704,7 @@ fn invisible_widget_and_warning_colours_remain_inspectable_under_invalid_banner(
 }
 
 #[test]
+/// An invalid widget warning palette retains that widget colour in diagnostics and blocks save.
 fn invalid_widget_warning_pair_uses_its_own_diagnostic_colours() {
     let mut editor = selected();
     let mut preview = Preview::new();
@@ -700,6 +725,8 @@ fn invalid_widget_warning_pair_uses_its_own_diagnostic_colours() {
     assert!(editor.begin_save().is_err());
 }
 #[test]
+/// Error links retain positional raw-repair authority without changing selection or accepted state; successful repair
+/// retires the link.
 fn indexed_error_links_keep_actual_raw_authority_without_selection_or_acceptance() {
     use dashboard_configurator::field_registry::{Registry, TargetOwner};
     let mut editor = Editor::new(default_config()).unwrap();

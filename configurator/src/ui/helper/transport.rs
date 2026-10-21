@@ -3,6 +3,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit, Response};
 
+/// Returns CORS fetch options using `method` and `abort`'s signal, omitting
+/// credentials, cache reuse and redirects. Callers supply fixed HTTP methods and
+/// attach authentication separately. No fetch or deadline is started here.
 pub(super) fn request_init(
     method: &str,
     abort: &AbortController,
@@ -17,6 +20,13 @@ pub(super) fn request_init(
     init
 }
 
+/// Fetch `request` and return at most `max_bytes` response bytes. Only successful
+/// HTTP statuses pass, except 409 when `accept_storage_conflict` requests its typed
+/// body. Network/abort/status/stream/bound failures return sanitized diagnostics.
+/// Caller owns the AbortController and deadline; dropping this future alone does
+/// not request network cancellation. The reader lock is released on normal/error
+/// completion, but this helper does not cancel the remaining body after oversize.
+/// See [Fetch](https://fetch.spec.whatwg.org/) for abort and response semantics.
 pub(super) async fn fetch_bounded(
     request: &Request,
     max_bytes: usize,

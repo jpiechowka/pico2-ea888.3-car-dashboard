@@ -1,3 +1,4 @@
+//! Equivalent-gasoline AFR formatting, qualification and retained-cell pixel repair.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
 use dashboard_host_validation::display::St7789Renderer;
@@ -9,6 +10,8 @@ use dashboard_host_validation::{AlignedFrame, colors};
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 
+/// Returns a raw legacy scene borrowing `snapshot` and evaluating freshness at
+/// monotonic milliseconds `now_ms`, with no overlays or FPS text.
 fn scene(
     snapshot: &DashboardSnapshot,
     now_ms: u64,
@@ -29,8 +32,11 @@ fn scene(
     }
 }
 
+/// Returns canonical demo channels with only dimensionless `lambda` varied.
 fn values(lambda: f32) -> [f32; 8] { [1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, lambda] }
 
+/// Returns packed pixels from `frame` for lambda interior x=81..158 and rows
+/// from `top` inclusive to `bottom` exclusive; callers supply ordered landscape bounds within 0..=240.
 fn row(
     frame: &AlignedFrame,
     top: usize,
@@ -41,6 +47,7 @@ fn row(
         .collect()
 }
 
+/// AFR uses unrounded lambda and remains explicitly labelled with its 14.7 equivalent-gasoline assumption.
 #[test]
 fn afr_is_derived_from_unrounded_lambda_on_the_labelled_gasoline_scale() {
     for (lambda, expected_lambda, expected_afr) in [
@@ -57,6 +64,7 @@ fn afr_is_derived_from_unrounded_lambda_on_the_labelled_gasoline_scale() {
     }
 }
 
+/// Nonfinite, nonpositive and unrepresentable lambda-derived AFR display `AFR --`, never numeric evidence.
 #[test]
 fn invalid_or_unrepresentable_lambda_never_produces_a_numeric_afr() {
     for lambda in [
@@ -75,6 +83,7 @@ fn invalid_or_unrepresentable_lambda_never_produces_a_numeric_afr() {
     }
 }
 
+/// Independent glyph baselines verify AFR/assumption text inside the lambda cell and untouched neighboring pixels.
 #[test]
 fn afr_and_scale_are_rasterized_inside_the_lambda_cell() {
     let mut model = AcquisitionModel::demo();
@@ -107,6 +116,7 @@ fn afr_and_scale_are_rasterized_inside_the_lambda_cell() {
     }
 }
 
+/// A change hidden by primary lambda precision still repairs both buffers when the derived AFR digits change.
 #[test]
 fn afr_only_rounding_change_redraws_both_retained_buffers() {
     let mut model = AcquisitionModel::demo();
@@ -135,6 +145,7 @@ fn afr_only_rounding_change_redraws_both_retained_buffers() {
     }
 }
 
+/// Stale, invalid, future and wrong-source samples remove previously visible AFR in both retained buffers.
 #[test]
 fn afr_disappears_with_stale_invalid_faulted_or_unqualified_lambda() {
     let mut model = AcquisitionModel::demo();

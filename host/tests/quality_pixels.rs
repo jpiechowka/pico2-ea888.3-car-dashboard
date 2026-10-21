@@ -1,3 +1,4 @@
+//! Quality-aware pixels distinguish valid zero, unavailable diagnostics and unqualified vehicle warnings.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot, SensorId};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
 use dashboard_host_validation::display::St7789Renderer;
@@ -6,6 +7,7 @@ use dashboard_host_validation::samples::{Quality, Quantity, Sample, Source};
 use dashboard_host_validation::{AlignedFrame, colors};
 use embedded_graphics::prelude::IntoStorage;
 
+/// Missing diagnostics differ from known zeros/false/empty values; nonfinite FPS matches the unavailable raster.
 #[test]
 fn debug_unavailable_trace_fault_clocks_and_nonfinite_fps_are_not_measured_zero() {
     use dashboard_host_validation::debug_view::{DebugData, DebugLine, DebugPage};
@@ -69,6 +71,8 @@ fn debug_unavailable_trace_fault_clocks_and_nonfinite_fps_are_not_measured_zero(
     }
 }
 
+/// Returns a raw legacy scene borrowing `snapshot`, deriving status/freshness
+/// at milliseconds `now_ms` with red candidate backgrounds and no overlay.
 fn scene(
     snapshot: &DashboardSnapshot,
     now_ms: u64,
@@ -89,6 +93,8 @@ fn scene(
     }
 }
 
+/// Qualified coolant zero differs from missing data, but generic vehicle samples never inherit unqualified demo
+/// critical colours.
 #[test]
 fn unavailable_is_not_zero_and_vehicle_coolant_has_no_unverified_critical_coloring() {
     let mut model = AcquisitionModel::new();
@@ -122,6 +128,7 @@ fn unavailable_is_not_zero_and_vehicle_coolant_has_no_unverified_critical_colori
     }
 }
 
+/// Both buffers converge to full redraw through freshness expiry, explicit transport fault and later valid recovery.
 #[test]
 fn stale_fault_and_recovery_replay_both_buffers_without_old_numbers_or_graphs() {
     let mut model = AcquisitionModel::new();

@@ -1,4 +1,10 @@
-//! GATT server and client implementation.
+//! Fixed-bearer GATT server events, client transactions, discovery and bounded notification fan-out.
+//! Retaining additional connection owners can panic at the bounded connection reference limit.
+//!
+//! Client requests require a concurrent receive task; cancellation after request admission closes the
+//! bearer because ATT has no transaction identity. Server event drop processes once and queues replies
+//! best-effort. See [Bluetooth ATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host/attribute-protocol--att-.html)
+//! and [GATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host/generic-attribute-profile--gatt-.html).
 use core::cell::RefCell;
 use core::future::Future;
 use core::marker::PhantomData;
@@ -51,11 +57,11 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// The RX phy.
         rx_phy: PhyKind,
     },
-    /// The phy settings was updated for this connection.
+    /// Connection timing was updated for this connection.
     ConnectionParamsUpdated {
         /// Connection interval.
         conn_interval: Duration,
-        /// Peripheral latency.
+        /// Allowed skipped connection events.
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
@@ -75,16 +81,18 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     ///
     /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
     /// must be called to respond to the request.
-    RequestConnectionParams(ConnectionParamsRequest),
+    RequestConnectionParams(
+        #[doc = "Pending controller parameter request; caller responds through its token."] ConnectionParamsRequest,
+    ),
     /// The data length was changed for this connection.
     DataLengthUpdated {
         /// Max TX octets.
         max_tx_octets: u16,
-        /// Max TX time.
+        /// Maximum TX packet transmission time in microseconds.
         max_tx_time: u16,
         /// Max RX octets.
         max_rx_octets: u16,
-        /// Max RX time.
+        /// Maximum RX packet transmission time in microseconds.
         max_rx_time: u16,
     },
     /// The frame space was updated for this connection.
@@ -104,9 +112,9 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         conn_interval: Duration,
         /// Subrate factor.
         subrate_factor: u16,
-        /// Peripheral latency.
+        /// Allowed skipped connection events.
         peripheral_latency: u16,
-        /// Continuation number.
+        /// Underlying connection events retained after a nonempty packet.
         continuation_number: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
@@ -119,10 +127,10 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
 
     #[cfg(feature = "security")]
     /// Display pass key
-    PassKeyDisplay(PassKey),
+    PassKeyDisplay(#[doc = "Pairing-generated display value."] PassKey),
     #[cfg(feature = "security")]
     /// Confirm pass key
-    PassKeyConfirm(PassKey),
+    PassKeyConfirm(#[doc = "Peer comparison value awaiting user confirmation."] PassKey),
     #[cfg(feature = "security")]
     /// Input the pass key
     PassKeyInput,
@@ -136,7 +144,7 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     },
     #[cfg(feature = "security")]
     /// Pairing failed
-    PairingFailed(Error),
+    PairingFailed(#[doc = "Pairing failure classified by the security state machine."] Error),
     #[cfg(feature = "security")]
     /// The peer has lost its bond.
     BondLost,
@@ -155,11 +163,14 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
 
 /// Used to manage a GATT connection with a client.
 pub struct GattConnection<'stack, 'server, P: PacketPool> {
+    /// Retained link owner; its final drop requests disconnection.
     connection: Connection<'stack, P>,
+    /// Borrowed local attribute/CCCD server used for permission checks and processing.
     pub(crate) server: &'server dyn DynamicAttributeServer<P>,
 }
 
 impl<P: PacketPool> Drop for GattConnection<'_, '_, P> {
+    /// Unregisters this connection from the attribute server; releasing the final underlying connection owner schedules link closure.
     fn drop(&mut self) {
         trace!("[gatt {}] disconnecting from server", self.connection.handle().raw());
         self.server.disconnect(&self.connection);
@@ -169,6 +180,7 @@ impl<P: PacketPool> Drop for GattConnection<'_, '_, P> {
 impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Creates a GATT connection from the given BLE connection and `AttributeServer`:
     /// this will register the client within the server's CCCD table.
+    /// Returns a wrapper consuming `connection` and registering its identity with `server`; propagates client-table capacity/state errors without a wrapper.
     pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CN: usize>(
         connection: Connection<'stack, P>,
         server: &'server AttributeServer<'values, M, P, AT, CN>,
@@ -179,16 +191,19 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     }
 
     /// Confirm that the displayed pass key matches the one displayed on the other party
+    /// Returns the underlying pairing confirmation result; unsupported without security and invalid outside the expected pairing state.
     pub fn pass_key_confirm(&self) -> Result<(), Error> {
         self.connection.pass_key_confirm()
     }
 
     /// The displayed pass key does not match the one displayed on the other party
+    /// Returns the underlying pairing rejection result; unsupported without security and invalid outside the expected pairing state.
     pub fn pass_key_cancel(&self) -> Result<(), Error> {
         self.connection.pass_key_cancel()
     }
 
     /// Input the pairing pass key
+    /// Forwards `pass_key` to pairing and returns its state/admission result; caller supplies 0..=999999, which is not range-checked here.
     pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
         self.connection.pass_key_input(pass_key)
     }
@@ -197,6 +212,7 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     ///
     /// Call this when [`GattConnectionEvent::OobRequest`] is received.
     #[cfg(feature = "security")]
+    /// Returns pairing admission/verification for `local_oob` and `peer_oob`; see Connection::provide_oob_data for asymmetric use, missing-material rejection and confirm verification.
     pub fn provide_oob_data(
         &self,
         local_oob: crate::security_manager::OobData,
@@ -208,6 +224,7 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Wait for the next GATT connection event.
     ///
     /// Uses the attribute server to handle the protocol.
+    /// Returns the first connection-control or queued ATT event, preferring a ready control event; cancellation while waiting consumes neither. Dropping a returned GATT event performs its default processing.
     pub async fn next(&self) -> GattConnectionEvent<'stack, 'server, P> {
         match select(self.connection.next(), self.connection.next_gatt()).await {
             Either::First(event) => match event {
@@ -305,17 +322,20 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     }
 
     /// Get a reference to the underlying BLE connection.
+    /// Returns the retained connection reference; does not create another reference-counted owner.
     pub fn raw(&self) -> &Connection<'stack, P> {
         &self.connection
     }
 
     /// Set the value of an attribute on the local GATT server for this connection.
+    /// Returns the result of storing `input` bytes at `attribute_handle` in this local server; no notification or peer write is sent.
     pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.as_gatt();
         self.server.set(&self.connection, attribute_handle.handle(), gatt_value)
     }
 
     /// Get the value of an attribute from the local GATT server for this connection.
+    /// Returns the decoded local value at `attribute_handle`, or table/decoder error; uses a 512-byte stack buffer and preserves only a bounded byte prefix on decode failure.
     pub fn get<T: AttributeHandle>(&self, attribute_handle: &T) -> Result<T::Value, Error>
     where
         T::Value: FromGatt,
@@ -335,11 +355,14 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
 /// A GATT payload ready for processing.
 pub struct GattData<'stack, P: PacketPool> {
+    /// Owned packet awaiting consumption; None means already processed or no response required.
     pdu: Option<Pdu<P::Packet>>,
+    /// Retained link owner; its final drop requests disconnection.
     connection: Connection<'stack, P>,
 }
 
 impl<P: PacketPool> core::fmt::Debug for GattData<'_, P> {
+    /// Formats the owned ATT packet representation into `f`; returns formatter failure. Payload bytes are not redacted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("GattData").field(&self.pdu).finish()
     }
@@ -347,12 +370,14 @@ impl<P: PacketPool> core::fmt::Debug for GattData<'_, P> {
 
 #[cfg(feature = "defmt")]
 impl<P: PacketPool> defmt::Format for GattData<'_, P> {
+    /// Formats the owned ATT packet representation into `fmt`; payload bytes are not redacted.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "GattData({})", &self.pdu)
     }
 }
 
 impl<'stack, P: PacketPool> GattData<'stack, P> {
+    /// Returns a request owner consuming `pdu` and `connection`; ingress must already have validated a client ATT PDU.
     pub(crate) const fn new(pdu: Pdu<P::Packet>, connection: Connection<'stack, P>) -> Self {
         Self {
             pdu: Some(pdu),
@@ -374,6 +399,7 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
     }
 
     /// Get the raw incoming ATT PDU.
+    /// Returns the borrowed decoded client PDU. Panics if internal ingress invariants are broken: missing, malformed or non-client packet.
     pub fn incoming(&self) -> AttClient<'_> {
         // We know that:
         // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
@@ -387,16 +413,18 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
     }
 
     /// Respond directly to request.
+    /// Returns after encoding `rsp` and queue admission; allocation, codec, disconnected or retention-exhaustion errors propagate. Cancellation drops unqueued bytes; admission is not delivery.
     pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
         let pdu = assemble(&self.connection, AttServer::Response(rsp))?;
-        self.connection.send(pdu).await;
+        self.connection.send(pdu).await?;
         Ok(())
     }
 
     /// Send an unsolicited ATT PDU without having a request (e.g. notification or indication)
+    /// Returns after encoding `uns` for `connection` and queue admission; allocation, codec or link errors propagate. Does not await indication confirmation; cancellation drops unqueued bytes.
     pub async fn send_unsolicited(connection: &Connection<'_, P>, uns: AttUns<'_>) -> Result<(), Error> {
         let pdu = assemble(connection, AttServer::Unsolicited(uns))?;
-        connection.send(pdu).await;
+        connection.send(pdu).await?;
         Ok(())
     }
 }
@@ -406,37 +434,54 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattEvent<'stack, 'server, P: PacketPool> {
     /// A characteristic was read.
-    Read(ReadEvent<'stack, 'server, P>),
+    Read(#[doc = "Owned read operation with automatic default processing."] ReadEvent<'stack, 'server, P>),
     /// A characteristic was written.
-    Write(WriteEvent<'stack, 'server, P>),
+    Write(#[doc = "Owned write operation with automatic default processing."] WriteEvent<'stack, 'server, P>),
     /// Other event.
-    Other(OtherEvent<'stack, 'server, P>),
+    Other(#[doc = "Owned remaining client operation with automatic processing."] OtherEvent<'stack, 'server, P>),
     /// A request was made that was not allowed by the permissions of the attribute.
-    NotAllowed(NotAllowedEvent<'stack, 'server, P>),
+    NotAllowed(
+        #[doc = "Denied operation retaining permission error and exact handle."] NotAllowedEvent<'stack, 'server, P>,
+    ),
 }
 
 impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     /// Create a new GATT event from the provided `GattData` and `DynamicAttributeServer`.
+    /// Returns an event consuming `data` and borrowing `server`; permission failures retain the exact denied handle. Dropping an unprocessed event applies its default accept/reject action.
     pub fn new(data: GattData<'stack, P>, server: &'server dyn DynamicAttributeServer<P>) -> Self {
         let att = data.incoming();
 
         let allowed = match &att {
-            AttClient::Command(AttCmd::Write { handle, .. }) => server.can_write(&data.connection, *handle),
+            AttClient::Command(AttCmd::Write { handle, .. }) => server
+                .can_write(&data.connection, *handle)
+                .map_err(|err| (*handle, err)),
             AttClient::Request(req) => match req {
-                AttReq::Write { handle, .. } => server.can_write(&data.connection, *handle),
+                AttReq::Write { handle, .. } => server
+                    .can_write(&data.connection, *handle)
+                    .map_err(|err| (*handle, err)),
                 #[cfg(feature = "att-queued-writes")]
-                AttReq::PrepareWrite { handle, .. } => server.can_write(&data.connection, *handle),
-                AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => server.can_read(&data.connection, *handle),
-                AttReq::ReadMultiple { handles } => handles.chunks_exact(2).try_for_each(|handle| {
-                    server.can_read(&data.connection, u16::from_le_bytes(handle.try_into().unwrap()))
+                AttReq::PrepareWrite { handle, .. } => server
+                    .can_write(&data.connection, *handle)
+                    .map_err(|err| (*handle, err)),
+                AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => {
+                    server.can_read(&data.connection, *handle).map_err(|err| (*handle, err))
+                }
+                AttReq::ReadMultiple { handles } => handles.as_chunks::<2>().0.iter().try_for_each(|handle| {
+                    let handle = u16::from_le_bytes(*handle);
+                    server.can_read(&data.connection, handle).map_err(|err| (handle, err))
                 }),
                 _ => Ok(()),
             },
             _ => Ok(()),
         };
 
-        if let Err(err) = allowed {
-            return GattEvent::NotAllowed(NotAllowedEvent { data, err, server });
+        if let Err((handle, err)) = allowed {
+            return GattEvent::NotAllowed(NotAllowedEvent {
+                data,
+                handle,
+                err,
+                server,
+            });
         }
 
         match att {
@@ -457,6 +502,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     }
 
     /// Accept the event, making it processed by the server.
+    /// Returns an owned reply after consuming the request once; server/packet-allocation/codec errors propagate. Dropping the reply only attempts immediate enqueue.
     pub fn accept(self) -> Result<Reply<'stack, P>, Error> {
         match self {
             Self::Read(e) => e.accept(),
@@ -467,6 +513,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    /// Returns an owned error reply using `err`; commands/confirmations remain silent. Consumes the request once and propagates packet/codec errors.
     pub fn reject(self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
         match self {
             Self::Read(e) => e.reject(err),
@@ -477,6 +524,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     }
 
     /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    /// Returns the borrowed request without processing it; dropping the enclosing event still performs its default action.
     pub fn payload(&self) -> &GattData<'stack, P> {
         match self {
             Self::Read(e) => e.payload(),
@@ -492,6 +540,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     /// which are not supported yet by the enclosed attribute server.
     /// Note that this will consume the event, so it would be up to the caller to respond
     /// to the incoming payload if needed and however they see fit.
+    /// Returns ownership of the request and disables this event's automatic processing; caller becomes responsible for any required response.
     pub fn into_payload(self) -> GattData<'stack, P> {
         match self {
             Self::Read(e) => e.into_payload(),
@@ -504,11 +553,14 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
 
 /// A characteristic read event returned while processing GATT requests.
 pub struct ReadEvent<'stack, 'server, P: PacketPool> {
+    /// Owned request bytes and retained connection; taking its PDU disables automatic processing.
     data: GattData<'stack, P>,
+    /// Borrowed local attribute/CCCD server used for permission checks and processing.
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
 impl<P: PacketPool> core::fmt::Debug for ReadEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `f`; returns formatter failure. Payload bytes are not redacted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("ReadEvent").field(&self.data).finish()
     }
@@ -516,6 +568,7 @@ impl<P: PacketPool> core::fmt::Debug for ReadEvent<'_, '_, P> {
 
 #[cfg(feature = "defmt")]
 impl<P: PacketPool> defmt::Format for ReadEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `fmt`; payload bytes are not redacted.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "ReadEvent({})", &self.data)
     }
@@ -523,6 +576,7 @@ impl<P: PacketPool> defmt::Format for ReadEvent<'_, '_, P> {
 
 impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
     /// Characteristic handle that was read
+    /// Returns the requested Read/ReadBlob handle; internal event classification guarantees it exists.
     pub fn handle(&self) -> u16 {
         // We know that the unwrap cannot fail, because `ReadEvent` wraps
         // ATT payloads that always do have a handle
@@ -532,11 +586,13 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
+    /// Returns an owned reply after consuming the request once; server/packet-allocation/codec errors propagate. Dropping the reply only attempts immediate enqueue.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Ok(()))
+        process(&mut self.data, self.server, Ok(()), None)
     }
 
     /// Accept the event without server processing.
+    /// Returns a reply containing `data` from the requested blob offset, bounded by ATT MTU and physical packet space. Invalid offset creates an ATT error; allocation/codec errors propagate after consuming the request. Does not mutate the table.
     pub fn accept_unprocessed<T: AsGatt + ?Sized>(mut self, data: &T) -> Result<Reply<'stack, P>, Error> {
         let (rsp, offset) = match self.data.incoming() {
             AttClient::Request(AttReq::Read { .. }) => (att::ATT_READ_RSP, 0),
@@ -566,11 +622,13 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    /// Returns an owned error reply using `err`; commands/confirmations remain silent. Consumes the request once and propagates packet/codec errors.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Err(err))
+        process(&mut self.data, self.server, Err(err), None)
     }
 
     /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    /// Returns the borrowed request without processing it; dropping the enclosing event still performs its default action.
     pub fn payload(&self) -> &GattData<'stack, P> {
         &self.data
     }
@@ -581,6 +639,7 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
     /// which are not supported yet by the enclosed attribute server.
     /// Note that this will consume the event, so it would be up to the caller to respond
     /// to the incoming payload if needed and however they see fit.
+    /// Returns ownership of the request and disables this event's automatic processing; caller becomes responsible for any required response.
     pub fn into_payload(mut self) -> GattData<'stack, P> {
         GattData {
             pdu: self.data.pdu.take(),
@@ -590,18 +649,22 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
 }
 
 impl<P: PacketPool> Drop for ReadEvent<'_, '_, P> {
+    /// Processes a still-owned Read request once; reply enqueue is best-effort and errors are discarded.
     fn drop(&mut self) {
-        let _ = process(&mut self.data, self.server, Ok(()));
+        let _ = process(&mut self.data, self.server, Ok(()), None);
     }
 }
 
 /// A characteristic write event returned while processing GATT requests.
 pub struct WriteEvent<'stack, 'server, P: PacketPool> {
+    /// Owned request bytes and retained connection; taking its PDU disables automatic processing.
     data: GattData<'stack, P>,
+    /// Borrowed local attribute/CCCD server used for permission checks and processing.
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
 impl<P: PacketPool> core::fmt::Debug for WriteEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `f`; returns formatter failure. Payload bytes are not redacted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("WriteEvent").field(&self.data).finish()
     }
@@ -609,6 +672,7 @@ impl<P: PacketPool> core::fmt::Debug for WriteEvent<'_, '_, P> {
 
 #[cfg(feature = "defmt")]
 impl<P: PacketPool> defmt::Format for WriteEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `fmt`; payload bytes are not redacted.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "WriteEvent({})", &self.data)
     }
@@ -616,6 +680,7 @@ impl<P: PacketPool> defmt::Format for WriteEvent<'_, '_, P> {
 
 impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// Characteristic handle that was written
+    /// Returns the direct write handle or retained ExecuteWrite prepare handle; internal event classification guarantees the variant.
     pub fn handle(&self) -> u16 {
         match self.data.incoming() {
             AttClient::Request(AttReq::Write { handle, .. }) | AttClient::Command(AttCmd::Write { handle, .. }) => {
@@ -628,6 +693,7 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     }
 
     /// Raw data to be written
+    /// Returns `f` applied synchronously to byte offset and borrowed write bytes; ordinary writes use offset zero, ExecuteWrite uses retained prepare storage. The closure must not reborrow that storage.
     pub fn with_data<R>(&self, f: impl FnOnce(usize, &[u8]) -> R) -> R {
         match self.data.incoming() {
             AttClient::Request(AttReq::Write { data, .. }) | AttClient::Command(AttCmd::Write { data, .. }) => {
@@ -643,6 +709,7 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     }
 
     /// Characteristic data to be written
+    /// Returns decoded pending bytes using `_c` only to select T; does not verify its handle. Nonzero prepared offset returns InvalidLength.
     pub fn value<T: FromGatt>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
         self.with_data(|offset, data| {
             if offset == 0 {
@@ -654,6 +721,7 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     }
 
     /// Validate the offset and length of the write request against the attribute's `len` and `capacity`
+    /// Returns Ok when the pending byte offset is within `len` and its end fits `capacity`; otherwise the precise ATT offset/length error. Does not mutate storage.
     pub fn validate(&self, len: usize, capacity: usize) -> Result<(), AttErrorCode> {
         self.with_data(|offset, data| {
             if offset > len {
@@ -669,11 +737,13 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
+    /// Returns an owned reply after consuming the request once; server/packet-allocation/codec errors propagate. Dropping the reply only attempts immediate enqueue.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Ok(()))
+        process(&mut self.data, self.server, Ok(()), None)
     }
 
     /// Accept the event without server processing.
+    /// Returns a silent command reply or success response without updating the table; ExecuteWrite clears prepared bytes. Allocation/codec failures propagate after consuming the request.
     pub fn accept_unprocessed(mut self) -> Result<Reply<'stack, P>, Error> {
         let rsp = match self.data.incoming() {
             AttClient::Request(AttReq::Write { .. }) => Some(att::ATT_WRITE_RSP),
@@ -703,11 +773,13 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    /// Returns an owned error reply using `err`; commands/confirmations remain silent. Consumes the request once and propagates packet/codec errors.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Err(err))
+        process(&mut self.data, self.server, Err(err), None)
     }
 
     /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    /// Returns the borrowed request without processing it; dropping the enclosing event still performs its default action.
     pub fn payload(&self) -> &GattData<'stack, P> {
         &self.data
     }
@@ -718,6 +790,7 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// which are not supported yet by the enclosed attribute server.
     /// Note that this will consume the event, so it would be up to the caller to respond
     /// to the incoming payload if needed and however they see fit.
+    /// Returns ownership of the request and disables this event's automatic processing; caller becomes responsible for any required response.
     pub fn into_payload(mut self) -> GattData<'stack, P> {
         GattData {
             pdu: self.data.pdu.take(),
@@ -727,18 +800,22 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
 }
 
 impl<P: PacketPool> Drop for WriteEvent<'_, '_, P> {
+    /// Applies a still-owned Write request once; reply enqueue is best-effort and errors are discarded.
     fn drop(&mut self) {
-        let _ = process(&mut self.data, self.server, Ok(()));
+        let _ = process(&mut self.data, self.server, Ok(()), None);
     }
 }
 
 /// Other event returned while processing GATT requests (neither read, nor write).
 pub struct OtherEvent<'stack, 'server, P: PacketPool> {
+    /// Owned request bytes and retained connection; taking its PDU disables automatic processing.
     data: GattData<'stack, P>,
+    /// Borrowed local attribute/CCCD server used for permission checks and processing.
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
 impl<P: PacketPool> core::fmt::Debug for OtherEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `f`; returns formatter failure. Payload bytes are not redacted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("OtherEvent").field(&self.data).finish()
     }
@@ -746,6 +823,7 @@ impl<P: PacketPool> core::fmt::Debug for OtherEvent<'_, '_, P> {
 
 #[cfg(feature = "defmt")]
 impl<P: PacketPool> defmt::Format for OtherEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `fmt`; payload bytes are not redacted.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "OtherEvent({})", &self.data)
     }
@@ -755,16 +833,19 @@ impl<'stack, P: PacketPool> OtherEvent<'stack, '_, P> {
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
+    /// Returns an owned reply after consuming the request once; server/packet-allocation/codec errors propagate. Dropping the reply only attempts immediate enqueue.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Ok(()))
+        process(&mut self.data, self.server, Ok(()), None)
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    /// Returns an owned error reply using `err`; commands/confirmations remain silent. Consumes the request once and propagates packet/codec errors.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Err(err))
+        process(&mut self.data, self.server, Err(err), None)
     }
 
     /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    /// Returns the borrowed request without processing it; dropping the enclosing event still performs its default action.
     pub fn payload(&self) -> &GattData<'stack, P> {
         &self.data
     }
@@ -775,6 +856,7 @@ impl<'stack, P: PacketPool> OtherEvent<'stack, '_, P> {
     /// which are not supported yet by the enclosed attribute server.
     /// Note that this will consume the event, so it would be up to the caller to respond
     /// to the incoming payload if needed and however they see fit.
+    /// Returns ownership of the request and disables this event's automatic processing; caller becomes responsible for any required response.
     pub fn into_payload(mut self) -> GattData<'stack, P> {
         GattData {
             pdu: self.data.pdu.take(),
@@ -784,19 +866,26 @@ impl<'stack, P: PacketPool> OtherEvent<'stack, '_, P> {
 }
 
 impl<P: PacketPool> Drop for OtherEvent<'_, '_, P> {
+    /// Processes a still-owned remaining request once; errors and failed immediate reply admission are discarded.
     fn drop(&mut self) {
-        let _ = process(&mut self.data, self.server, Ok(()));
+        let _ = process(&mut self.data, self.server, Ok(()), None);
     }
 }
 
-/// Other event returned while processing GATT requests (neither read, nor write).
+/// Permission-denied operation; default drop rejects using the captured attribute and error.
 pub struct NotAllowedEvent<'stack, 'server, P: PacketPool> {
+    /// Exact attribute whose permission check failed, including ReadMultiple members.
+    handle: u16,
+    /// Owned request bytes and retained connection; taking its PDU disables automatic processing.
     data: GattData<'stack, P>,
+    /// Captured ATT permission failure used by default rejection.
     err: AttErrorCode,
+    /// Borrowed local attribute/CCCD server used for permission checks and processing.
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
 impl<P: PacketPool> core::fmt::Debug for NotAllowedEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `f`; returns formatter failure. Payload bytes are not redacted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("NotAllowedEvent").field(&self.data).finish()
     }
@@ -804,6 +893,7 @@ impl<P: PacketPool> core::fmt::Debug for NotAllowedEvent<'_, '_, P> {
 
 #[cfg(feature = "defmt")]
 impl<P: PacketPool> defmt::Format for NotAllowedEvent<'_, '_, P> {
+    /// Formats the owned ATT packet representation into `fmt`; payload bytes are not redacted.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "NotAllowedEvent({})", &self.data)
     }
@@ -811,25 +901,25 @@ impl<P: PacketPool> defmt::Format for NotAllowedEvent<'_, '_, P> {
 
 impl<'stack, P: PacketPool> NotAllowedEvent<'stack, '_, P> {
     /// Characteristic handle that was requested
+    /// Returns the exact attribute whose permission check failed, including a denied member of ReadMultiple.
     pub fn handle(&self) -> u16 {
-        // We know that the unwrap cannot fail, because `NotAllowedEvent` wraps
-        // ATT payloads that always do have a handle
-        unwrap!(self.data.handle())
+        self.handle
     }
 
-    /// Accept the event, making it processed by the server.
-    ///
-    /// Automatically called if drop() is invoked.
+    /// Rejects the denied event using its captured permission error; also performed by drop.
+    /// Returns an ATT error reply using the captured permission failure and handle; does not apply the denied operation.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Err(self.err))
+        process(&mut self.data, self.server, Err(self.err), Some(self.handle))
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    /// Returns an owned error reply using `err`; commands/confirmations remain silent. Consumes the request once and propagates packet/codec errors.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
-        process(&mut self.data, self.server, Err(err))
+        process(&mut self.data, self.server, Err(err), Some(self.handle))
     }
 
     /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    /// Returns the borrowed request without processing it; dropping the enclosing event still performs its default action.
     pub fn payload(&self) -> &GattData<'stack, P> {
         &self.data
     }
@@ -840,6 +930,7 @@ impl<'stack, P: PacketPool> NotAllowedEvent<'stack, '_, P> {
     /// which are not supported yet by the enclosed attribute server.
     /// Note that this will consume the event, so it would be up to the caller to respond
     /// to the incoming payload if needed and however they see fit.
+    /// Returns ownership of the request and disables this event's automatic processing; caller becomes responsible for any required response.
     pub fn into_payload(mut self) -> GattData<'stack, P> {
         GattData {
             pdu: self.data.pdu.take(),
@@ -849,15 +940,18 @@ impl<'stack, P: PacketPool> NotAllowedEvent<'stack, '_, P> {
 }
 
 impl<P: PacketPool> Drop for NotAllowedEvent<'_, '_, P> {
+    /// Rejects a still-owned request with captured permission error/handle; errors and failed immediate reply admission are discarded.
     fn drop(&mut self) {
-        let _ = process(&mut self.data, self.server, Err(self.err));
+        let _ = process(&mut self.data, self.server, Err(self.err), Some(self.handle));
     }
 }
 
+/// Consumes `data` once, applying `server` for Ok `result` or encoding its error with optional `error_handle` override. Returns an owned reply or allocation/server/codec error; already-consumed data returns a silent reply.
 fn process<'stack, P>(
     data: &mut GattData<'stack, P>,
     server: &dyn DynamicAttributeServer<P>,
     result: Result<(), AttErrorCode>,
+    error_handle: Option<u16>,
 ) -> Result<Reply<'stack, P>, Error>
 where
     P: PacketPool,
@@ -865,7 +959,7 @@ where
     if let Some(pdu) = data.pdu.take() {
         let res = match result {
             Ok(_) => process_accept(&pdu, &data.connection, server),
-            Err(code) => process_reject(&pdu, &data.connection, code),
+            Err(code) => process_reject(&pdu, &data.connection, code, error_handle),
         };
         res
     } else {
@@ -873,6 +967,7 @@ where
     }
 }
 
+/// Returns a reply after processing validated client `pdu` for `connection` through `server`; bounds response storage by negotiated ATT MTU. Pool exhaustion/codec/server errors propagate; table effects may precede later encoding errors.
 fn process_accept<'stack, P>(
     pdu: &Pdu<P::Packet>,
     connection: &Connection<'stack, P>,
@@ -913,10 +1008,12 @@ where
     }
 }
 
+/// Returns an error reply to request `pdu` on `connection`, using `code` and optional exact `error_handle`; commands/confirmations return silent replies. ExecuteWrite clears prepared bytes; allocation/codec errors propagate.
 fn process_reject<'stack, P: PacketPool>(
     pdu: &Pdu<P::Packet>,
     connection: &Connection<'stack, P>,
     code: AttErrorCode,
+    error_handle: Option<u16>,
 ) -> Result<Reply<'stack, P>, Error> {
     // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
     // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
@@ -939,12 +1036,14 @@ fn process_reject<'stack, P: PacketPool>(
     if let AttClient::Request(AttReq::ExecuteWrite { .. }) = &att {
         connection.clear_prepare_write();
     }
-    let handle = match att {
+    let handle = error_handle.unwrap_or(match att {
+        #[cfg(feature = "att-queued-writes")]
+        AttClient::Request(AttReq::PrepareWrite { handle, .. }) => handle,
         AttClient::Request(AttReq::Write { handle, .. }) => handle,
         AttClient::Request(AttReq::Read { handle }) => handle,
         AttClient::Request(AttReq::ReadBlob { handle, .. }) => handle,
-        _ => 0, // As per spec, if the incoming ATT does not have an ATT handle, we should report with handle 0
-    };
+        _ => 0, // No application-selected failing handle is available.
+    });
     // We know it has been checked, therefore this cannot fail
     let request = pdu.as_ref()[0];
     let rsp = AttRsp::Error { request, handle, code };
@@ -952,6 +1051,7 @@ fn process_reject<'stack, P: PacketPool>(
     Ok(Reply::new(connection.clone(), Some(pdu)))
 }
 
+/// Returns an owned L2CAP-framed server `att` for `conn`; allocation/codec errors propagate. Encodes into physical packet space first, then truncates ATT bytes to negotiated MTU; callers must avoid splitting structured responses.
 pub(crate) fn assemble<'stack, P: PacketPool>(
     conn: &Connection<'stack, P>,
     att: AttServer<'_>,
@@ -971,14 +1071,17 @@ pub(crate) fn assemble<'stack, P: PacketPool>(
 
 /// A reply to a gatt request.
 ///
-/// The reply may be sent immediately or queued for sending later. To guarantee delivery of a reply
-/// in case of a full outbound queue, the async send() should be used rather than relying on the Drop implementation.
+/// Drop attempts immediate queue admission; send waits for capacity. Neither guarantees peer delivery,
+/// and disconnected or exhausted retention can still reject admission.
 pub struct Reply<'stack, P: PacketPool> {
+    /// Retained link owner; its final drop requests disconnection.
     connection: Connection<'stack, P>,
+    /// Owned packet awaiting consumption; None means already processed or no response required.
     pdu: Option<Pdu<P::Packet>>,
 }
 
 impl<'stack, P: PacketPool> Reply<'stack, P> {
+    /// Returns a reply owning `connection` and optional framed `pdu`; None represents an operation requiring no response.
     fn new(connection: Connection<'stack, P>, pdu: Option<Pdu<P::Packet>>) -> Self {
         Self { connection, pdu }
     }
@@ -986,6 +1089,7 @@ impl<'stack, P: PacketPool> Reply<'stack, P> {
     /// Send the reply.
     ///
     /// May fail if the outbound queue is full.
+    /// Returns immediate queue admission or disconnected, retention-exhaustion or full-queue error; consumes the response even on failure. A silent reply succeeds without queue access.
     pub fn try_send(mut self) -> Result<(), Error> {
         if let Some(pdu) = self.pdu.take() {
             self.connection.try_send(pdu)
@@ -994,10 +1098,12 @@ impl<'stack, P: PacketPool> Reply<'stack, P> {
         }
     }
 
-    /// Send the reply.
+    /// Queues the reply, waiting for capacity; returns without transmission acknowledgment. This unit-returning API logs and discards admission failures; use try_send for an immediate reported result. Cancellation drops unqueued bytes and retention.
     pub async fn send(mut self) {
         if let Some(pdu) = self.pdu.take() {
-            self.connection.send(pdu).await
+            if self.connection.send(pdu).await.is_err() {
+                warn!("[gatt] reply enqueue failed");
+            }
         }
     }
 }
@@ -1012,10 +1118,11 @@ impl<'stack, P: PacketPool> Reply<'stack, P> {
 }
 
 impl<P: PacketPool> Drop for Reply<'_, P> {
+    /// Attempts immediate queue admission for remaining reply bytes; failure discards them and logs only metadata.
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
             if self.connection.try_send(pdu).is_err() {
-                warn!("[gatt] error sending reply (outbound buffer full)");
+                warn!("[gatt] reply enqueue failed");
             }
         }
     }
@@ -1023,13 +1130,16 @@ impl<P: PacketPool> Drop for Reply<'_, P> {
 
 /// Notification listener for GATT client.
 pub struct NotificationListener<'lst, const MTU: usize> {
+    /// Optional value-handle filter; None receives all published handles.
     handle: Option<u16>,
+    /// Bounded pubsub subscription; drop releases subscriber capacity without changing peer CCCD.
     listener: pubsub::DynSubscriber<'lst, Notification<MTU>>,
 }
 
 impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
     /// Receive a notification, reporting queue loss instead of joining fragments
     /// across it. Stream protocols must disconnect/invalidate on `Err`.
+    /// Returns the next matching notification, or Err(number of globally lost queue entries). Other handles are consumed; cancellation preserves unread messages but already skipped entries stay consumed.
     pub async fn next_checked(&mut self) -> Result<Notification<MTU>, u64> {
         loop {
             match self.listener.next_message().await {
@@ -1041,7 +1151,8 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    /// Get the next (len: u16, Packet) tuple from the rx queue
+    /// Wait for the next matching notification, ignoring queue-loss markers.
+    /// Returns the next matching value while silently discarding lag notifications; use next_checked for stream protocols. Cancellation leaves unread messages queued.
     pub async fn next(&mut self) -> Notification<MTU> {
         loop {
             if let WaitResult::Message(m) = self.listener.next_message().await {
@@ -1053,8 +1164,11 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
     }
 }
 
+/// Maximum simultaneous client notification subscriptions from generated configuration.
 const MAX_NOTIF: usize = config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
+/// Retained broadcast notification entries before oldest-message eviction.
 const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
+/// Maximum copied notification value bytes, excluding opcode and handle.
 const NOTIF_MTU: usize = config::GATT_CLIENT_NOTIFICATION_MTU;
 
 /// BT Core Spec Vol 3, Part F, Section 3.3.3: ATT transaction timeout.
@@ -1066,18 +1180,27 @@ pub(crate) const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// return `Error::Busy`. Dropping an unfinished request closes the connection:
 /// ATT responses have no transaction identifier that permits safe reuse.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {
+    /// Distinct fully discovered service records, bounded by MAX_SERVICES; incomplete discovery is not cached.
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
+    /// Controller type association; stores no controller instance.
     _phantom: PhantomData<T>,
+    /// Exclusive fixed-ATT client claim and retained link.
     connection: ClientConnection<'reference, P>,
+    /// One outstanding server response; pump waits when full.
     response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), 1>,
 
     // TODO: Wait for something like https://github.com/rust-lang/rust/issues/132980 (min_generic_const_args) to allow using P::MTU
+    /// Fixed-capacity broadcast values; immediate publication evicts oldest messages and exposes lag to checked listeners.
     notifications: PubSubChannel<NoopRawMutex, Notification<NOTIF_MTU>, NOTIF_QSIZE, MAX_NOTIF, 1>,
 }
 
-struct ClientConnection<'d, P: PacketPool>(Connection<'d, P>);
+/// Exclusive GATT-client claim coupled to a retained connection owner.
+struct ClientConnection<'d, P: PacketPool>(
+    #[doc = "Retained link coupled to the exclusive client flag."] Connection<'d, P>,
+);
 
 impl<'d, P: PacketPool> ClientConnection<'d, P> {
+    /// Returns an exclusive fixed-ATT client owner cloned from `connection`; Busy if already claimed, or the underlying link/state error. Drop releases that claim.
     fn acquire(connection: &Connection<'d, P>) -> Result<Self, Error> {
         connection.manager().acquire_gatt_client(connection.index())?;
         Ok(Self(connection.clone()))
@@ -1085,25 +1208,32 @@ impl<'d, P: PacketPool> ClientConnection<'d, P> {
 }
 
 impl<'d, P: PacketPool> core::ops::Deref for ClientConnection<'d, P> {
+    /// Retained BLE connection exposed through the exclusive client owner.
     type Target = Connection<'d, P>;
 
+    /// Returns the retained BLE connection without cloning or releasing ATT ownership.
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl<P: PacketPool> Drop for ClientConnection<'_, P> {
+    /// Releases this link's exclusive GATT client claim; retained connection drops afterward.
     fn drop(&mut self) {
         self.manager().release_gatt_client(self.index());
     }
 }
 
+/// Cancellation guard for one admitted fixed-bearer ATT transaction.
 struct AttRequestGuard<'a, 'd, P: PacketPool> {
+    /// Borrowed link whose transaction slot is reserved.
     connection: &'a Connection<'d, P>,
+    /// False until validated response consumption; unfinished drop requests disconnect.
     complete: bool,
 }
 
 impl<'a, 'd, P: PacketPool> AttRequestGuard<'a, 'd, P> {
+    /// Returns a guard reserving the request opcode `opcode` on `connection`; Busy/disconnected errors leave no guard. Unfinished drop requests disconnect.
     fn begin(connection: &'a Connection<'d, P>, opcode: u8) -> Result<Self, Error> {
         connection.manager().begin_att_request(connection.index(), opcode)?;
         Ok(Self {
@@ -1112,6 +1242,7 @@ impl<'a, 'd, P: PacketPool> AttRequestGuard<'a, 'd, P> {
         })
     }
 
+    /// Releases the ATT transaction slot and marks this guard complete, preventing its cancellation disconnect.
     fn finish(mut self) {
         self.connection.manager().finish_att_request(self.connection.index());
         self.complete = true;
@@ -1119,6 +1250,7 @@ impl<'a, 'd, P: PacketPool> AttRequestGuard<'a, 'd, P> {
 }
 
 impl<P: PacketPool> Drop for AttRequestGuard<'_, '_, P> {
+    /// Requests disconnect if no validated response completed this ATT transaction; cannot prove canceled sends never reached the peer.
     fn drop(&mut self) {
         if !self.complete {
             // Even cancellation while enqueueing cannot prove that no request
@@ -1132,25 +1264,32 @@ impl<P: PacketPool> Drop for AttRequestGuard<'_, '_, P> {
 #[derive(Debug, PartialEq, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Notification<const MTU: usize> {
+    /// Received characteristic value handle.
     handle: u16,
+    /// Fixed-capacity copied value bytes; unused tail is zero-filled.
     data: [u8; MTU],
+    /// Initialized value prefix length in bytes, at most MTU.
     len: usize,
+    /// True for ATT indication, false for notification.
     indication: bool,
 }
 
 impl<const MTU: usize> Notification<MTU> {
     /// The characteristic value handle this notification is for.
+    /// Returns the received characteristic value handle, without revalidating a cached descriptor.
     pub fn handle(&self) -> u16 {
         self.handle
     }
 
     /// Whether this notification was received as an indication.
+    /// Returns true for an indication, false for an unacknowledged notification; ingress handles confirmation separately.
     pub fn is_indication(&self) -> bool {
         self.indication
     }
 }
 
 impl<const MTU: usize> AsRef<[u8]> for Notification<MTU> {
+    /// Returns only initialized value bytes, excluding handle/opcode and unused fixed-array tail.
     fn as_ref(&self) -> &[u8] {
         &self.data[..self.len]
     }
@@ -1160,30 +1299,42 @@ impl<const MTU: usize> AsRef<[u8]> for Notification<MTU> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ServiceHandle {
+    /// Inclusive service declaration handle.
     start: u16,
+    /// Inclusive last handle in the service group.
     end: u16,
+    /// Discovered service UUID in its decoded width.
     uuid: Uuid,
 }
 
 impl ServiceHandle {
     /// Get the attribute handles that belong to this service
+    /// Returns the inclusive discovered service handle range, including declaration and attributes.
     pub fn handle_range(&self) -> core::ops::RangeInclusive<u16> {
         self.start..=self.end
     }
 
     /// Get the UUID of this service
+    /// Returns the recorded service UUID without normalization or another discovery request.
     pub fn uuid(&self) -> Uuid {
         self.uuid
     }
 }
 
+/// Encoded ATT opcode and owned framed packet, or host/controller-typed encoding failure.
+type EncodedAtt<P, E> = Result<(u8, Pdu<P>), BleHostError<E>>;
+
+/// Owned response packet plus the receive pump's controller link identity.
 pub(crate) struct Response<P> {
+    /// Owned ATT response bytes, without L2CAP header.
     pdu: Pdu<P>,
+    /// Controller connection handle captured by the receive pump.
     handle: ConnHandle,
 }
 
 // ATT 3.4.1.1 defines a fixed five-byte Error Response. Check its request
 // without decoding the full response enum in the async transaction frames.
+/// Returns Ok only for exact five-byte `data` with Error Response opcode matching `request`; wrong request yields UnexpectedGattResponse, other shape InvalidValue.
 fn validate_error_response(data: &[u8], request: u8) -> Result<(), Error> {
     match data {
         [att::ATT_ERROR_RSP, opcode, _, _, _] if *opcode == request => Ok(()),
@@ -1195,19 +1346,22 @@ fn validate_error_response(data: &[u8], request: u8) -> Result<(), Error> {
 /// Trait with behavior for a gatt client.
 pub(crate) trait Client<'d, E, P: PacketPool> {
     /// Perform a gatt request and return the response.
+    /// Returns the response to `req` after exclusive request admission and enqueue; starts a 30-second response timeout after enqueue. Busy, allocation, codec, link, timeout and mismatched-error-opcode failures propagate; cancellation after admission closes the bearer.
     fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Response<P::Packet>, BleHostError<E>>>;
+    /// Returns after encoding and enqueueing `cmd`; no ATT acknowledgment is expected. Cancellation drops unqueued bytes; prior accepted queue entries remain owned by the runner.
     fn command(&self, cmd: AttCmd<'_>) -> impl Future<Output = Result<(), BleHostError<E>>>;
 }
 
 impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client<'reference, T::Error, P>
     for GattClient<'reference, T, P, MAX_SERVICES>
 {
+    /// Returns the response to `req` after exclusive request admission and enqueue; starts a 30-second response timeout after enqueue. Busy, allocation, codec, link, timeout and mismatched-error-opcode failures propagate; cancellation after admission closes the bearer.
     async fn request(&self, req: AttReq<'_>) -> Result<Response<P::Packet>, BleHostError<T::Error>> {
         let data = Att::Client(AttClient::Request(req));
 
         let (request_opcode, pdu) = Self::encode_att_data(data)?;
         let transaction = AttRequestGuard::begin(&self.connection, request_opcode)?;
-        self.connection.send(pdu).await;
+        self.connection.send(pdu).await?;
 
         // BT Core Spec Vol 3, Part F, Section 3.3.3: 30-second ATT transaction timeout.
         // If the server does not respond within 30 seconds, the client shall close the
@@ -1233,6 +1387,7 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
         Ok(Response { handle: h, pdu })
     }
 
+    /// Returns after encoding and enqueueing `cmd`; no ATT acknowledgment is expected. Cancellation drops unqueued bytes; prior accepted queue entries remain owned by the runner.
     async fn command(&self, cmd: AttCmd<'_>) -> Result<(), BleHostError<T::Error>> {
         let data = Att::Client(AttClient::Command(cmd));
 
@@ -1244,7 +1399,8 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
 
 impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> GattClient<'reference, T, P, MAX_SERVICES> {
     // Keep encoding temporaries out of the async send future.
-    fn encode_att_data(data: Att<'_>) -> Result<(u8, Pdu<P::Packet>), BleHostError<T::Error>> {
+    /// Returns opcode and owned L2CAP-framed `data`; packet exhaustion or encoding capacity failure leaves no queued packet. Packet-pool size must fit the u16 L2CAP length domain.
+    fn encode_att_data(data: Att<'_>) -> EncodedAtt<P::Packet, T::Error> {
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: data.size() as u16,
@@ -1261,15 +1417,17 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok((opcode, Pdu::new(buf, len)))
     }
 
+    /// Returns the opcode after encoding and queueing `data`; allocation/codec/link/retention failures propagate. Cancellation discards only unqueued bytes.
     async fn send_att_data(&self, data: Att<'_>) -> Result<u8, BleHostError<T::Error>> {
         let (opcode, pdu) = Self::encode_att_data(data)?;
-        self.connection.send(pdu).await;
+        self.connection.send(pdu).await?;
         Ok(opcode)
     }
 }
 
 impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattClient<'reference, C, P, MAX_SERVICES> {
-    /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
+    /// Creates the sole client on a connection's fixed ATT bearer.
+    /// Returns an exclusive client for `connection`; `_stack` supplies the controller type only. Performs once-only MTU exchange, then best-effort bonded encryption. Allocation, busy, malformed response, timeout and disconnected errors propagate; cancellation during ATT exchange closes the bearer. Early notifications are consumed before listeners exist.
     pub async fn new(
         _stack: &Stack<'_, C, P>,
         connection: &Connection<'reference, P>,
@@ -1286,7 +1444,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
             let len = w.len();
             let transaction = AttRequestGuard::begin(&connection, att::ATT_EXCHANGE_MTU_REQ)?;
-            connection.send(Pdu::new(buf, len)).await;
+            connection.send(Pdu::new(buf, len)).await?;
 
             // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
             with_timeout(ATT_TRANSACTION_TIMEOUT, async {
@@ -1356,6 +1514,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover all primary services in ascending handle order.
+    /// Returns discovered primary services in increasing nonoverlapping ranges and remembers them atomically; capacity, malformed response and ATT errors propagate. Cancellation may leave peer transactions completed but does not publish a partial cache.
     pub async fn services(&self) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
         let mut result = Vec::new();
         let mut start = 1u16;
@@ -1422,6 +1581,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover primary services associated with a UUID.
+    /// Returns primary service ranges matching `uuid` (UUID32 expands to UUID128) and remembers them after complete discovery; capacity, malformed ordering and ATT errors propagate.
     pub async fn services_by_uuid(
         &self,
         uuid: &Uuid,
@@ -1429,12 +1589,13 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let mut start: u16 = 0x0001;
         let mut result = Vec::new();
 
+        let (wire_uuid, wire_len) = uuid.att_bytes();
         loop {
             let data = att::AttReq::FindByTypeValue {
                 start_handle: start,
                 end_handle: 0xFFFF,
                 att_type: PRIMARY_SERVICE.into(),
-                att_value: uuid.as_raw(),
+                att_value: &wire_uuid[..wire_len],
             };
 
             let response = self.request(data).await?;
@@ -1480,6 +1641,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok(result)
     }
 
+    /// Returns Ok after remembering previously unknown entries from `services`; preflights capacity to avoid partial cache publication. Internal discovery supplies distinct rows.
     fn remember_services(&self, services: &[ServiceHandle]) -> Result<(), Error> {
         let mut known = self.known_services.borrow_mut();
         let additional = services.iter().filter(|s| !known.contains(s)).count();
@@ -1494,6 +1656,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok(())
     }
 
+    /// Returns a decoded 5- or 19-byte `item` only when declaration `handle` follows `previous_value` within `service` and precedes its value handle; malformed lengths/order return InvalidCharacteristicDeclarationData.
     fn checked_declaration(
         service: &ServiceHandle,
         previous_value: u16,
@@ -1519,6 +1682,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover all characteristics in a given service
+    /// Returns at most N characteristics in `service`, validating declaration/value order and resolving CCCDs inside each characteristic range; missing CCCD is None, other ATT/capacity errors propagate.
     pub async fn characteristics<const N: usize>(
         &self,
         service: &ServiceHandle,
@@ -1583,6 +1747,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover characteristics in a given service using a UUID.
+    /// Returns the first declaration in `service` exactly matching `uuid`, with its bounded descriptor range and required CCCD; NotFound covers absent characteristic/required CCCD. T selects interpretation only.
     pub async fn characteristic_by_uuid<T: AsGatt + ?Sized>(
         &self,
         service: &ServiceHandle,
@@ -1658,6 +1823,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
+    /// Returns callback break output or None after inclusive `start`..=`end` exhaustion/ATTRIBUTE_NOT_FOUND. `make_req` builds each range request; `handle_rsp` must advance a widened next handle, otherwise UnexpectedGattResponse. Earlier callbacks remain applied on later failure/cancellation.
     async fn paginated_request<R>(
         &self,
         start: u16,
@@ -1695,6 +1861,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ///
     /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
     /// the entire range was iterated without breaking.
+    /// Queries inclusive `start`..=`end`; validates nonzero increasing handles before invoking `callback`. Empty/reversed ranges finish without requests; earlier callback effects survive later failures.
     pub async fn find_information<R>(
         &self,
         start: u16,
@@ -1734,6 +1901,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         .await
     }
 
+    /// Returns the first CCCD in inclusive `char_start_handle`..=`char_end_handle`, or NotFound; propagates request/codec failures.
     async fn get_characteristic_cccd(
         &self,
         char_start_handle: u16,
@@ -1753,6 +1921,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Discover all descriptors for a characteristic.
     ///
     /// Returns a list of descriptors found in the handle range belonging to the characteristic.
+    /// Searches only the descriptor range of `characteristic`; returns empty for no range and InsufficientSpace when more than N entries are found. Does not validate a cached characteristic against peer identity.
     pub async fn descriptors<T: AsGatt + ?Sized, const N: usize>(
         &self,
         characteristic: &Characteristic<T>,
@@ -1786,6 +1955,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Find a specific descriptor by UUID for a characteristic.
     ///
     /// Returns the first descriptor matching the given UUID.
+    /// Searches the descriptor range of `characteristic` for exact `uuid`; returns NotFound when absent. DT selects byte interpretation only.
     pub async fn descriptor_by_uuid<T: AsGatt + ?Sized, DT: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
@@ -1816,6 +1986,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Paginates automatically using successive ATT ReadByType requests.
     /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
     /// the entire range was iterated without breaking (i.e. ATTRIBUTE_NOT_FOUND was received).
+    /// Queries inclusive `start`..=`end` for `attribute_type`, validating increasing in-range handles before `callback`. Callback bytes expire after the call; prior effects survive later errors/cancellation.
     pub async fn read_by_type<R>(
         &self,
         start: u16,
@@ -1860,6 +2031,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read a characteristic described by a handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
+    /// Reads `characteristic` into `dest` through read_handle; returns bytes copied, silently limited by destination capacity, with partial bytes preserved on later failure.
     pub async fn read_characteristic<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
@@ -1871,6 +2043,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read a characteristic described by a UUID.
     ///
     /// The number of bytes copied into the provided buffer is returned.
+    /// Reads the first matching `uuid` in `service` into `dest`; returns the copied prefix length or NotFound. Does not follow ReadBlob for a longer value.
     pub async fn read_characteristic_by_uuid(
         &self,
         service: &ServiceHandle,
@@ -1888,6 +2061,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write to a characteristic described by a handle.
+    /// Writes raw `buf` to the value identified by `handle`; returns after the ATT Write response or propagates ATT/transaction/codec errors. No prepared-write splitting is performed.
     pub async fn write_characteristic<T: AsGatt + ?Sized>(
         &self,
         handle: &Characteristic<T>,
@@ -1897,6 +2071,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write without waiting for a response to a characteristic described by a handle.
+    /// Queues raw `buf` for the value identified by `handle`; returns admission status without peer acknowledgment. No prepared-write splitting or typed-value validation is performed.
     pub async fn write_characteristic_without_response<T: AsGatt + ?Sized>(
         &self,
         handle: &Characteristic<T>,
@@ -1915,6 +2090,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read an attribute by raw handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
+    /// Reads raw attribute `handle` into `dest`, following full-length responses with ReadBlob while space remains. Returns copied bytes; destination truncation is successful and later errors/cancellation leave the copied prefix.
     pub async fn read_handle(&self, handle: u16, dest: &mut [u8]) -> Result<usize, BleHostError<C::Error>> {
         let response = self.request(att::AttReq::Read { handle }).await?;
 
@@ -1944,6 +2120,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read an attribute value by raw handle using Read Blob requests.
     ///
     /// The `offset` parameter specifies the starting offset within the attribute value.
+    /// Reads raw `handle` starting at byte `offset` into `dest`; returns copied bytes, treating INVALID_OFFSET/ATTRIBUTE_NOT_LONG as end-of-value. Rejects offset overflow before another request; failures preserve prior writes. Even empty `dest` sends one request.
     pub async fn read_handle_blob(
         &self,
         handle: u16,
@@ -2000,6 +2177,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write an attribute by raw handle.
+    /// Writes raw `buf` to `handle`; returns success only for ATT Write response, otherwise ATT/unexpected-response/transaction failure. Pool capacity bounds encoding; no long-write splitting.
     pub async fn write_handle(&self, handle: u16, buf: &[u8]) -> Result<(), BleHostError<C::Error>> {
         let response = self.request(att::AttReq::Write { handle, data: buf }).await?;
 
@@ -2011,6 +2189,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write an attribute by raw handle without waiting for a response.
+    /// Queues raw `buf` to `handle` as Write Command; returns encoding/admission result without peer acknowledgment. Cancellation drops unqueued bytes.
     pub async fn write_handle_without_response(&self, handle: u16, buf: &[u8]) -> Result<(), BleHostError<C::Error>> {
         self.command(att::AttCmd::Write { handle, data: buf }).await
     }
@@ -2018,6 +2197,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read a descriptor value.
     ///
     /// The number of bytes copied into the provided buffer is returned.
+    /// Reads `descriptor` into `dest`; returns copied length with the same truncation/partial-write semantics as read_handle.
     pub async fn read_descriptor<T: AsGatt + ?Sized>(
         &self,
         descriptor: &Descriptor<T>,
@@ -2027,6 +2207,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write a descriptor value.
+    /// Writes raw `buf` to `descriptor`; returns the ATT write result and does not validate bytes against its generic type.
     pub async fn write_descriptor<T: AsGatt + ?Sized>(
         &self,
         descriptor: &Descriptor<T>,
@@ -2038,6 +2219,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
+    /// Reserves a listener for `characteristic` before writing CCCD: `indication` selects 0x0002, false selects 0x0001. Returns the listener on write acknowledgment; missing CCCD, subscriber limit or write failure propagates. Cancellation drops the listener and quarantines an unfinished request.
     pub async fn subscribe<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
@@ -2056,6 +2238,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ///
     /// Use this for reconnection scenarios where the server remembers the subscription
     /// (per BLE spec 10.3.2.2, CCCD values persist across disconnections for bonded devices).
+    /// Returns a new local listener filtered to `characteristic` or subscriber-capacity error; does not check properties, write CCCD or validate cached handles against peer identity.
     pub fn listen<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
@@ -2087,6 +2270,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Unsubscribe from a given Characteristic
+    /// Writes zero to the CCCD of `characteristic`; returns ATT/admission result or NotSupported without a CCCD. Existing local listeners remain allocated.
     pub async fn unsubscribe<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
@@ -2096,6 +2280,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Confirm an indication that was received.
+    /// Returns queue admission for an ATT confirmation. Normal host ingress already confirms indications, so calling this additionally sends a duplicate confirmation.
     pub async fn confirm_indication(&self) -> Result<(), BleHostError<C::Error>> {
         self.send_att_data(Att::Client(AttClient::Confirmation(AttCfm::ConfirmIndication)))
             .await
@@ -2103,11 +2288,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Handle a notification or indication that was received.
+    /// Parses `data` excluding opcode; `indication` records its wire kind. Returns after immediate publication, evicting oldest messages when full; malformed/oversized values request disconnect and return an error.
     async fn handle_notification_packet(&self, data: &[u8], indication: bool) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
-        let value_handle: u16 = r.read().map_err(|e| {
+        let value_handle: u16 = r.read().inspect_err(|_| {
             self.connection.disconnect();
-            e
         })?;
         let value_attr = r.remaining();
 
@@ -2132,6 +2317,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Task which handles GATT rx data (needed for notifications to work)
+    /// Runs the sole client receive pump; returns Disconnected or malformed-notification error. Must run concurrently with client requests. Cancellation may drop a dequeued response blocked on its one-entry queue; outstanding transactions then time out.
     pub async fn task(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let handle = self.connection.handle();
@@ -2150,6 +2336,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
+    /// Returns the borrowed server response decoded from `data`; rejects other ATT directions/opcodes and propagates codec errors.
     fn response<'a>(data: &'a [u8]) -> Result<AttRsp<'a>, BleHostError<C::Error>> {
         let att = Att::decode(data)?;
         match att {
@@ -2160,6 +2347,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 }
 
 #[cfg(test)]
+/// Actual GATT event/encoding/transaction regressions with bounded packet pools and synthetic peers.
 mod tests {
     extern crate std;
 
@@ -2179,6 +2367,7 @@ mod tests {
     use crate::prelude::*;
     use crate::Address;
 
+    /// Returns a client claiming `connection` with an empty one-service cache and bounded queues; panics if already claimed. Does not perform MTU exchange.
     pub(super) fn test_client(
         connection: &Connection<'static, DefaultPacketPool>,
     ) -> GattClient<'static, crate::mock_controller::MockController, DefaultPacketPool, 1> {
@@ -2191,6 +2380,7 @@ mod tests {
         }
     }
 
+    /// Returns an accepted central connection backed by leaked test-only manager storage; panics on fixture admission failure.
     fn test_connection() -> Connection<'static, DefaultPacketPool> {
         let mgr = setup();
         mgr.connect(
@@ -2206,6 +2396,7 @@ mod tests {
         conn
     }
 
+    /// Returns encoded ATT response bytes for `value`, optional blob `offset`, and negotiated `mtu`; asserts one response and no automatic duplicate.
     fn custom_read(value: &[u8], offset: Option<u16>, mtu: u16) -> std::vec::Vec<u8> {
         use core::pin::pin;
         use core::task::{Context, Waker};
@@ -2252,7 +2443,73 @@ mod tests {
         result
     }
 
+    /// Permission failures preserve the first denied ReadMultiple member or PrepareWrite handle and the original request opcode.
     #[test]
+    fn denied_multi_and_prepared_requests_keep_failing_handle() {
+        for prepared in [false, true] {
+            if prepared && !cfg!(feature = "att-queued-writes") {
+                continue;
+            }
+            for reject in [false, true] {
+                let mut storage = [0u8];
+                let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+                let mut service = table.add_service(Service {
+                    uuid: Uuid::new_short(0x180a),
+                });
+                let readable = service
+                    .add_characteristic_ro::<u8, _>(Uuid::new_short(0x2a29), &0)
+                    .build();
+                let denied = service
+                    .add_characteristic(Uuid::new_short(0x2a24), [CharacteristicProp::Write], 0u8, &mut storage)
+                    .build();
+                let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+                let conn = test_connection();
+                let handle = if prepared { readable.handle } else { denied.handle };
+                let opcode = if prepared { 0x16 } else { 0x20 };
+                let mut packet = DefaultPacketPool::allocate().unwrap();
+                let bytes = packet.as_mut();
+                bytes[0] = opcode;
+                bytes[1..3].copy_from_slice(&readable.handle.to_le_bytes());
+                bytes[3..5].copy_from_slice(&if prepared { 0u16 } else { denied.handle }.to_le_bytes());
+                let GattEvent::NotAllowed(event) = GattEvent::new(GattData::new(Pdu::new(packet, 5), conn), &server)
+                else {
+                    panic!("expected permission rejection");
+                };
+                assert_eq!(event.handle(), handle);
+                let expected_code = if reject {
+                    AttErrorCode::UNLIKELY_ERROR
+                } else if prepared {
+                    AttErrorCode::WRITE_NOT_PERMITTED
+                } else {
+                    AttErrorCode::READ_NOT_PERMITTED
+                };
+                let mut reply = if reject {
+                    event.reject(expected_code)
+                } else {
+                    event.accept()
+                }
+                .unwrap();
+                let packet = reply.pdu.take().unwrap();
+                assert_eq!(
+                    &packet.as_ref()[4..8],
+                    &[att::ATT_ERROR_RSP, opcode, handle as u8, (handle >> 8) as u8]
+                );
+                assert_eq!(
+                    packet.as_ref()[8],
+                    if reject {
+                        0x0e
+                    } else if prepared {
+                        0x03
+                    } else {
+                        0x02
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    /// Checks ordinary reads, valid suffixes and empty/exact-end blob responses.
     fn custom_read_returns_values_and_valid_blob_suffixes() {
         assert_eq!(custom_read(&[10, 20, 30], None, 23), [att::ATT_READ_RSP, 10, 20, 30]);
         assert_eq!(
@@ -2265,6 +2522,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks both negotiated ATT and physical packet limits without slicing beyond supplied value.
     fn custom_read_respects_negotiated_mtu_and_packet_capacity() {
         let value = [0x42; DefaultPacketPool::MTU + 10];
         let read = custom_read(&value, None, 23);
@@ -2278,6 +2536,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks oversized blob offsets produce one correctly addressed ATT error, including empty values.
     fn custom_read_rejects_excess_offset_without_panicking() {
         for offset in [4, u16::MAX] {
             // The table's first value handle is 3; the error must name it and
@@ -2288,6 +2547,7 @@ mod tests {
     }
 
     #[test]
+    /// Exercises permission/application rejection and automatic drop: commands stay silent, requests receive exactly one error, storage stays unchanged.
     fn rejected_write_commands_are_silent_and_requests_keep_their_error() {
         use core::pin::pin;
         use core::task::{Context, Waker};
@@ -2352,16 +2612,18 @@ mod tests {
     }
 
     #[test]
+    /// Confirms rejecting an ATT confirmation never constructs an Error Response.
     fn rejected_confirmation_does_not_create_a_response() {
         let conn = test_connection();
         let mut packet = DefaultPacketPool::allocate().unwrap();
         packet.as_mut()[0] = att::ATT_HANDLE_VALUE_CFM;
-        let mut reply = process_reject(&Pdu::new(packet, 1), &conn, AttErrorCode::REQUEST_NOT_SUPPORTED).unwrap();
+        let mut reply = process_reject(&Pdu::new(packet, 1), &conn, AttErrorCode::REQUEST_NOT_SUPPORTED, None).unwrap();
         let response = reply.pdu.take();
         assert!(response.is_none(), "only requests can receive an Error Response");
     }
 
     #[test]
+    /// Publishes a value before the CCCD write response and verifies the pre-reserved listener retains it.
     fn subscription_captures_notification_before_cccd_response() {
         use core::future::Future;
         use core::pin::pin;
@@ -2399,6 +2661,7 @@ mod tests {
     }
 
     #[test]
+    /// Overfills pubsub to verify lag reporting, then submits a truncated value and verifies link quarantine.
     fn notification_lag_is_visible_and_malformed_values_disconnect() {
         use embassy_futures::block_on;
         let conn = test_connection();
@@ -2413,6 +2676,7 @@ mod tests {
     }
 
     #[test]
+    /// Exercises actual constructor exchange against an empty inbound PDU and expects InvalidValue.
     fn mtu_exchange_rejects_empty_packet_without_panicking() {
         use embassy_futures::block_on;
         let mut resources = crate::HostResources::<DefaultPacketPool, 1, 1>::new();
@@ -2437,6 +2701,7 @@ mod tests {
     }
 
     /// Build a ReadByType ATT request PDU (ATT payload only, no L2CAP header).
+    /// Returns packet and initialized length for inclusive `start`..=`end` and `uuid`; panics on pool/codec failure in the fixture.
     fn build_read_by_type_pdu(start: u16, end: u16, uuid: &Uuid) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
         let att = Att::Client(AttClient::Request(AttReq::ReadByType {
             start,
@@ -2452,6 +2717,7 @@ mod tests {
     }
 
     /// Build a Write Command ATT PDU (ATT payload only, no L2CAP header).
+    /// Returns packet and initialized length encoding Write Command to `handle` with `data`; panics on fixture allocation/codec failure.
     fn build_write_cmd_pdu(handle: u16, data: &[u8]) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
         let att = Att::Client(AttClient::Command(AttCmd::Write { handle, data }));
 
@@ -2479,14 +2745,20 @@ mod tests {
     fn test_process_accept_read_by_type_no_partial_entries() {
         let _ = env_logger::try_init();
 
+        /// Fixed fixture attribute capacity, including declarations and values.
         const MAX_ATTRIBUTES: usize = 64;
+        /// Fixture client-table/link capacity.
         const CONNECTIONS_MAX: usize = 3;
+        /// Nine wide declarations force pagination at the fixture ATT MTU.
         const NUM_CHARACTERISTICS: u8 = 9;
+        /// Negotiated ATT bytes per response in this pagination fixture.
         const ATT_MTU: u16 = 185;
 
         // Each ReadByType entry for a 128-bit UUID declaration:
         //   2 (handle) + 1 (props) + 2 (value handle) + 16 (UUID) = 21 bytes
+        /// Bytes per handle plus 128-bit characteristic declaration entry.
         const ENTRY_SIZE: usize = 21;
+        /// ATT response opcode and entry-width byte count.
         const RESPONSE_HEADER_SIZE: usize = 2;
 
         // Characteristic declaration UUID (0x2803)
@@ -2578,10 +2850,13 @@ mod tests {
     }
 
     #[test]
+    /// Checks accepted Write Command updates local storage and surfaces application bytes without generating an ATT response.
     fn test_write_command_surfaces_gatt_write_event_without_att_response() {
         let _ = env_logger::try_init();
 
+        /// Fixed fixture attribute capacity, including declarations and values.
         const MAX_ATTRIBUTES: usize = 16;
+        /// Fixture client-table/link capacity.
         const CONNECTIONS_MAX: usize = 3;
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];
@@ -2644,7 +2919,9 @@ mod tests {
     fn test_execute_write_reject_clears_prepare_queue() {
         let _ = env_logger::try_init();
 
+        /// Fixed fixture attribute capacity, including declarations and values.
         const MAX_ATTRIBUTES: usize = 16;
+        /// Fixture client-table/link capacity.
         const CONNECTIONS_MAX: usize = 3;
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];

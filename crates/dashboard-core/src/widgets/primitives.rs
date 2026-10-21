@@ -1,9 +1,13 @@
+//! Shared synchronous drawing; target errors are discarded and transfer ownership remains external.
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Text, TextStyle};
 
+/// Fills `display` with `bg_color` inside a two-pixel inset of pixel `x`, `y`,
+/// width `w`, height `h`; dimensions below four are inert. Caller must bound
+/// coordinates to representable panel arithmetic; this function adds no cell clip.
 pub fn draw_cell_background<D>(
     display: &mut D,
     x: u32,
@@ -23,6 +27,9 @@ pub fn draw_cell_background<D>(
         .ok();
 }
 
+/// Draws a one-pixel `color` arrow on `display` centered at bounded pixel `x`, `y`.
+/// `rising` points up, otherwise down; footprint extends three pixels horizontally
+/// and four vertically. Caller owns clipping and representable coordinate margins.
 pub fn draw_trend_arrow<D>(
     display: &mut D,
     x: i32,
@@ -63,6 +70,12 @@ pub fn draw_trend_arrow<D>(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Draws `count` chronological samples from circular `buffer` starting at
+/// `start_idx`, wrapping within `buffer_size`, into `display` at `x`, `y`, width
+/// `w`, height `h` pixels. Invalid ring bounds are inert; nonfinite samples break
+/// lines. `data_min`/`data_max` define a finite nondecreasing scale, clamping
+/// indicators only. `color_fn` receives each finite raw value; work is linear in
+/// `count`, which callers must bound. Geometry is capped by the shared graph helper.
 pub fn draw_mini_graph<D, F>(
     display: &mut D,
     x: i32,
@@ -102,6 +115,11 @@ pub fn draw_mini_graph<D, F>(
 }
 
 /// The window always occupies sixty positions; absent buckets break connectivity.
+/// Draws `history` and its seconds label into `display` at `x`, `y`, width `w`,
+/// height `h` pixels. `bounds` supplies canonical min/max, or `None` draws only
+/// duration. `color_fn` receives raw values for segments and zero for the label.
+/// Width outside `5..=320`, height outside `12..=320`, or overflowing label
+/// coordinates are inert; finite bounds are validated by the point renderer.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_history_graph<D, F>(
     display: &mut D,
@@ -150,6 +168,12 @@ pub fn draw_history_graph<D, F>(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Draws `count > 0` samples fetched by `value_at` into `display` at pixel `x`,
+/// `y`, width `w`, height `h`, with a two-pixel inset. `value_at` must return
+/// finite values or `None` gaps; `color_fn` colors each segment by its endpoint's
+/// raw value. `data_min`/`data_max` must form a finite nonnegative span or nothing
+/// is drawn; equal bounds center the trace. Dimensions outside `5..=320` or
+/// overflowing upper coordinates are inert. Work is linear in caller-bounded `count`.
 fn draw_graph_points<D, F, V>(
     display: &mut D,
     x: i32,
@@ -234,16 +258,23 @@ fn draw_graph_points<D, F, V>(
 }
 
 #[inline]
+/// Returns the shared high-contrast black/white outline choice for `text_color`.
 pub(crate) fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
     crate::ui::colors::readable_foreground(text_color)
 }
 
 #[cfg(feature = "simple-outline")]
+/// Two one-panel-pixel shadow offsets used by the reduced-cost outline feature.
 pub(crate) const VALUE_OUTLINE_OFFSETS: &[(i32, i32)] = &[(1, 1), (1, 0)];
 #[cfg(not(feature = "simple-outline"))]
+/// Eight one-panel-pixel neighbors forming the full outline around each glyph.
 pub(crate) const VALUE_OUTLINE_OFFSETS: &[(i32, i32)] =
     &[(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
+/// Draws `text` into `display` at `position` using bitmap `font`, foreground
+/// `text_color` and alignment/baseline `text_style`, first drawing contrasting
+/// outline offsets. Caller must fit text and provide bounded coordinates/clipping;
+/// this primitive neither truncates nor validates arbitrary positions.
 pub fn draw_value_with_outline<D>(
     display: &mut D,
     text: &str,

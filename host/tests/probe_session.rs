@@ -1,3 +1,6 @@
+//! Polled connection supervision and cleanup publication ordering using real production futures with scripted
+//! readiness.
+
 #[path = "../../firmware/ble-probe/src/session.rs"]
 mod session;
 
@@ -6,6 +9,7 @@ use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 use std::cell::Cell;
 
+/// Connection-event failure remains observable while MTU startup waits and prevents inventory creation.
 #[test]
 fn connection_event_failure_is_observed_while_mtu_is_still_pending() {
     let run_called = Cell::new(false);
@@ -24,6 +28,7 @@ fn connection_event_failure_is_observed_while_mtu_is_still_pending() {
     assert!(!run_called.get());
 }
 
+/// Event work progresses during startup and inventory; completed startup is never repolled or recreated.
 #[test]
 fn event_work_progresses_during_startup_and_inventory_without_restarting_startup() {
     let stage = Cell::new(0);
@@ -67,6 +72,7 @@ fn event_work_progresses_during_startup_and_inventory_without_restarting_startup
     assert_eq!(client_runs.get(), 1);
 }
 
+/// Simultaneously ready startup/event failures preserve the startup error and do not invoke discovery.
 #[test]
 fn immediate_mtu_failure_keeps_stage_error_and_never_starts_discovery() {
     let mut session = pin!(session::inspect_with_events(
@@ -80,11 +86,17 @@ fn immediate_mtu_failure_keeps_stage_error_and_never_starts_discovery() {
     );
 }
 
-struct DropFlag<'a>(&'a Cell<bool>);
+/// Marks when a future-owned guard is released.
+struct DropFlag<'a>(
+    /// Borrowed flag set on drop; must outlive the owning future.
+    &'a Cell<bool>,
+);
 impl Drop for DropFlag<'_> {
+    /// Marks the borrowed flag true on normal completion or cancellation.
     fn drop(&mut self) { self.0.set(true); }
 }
 
+/// Connection failure drops both active work and event future before supervision returns in either phase.
 #[test]
 fn connection_failure_drops_the_active_work_before_returning() {
     for during_startup in [true, false] {
@@ -120,6 +132,7 @@ fn connection_failure_drops_the_active_work_before_returning() {
     }
 }
 
+/// Successful inventory drops the losing pending event consumer before returning its result.
 #[test]
 fn completed_inventory_drops_event_consumer_before_returning() {
     let events_dropped = Cell::new(false);
@@ -139,6 +152,7 @@ fn completed_inventory_drops_event_consumer_before_returning() {
     assert!(events_dropped.get());
 }
 
+/// Dropping the outer pending supervisor releases both work and event guards during startup or discovery.
 #[test]
 fn outer_cancellation_drops_both_waits_in_mtu_and_discovery_phases() {
     for during_startup in [true, false] {
@@ -176,6 +190,7 @@ fn outer_cancellation_drops_both_waits_in_mtu_and_discovery_phases() {
     }
 }
 
+/// Borrowed pinned operations must leave their owning scope before outer cleanup; guards prove both are dropped first.
 #[test]
 fn borrowed_startup_and_event_futures_are_dropped_before_outer_cleanup() {
     for during_startup in [true, false] {
@@ -220,6 +235,8 @@ fn borrowed_startup_and_event_futures_are_dropped_before_outer_cleanup() {
     }
 }
 
+/// Every attempt awaits cleanup acknowledgment, then samples context and publishes it before End, including failed
+/// connects.
 #[test]
 fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
     use std::cell::RefCell;

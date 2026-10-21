@@ -1,10 +1,13 @@
+//! Bounded log retention, loss accounting, UTF-8 truncation and coherent page snapshots.
 use core::fmt::Write;
 
 use dashboard_host_validation::logging::{Entry, LOG_ENTRIES, Level, LogBuffer, LogStore, Message, VISIBLE_LINES};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
+/// Returns an Info fixture whose timestamp is `n` milliseconds and message embeds the same number.
 fn entry(n: u64) -> Entry { Entry::new(Level::Info, n, format_args!("record {n}")) }
 
+/// Quality logging emits transitions only and preserves the dedicated latest-fault record through recovery/staleness.
 #[test]
 fn qualified_quality_logs_only_changes_and_preserves_latest_fault() {
     use dashboard_core::acquisition::AcquisitionModel;
@@ -41,6 +44,7 @@ fn qualified_quality_logs_only_changes_and_preserves_latest_fault() {
     assert_eq!(logs.window(None).unwrap().newest, newest);
 }
 
+/// Forty-byte truncation preserves a UTF-8 prefix and makes later formatting attempts fail consistently.
 #[test]
 fn message_truncation_preserves_a_utf8_prefix_and_reports_format_failure() {
     for input in [
@@ -61,6 +65,7 @@ fn message_truncation_preserves_a_utf8_prefix_and_reports_format_failure() {
     assert_eq!(message.as_str(), "b".repeat(40));
 }
 
+/// Sequence-based scroll anchors survive insertions and clamp to retained history after eviction.
 #[test]
 fn sequence_anchor_survives_full_ring_insertions_and_clamps_after_eviction() {
     let mut ring = LogBuffer::new();
@@ -91,6 +96,8 @@ fn sequence_anchor_survives_full_ring_insertions_and_clamps_after_eviction() {
     assert_eq!(clamped.overwritten, 172);
 }
 
+/// Informational floods cannot erase the dedicated fault; truncation, overwrite and replacement counters account for
+/// loss.
 #[test]
 fn fault_record_survives_informational_floods_and_counters_account_for_loss() {
     let store = LogStore::<CriticalSectionRawMutex>::new();
@@ -111,6 +118,7 @@ fn fault_record_survives_informational_floods_and_counters_account_for_loss() {
     assert_eq!(store.counters().fault_replacements, 1);
 }
 
+/// Two producers account for all 10,000 attempts as accepted sequence entries or contention drops.
 #[test]
 fn simultaneous_producers_account_for_every_attempt_without_waiting_for_history() {
     let store = LogStore::<CriticalSectionRawMutex>::new();
@@ -134,6 +142,7 @@ fn simultaneous_producers_account_for_every_attempt_without_waiting_for_history(
     }
 }
 
+/// Control characters render exactly as question marks, preventing text from escaping its row.
 #[test]
 fn control_characters_cannot_draw_outside_their_log_row() {
     use dashboard_host_validation::AlignedFrame;
@@ -150,6 +159,7 @@ fn control_characters_cannot_draw_outside_their_log_row() {
     assert!(actual.0 == expected.0);
 }
 
+/// Captured pages remain coherent while the ring wraps between row draws and clear both reused framebuffers.
 #[test]
 fn captured_page_is_stable_during_production_and_clears_both_framebuffers() {
     use dashboard_host_validation::AlignedFrame;

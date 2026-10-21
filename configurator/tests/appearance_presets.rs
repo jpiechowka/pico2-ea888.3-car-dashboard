@@ -1,9 +1,12 @@
+//! Appearance allowlist, revision-bound preview and bounded preset persistence regressions.
+
 use dashboard_configurator::appearance_presets::*;
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::workspace::{Command, CommandEffect, WorkspaceState, dispatch_with_appearance};
 
 #[test]
+/// Late lock rejection cannot overwrite a completed quota failure; a still-pending lock failure settles once.
 fn lock_promise_reports_failure_only_if_write_callback_has_not_completed() {
     let mut store = PresetStore::restore(Ok(None));
     let request = store.begin_save().unwrap();
@@ -17,6 +20,7 @@ fn lock_promise_reports_failure_only_if_write_callback_has_not_completed() {
     assert!(!store.reject_lock(&request));
 }
 
+/// Returns the default editor with widget1 selected; fixture selection failures panic.
 fn selected() -> Editor {
     let mut e = Editor::default();
     e.select(Selection {
@@ -26,12 +30,16 @@ fn selected() -> Editor {
     .unwrap();
     e
 }
+/// Returns `e`'s selected appearance with monochrome colors and three decimals;
+/// requires a clean selected widget and panics on failed fixture admission.
 fn changed(e: &Editor) -> AppearanceSnapshot {
     let mut s = e.selected_appearance(e.stamp()).unwrap();
     s.colors = ColorPalette::Monochrome.colors();
     s.decimals = 3;
     s
 }
+/// Returns `e`'s project/acquisition/revision identities, selection, history lengths and
+/// exported JSON for exact no-effect comparisons; inadmissible editor export panics.
 fn state(
     e: &Editor
 ) -> (
@@ -53,6 +61,8 @@ fn state(
 }
 
 #[test]
+/// Each appearance scope changes only the independently enumerated visual allowlist, preserving
+/// hidden preferences and signed zero, and restores exact bytes in one undo/redo step.
 fn selected_view_all_change_only_the_explicit_allowlist_and_one_undo() {
     for scope in AppearanceScope::ALL {
         let mut e = selected();
@@ -125,6 +135,8 @@ fn selected_view_all_change_only_the_explicit_allowlist_and_one_undo() {
 }
 
 #[test]
+/// Resulting gauge style/span controls omissions; unsupported visibility preferences stay stored rather than
+/// overwritten.
 fn capabilities_use_the_resulting_style_and_preserve_unsupported_preferences() {
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
         for kind in GaugeKind::ALL {
@@ -174,6 +186,8 @@ fn capabilities_use_the_resulting_style_and_preserve_unsupported_preferences() {
 }
 
 #[test]
+/// All-widget appearance changes cover64 widgets in one transaction; identical reapplication changes no
+/// identity/history.
 fn all_64_widgets_are_one_transaction_and_noop_is_explicit() {
     let mut c = default_config();
     c.views.clear();
@@ -222,6 +236,8 @@ fn all_64_widgets_are_one_transaction_and_noop_is_explicit() {
 }
 
 #[test]
+/// A valid palette conflicting with a retained band fails atomically without creating a draft or invalidating the save
+/// token.
 fn color_band_conflict_rejects_without_publishing_a_draft_or_retiring_save() {
     let mut e = selected();
     let mut c = e.preview().config().clone();
@@ -265,6 +281,8 @@ fn color_band_conflict_rejects_without_publishing_a_draft_or_retiring_save() {
 }
 
 #[test]
+/// Appearance operations respect editor owner, pending JSON/raw state and pointer/import leases without clearing
+/// blockers.
 fn stale_owner_pending_json_raw_pointer_and_import_cannot_apply_or_copy() {
     let mut e = selected();
     let request = e
@@ -302,6 +320,7 @@ fn stale_owner_pending_json_raw_pointer_and_import_cannot_apply_or_copy() {
 }
 
 #[test]
+/// Palette snapshots round-trip RGB565 colors and deny unsupported fields/styles/malformed colors.
 fn palettes_and_snapshot_wire_are_quantized_strict_and_have_no_excluded_fields() {
     assert_eq!(ColorPalette::Default.colors(), WidgetColors::default());
     let e = selected();
@@ -324,6 +343,8 @@ fn palettes_and_snapshot_wire_are_quantized_strict_and_have_no_excluded_fields()
 }
 
 #[test]
+/// Preset names obey printable-ASCII/32-byte rules;16-record capacity, duplicates and invalid imports preserve prior
+/// memory.
 fn bounded_preset_import_names_capacity_duplicate_and_invalid_restore() {
     let e = selected();
     let s = changed(&e);
@@ -361,6 +382,8 @@ fn bounded_preset_import_names_capacity_duplicate_and_invalid_restore() {
 }
 
 #[test]
+/// Conflict observations, write failures, memory edits and cancellation retire stale writes while retaining usable
+/// preset records.
 fn storage_conflict_failed_save_and_stale_completion_preserve_memory() {
     let e = selected();
     let s = changed(&e);
@@ -406,6 +429,8 @@ fn storage_conflict_failed_save_and_stale_completion_preserve_memory() {
 }
 
 #[test]
+/// Copy/preview commands return typed frozen effects without editing; explicit Apply changes state and retires old
+/// offers.
 fn palette_copy_and_preview_produce_actual_typed_authority_without_editing() {
     let mut e = selected();
     let before = state(&e);
@@ -442,6 +467,7 @@ fn palette_copy_and_preview_produce_actual_typed_authority_without_editing() {
 }
 
 #[test]
+/// Copy does not silently select clipboard; explicit source/palette changes invalidate prior staged confirmations.
 fn explicit_source_choices_retire_old_offers_and_confirmations() {
     let e = selected();
     let mut session = AppearanceSession::default();
@@ -479,6 +505,8 @@ fn explicit_source_choices_retire_old_offers_and_confirmations() {
 }
 
 #[test]
+/// Exact32KiB preset input is accepted; excess bytes, duplicate/unknown fields, invalid snapshots and record overflow
+/// reject atomically.
 fn exact_wire_limit_duplicate_fields_and_full_record_capacity_are_atomic() {
     let e = selected();
     let snapshot = changed(&e);
@@ -524,6 +552,8 @@ fn exact_wire_limit_duplicate_fields_and_full_record_capacity_are_atomic() {
 }
 
 #[test]
+/// Parsed valid/invalid pending JSON blocks appearance; discarded inspection epochs and changed selection cannot reuse
+/// requests.
 fn parsed_valid_and_invalid_json_and_retired_inspection_epochs_reject_appearance() {
     let mut e = selected();
     let snapshot = changed(&e);
@@ -572,6 +602,7 @@ fn parsed_valid_and_invalid_json_and_retired_inspection_epochs_reject_appearance
 }
 
 #[test]
+/// Invalid decimal/contrast snapshots reject before mutation, and applying to an empty view is an explicit no-op.
 fn invalid_typed_snapshot_and_empty_view_have_no_editor_effects() {
     let mut e = selected();
     let before = state(&e);
@@ -602,6 +633,7 @@ fn invalid_typed_snapshot_and_empty_view_have_no_editor_effects() {
 }
 
 #[test]
+/// Denied reload clears the saved-status claim while preserving in-memory preset export.
 fn failed_explicit_reload_marks_storage_failed_without_losing_memory_records() {
     let e = selected();
     let mut store = PresetStore::restore(Ok(None));
@@ -615,6 +647,7 @@ fn failed_explicit_reload_marks_storage_failed_without_losing_memory_records() {
 }
 
 #[test]
+/// Old command offers cannot mint fresh targets after JSON Discard even when editor stamp/session remain equal.
 fn captured_appearance_commands_cannot_acquire_post_discard_candidate_authority() {
     for command in [
         Command::CopyAppearance,
@@ -651,6 +684,7 @@ fn captured_appearance_commands_cannot_acquire_post_discard_candidate_authority(
 }
 
 #[test]
+/// Malformed/oversized reloads preserve records but mark storage unavailable and retire prior pending writes.
 fn failed_reload_observations_retire_saved_status_and_old_write_authority() {
     let e = selected();
     let mut original = PresetStore::restore(Ok(None));
@@ -686,6 +720,8 @@ fn failed_reload_observations_retire_saved_status_and_old_write_authority() {
 }
 
 #[test]
+/// Denied explicit replacement observation uses the actual producer, preserves presets and rejects outstanding write
+/// authority.
 fn denied_replace_observation_uses_the_real_producer_and_preserves_presets() {
     let e = selected();
     let mut original = PresetStore::restore(Ok(None));
@@ -713,6 +749,8 @@ fn denied_replace_observation_uses_the_real_producer_and_preserves_presets() {
 }
 
 #[test]
+/// Closing current preview returns its original scope; stale close/focus return cannot affect a changed source or newer
+/// preview.
 fn closing_preview_returns_original_scope_and_retires_stale_focus_returns() {
     for applied in [false, true] {
         for scope in AppearanceScope::ALL {

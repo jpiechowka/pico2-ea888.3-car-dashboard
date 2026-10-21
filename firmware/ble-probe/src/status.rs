@@ -19,24 +19,34 @@ use dashboard_core::discovery::{
     info_length_valid,
 };
 
+/// Activity bit for a fully clean live inspection, never a saved capture.
 const CLEAN: u32 = 1 << 4;
+/// Activity bit while a capture storage request awaits completion.
 const CAPTURE: u32 = 1 << 5;
+/// Nine fault-category bits retained independently from activity publication.
 const ERRORS: u32 = 0x0001_FF00;
+/// Encoded first-fault identity; later faults add bits without replacing it.
 const FIRST: u32 = 0x00F0_0000;
+/// Scan/advertisement faults use a slower red blink than terminal failure.
 const SCAN_ERRORS: u32 = ((Fault::Scan.bit() | Fault::Advertisement.bit()) as u32) << 8;
 
 pub use dashboard_core::discovery::Fault;
 
+/// Atomic phase/activity/fault word read by the sole RGB supervisor.
 pub struct Status {
+    /// Low phase bits, clean/capture flags, cumulative fault bits and first fault.
     word: AtomicU32,
 }
 impl Status {
+    /// Returns Starting activity with no clean flag or retained fault.
     pub const fn new() -> Self {
         Self {
             word: AtomicU32::new(RadioPhase::Starting as u32),
         }
     }
 
+    /// Atomically latches `fault`, preserving an earlier first cause and concurrent
+    /// activity/fault updates; does not clear or restart a radio operation.
     pub fn record(
         &self,
         fault: Fault,
@@ -51,6 +61,9 @@ impl Status {
     /// after this operation survives every subsequent activity update.
     fn recover(&self) { self.word.swap(RadioPhase::Stopping as u32, Ordering::Relaxed); }
 
+    /// Applies live `input` at boot-relative `now_ms` to `model`, clearing the
+    /// latch only for Recover and then observing resulting faults. Returns any
+    /// new radio request; the caller publishes it to the sole radio owner.
     pub fn input(
         &self,
         model: &mut Probe,
@@ -65,6 +78,9 @@ impl Status {
         request
     }
 
+    /// Applies current-generation `event` to `model`, rejecting stale generations
+    /// before inspecting payloads. Latches malformed reports, capacity, incomplete
+    /// inspection and cleanup faults without generating another radio request.
     pub fn event(
         &self,
         model: &mut Probe,
@@ -107,6 +123,8 @@ impl Status {
         }
     }
 
+    /// Latches errors and bounded-capacity omissions already represented by `model`;
+    /// reading old counters can retain a fault but never creates a clean success.
     fn observe_probe(
         &self,
         model: &Probe,
@@ -127,6 +145,8 @@ impl Status {
         }
     }
 
+    /// Applies capture `input` at `now_ms` with the supplied live `context` to `ui`.
+    /// Returns the resulting action and latches any resulting storage fault.
     pub fn capture_input(
         &self,
         ui: &mut cap::CaptureUi,
@@ -139,6 +159,8 @@ impl Status {
         action
     }
 
+    /// Advances capture `ui` with boot-relative `now_ms`, observes resulting
+    /// faults, and returns a newly due action if any.
     pub fn capture_tick(
         &self,
         ui: &mut cap::CaptureUi,
@@ -149,6 +171,9 @@ impl Status {
         action
     }
 
+    /// Applies `completion` only if `id` still matches the pending request in
+    /// `ui`; stale results do not latch their errors or alter the accepted screen.
+    /// Byte-lease return is handled separately and must occur even for stale IDs.
     pub fn capture_complete(
         &self,
         ui: &mut cap::CaptureUi,
@@ -163,6 +188,8 @@ impl Status {
         }
     }
 
+    /// Latches storage faults from `ui` error state or blocked/corrupt slot rows;
+    /// it does not load, erase, or reinterpret the underlying capture bytes.
     fn observe_capture(
         &self,
         ui: &cap::CaptureUi,
@@ -185,6 +212,8 @@ impl Status {
         }
     }
 
+    /// Latches storage failure for `error`, excluding expected Empty/NoPeer/Busy
+    /// admission rejections. Other errors remain visible until protected recovery.
     pub fn capture_error(
         &self,
         error: cap::UiError,
@@ -195,6 +224,8 @@ impl Status {
         }
     }
 
+    /// Latches Encoder only when `was_connected` was true; absence at startup is
+    /// allowed because onboard controls remain available.
     pub fn encoder_failed(
         &self,
         was_connected: bool,
@@ -204,6 +235,8 @@ impl Status {
         }
     }
 
+    /// Latches USB only if `session_current` is true; reset/unplug invalidation
+    /// is ordinary cancellation and does not create a transfer fault.
     pub fn usb_failed(
         &self,
         session_current: bool,
@@ -215,6 +248,9 @@ impl Status {
         }
     }
 
+    /// Publishes phase/clean/capture activity from `model` and `ui`, atomically
+    /// preserving every concurrent fault bit and first cause. Only a clean live
+    /// inspection can set green eligibility; saved pages never do.
     pub fn publish(
         &self,
         model: &Probe,
@@ -234,6 +270,10 @@ impl Status {
     }
 
     /// Electrical high levels for PIM715 R/G/B (active low), sampled at 50 ms.
+    /// Returns electrical R/G/B levels at boot-relative `now_ms`; false means on.
+    /// `terminal_fault` overrides all activity with a 250 ms red blink. Other
+    /// faults, capture activity, scanning and clean paused inspection follow in
+    /// priority order; these levels certify no vehicle or radio compatibility.
     pub fn levels(
         &self,
         now_ms: u64,
@@ -266,6 +306,8 @@ impl Status {
     }
 
     /// UI snapshot of the same latch bits; cumulative counters cannot relatch it.
+    /// Returns a coherent first-cause/category snapshot; panics only if the
+    /// internally maintained atomic fault encoding violates its construction rules.
     pub fn fault_latch(&self) -> FaultLatch {
         let word = self.word.load(Ordering::Relaxed);
         FaultLatch::from_parts(((word & ERRORS) >> 8) as u16, ((word & FIRST) >> 20) as u8)
@@ -273,9 +315,13 @@ impl Status {
     }
 
     #[cfg(test)]
+    /// Returns the legacy coarse category of the same atomic fault snapshot.
     pub fn error_latch(&self) -> dashboard_core::discovery::ErrorLatch { self.fault_latch().category() }
 }
 
+/// Returns whether `model` records a selected-peer live inspection with every
+/// stage complete, acknowledged normal cleanup, matching termination evidence,
+/// valid bounded values and link/timing metadata. Saved data cannot satisfy this.
 fn clean_probe(model: &Probe) -> bool {
     let i = &model.inspection;
     matches!(model.request.action, Action::Inspect(peer) if model.selected_device().is_some_and(|d| d.peer == peer))
@@ -299,6 +345,8 @@ fn clean_probe(model: &Probe) -> bool {
         && i.values.iter().all(|v| valid_read(v) && !v.value.truncated)
 }
 
+/// Returns whether `value` succeeded without failure and has the allowed byte
+/// length for its standard UUID; truncation is checked separately by callers.
 fn valid_read(value: &InfoValue) -> bool {
     value.result == ReadResult::Ok
         && value.failure.is_none()

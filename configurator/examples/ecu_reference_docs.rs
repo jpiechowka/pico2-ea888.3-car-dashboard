@@ -1,5 +1,7 @@
 //! Deterministic Markdown projection of the same entries embedded in Studio.
 use dashboard_configurator::ecu_reference::ENTRIES;
+/// Writes the fixed catalogue and current binding metadata as Markdown to stdout.
+/// Panics if stdout cannot be written; does not fetch evidence or alter project state.
 fn main() {
     println!(
         "# ECU signal and research catalogue\n\nGenerated from `configurator/src/ecu_reference.rs`. Research reviewed \

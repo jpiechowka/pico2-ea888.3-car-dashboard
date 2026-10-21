@@ -1,7 +1,9 @@
+//! Project container admission, legacy migration, artwork identity and build-script regressions.
 use dashboard_config::startup::{StartupProfile, StartupTheme};
 use dashboard_config::{default_config, validate};
 use dashboard_config_tools::project::*;
 #[test]
+/// Frozen EAVP1 input migrates once; subsequent current-format encode/decode is byte-stable.
 fn frozen_legacy_project_migrates_to_current_dashboard_and_profile() {
     let project = Project::decode(include_bytes!("fixtures/v1-landscape.eavp")).unwrap();
     let dashboard = dashboard_config::decode(project.dashboard_bytes()).unwrap();
@@ -17,6 +19,7 @@ fn frozen_legacy_project_migrates_to_current_dashboard_and_profile() {
     );
 }
 #[test]
+/// Round-trip a complete project and reject short headers, trailing data, versions and checksum damage.
 fn complete_project_round_trip_and_header_bounds() {
     let config = validate(default_config()).unwrap();
     let profile = StartupProfile {
@@ -46,7 +49,9 @@ fn complete_project_round_trip_and_header_bounds() {
 }
 
 use std::sync::Arc;
+/// Return a landscape fixture with one red RGB565 frame and a hash-bound synthetic PNG header.
 fn artwork() -> Arc<Artwork> { artwork_in(dashboard_config::Geometry::Landscape) }
+/// Return one 100 ms red frame for `geometry`; source bytes test identity, not PNG decoding.
 fn artwork_in(geometry: dashboard_config::Geometry) -> Arc<Artwork> {
     use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
     let mut asset = vec![0; 52];
@@ -94,6 +99,7 @@ fn artwork_in(geometry: dashboard_config::Geometry) -> Arc<Artwork> {
     Arc::new(Artwork::new(asset.into(), recipe, Some(source)).unwrap())
 }
 #[test]
+/// Converted-only export preserves exact pixels and the resident original; invalid recipes fail admission.
 fn smaller_projection_preserves_exact_pixels_and_does_not_mutate_original() {
     let art = artwork();
     let config = validate(default_config()).unwrap();
@@ -126,6 +132,7 @@ fn smaller_projection_preserves_exact_pixels_and_does_not_mutate_original() {
 }
 
 #[test]
+/// Reject a project whose resolved splash geometry disagrees with the converted asset.
 fn splash_geometry_mismatch_cannot_be_admitted_as_a_project() {
     let config = validate(default_config()).unwrap();
     let profile = StartupProfile {
@@ -140,6 +147,7 @@ fn splash_geometry_mismatch_cannot_be_admitted_as_a_project() {
 }
 
 #[test]
+/// Every mounting/default/override preserves matching artwork and rejects a geometry-changing replacement.
 fn all_mountings_resolve_inheritance_without_reinterpreting_artwork() {
     use dashboard_config::{Geometry, Orientation};
     for default in Orientation::ALL {
@@ -179,6 +187,7 @@ fn all_mountings_resolve_inheritance_without_reinterpreting_artwork() {
     }
 }
 
+/// Return five section copies from trusted fixture `bytes`; malformed offsets can panic.
 fn sections(bytes: &[u8]) -> [Vec<u8>; 5] {
     core::array::from_fn(|index| {
         let at = 32 + index * 48;
@@ -188,7 +197,10 @@ fn sections(bytes: &[u8]) -> [Vec<u8>; 5] {
     })
 }
 
-/// Independently reseal containers so semantic failures survive valid checksums.
+/// Return a container using `version` and five `parts`, independently recomputing lengths, CRCs and SHA-256.
+///
+/// Trusted, small fixture lengths must fit the encoded integer widths. This deliberately bypasses
+/// semantic admission so malformed nested content still reaches the production decoder.
 fn container(
     version: u16,
     parts: &[Vec<u8>; 5],
@@ -219,6 +231,7 @@ fn container(
 }
 
 #[test]
+/// Legacy artwork migration preserves converted pixels, original bytes and converter provenance.
 fn legacy_artwork_migration_preserves_pixels_original_and_producer() {
     let mut parts = sections(include_bytes!("fixtures/v1-landscape.eavp"));
     let art = artwork();
@@ -261,6 +274,7 @@ fn legacy_artwork_migration_preserves_pixels_original_and_producer() {
 }
 
 #[test]
+/// Valid outer checksums cannot admit mixed nested versions, mismatched geometry or noncanonical recipes.
 fn resealed_mixed_versions_mismatch_and_noncanonical_recipes_are_rejected() {
     let project = Project::new(
         &validate(default_config()).unwrap(),
@@ -316,19 +330,22 @@ fn resealed_mixed_versions_mismatch_and_noncanonical_recipes_are_rejected() {
     }
 }
 
-mod firmware_build {
-    include!("../../../firmware/pico2/build.rs");
-    pub fn run() { main(); }
-}
+#[path = "../../../firmware/pico2/build.rs"]
+mod firmware_build;
 
 #[test]
+/// Child-only build-script entry; ordinary suite execution has no filesystem build side effects.
 fn firmware_build_child() {
     if std::env::var_os("EA888_TEST_STARTUP_BUILD").is_some() {
-        firmware_build::run();
+        firmware_build::main();
     }
 }
 
 #[test]
+/// Real build-script admission honors every default/override and publishes no partial files on mismatch.
+///
+/// Each child gets isolated inputs/output and cleared inherited feature/clock variables; this runs
+/// the script directly rather than Cargo, a target image, or a hardware flashing runner.
 fn direct_cargo_build_uses_prepared_default_and_explicit_splash_override() {
     use dashboard_config::{Geometry, Orientation};
     let root = std::env::temp_dir().join(format!("ea888-startup-admission-{}", std::process::id()));
@@ -403,6 +420,7 @@ fn direct_cargo_build_uses_prepared_default_and_explicit_splash_override() {
 }
 
 #[test]
+/// Source sheet timing accepts 1 ms independently of converted frames, but rejects zero/60000 ms.
 fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
     let art = artwork();
     let mut recipe = art.recipe().clone();
@@ -420,6 +438,7 @@ fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
 }
 
 #[test]
+/// A portable recipe accepts a 10 s clip but rejects a clip extending that limit by 1 ms.
 fn portable_recipe_cannot_exceed_converter_clip_duration() {
     let art = artwork();
     let mut recipe = art.recipe().clone();
@@ -434,6 +453,7 @@ fn portable_recipe_cannot_exceed_converter_clip_duration() {
 }
 
 #[test]
+/// External source handles preserve identity, block complete export until materialized and reject wrong bytes.
 fn immutable_original_handles_preserve_identity_without_retaining_source_bytes() {
     let art = artwork();
     let source = art.original().unwrap().clone();
@@ -490,6 +510,7 @@ fn immutable_original_handles_preserve_identity_without_retaining_source_bytes()
 }
 
 #[test]
+/// EAVP2 migrates a frozen v5 dashboard with BLE defaults while preserving artwork and rejecting trailing data.
 fn eavp2_v5_dashboard_migrates_while_retaining_artwork() {
     let project = Project::new(
         &validate(default_config()).unwrap(),

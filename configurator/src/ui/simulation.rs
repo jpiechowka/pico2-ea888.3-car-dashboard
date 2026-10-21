@@ -10,6 +10,9 @@ use leptos::leptos_dom::helpers::{
 
 use super::*;
 
+/// Returns callback authority bound to `ui`'s current gate/source/accepted config lineage, or None after
+/// disposal/exhaustion. Capture alone does not synchronize a pending editor change; callbacks must recheck
+/// current_callback before effects.
 pub(super) fn capture_callback(ui: Ui) -> Option<CallbackToken> {
     let editor = ui.editor.try_with_untracked(Editor::accepted_config_key)?;
     let source = ui.dock.sim.try_with_untracked(ControlSimulator::source_key)?;
@@ -19,8 +22,9 @@ pub(super) fn capture_callback(ui: Ui) -> Option<CallbackToken> {
         .flatten()
 }
 
-/// Synchronize real Editor ownership before checking the callback, then mutate handles.
-/// Every access preceding admission is fallible so disposed callbacks are inert.
+/// Synchronizes `ui` against actual editor state, then returns whether `callback` still matches source/gate/accepted
+/// lineage. Fallible signal access makes disposed callbacks inert; synchronization can cancel old playback/restart
+/// source before rejecting.
 pub(super) fn current_callback(
     ui: Ui,
     callback: CallbackToken,
@@ -47,6 +51,9 @@ pub(super) fn current_callback(
         .unwrap_or(false)
 }
 
+/// Freezes `ui`'s active elapsed clock, stops playback, clears held/release tracking and retires scheduled callbacks.
+/// Resets gesture trackers without synthesizing release taps; disposed signals are ignored and accepted pending pixels
+/// remain retained.
 pub(super) fn cancel(ui: Ui) {
     freeze_clock(ui);
     let _ = ui.dock.running.try_set(false);
@@ -56,6 +63,7 @@ pub(super) fn cancel(ui: Ui) {
     retire_callbacks(ui);
 }
 
+/// Retires `ui`'s callback gate and cancels held animation-frame handles; disposal is a no-op.
 fn retire_callbacks(ui: Ui) {
     let _ = ui
         .dock
@@ -63,6 +71,8 @@ fn retire_callbacks(ui: Ui) {
         .try_update_value(|callbacks| callbacks.retire(|handle| handle.cancel()));
 }
 
+/// Removes `ui`'s playback clock and samples its final active elapsed boundary only for the same source.
+/// Cancels gestures before sampling and refuses accepted sampling while pending JSON has not yet installed inspection.
 fn freeze_clock(ui: Ui) {
     let mut frozen = None;
     let _ = ui.dock.playback_clock.try_update_value(|clock| {
@@ -88,6 +98,10 @@ fn freeze_clock(ui: Ui) {
     }
 }
 
+/// Installs `ui` blur/visibility/cleanup cancellation and a source-bound 50-ms playback/held-release timer.
+/// Timer advances from elapsed clock, not callback count, and rechecks editor/source authority; creation failure leaves
+/// manual steps usable. Requires a reactive owner; cleanup clears timers/listeners and freezes time without fabricating
+/// input edges.
 pub(super) fn install(ui: Ui) {
     let blur = window_event_listener_untyped("blur", move |_| {
         cancel(ui);
@@ -179,6 +193,8 @@ pub(super) fn install(ui: Ui) {
     });
 }
 
+/// Records `result` for `ui`'s simulation canvas: success publishes consumed/displayed lineage, failure retains exact
+/// pending bytes. Updates bounded render diagnostics and notice; does not acknowledge simulator frame completion.
 fn canvas_result(
     ui: Ui,
     result: Result<(), RenderIssue>,
@@ -205,6 +221,11 @@ fn canvas_result(
     }
 }
 
+/// Renders/submits or retries exact pending bytes for `ui`; `manual` selects Simulation mode and suppresses automatic
+/// completion. Synchronizes editor first and refuses inspection; consumed pending frames are retained, with automatic
+/// completion scheduled unless the dropped-completion fixture is selected. Failures report without issuing a
+/// replacement token for retained bytes. Frame-sequence exhaustion refuses new work; successful canvas write remains
+/// separate from completed presentation metadata.
 pub(super) fn submit(
     ui: Ui,
     manual: bool,
@@ -279,6 +300,9 @@ pub(super) fn submit(
     }
 }
 
+/// Schedules at most one `ui` animation-frame completion bound to callback/source/editor and captured pending token.
+/// Stale/mode/inspection changes suppress execution; scheduling failure leaves manual completion available with
+/// retained pixels.
 fn schedule_completion(ui: Ui) {
     if ui.dock.callbacks.with_value(|callbacks| callbacks.completion.is_some()) {
         return;
@@ -312,6 +336,9 @@ fn schedule_completion(ui: Ui) {
     }
 }
 
+/// Restores exact pending pixels in `ui` before acknowledging their simulator token and releasing preview ownership.
+/// Inspection/no pending state is a no-op. Canvas failure keeps authority pending; after successful Off completion a
+/// separate draw projects black, whose failure is reported without undoing already completed metadata.
 pub(super) fn complete(ui: Ui) {
     ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
     if ui.inspection_active() {
@@ -363,6 +390,9 @@ pub(super) fn complete(ui: Ui) {
     ui.render_issue(RenderLane::Simulation, result);
 }
 
+/// Captures an admitted project from `ui`, cancels playback/pointer state and starts full startup replay with matching
+/// frame completions. Rejection preserves accepted acquisition and reports why; success captures project stamp so later
+/// edits cancel the replay.
 pub(super) fn replay_startup(ui: Ui) {
     let captured = ui
         .editor
@@ -395,6 +425,9 @@ pub(super) fn replay_startup(ui: Ui) {
     submit(ui, false);
 }
 
+/// Requests fresh `scenario` source in synchronized `ui`, refusing inspection and cancelling old callbacks first.
+/// Success clears local pending flags and logs selection; failure retains old evidence and reports exhaustion/admission
+/// refusal.
 fn source(
     ui: Ui,
     scenario: Scenario,
@@ -423,6 +456,9 @@ fn source(
     }
 }
 
+/// Updates `ui`'s held level for `button` to `down` at current elapsed playback time, then dispatches all levels
+/// together. A real held-to-released edge schedules 50 ms of settling when representable; lifecycle cancellation uses a
+/// different path.
 fn held(
     ui: Ui,
     button: ButtonId,
@@ -443,6 +479,9 @@ fn held(
     ui.simulate(|sim| sim.physical_at(pressed, EncoderBatch::default(), at));
 }
 
+/// Parses `ui`'s currently admitted bounded reset text and delivers exact u64 token through accepted-only simulation
+/// admission. Oversize/nondecimal text does nothing; stale/duplicate token reports refusal without resetting
+/// statistics.
 fn deliver_reset_token(ui: Ui) {
     let text = ui
         .dock
@@ -465,6 +504,9 @@ fn deliver_reset_token(ui: Ui) {
     }
 }
 
+/// Submits admitted raw text for `channel` in `ui` after cancelling playback; `diagnostic` bypasses only UI test-domain
+/// filtering. Oversize text is blocked, inspection is refused by accepted-only dispatch, and shared sample gates remain
+/// authoritative.
 fn submit_channel_input(
     ui: Ui,
     channel: Channel,
@@ -487,7 +529,13 @@ fn submit_channel_input(
 }
 
 #[component]
-pub(super) fn Panel(ui: Ui) -> impl IntoView {
+/// Returns `ui`'s persistent synthetic control/data/presentation test panel with explicit delayed reset and completion
+/// actions. Candidate controls remain inspectable while accepted sample/reset/completion actions stay guarded; all
+/// observations are synthetic.
+pub(super) fn Panel(
+    /// Shared accepted/candidate simulation sessions and pending presentation ownership.
+    ui: Ui
+) -> impl IntoView {
     let sim = ui.dock.sim;
     view! {
         <section class="control-simulator" aria-label="All-screen simulator">

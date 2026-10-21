@@ -11,6 +11,8 @@ use dashboard_configurator::resources::{
 
 use super::*;
 
+/// Returns a compact summary of `report`, distinguishing current export bytes from
+/// last accepted measurements and unavailable/nonexportable state.
 pub(super) fn footer(report: &ResourceReport) -> String {
     match (report.availability, report.accepted.as_ref()) {
         (ResourceAvailability::Current, Some(accepted)) => {
@@ -35,6 +37,7 @@ pub(super) fn footer(report: &ResourceReport) -> String {
     }
 }
 
+/// Returns the configured-source status label for `status`; selectable never means live qualified.
 fn selection_label(status: SourceSelectionStatus) -> &'static str {
     match status {
         SourceSelectionStatus::Disabled => "Disabled",
@@ -45,6 +48,7 @@ fn selection_label(status: SourceSelectionStatus) -> &'static str {
     }
 }
 
+/// Returns the presentation unit for `readout`, preserving fixed/toggle and assumed-AFR distinctions.
 fn readout_label(readout: Readout) -> &'static str {
     match readout {
         Readout::Celsius => "°C",
@@ -60,6 +64,8 @@ fn readout_label(readout: Readout) -> &'static str {
     }
 }
 
+/// Returns the configured `secondary` unit when `available`, an unavailable-span
+/// explanation otherwise, or None text for a disabled secondary regardless of capability.
 fn secondary_label(
     secondary: Secondary,
     available: bool,
@@ -78,6 +84,9 @@ fn secondary_label(
     }
 }
 
+/// Returns serialization, occupancy, source and widget facts from `accepted`;
+/// `current` controls whether the measurements are labelled exportable now or historical.
+/// Values remain configuration facts and do not claim target timing or ECU qualification.
 fn accepted_view(
     accepted: ConfigResources,
     current: bool,
@@ -120,8 +129,14 @@ fn accepted_view(
     }
 }
 
+/// Returns `ui`'s accepted-resource report and separate build-evidence navigation.
+/// Report errors remain explicit and no draft serialization or physical measurement
+/// is substituted for unavailable accepted measurements.
 #[component]
-pub fn Resources(ui: Ui) -> impl IntoView {
+pub fn Resources(
+    /// Shared accepted project and bounded resource-admission observations.
+    ui: Ui
+) -> impl IntoView {
     view! { <div class="resource-panel">
         <div class="settings-copy"><h2>"Configuration resources"</h2><p>"Actual accepted serialization sizes and bounded layout facts. Drafts cannot produce export sizes."</p></div>
         {move || match ui.resource_report() {

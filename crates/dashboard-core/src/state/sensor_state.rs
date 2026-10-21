@@ -1,3 +1,4 @@
+//! Single-channel accepted values, elapsed-time sampling and immutable graph snapshots.
 use super::extrema::{Extrema, valid_sample};
 use super::history::{History, HistoryData, HistoryView};
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
@@ -6,28 +7,42 @@ use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 /// because public snapshot arrays may move a copied sensor to another slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GraphCacheIdentity {
+    /// Non-reused acquisition run origin, absent identities disable reuse entirely.
     origin: core::num::NonZeroU32,
+    /// Checked graph content/time revision within this owner.
     revision: u32,
+    /// Channel provenance independent of the snapshot's array location.
     channel: dashboard_config::Channel,
 }
 
+/// Number of admitted five-second average samples retained.
 const AVG_BUFFER_SIZE: usize = 60;
 
+/// Minimum accepted-sample spacing for the rolling average, in milliseconds.
 pub const AVG_SAMPLE_PERIOD_MS: u64 = 5_000;
 
+/// Legacy graph capacity, matching the canonical history's sixty buckets.
 pub const GRAPH_HISTORY_SIZE: usize = 60;
 
+/// Legacy default 120-second graph bucket period; configured duration may differ.
 pub const GRAPH_SAMPLE_PERIOD_MS: u64 = 2_000;
 
+/// Duration of the legacy new-extremum highlight, in milliseconds.
 pub const PEAK_HOLD_MS: u64 = 750;
 
+/// Minimum spacing of accepted trend samples, in milliseconds.
 const TREND_SAMPLE_PERIOD_MS: u64 = 200;
+/// Width of each recent/older trend comparison window and snapshot trend age limit.
 const TREND_WINDOW_MS: u64 = 2_000;
 
+/// Which extension of lifetime extrema triggers the legacy highlight.
 #[derive(Clone, Copy)]
 pub enum PeakMode {
+    /// No new-peak highlights, while numeric extrema still update.
     None,
+    /// A value strictly above an existing maximum highlights.
     Maximum,
+    /// A value strictly outside either existing bound highlights.
     Range,
 }
 
@@ -35,19 +50,29 @@ pub enum PeakMode {
 /// acquisition owner; a coalesced snapshot already includes every accepted peak.
 #[derive(Clone, Copy, Debug)]
 pub struct SensorSnapshot {
+    /// Last accepted canonical value, or absent before first sample.
     value: Option<f32>,
+    /// Minimum since statistics reset, including retained current value at reset.
     minimum: Option<f32>,
+    /// Maximum since statistics reset, including retained current value at reset.
     maximum: Option<f32>,
+    /// Mean of up to sixty five-second samples, not a time-weighted interpolation.
     average: Option<f32>,
+    /// Significant rising/falling trend; `None` for insufficient/flat comparison.
     trend: Option<bool>,
+    /// Original last-good sample timestamp in monotonic milliseconds.
     sampled_at_ms: Option<u64>,
+    /// Exclusive legacy highlight expiry, with saturating millisecond addition.
     peak_until_ms: Option<u64>,
+    /// Fixed canonical graph data and explicit gaps.
     graph: HistoryData,
+    /// Optional acquisition-issued graph proof; absence requires conservative redraw.
     graph_identity: Option<GraphCacheIdentity>,
 }
 
 // Runtime cache proof does not change semantic snapshot equality.
 impl PartialEq for SensorSnapshot {
+    /// Returns semantic equality with `other`, excluding runtime graph-cache identity.
     fn eq(
         &self,
         other: &Self,
@@ -64,6 +89,7 @@ impl PartialEq for SensorSnapshot {
 }
 
 impl SensorSnapshot {
+    /// No accepted value/statistics; empty graph and unavailable cache identity.
     pub const EMPTY: Self = Self {
         value: None,
         minimum: None,
@@ -76,18 +102,24 @@ impl SensorSnapshot {
         graph_identity: None,
     };
 
+    /// Returns exact owner/channel/revision proof, or `None` for untracked/exhausted data.
     pub const fn graph_cache_identity(&self) -> Option<GraphCacheIdentity> { self.graph_identity }
 
+    /// Returns retained canonical value without source/freshness qualification.
     pub fn value(&self) -> Option<f32> { self.value }
 
+    /// Returns retained minimum, or `None` before accepted data.
     pub fn minimum(&self) -> Option<f32> { self.minimum }
 
+    /// Returns retained maximum, or `None` before accepted data.
     pub fn maximum(&self) -> Option<f32> { self.maximum }
 
     /// Join accepted extrema from an earlier snapshot of the same source/run.
     /// Used by bounded browser replay when older history points leave its window.
     /// The caller owns source/time/reset boundaries. No reading or freshness is
     /// synthesized, and firmware acquisition remains the statistics owner.
+    /// Merges valid extrema from `earlier` without changing the current reading,
+    /// timestamp, graph, average or cache proof.
     pub fn retain_extrema_from(
         &mut self,
         earlier: &Self,
@@ -100,10 +132,14 @@ impl SensorSnapshot {
         }
     }
 
+    /// Returns the captured rolling mean in canonical units, or `None` without samples.
     pub fn get_average(&self) -> Option<f32> { self.average }
 
+    /// Returns original last-good sample time in monotonic milliseconds.
     pub fn sampled_at_ms(&self) -> Option<u64> { self.sampled_at_ms }
 
+    /// Returns captured rising/falling trend at monotonic `now_ms` milliseconds,
+    /// or `None` for no trend, reversed time, or last sample older than two seconds.
     pub fn get_trend_at(
         &self,
         now_ms: u64,
@@ -112,6 +148,8 @@ impl SensorSnapshot {
         if age <= TREND_WINDOW_MS { self.trend } else { None }
     }
 
+    /// Returns whether a legacy new-peak highlight remains live at `now_ms`
+    /// milliseconds, requiring last sample <= now < expiry. No freshness proof added.
     pub fn is_new_peak_at(
         &self,
         now_ms: u64,
@@ -119,35 +157,56 @@ impl SensorSnapshot {
         self.sampled_at_ms.is_some_and(|at| at <= now_ms) && self.peak_until_ms.is_some_and(|until| now_ms < until)
     }
 
+    /// Returns immutable chronological graph points and gaps from this snapshot.
     pub fn history(&self) -> HistoryView<'_> { self.graph.view() }
 }
 
+/// Single acquisition owner's statistics; timers never invent measurements.
 pub struct SensorState {
+    /// Last accepted canonical value, independent of outer source/quality metadata.
     value: Option<f32>,
+    /// Accepted min/max since reset.
     extrema: Extrema,
+    /// Trend sample ring in insertion order modulo its capacity.
     history: [f32; HISTORY_SIZE],
+    /// Original trend sample timestamps in milliseconds, parallel to `history`.
     history_time_ms: [u64; HISTORY_SIZE],
+    /// Next trend write slot.
     history_index: usize,
+    /// Initialized trend slots, capped at HISTORY_SIZE.
     history_count: usize,
+    /// Timestamp of last trend admission for 200 ms decimation.
     trend_last_sample_ms: Option<u64>,
+    /// Nonnegative significant difference between window means, in canonical units.
     trend_threshold: f32,
+    /// Last accepted raw sample time; strictly increases across ingestion.
     last_sample_ms: Option<u64>,
+    /// Latest non-reversed timer observation for highlight expiry.
     last_tick_ms: Option<u64>,
+    /// Exclusive millisecond deadline for legacy new-extremum highlight.
     peak_until_ms: Option<u64>,
 
+    /// Cached legacy highlight state; snapshot readers also evaluate timestamp expiry.
     pub is_new_peak: bool,
 
+    /// Five-second-decimated canonical samples for the rolling arithmetic mean.
     avg_buffer: [f32; AVG_BUFFER_SIZE],
+    /// Next average write/eviction slot.
     avg_index: usize,
+    /// Initialized average slots, at most sixty.
     avg_count: usize,
+    /// Running sum of initialized average slots; finite sample bound limits magnitude.
     avg_sum: f32,
+    /// Timestamp of last average admission, absent after reset.
     avg_last_sample_ms: Option<u64>,
 
+    /// Independent elapsed-time bucket history with gaps and checked revision.
     graph: History,
 }
 
 impl SensorState {
     #[cfg(test)]
+    /// Forces graph `revision` for exhaustion fixtures without altering graph contents.
     pub(crate) fn force_revision_for_test(
         &mut self,
         revision: u32,
@@ -155,8 +214,10 @@ impl SensorState {
         self.graph.force_revision(revision);
     }
 
+    /// Returns checked graph revision, or sticky `None` after exhaustion.
     pub(crate) const fn graph_revision(&self) -> Option<u32> { self.graph.revision() }
 
+    /// Returns empty statistics with default trend threshold and 120-second graph.
     pub const fn new() -> Self {
         Self {
             value: None,
@@ -180,12 +241,18 @@ impl SensorState {
         }
     }
 
+    /// Returns last accepted canonical value without source/freshness admission.
     pub const fn value(&self) -> Option<f32> { self.value }
 
+    /// Returns last accepted sample's monotonic millisecond timestamp.
     pub const fn sampled_at_ms(&self) -> Option<u64> { self.last_sample_ms }
 
+    /// Returns a coherent presentation copy without graph-cache proof.
     pub fn snapshot(&self) -> SensorSnapshot { self.snapshot_with_identity(None) }
 
+    /// Returns a presentation copy with exact graph identity from optional
+    /// acquisition `origin`, current graph revision and `channel`; either missing
+    /// origin/revision disables proof while preserving numeric data.
     pub(crate) fn tracked_snapshot(
         &self,
         origin: Option<core::num::NonZeroU32>,
@@ -201,6 +268,8 @@ impl SensorState {
         self.snapshot_with_identity(identity)
     }
 
+    /// Returns all presentation fields with supplied `graph_identity`; caller
+    /// guarantees any identity corresponds to these current graph contents.
     fn snapshot_with_identity(
         &self,
         graph_identity: Option<GraphCacheIdentity>,
@@ -218,11 +287,16 @@ impl SensorState {
         }
     }
 
+    /// Returns minimum since reset, or `None` before a valid sample.
     pub fn minimum(&self) -> Option<f32> { self.extrema.min() }
 
+    /// Returns maximum since reset, or `None` before a valid sample.
     pub fn maximum(&self) -> Option<f32> { self.extrema.max() }
 
     /// Apply all measurement-derived state through the same acceptance gate.
+    /// Returns whether canonical `value` at `sampled_at_ms` milliseconds is finite,
+    /// within +/-1,000,000 and strictly newer. `peak_mode` selects highlight policy;
+    /// first valid data initializes extrema without producing a highlight.
     pub fn ingest(
         &mut self,
         value: f32,
@@ -237,6 +311,8 @@ impl SensorState {
         self.update_at(value, peak, sampled_at_ms)
     }
 
+    /// Returns empty state with significant trend difference `threshold` in
+    /// canonical units; negative/nonfinite input retains the default threshold.
     pub const fn with_trend_threshold(threshold: f32) -> Self {
         let mut state = Self::new();
         if threshold.is_finite() && threshold >= 0.0 {
@@ -246,6 +322,10 @@ impl SensorState {
     }
 
     /// Returns false for an invalid value or a duplicate/out-of-order measurement.
+    /// On success, stores canonical `value` at `sampled_at_ms` milliseconds and
+    /// updates extrema, graph and due trend/average samples. `is_max_updated`
+    /// requests a 750 ms highlight; caller determines its semantic validity.
+    /// No catch-up samples are synthesized. Rejection leaves all state unchanged.
     pub fn update_at(
         &mut self,
         value: f32,
@@ -282,6 +362,9 @@ impl SensorState {
         true
     }
 
+    /// Advances graph gaps at `now_ms` milliseconds and expires highlights. Graph
+    /// clock reversal clears/reanchors history; highlight timing ignores reversed
+    /// ticks. Does not insert values into averages, trends or extrema.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -297,6 +380,8 @@ impl SensorState {
         }
     }
 
+    /// Inserts already validated canonical `value` into the sixty-slot average,
+    /// evicting the oldest when full. Caller enforces five-second sample spacing.
     fn add_avg_sample(
         &mut self,
         value: f32,
@@ -312,6 +397,8 @@ impl SensorState {
         self.avg_index = (self.avg_index + 1) % AVG_BUFFER_SIZE;
     }
 
+    /// Returns arithmetic mean of admitted average samples, or `None` when empty;
+    /// elapsed gaps are not filled or weighted as repeated measurements.
     pub fn get_average(&self) -> Option<f32> {
         if self.avg_count == 0 {
             None
@@ -320,6 +407,7 @@ impl SensorState {
         }
     }
 
+    /// Clears only the rolling average and its sampling clock, preserving raw data.
     pub fn reset_average(&mut self) {
         self.avg_buffer = [0.0; AVG_BUFFER_SIZE];
         self.avg_index = 0;
@@ -328,8 +416,11 @@ impl SensorState {
         self.avg_last_sample_ms = None;
     }
 
+    /// Returns current immutable graph values, timestamps and explicit gaps.
     pub fn history(&self) -> HistoryView<'_> { self.graph.view() }
 
+    /// Sets graph duration to `seconds`; changed duration clears/reanchors graph
+    /// only. Panics unless 10..=900; statistics and raw values remain untouched.
     pub fn set_history_duration(
         &mut self,
         seconds: u16,
@@ -337,6 +428,8 @@ impl SensorState {
         self.graph.set_duration(seconds);
     }
 
+    /// Creates a graph gap at monotonic event `now_ms` and its preceding retained
+    /// bucket, without altering last-good numeric statistics or their timestamp.
     pub fn invalidate_history(
         &mut self,
         now_ms: u64,
@@ -344,13 +437,16 @@ impl SensorState {
         self.graph.invalidate(now_ms);
     }
 
+    /// Clears graph validity/duplicate history while retaining its duration/clock.
     pub fn reset_graph(&mut self) { self.graph.clear(); }
 
+    /// Clears the legacy new-extremum highlight and its expiry deadline.
     pub fn reset_peak(&mut self) {
         self.is_new_peak = false;
         self.peak_until_ms = None;
     }
 
+    /// Empties trend sampling history; next accepted sample can seed a new window.
     pub fn reset_trend(&mut self) {
         self.history_count = 0;
         self.history_index = 0;
@@ -369,6 +465,10 @@ impl SensorState {
         }
     }
 
+    /// Returns true for significantly rising or false for falling window means,
+    /// or `None` without both windows or when difference <=threshold. Windows
+    /// are ages 0..=2 seconds and >2..=4 seconds relative to last accepted sample;
+    /// callers separately expire that sample against the current clock.
     pub fn get_trend(&self) -> Option<bool> {
         let latest = self.last_sample_ms?;
         let mut recent = (0.0f32, 0usize);
@@ -392,6 +492,9 @@ impl SensorState {
     }
 }
 
+/// Returns whether no `last_ms` exists or `sampled_at_ms` is at least `period_ms`
+/// later; all are milliseconds. Caller guarantees sampled time >= last, avoiding
+/// unsigned underflow. Only one sample is taken regardless of missed periods.
 fn sample_due(
     last_ms: Option<u64>,
     sampled_at_ms: u64,
@@ -401,5 +504,6 @@ fn sample_due(
 }
 
 impl Default for SensorState {
+    /// Returns empty state with the default trend threshold and graph duration.
     fn default() -> Self { Self::new() }
 }

@@ -6,8 +6,12 @@ use dashboard_configurator::build_flash::BuildSelection;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::helper_client::*;
 #[path = "../tests/support/display_fixture.rs"]
+/// Shared deterministic maximum-size asset fixture, outside timed operations.
 mod fixture;
 
+/// Returns elapsed nanoseconds for `count` real reducer/identity operations, using
+/// maximum artwork when `large` and the display cache when `cached`. `workload` must be
+/// selection/options/miss/blocked; unknown workload or failed fixture admission panics.
 fn run(
     large: bool,
     cached: bool,
@@ -63,6 +67,9 @@ fn run(
     }
     started.elapsed().as_nanos()
 }
+/// Prints fixture identities and five alternating cached/uncached native batches per
+/// workload/asset size. First CLI argument is 1..=10000 iterations (default100); invalid
+/// input and fixture failures panic. Creates no firmware or physical timing evidence.
 fn main() {
     let count = std::env::args()
         .nth(1)

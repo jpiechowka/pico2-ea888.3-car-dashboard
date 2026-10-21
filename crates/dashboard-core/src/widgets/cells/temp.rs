@@ -1,3 +1,4 @@
+//! Legacy temperature cell with optional canonical average and raw history.
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -7,15 +8,25 @@ use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_hi
 use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, VALUE_FONT, VALUE_FONT_MEDIUM, WHITE};
 use crate::widgets::primitives::{draw_cell_background, draw_history_graph, draw_trend_arrow, draw_value_with_outline};
 
+/// Celsius value rounding to four positive digits, switching to the narrower value font.
 const TEMP_LARGE_VALUE_THRESHOLD: f32 = 999.5;
 
+/// Returns whether `value` degrees Celsius is at least 999.5; NaN returns false.
+/// This legacy heuristic is not general string fitting for negative/extreme inputs.
 pub fn temp_uses_medium_font(value: f32) -> bool { value >= TEMP_LARGE_VALUE_THRESHOLD }
 
+/// Large-font baseline offset in pixels relative to the cell's vertical center.
 const TEMP_VALUE_Y_LARGE: i32 = -12;
 
+/// Medium-font baseline offset in pixels relative to the cell's vertical center.
 const TEMP_VALUE_Y_MEDIUM: i32 = -10;
 
 #[allow(clippy::too_many_arguments)]
+/// Draws `label`, current `temp`/`max_temp` Celsius and `state` trend/peak/history/
+/// optional average into `display` at bounded pixel `x`, `y`, width `w`, height `h`.
+/// Uses `bg_color`; `is_critical` adjusts statistic contrast. Returns the background.
+/// Caller supplies qualified finite data, a short fitting label, `w >= 16`, legacy
+/// cell geometry and clipping; extreme coordinates can overflow. Draw errors are discarded.
 pub fn draw_temp_cell<D>(
     display: &mut D,
     x: u32,

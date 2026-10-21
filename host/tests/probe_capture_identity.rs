@@ -9,6 +9,7 @@ use dashboard_core::discovery::*;
 use dashboard_host_validation::probe_captures::{decode_json, hex, publish, text_report};
 use serde_json::Value;
 
+/// Returns one AD field of raw `kind` containing `name`; panics if length plus type exceeds one byte.
 fn ad(
     kind: u8,
     name: &[u8],
@@ -17,6 +18,8 @@ fn ad(
     bytes.extend_from_slice(name);
     bytes
 }
+/// Returns a selected random-static peer with raw `adv` and optional nonempty `response` packets at 1/2 ms.
+/// Starts inspection via click at 3 ms; packet/name qualification remains production behavior.
 fn probe(
     adv: &[u8],
     response: &[u8],
@@ -35,6 +38,8 @@ fn probe(
     p.input(Input::Click, 3);
     p
 }
+/// Returns encoded selected-peer capture bytes from `p` at 100 ms with fixed stock build identity.
+/// Panics if encoding fails; truncates the allocated scratch vector to the encoded prefix.
 fn bytes(p: &Probe) -> Vec<u8> {
     let mut bytes = vec![0; 8192];
     let n = encode(
@@ -53,6 +58,8 @@ fn bytes(p: &Probe) -> Vec<u8> {
     bytes.truncate(n);
     bytes
 }
+/// Adds GAP service/name characteristic and a read of `name` with `result` to `p`'s inspection.
+/// Uses a one-millisecond read and no explicit failure; admission remains the production inspection policy.
 fn gap_name(
     p: &mut Probe,
     name: &[u8],
@@ -80,8 +87,10 @@ fn gap_name(
         elapsed_ms: 1,
     }));
 }
+/// Returns the JSON identity from encoded/validated `p`; panics if fixture encoding or decoding fails.
 fn identity(p: &Probe) -> Value { decode_json(&bytes(p)).unwrap()["identity"].clone() }
 
+/// Directory/export names share cached provenance while current packets and cleared read inventories stay unmodified.
 #[test]
 fn cached_packet_and_gap_names_agree_in_directory_and_export_without_fabricated_packets() {
     use dashboard_core::discovery::capture;
@@ -122,6 +131,7 @@ fn cached_packet_and_gap_names_agree_in_directory_and_export_without_fabricated_
     assert_eq!(json["record_counts"]["reads"], 0);
 }
 
+/// Content hash, observed address/type and portable names derive from the exact validated binary.
 #[test]
 fn name_address_and_full_content_id_are_derived_from_validated_bytes() {
     let bytes = bytes(&probe(&ad(9, b"NEEWER-TL21C"), &[]));
@@ -145,6 +155,7 @@ fn name_address_and_full_content_id_are_derived_from_validated_bytes() {
     assert!(text_report(&v).contains(&format!("identity.capture_id: \"sha256:{digest}\"")));
 }
 
+/// Complete AD names outrank GAP, which outranks shortened names, retaining deterministic packet/read provenance.
 #[test]
 fn complete_ad_names_win_then_gap_then_shortened_names_with_deterministic_provenance() {
     for (adv, response, expected, source, complete) in [
@@ -171,6 +182,7 @@ fn complete_ad_names_win_then_gap_then_shortened_names_with_deterministic_proven
     assert_eq!(identity(&p)["device_name"]["record_index"], 2);
 }
 
+/// Malformed/empty/duplicate/truncated name fields retain raw evidence and use only the valid qualified prefix.
 #[test]
 fn malformed_empty_duplicate_and_truncated_packets_preserve_evidence_without_guessing() {
     let cases = [
@@ -196,6 +208,7 @@ fn malformed_empty_duplicate_and_truncated_packets_preserve_evidence_without_gue
     assert!(names::SavedIdentity::from_capture(&capture.view()).name.truncated);
 }
 
+/// Path syntax, controls, Unicode and invalid UTF-8 cannot escape portable ASCII artifact basenames.
 #[test]
 fn unsafe_non_ascii_and_invalid_utf8_names_never_become_path_syntax() {
     for (name, slug) in [
@@ -221,6 +234,7 @@ fn unsafe_non_ascii_and_invalid_utf8_names_never_become_path_syntax() {
     }
 }
 
+/// Unusable names fall back to unnamed; usable long names retain full evidence while limiting the slug.
 #[test]
 fn missing_names_and_unusable_gap_reads_fall_back_and_long_names_are_bounded() {
     assert!(identity(&probe(&[], &[]))["device_name"].is_null());
@@ -250,6 +264,7 @@ fn missing_names_and_unusable_gap_reads_fall_back_and_long_names_are_bounded() {
     assert_eq!(i["device_name"]["utf8"].as_str().unwrap().len(), 40);
 }
 
+/// Every byte value and slug truncation boundary preserve raw names while producing portable single-component labels.
 #[test]
 fn every_name_byte_and_slug_boundary_remain_portable_and_lossless() {
     for byte in 0..=255u8 {
@@ -271,6 +286,7 @@ fn every_name_byte_and_slug_boundary_remain_portable_and_lossless() {
     assert!(!stem.contains("--"));
 }
 
+/// Equal sanitized name slugs remain distinct when their captured bytes produce different content hashes.
 #[test]
 fn equal_sanitized_names_do_not_alias_distinct_captures() {
     let a = identity(&probe(&ad(9, b"A/B"), &[]));
@@ -281,6 +297,7 @@ fn equal_sanitized_names_do_not_alias_distinct_captures() {
     assert_ne!(a["capture_id"], b["capture_id"]);
 }
 
+/// Changed evidence changes content identity; public/random address type remains part of observed device keys.
 #[test]
 fn changed_bytes_and_observed_peer_type_change_identity_without_claiming_permanent_device_id() {
     let p = probe(&ad(9, b"Device"), &[]);
@@ -312,6 +329,7 @@ fn changed_bytes_and_observed_peer_type_change_identity_without_claiming_permane
     assert_ne!(a["capture_id"], identity(&public)["capture_id"]);
 }
 
+/// Frozen v1/v2 binaries gain derived identity without rewriting their historical capture schema.
 #[test]
 fn frozen_legacy_v1_and_v2_captures_gain_identity_without_schema_rewrites() {
     for (schema, fixture) in [
@@ -335,9 +353,15 @@ fn frozen_legacy_v1_and_v2_captures_gain_identity_without_schema_rewrites() {
     }
 }
 
-struct Temp(PathBuf);
+/// One newly created test directory with at most one level of artifact subdirectories.
+struct Temp(
+    /// Unique path owned exclusively by this test guard.
+    PathBuf,
+);
 impl Temp {
+    /// Returns a newly created directory distinguished by process/time/sequence; clock or I/O failure panics.
     fn new() -> Self {
+        /// Per-process suffix avoiding collisions for equal timestamp observations.
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
             "ble-identity-{}-{}-{}",
@@ -353,6 +377,7 @@ impl Temp {
     }
 }
 impl Drop for Temp {
+    /// Removes owned files, one-level artifact directories and the root; unexpected contents/I/O failure panic.
     fn drop(&mut self) {
         // Only this test's newly created files and one-level output directories.
         for entry in fs::read_dir(&self.0).unwrap().map(Result::unwrap) {
@@ -369,6 +394,7 @@ impl Drop for Temp {
     }
 }
 
+/// USB slot envelopes and offline publication share content-derived artifact names and reject output reuse.
 #[test]
 fn publication_uses_same_named_artifacts_across_slot_envelopes_and_offline_decode() {
     let temp = Temp::new();
@@ -404,6 +430,8 @@ fn publication_uses_same_named_artifacts_across_slot_envelopes_and_offline_decod
     }
 }
 
+/// Runs the real binary's offline decode command with path `args` and returns captured status/stdout/stderr.
+/// Panics on child launch failure; nonzero exit status is returned for assertions and no USB command is issued.
 fn cli(args: &[&Path]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ble_probe_captures"))
         .arg("decode")
@@ -412,6 +440,7 @@ fn cli(args: &[&Path]) -> std::process::Output {
         .unwrap()
 }
 
+/// Offline CLI accepts a legacy input filename and reports actual content-derived outputs without modifying input.
 #[test]
 fn real_offline_cli_decodes_legacy_filename_and_reports_the_actual_named_outputs() {
     let temp = Temp::new();
@@ -431,6 +460,7 @@ fn real_offline_cli_decodes_legacy_filename_and_reports_the_actual_named_outputs
     assert_eq!(fs::read(&input).unwrap(), data);
 }
 
+/// Missing/corrupt/oversized input and unusable destinations fail without replacing existing output contents.
 #[test]
 fn real_offline_cli_rejects_missing_corrupt_oversized_inputs_and_unwritable_destinations() {
     let temp = Temp::new();

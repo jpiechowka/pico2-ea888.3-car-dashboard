@@ -5,9 +5,11 @@ use core::task::{Context, Poll, Waker};
 
 use dashboard_core::discovery::capture_ui as ui;
 
+/// Actual capacity-one affine reply mailbox used by firmware storage/UI tasks.
 #[path = "../../firmware/ble-probe/src/capture_reply.rs"]
 mod mailbox;
 
+/// Publication remains pending until consumption returns the same mutable envelope with consumer updates intact.
 #[test]
 fn reply_is_borrowed_until_consumed_and_the_same_record_returns_to_its_owner() {
     let channel = mailbox::Mailbox::new();
@@ -37,6 +39,8 @@ fn reply_is_borrowed_until_consumed_and_the_same_record_returns_to_its_owner() {
     assert_eq!(returned.length, 123);
 }
 
+/// Failed/stale completions return the identical byte lease after Back, recovery or timeout without replacing hidden
+/// screens.
 #[test]
 fn failed_or_stale_reply_returns_byte_lease_after_back_recovery_and_timeout() {
     for hide in [ui::Input::Back, ui::Input::Recover, ui::Input::Click] {
@@ -83,6 +87,7 @@ fn failed_or_stale_reply_returns_byte_lease_after_back_recovery_and_timeout() {
     }
 }
 
+/// Reusing one envelope across 32 acknowledged handoffs neither replays old replies nor loses ownership.
 #[test]
 fn repeated_handoffs_do_not_replay_old_replies_or_lose_a_lease() {
     let channel = mailbox::Mailbox::new();

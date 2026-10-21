@@ -1,4 +1,5 @@
 //! Exercise the exact software functions used by the vendored IRQ driver.
+/// Production ring/IRQ operations tested without hardware register access.
 #[path = "../../firmware/vendor/embassy-rp/src/uart/buffered_io.rs"]
 mod io;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -9,13 +10,22 @@ use std::task::Wake;
 use embassy_hal_internal::atomic_ring_buffer::RingBuffer;
 use embassy_sync::waitqueue::AtomicWaker;
 
+/// Count of explicit task wakes for register-before-rearm ordering checks.
 #[derive(Default)]
-struct WakeCount(AtomicUsize);
+struct WakeCount(
+    /// Sequentially consistent notification count, initially zero.
+    AtomicUsize,
+);
 impl Wake for WakeCount {
+    /// Consumes this `self` reference and records one notification.
     fn wake(self: Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
 
+    /// Records one notification while retaining the borrowed `self` reference.
     fn wake_by_ref(self: &Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
 }
+/// Returns a ring backed by mutable `bytes`, without encoding that storage lifetime in its type.
+/// Tests must keep `bytes` alive and exclusively reserved until ring/reader/writer use ends,
+/// and create only one reader and writer. All callers provide nonempty storage.
 fn ring(bytes: &mut [u8]) -> RingBuffer {
     let ring = RingBuffer::new();
     // Each test keeps storage alive and one reader/writer until the scope ends.
@@ -23,6 +33,7 @@ fn ring(bytes: &mut [u8]) -> RingBuffer {
     ring
 }
 
+/// Repeated same-core claims coexist; wrong/invalid core claims panic before mutating ownership.
 #[test]
 fn irq_claim_allows_same_core_halves_and_rejects_other_cores_without_mutation() {
     for core in 0..=1 {
@@ -47,6 +58,7 @@ fn irq_claim_allows_same_core_halves_and_rejects_other_cores_without_mutation() 
     }
 }
 
+/// RX registers its waiter before rearming so an immediate producer wake is retained for the next poll.
 #[test]
 fn rx_pending_registers_before_rearming_and_no_wakeup_is_lost() {
     let mut bytes = [0; 16];
@@ -71,6 +83,7 @@ fn rx_pending_registers_before_rearming_and_no_wakeup_is_lost() {
     assert_eq!(out[0], 42);
 }
 
+/// Every injected fault position/wrap blocks both prefix and later bytes until explicit drain/reset.
 #[test]
 fn every_fault_position_and_ring_wrap_blocks_prefix_and_post_fault_bytes_until_reset() {
     for offset in 0..32 {
@@ -120,6 +133,7 @@ fn every_fault_position_and_ring_wrap_blocks_prefix_and_post_fault_bytes_until_r
     }
 }
 
+/// A fault latched during rearm rejects the copied chunk and accumulates sticky fault bits.
 #[test]
 fn fault_during_rearm_discards_the_returned_chunk_and_remains_sticky() {
     let mut bytes = [0; 8];
@@ -141,6 +155,7 @@ fn fault_during_rearm_discards_the_returned_chunk_and_remains_sticky() {
     );
 }
 
+/// Full TX and nonempty flush register before kicking the consumer, preventing lost readiness wakes.
 #[test]
 fn full_tx_ring_and_pending_flush_pend_after_registering_the_waker() {
     let mut bytes = [0; 8];
@@ -174,6 +189,7 @@ fn full_tx_ring_and_pending_flush_pend_after_registering_the_waker() {
     assert_eq!(io::poll_flush(&ring, &waker, &cx, || panic!()), Poll::Ready(()));
 }
 
+/// All tested ring offsets/capacities preserve byte order and respect FIFO acceptance plus the IRQ work budget.
 #[test]
 fn tx_drain_crosses_every_ring_wrap_and_honors_fifo_capacity_and_work_budget() {
     for capacity in 1..=64 {
@@ -213,6 +229,7 @@ fn tx_drain_crosses_every_ring_wrap_and_honors_fifo_capacity_and_work_budget() {
     }
 }
 
+/// Oversized consume panics before advancing indices, leaving the existing byte intact.
 #[test]
 fn oversized_consume_cannot_corrupt_the_ring_indices() {
     let mut bytes = [0; 8];
@@ -230,8 +247,11 @@ fn oversized_consume_cannot_corrupt_the_ring_indices() {
     assert!(ring.is_empty());
 }
 
+/// Concurrent publication preserves the ordered prefix and exposes a terminal fault within ten seconds.
+/// At most one ring plus output chunk may be withheld at the sticky fault boundary.
 #[test]
 fn concurrent_rx_publication_preserves_order_and_stops_at_the_fault() {
+    /// Number of bytes produced before injecting the terminal RX error.
     const TOTAL: usize = 100_000;
     let mut bytes = [0; 31];
     let ring = ring(&mut bytes);

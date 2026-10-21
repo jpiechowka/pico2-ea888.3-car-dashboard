@@ -1,7 +1,10 @@
+//! Typed configuration diff, RFC6901 pointer and bounded summary regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::json_diff::{DiffKind, PointerSide, diff_configs, diff_json, pointer_segment};
 
 #[test]
+/// Equality emits no changes; one typed scalar change retains its actual indexed pointer and both values.
 fn equal_and_scalar_changes_compare_typed_values_at_real_pointers() {
     let before = default_config();
     assert!(diff_configs(&before, &before).unwrap().changes.is_empty());
@@ -19,6 +22,7 @@ fn equal_and_scalar_changes_compare_typed_values_at_real_pointers() {
 }
 
 #[test]
+/// Unique object removal/addition does not misreport shifted surviving objects as changed leaves.
 fn add_remove_and_shift_use_indexed_pointers_without_false_value_changes() {
     let before = default_config();
     let mut after = before.clone();
@@ -36,6 +40,7 @@ fn add_remove_and_shift_use_indexed_pointers_without_false_value_changes() {
 }
 
 #[test]
+/// Stable IDs separate collection reorder from a changed leaf at its new candidate index.
 fn unique_ids_match_reorders_separately_from_leaf_changes() {
     let mut before = default_config();
     before
@@ -65,6 +70,7 @@ fn unique_ids_match_reorders_separately_from_leaf_changes() {
 }
 
 #[test]
+/// Duplicate IDs force ambiguous indexed changes rather than asserting unique object correspondence.
 fn duplicate_ids_fall_back_to_ambiguous_indexed_entries() {
     let before = default_config();
     let mut after = before.clone();
@@ -83,6 +89,7 @@ fn duplicate_ids_fall_back_to_ambiguous_indexed_entries() {
 }
 
 #[test]
+/// Ambiguous tail additions/removals point to the side where the object actually exists and use its UI label.
 fn ambiguous_tail_pointers_identify_the_present_document_and_displayed_side() {
     let accepted = default_config();
     let mut shorter = accepted.clone();
@@ -131,6 +138,7 @@ fn ambiguous_tail_pointers_identify_the_present_document_and_displayed_side() {
 }
 
 #[test]
+/// RFC6901 escapes tilde before slash, preserving literal escape-looking text and empty segments.
 fn pointer_segments_escape_tilde_and_slash_once() {
     assert_eq!(pointer_segment("a~/b"), "a~0~1b");
     assert_eq!(pointer_segment("~1/~0"), "~01~1~00");
@@ -138,6 +146,7 @@ fn pointer_segments_escape_tilde_and_slash_once() {
 }
 
 #[test]
+/// Duplicate/unknown keys, scalar type drift and oversized original bytes fail before any semantic diff.
 fn strict_original_byte_parse_precedes_diff_and_rejects_type_changes() {
     let before = default_config();
     let text = serde_json::to_string(&before).unwrap();
@@ -160,6 +169,7 @@ fn strict_original_byte_parse_precedes_diff_and_rejects_type_changes() {
 }
 
 #[test]
+/// Large added objects produce UTF-8 summaries at most 256 bytes with explicit truncation.
 fn large_subtree_summaries_are_bounded_and_flagged() {
     let mut before = default_config();
     let after = before.clone();
@@ -172,6 +182,7 @@ fn large_subtree_summaries_are_bounded_and_flagged() {
 }
 
 #[test]
+/// The 513-change fixture retains exactly 512 paths and reports the one omitted change.
 fn retained_paths_stop_at_512_but_omitted_count_is_exact() {
     let mut before = default_config();
     let exemplar = before.widgets[0].clone();

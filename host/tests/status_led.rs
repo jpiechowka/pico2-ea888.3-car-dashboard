@@ -1,3 +1,5 @@
+//! Software LED policy: immutable presentation completion, channel duties and elapsed-time pattern boundaries.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::Overlay;
@@ -7,6 +9,7 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::samples::SensorId;
 use dashboard_host_validation::status_led::{PresentedLed, StatusLed};
 
+/// Default no-warning output remains green even when the backlight is off.
 #[test]
 fn normal_indicator_is_continuous_green_including_black_screen() {
     let presenter = PresentedLed::new();
@@ -15,6 +18,7 @@ fn normal_indicator_is_continuous_green_including_black_screen() {
     }
 }
 
+/// Busy, mismatched and stale completions cannot change the visible phase; matching frames do.
 #[test]
 fn indicator_changes_only_on_matching_completed_or_unchanged_presentation() {
     let mut presenter = PresentedLed::new();
@@ -49,6 +53,7 @@ fn indicator_changes_only_on_matching_completed_or_unchanged_presentation() {
     assert_eq!(presenter.output(true), StatusLed::Off);
 }
 
+/// Every channel's visible warning maps its committed blink phase to red/off without a green interval.
 #[test]
 fn visible_warning_blinks_red_and_off_without_a_green_phase() {
     for sensor in SensorId::ALL {
@@ -63,6 +68,7 @@ fn visible_warning_blinks_red_and_off_without_a_green_phase() {
     }
 }
 
+/// Default policy suppresses dashboard warning indication during button feedback, diagnostics and backlight-off.
 #[test]
 fn hidden_warnings_are_green_during_feedback_and_on_diagnostic_pages() {
     let mut model = AcquisitionModel::demo();
@@ -92,6 +98,7 @@ fn hidden_warnings_are_green_during_feedback_and_on_diagnostic_pages() {
     }
 }
 
+/// Warning masks/run/event metadata change only with the matching newer completed frame token.
 #[test]
 fn completed_warning_metadata_is_immutable_until_matching_transfer() {
     use dashboard_host_validation::status_led::{PresentedScene, PresentedWarning};
@@ -132,6 +139,7 @@ fn completed_warning_metadata_is_immutable_until_matching_transfer() {
 use dashboard_config::{Color, LedPatternKind, LedSettings};
 use dashboard_host_validation::status_led::{LedController, LedDuty, PresentedScene};
 
+/// Returns independent `red`, `green` and `blue` duties in hundredths of a percent; performs no validation.
 fn rgb(
     red: u16,
     green: u16,
@@ -139,6 +147,7 @@ fn rgb(
 ) -> LedDuty {
     LedDuty { red, green, blue }
 }
+/// Returns normal-pattern duty from `settings` at `at` milliseconds after a fresh epoch at zero.
 fn duty(
     settings: &LedSettings,
     at: u64,
@@ -147,6 +156,7 @@ fn duty(
     c.update(settings, PresentedScene::EMPTY, true, 0, false);
     c.update(settings, PresentedScene::EMPTY, true, at, false)
 }
+/// RGB565 scaling, percent brightness, blink edges and cubic breathe checkpoints have exact integer duties.
 #[test]
 fn configured_patterns_have_exact_endpoints_and_independent_channels() {
     let mut s = LedSettings::default();
@@ -195,6 +205,7 @@ fn configured_patterns_have_exact_endpoints_and_independent_channels() {
         assert_eq!(duty(&s, at), rgb(want, want, want));
     }
 }
+/// Exhausts all policy flags/pages/feedback/backlight/eligibility combinations against an independent predicate.
 #[test]
 fn policy_matrix_requires_each_applicable_background_switch() {
     for bits in 0..16 {
@@ -232,6 +243,7 @@ fn policy_matrix_requires_each_applicable_background_switch() {
         }
     }
 }
+/// Committed warning phases override elapsed blink; clock reversal retains output and explicit Off wins.
 #[test]
 fn committed_phase_warning_off_and_regressed_clock_preserve_policy() {
     let mut s = LedSettings::default();
@@ -253,6 +265,7 @@ fn committed_phase_warning_off_and_regressed_clock_preserve_policy() {
     assert_eq!(c.update(&s, scene, true, 700, false), rgb(0, 0, 0)); // epoch remained 100
     assert_eq!(c.update(&s, scene, true, 900, false), rgb(10000, 0, 0));
 }
+/// Dense/sparse updates agree near clock saturation; reduced motion holds breathing steady without disabling blink.
 #[test]
 fn animation_is_cadence_independent_bounded_and_reduced_motion_only_stops_breathing() {
     let mut s = LedSettings::default();
@@ -284,6 +297,7 @@ fn animation_is_cadence_independent_bounded_and_reduced_motion_only_stops_breath
     assert_eq!(duty(&s, u64::MAX), rgb(0, 10000, 0));
 }
 
+/// Switching normal/warning selection restarts blink epochs; repeated identical selections retain them.
 #[test]
 fn selection_changes_restart_blink_but_visible_phase_and_repaints_do_not() {
     let mut s = LedSettings::default();
@@ -302,6 +316,7 @@ fn selection_changes_restart_blink_but_visible_phase_and_repaints_do_not() {
     assert_eq!(c.update(&s, PresentedScene::EMPTY, true, 600, false), rgb(0, 10000, 0));
 }
 
+/// Odd and boundary breathe periods stay bounded, monotonic within each half and return to zero.
 #[test]
 fn breathe_extreme_and_odd_periods_are_bounded_and_monotonic_per_half() {
     let mut s = LedSettings::default();
@@ -324,6 +339,7 @@ fn breathe_extreme_and_odd_periods_are_bounded_and_monotonic_per_half() {
     }
 }
 
+/// Snoozed active rules still qualify LED status; stale data retains eligibility only through a latch.
 #[test]
 fn completed_eligibility_retains_snoozed_active_but_expires_unlatched_stale_data() {
     use dashboard_config::{ControlAction, WarningScope};
@@ -373,6 +389,7 @@ fn completed_eligibility_retains_snoozed_active_but_expires_unlatched_stale_data
         );
     }
 }
+/// Reduced motion preserves an explicitly configured blink's off interval.
 #[test]
 fn reduced_motion_keeps_explicit_blink_off_phase() {
     let mut s = LedSettings::default();

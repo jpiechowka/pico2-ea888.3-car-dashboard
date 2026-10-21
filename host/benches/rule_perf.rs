@@ -1,3 +1,4 @@
+//! Rule/peak/history/LED host workloads with full-cycle warning paging prechecks.
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion};
@@ -6,6 +7,8 @@ use dashboard_host_validation::alarms::RuleIndex;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::view_state::WarningPager;
 
+/// Returns 64 boost widgets with the first `warnings` rules enabled (values above 64 enable all).
+/// `peaks` enables alternating min/max holds of 100..=6400 ms; fixture validation failure panics.
 fn maximum(
     warnings: usize,
     peaks: bool,
@@ -48,6 +51,8 @@ fn maximum(
     validate(config).unwrap()
 }
 
+/// Registers rule ingestion/snapshot/paging, peak, one-day history-gap and breathing LED workloads with `c`.
+/// Verifies all 64 rules qualify before timing snapshot/page paths; host timings establish no device performance.
 pub fn benchmarks(c: &mut Criterion) {
     complete_paging(c);
     use dashboard_host_validation::status_led::{LedController, PresentedScene};
@@ -128,6 +133,8 @@ pub fn benchmarks(c: &mut Criterion) {
 
 // Snapshot creation stays outside the timed pager cycle. Each snapshot is fresh
 // at its page deadline; the preflight proves every global rule is reached once.
+/// Registers complete 64-rule rotations in both page modes with `c`, using prebuilt fresh snapshots.
+/// Panics if any rule is repeated or omitted in the preflight cycle; snapshot acquisition stays outside timing.
 fn complete_paging(c: &mut Criterion) {
     for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
         let mut raw = maximum(64, false).config().clone();

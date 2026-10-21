@@ -2,7 +2,13 @@
 use super::*;
 
 #[component]
-pub fn Results(report: serde_json::Value) -> impl IntoView {
+/// Returns prerequisite summaries from `report`, rendering evidence as escaped text.
+/// Missing fields use explicit fallback labels; long evidence remains expandable.
+/// This presentation does not admit a build or prove installed-tool availability.
+pub fn Results(
+    /// Helper prerequisite JSON whose checks were fetched by the connection adapter.
+    report: serde_json::Value
+) -> impl IntoView {
     let rows = report["checks"].as_array().cloned().unwrap_or_default();
     let summary = dashboard_configurator::helper_client::prerequisite_summary(&report);
     view! {

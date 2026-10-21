@@ -1,3 +1,5 @@
+//! Scripted real JEDEC-read state machine; no QMI registers or physical flash are accessed.
+/// Reviewed HAL probe algorithm, sharing the production register-order contract.
 #[path = "../../firmware/vendor/embassy-rp/src/flash_probe.rs"]
 mod probe;
 
@@ -5,15 +7,37 @@ use std::collections::VecDeque;
 
 use probe::*;
 
+/// One exact expected register-boundary operation in the synthetic bus transcript.
 #[derive(Debug)]
 enum Step {
-    Control(u32),
-    Status(u32),
-    Write(u8),
-    Read(u8),
+    /// DIRECT_CSR control write, including clock/enable/CS bits.
+    Control(
+        /// Expected raw register value.
+        u32,
+    ),
+    /// DIRECT_CSR polling read.
+    Status(
+        /// Raw status returned for this poll.
+        u32,
+    ),
+    /// Next transmitted command/dummy byte.
+    Write(
+        /// Exact byte required by the scripted exchange.
+        u8,
+    ),
+    /// Next received byte, including the discarded command-phase byte.
+    Read(
+        /// Byte supplied by the synthetic RX FIFO.
+        u8,
+    ),
 }
-struct Wire(VecDeque<Step>);
+/// Ordered destructive transcript; unexpected accesses panic at their first mismatch.
+struct Wire(
+    /// Remaining expected accesses, consumed from the front.
+    VecDeque<Step>,
+);
 impl Io for Wire {
+    /// Consumes the next expected control write and checks exact `value`; panics on order/value mismatch.
     fn control(
         &mut self,
         value: u32,
@@ -21,6 +45,7 @@ impl Io for Wire {
         assert!(matches!(self.0.pop_front(), Some(Step::Control(want)) if value == want));
     }
 
+    /// Returns/consumes the next scripted status word; panics if the next operation is not a status read.
     fn status(&mut self) -> u32 {
         match self.0.pop_front() {
             Some(Step::Status(value)) => value,
@@ -28,6 +53,7 @@ impl Io for Wire {
         }
     }
 
+    /// Consumes the next scripted TX operation and checks `byte`; panics on order/value mismatch.
     fn write(
         &mut self,
         byte: u8,
@@ -35,6 +61,7 @@ impl Io for Wire {
         assert!(matches!(self.0.pop_front(), Some(Step::Write(want)) if byte == want));
     }
 
+    /// Returns/consumes the next scripted RX byte; panics for a different operation or exhausted transcript.
     fn read(&mut self) -> u8 {
         match self.0.pop_front() {
             Some(Step::Read(value)) => value,
@@ -43,11 +70,15 @@ impl Io for Wire {
     }
 }
 
+/// Returns the complete JEDEC transcript with four received `bytes` (first is
+/// discarded) and `delays` busy polls before each ready status, including final idle.
 fn script(
     bytes: [u8; 4],
     delays: usize,
 ) -> Wire {
     let mut steps = VecDeque::from([Step::Control(TIMING | EN)]);
+    /// Appends `delays` repeated `busy` statuses followed by one `ready` status
+    /// to the mutable ordered `steps` transcript.
     fn wait(
         steps: &mut VecDeque<Step>,
         busy: u32,
@@ -70,6 +101,8 @@ fn script(
     Wire(steps)
 }
 
+/// Exhausts byte values and delayed polling while checking command 0x9F, dummy writes and exactly three retained reply
+/// bytes.
 #[test]
 fn exact_read_only_wire_order_discards_only_command_byte() {
     for byte in 0..=255 {
@@ -86,6 +119,8 @@ fn exact_read_only_wire_order_discards_only_command_byte() {
     }
 }
 
+/// A single poll budget covers the entire transaction; every insufficient budget leaves final CS/direct-mode release
+/// unexecuted.
 #[test]
 fn one_budget_bounds_every_poll_and_never_deasserts_a_busy_chip_select() {
     for delays in [0, 1, 7] {
@@ -107,6 +142,7 @@ fn one_budget_bounds_every_poll_and_never_deasserts_a_busy_chip_select() {
     }
 }
 
+/// Nonempty initial/final FIFOs fail without the success cleanup write, requiring the caller's RAM fail-stop policy.
 #[test]
 fn unexpected_initial_or_final_fifo_contents_require_ram_fail_stop() {
     for position in [1, 19] {

@@ -1,3 +1,4 @@
+//! Floating division with nonfinite policy and SIO divider preservation.
 // Credit: taken from `rp-hal` (also licensed Apache+MIT)
 // https://github.com/rp-rs/rp-hal/blob/main/rp2040-hal/src/float/conv.rs
 
@@ -9,6 +10,10 @@ use crate::rom_data;
 // state into the function prologue.  That save and restore (push/pop) takes
 // longer than the actual division, so doing it in the common case where
 // they are not required wastes a lot of time.
+/// Calls `f` after waiting for and saving the current core's dirty SIO divider;
+/// returns its result after restoring operands and result registers. There is no
+/// timeout. Interrupt users must follow the same DIRTY preservation convention;
+/// unwinding from `f` skips restoration.
 #[inline(never)]
 #[cold]
 fn save_divider_and_call<F, R>(f: F) -> R
@@ -56,6 +61,8 @@ where
     result
 }
 
+/// Returns `f`'s result, saving/restoring the current core's SIO divider only
+/// when DIRTY indicates an outstanding result. `f` must not unwind when state is saved.
 fn save_divider<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
@@ -70,33 +77,46 @@ where
     }
 }
 
+/// Precision-specific ROM quotient entry point; caller supplies the nonfinite policy.
 trait ROMDiv {
-    fn rom_div(self, b: Self) -> Self;
+    /// Returns the ROM quotient of `self` and `b`; retains ROM rounding/subnormal behavior.
+    fn rom_div(
+        self,
+        b: Self,
+    ) -> Self;
 }
 
 impl ROMDiv for f32 {
-    fn rom_div(self, b: Self) -> Self {
+    /// Returns the ROM quotient of `self` and `b`; retains ROM rounding/subnormal behavior.
+    fn rom_div(
+        self,
+        b: Self,
+    ) -> Self {
         // ROM implementation uses the hardware divider, so we have to save it
         save_divider(|| rom_data::float_funcs::fdiv(self, b))
     }
 }
 
 impl ROMDiv for f64 {
-    fn rom_div(self, b: Self) -> Self {
+    /// Returns the ROM quotient of `self` and `b`; retains ROM rounding/subnormal behavior.
+    fn rom_div(
+        self,
+        b: Self,
+    ) -> Self {
         // ROM implementation uses the hardware divider, so we have to save it
         save_divider(|| rom_data::double_funcs::ddiv(self, b))
     }
 }
 
-fn div<F: Float + ROMDiv>(a: F, b: F) -> F {
+/// Returns `a` divided by `b`, handling NaN, infinite dividends and zero/zero
+/// before the ROM quotient. Finite ROM division preserves the core's SIO divider.
+fn div<F: Float + ROMDiv>(
+    a: F,
+    b: F,
+) -> F {
     if a.is_not_finite() {
         if b.is_not_finite() {
             // inf/NaN / inf/NaN = NaN
-            return F::NAN;
-        }
-
-        if b.is_zero() {
-            // inf/NaN / 0 = NaN
             return F::NAN;
         }
 
@@ -126,6 +146,7 @@ fn div<F: Float + ROMDiv>(a: F, b: F) -> F {
 intrinsics! {
     #[alias = __divsf3vfp]
     #[aeabi = __aeabi_fdiv]
+    /// Returns `a / b` with NaN/infinity/zero handling; ROM calls preserve the core SIO divider state.
     extern "C" fn __divsf3(a: f32, b: f32) -> f32 {
         div(a, b)
     }
@@ -133,7 +154,27 @@ intrinsics! {
     #[bootrom_v2]
     #[alias = __divdf3vfp]
     #[aeabi = __aeabi_ddiv]
+    /// Returns `a / b` with nonfinite handling and SIO divider preservation; ROM v2 is required for finite arithmetic (older ROM panics).
     extern "C" fn __divdf3(a: f64, b: f64) -> f64 {
         div(a, b)
+    }
+}
+
+/// Native checks exercise only software special-value branches, never ROM/MMIO.
+#[cfg(all(test, not(target_arch = "arm")))]
+mod tests {
+    /// Infinite dividends retain the quotient sign for signed zero divisors.
+    #[test]
+    fn infinite_dividend_over_zero_preserves_sign() {
+        for a in [f32::NEG_INFINITY, f32::INFINITY] {
+            for b in [-0.0_f32, 0.0] {
+                assert_eq!(super::div(a, b).to_bits(), (a / b).to_bits());
+            }
+        }
+        for a in [f64::NEG_INFINITY, f64::INFINITY] {
+            for b in [-0.0_f64, 0.0] {
+                assert_eq!(super::div(a, b).to_bits(), (a / b).to_bits());
+            }
+        }
     }
 }

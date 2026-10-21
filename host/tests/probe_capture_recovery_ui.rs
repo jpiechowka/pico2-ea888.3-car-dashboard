@@ -1,10 +1,19 @@
+//! Journal/UI integration preserves readable supported evidence beside an unsupported sibling until explicit full
+//! reset.
+
 use dashboard_core::discovery::{capture_store as journal, capture_ui as ui};
 use embassy_futures::block_on;
 
-struct Flash(Vec<u8>);
+/// In-memory NOR model for the reserved four-slot range.
+struct Flash(
+    /// Bytes addressed relative to FLASH_OFFSET, initialized erased by the test.
+    Vec<u8>,
+);
 impl journal::Storage for Flash {
+    /// No recoverable I/O failures are injected; invalid ranges and zero-to-one programming panic.
     type Error = ();
 
+    /// Copies reserved-range `offset` bytes into `bytes`; returns success, panicking on underflow/out-of-bounds ranges.
     async fn read(
         &mut self,
         offset: u32,
@@ -15,6 +24,7 @@ impl journal::Storage for Flash {
         Ok(())
     }
 
+    /// Fills one sector at `offset` with 0xFF and returns success; invalid ranges panic and alignment is caller-owned.
     async fn erase_sector(
         &mut self,
         offset: u32,
@@ -24,6 +34,8 @@ impl journal::Storage for Flash {
         Ok(())
     }
 
+    /// AND-programs `bytes` at `offset` and returns success; zero-to-one transitions/range violations panic.
+    /// Earlier byte effects remain if a later assertion fails; page alignment is caller-owned.
     async fn program_page(
         &mut self,
         offset: u32,
@@ -38,6 +50,8 @@ impl journal::Storage for Flash {
     }
 }
 
+/// Unknown sibling schema blocks overwrite but permits loading the older supported copy; only confirmed Reset erases
+/// both.
 #[test]
 fn older_valid_capture_remains_loadable_and_unknown_sibling_requires_full_reset_confirmation() {
     block_on(async {

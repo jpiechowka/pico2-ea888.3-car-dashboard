@@ -4,9 +4,14 @@ use dashboard_config::{Applicability, LimitMode, MAX_WIDGETS, ValidatedConfig};
 use super::*;
 use crate::warning_state::{CommandResult, WarningCommand, WarningEligibility};
 
+/// Valid index into the fixed 64-widget/rule storage, not a canonical channel index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RuleIndex(u8);
+pub struct RuleIndex(
+    /// Widget/rule index in 0..MAX_WIDGETS; construction bounds it.
+    u8,
+);
 impl RuleIndex {
+    /// Returns a bounded rule index for `index` <MAX_WIDGETS, otherwise `None`.
     pub const fn new(index: usize) -> Option<Self> {
         if index < MAX_WIDGETS {
             Some(Self(index as u8))
@@ -15,24 +20,37 @@ impl RuleIndex {
         }
     }
 
+    /// Returns the validated zero-based widget/rule array index.
     pub const fn index(self) -> usize { self.0 as usize }
 }
 
+/// Coherent configured-rule publication; raw validity and remembered episodes differ.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuleAlerts {
+    /// Raw state per configured widget, disabled for unused slots.
     states: [Status; MAX_WIDGETS],
+    /// Inclusive raw-validity deadlines in monotonic milliseconds.
     expires: [u64; MAX_WIDGETS],
     // Two 3-bit channel IDs per byte; avoids copying configuration in Watch.
+    /// Two channel nibbles per byte; low three bits identify canonical channel.
     channels: [u8; MAX_WIDGETS / 2],
+    /// Latest non-reversed raw-policy evaluation time in milliseconds.
     evaluated_at: u64,
+    /// Remembered episode bits awaiting qualified clear and acknowledgment.
     latched: u64,
+    /// Episode bits with qualified completed clear dwell.
     cleared: u64,
+    /// Episode bits with accepted acknowledgment.
     acknowledged: u64,
+    /// Episode bits with nonzero producer-managed snooze deadlines.
     snoozed: u64,
+    /// Saturating activation watermark; MAX is terminal, not an issued episode ID.
     pub(crate) event_serial: u64,
+    /// Last command result exposed to presentation, including rejected commands.
     pub(crate) result: CommandResult,
 }
 impl RuleAlerts {
+    /// All rules disabled, no episodes, no command result and event watermark zero.
     pub const DISABLED: Self = Self {
         states: [Status::Disabled; MAX_WIDGETS],
         expires: [0; MAX_WIDGETS],
@@ -46,6 +64,8 @@ impl RuleAlerts {
         result: CommandResult::EMPTY,
     };
 
+    /// Returns the packed canonical channel for widget `index`; unused slots map
+    /// to Boost but remain Disabled and have no held value.
     pub(crate) fn channel(
         &self,
         index: RuleIndex,
@@ -54,6 +74,9 @@ impl RuleAlerts {
         SensorId::ALL[((self.channels[i / 2] >> ((i % 2) * 4)) & 7) as usize]
     }
 
+    /// Returns raw status qualified with `samples` at `now` milliseconds plus
+    /// remembered flags for widget `index`. Reader does not advance/expire snoozes;
+    /// producer ticking owns those deadlines.
     pub(crate) fn eligibility(
         &self,
         index: RuleIndex,
@@ -70,6 +93,9 @@ impl RuleAlerts {
         }
     }
 
+    /// Returns widget `index` status qualified by coherent `samples` at `now`
+    /// milliseconds. Reversed time, expiry or absent channel value makes enabled
+    /// status Unavailable; Disabled remains Disabled and dwell is never advanced.
     pub(crate) fn status_at(
         &self,
         index: RuleIndex,
@@ -91,16 +117,22 @@ impl RuleAlerts {
     }
 }
 
+/// One configured episode's raw dwell, activation identity and snooze deadline.
 #[derive(Clone, Copy)]
 struct EpisodeState {
+    /// Shared source/context/dwell state with remembered flags.
     raw: State,
+    /// Nonzero activation identity, zero before activation or at terminal exhaustion.
     activation_serial: u64,
+    /// Exclusive monotonic millisecond snooze expiry; zero means not snoozed.
     snooze_until_ms: u64,
 }
 impl Default for EpisodeState {
+    /// Returns an empty unseen episode with no activation or snooze.
     fn default() -> Self { Self::EMPTY }
 }
 impl EpisodeState {
+    /// Empty constant episode for allocation-free fixed array initialization.
     const EMPTY: Self = Self {
         raw: State::EMPTY,
         activation_serial: 0,
@@ -108,16 +140,25 @@ impl EpisodeState {
     };
 }
 
+/// Mutable policy state inseparable from its enclosing immutable configuration.
 pub(crate) struct RuleEngineState {
+    /// Per-widget raw decisions and remembered episodes.
     states: [EpisodeState; MAX_WIDGETS],
+    /// Coherent published raw status/masks and command result.
     alerts: RuleAlerts,
+    /// Exact source binding per canonical channel, absent when unqualified/disabled.
     sources: [Option<Source>; 8],
+    /// Configured/applicable rule mask; source/context may still be unavailable.
     enabled: u64,
+    /// Greatest accepted raw-evaluation time in milliseconds.
     last_ms: u64,
+    /// Newest admitted command, used for exact idempotence and stale rejection.
     last_command: WarningCommand,
+    /// Result cached for an exact repeat of last_command.
     last_result: CommandResult,
 }
 impl RuleEngineState {
+    /// Empty construction storage; requires one immutable-policy initialization.
     pub(crate) const EMPTY: Self = Self {
         states: [EpisodeState::EMPTY; MAX_WIDGETS],
         alerts: RuleAlerts::DISABLED,
@@ -133,6 +174,8 @@ impl RuleEngineState {
         last_result: CommandResult::EMPTY,
     };
 
+    /// Returns empty configured state bound to `config` rules applicable in `mode`
+    /// with exact channel `sources`; caller preserves that configuration binding.
     pub(crate) fn new(
         config: &ValidatedConfig,
         mode: DataMode,
@@ -145,6 +188,10 @@ impl RuleEngineState {
 
     // Construction only: mutate the already-present empty engine. The owner
     // supplies the configuration from its immutable stored handle.
+    /// Initializes fresh empty storage from immutable `config`, explicit `mode`
+    /// and exact `sources`. Enables Demo rules or VehicleAndDemo applicability;
+    /// enabled slots begin Unavailable. Construction-only: masks/channels use OR,
+    /// so rerunning this on existing state is not a supported configuration change.
     pub(crate) fn initialize_bound_policy(
         &mut self,
         config: &ValidatedConfig,
@@ -163,10 +210,15 @@ impl RuleEngineState {
         }
     }
 
+    /// Returns the current publication; does not tick raw freshness or snooze expiry.
     pub(crate) const fn snapshot(&self) -> RuleAlerts { self.alerts }
 
+    /// Returns whether any applicable configured rule exists, independent of data availability.
     pub(crate) const fn enabled(&self) -> bool { self.enabled != 0 }
 
+    /// Returns source-bound canonical rule for widget `i` in immutable `config`,
+    /// or `None` without an admitted source. Panics if i is outside configured
+    /// widgets; internal enabled-mask callers guarantee the bound and validation.
     fn rule(
         &self,
         config: &ValidatedConfig,
@@ -224,6 +276,11 @@ impl RuleEngineState {
         })
     }
 
+    /// Evaluates qualified `samples` and verified optional `contexts` at monotonic
+    /// `now` milliseconds against immutable `config`. New raw activations get
+    /// checked-by-saturation episode IDs, clear acknowledgment, optionally latch,
+    /// and interrupt every snooze. Reversal invalidates raw decisions/snoozes,
+    /// preserving remembered episodes; MAX serial keeps visibility but disables ack.
     pub(crate) fn update_inputs(
         &mut self,
         config: &ValidatedConfig,
@@ -288,6 +345,7 @@ impl RuleEngineState {
         self.refresh_masks();
     }
 
+    /// Rebuilds publication masks from episode flags/deadlines without advancing time.
     fn refresh_masks(&mut self) {
         self.alerts.latched = 0;
         self.alerts.cleared = 0;
@@ -310,6 +368,8 @@ impl RuleEngineState {
         }
     }
 
+    /// Returns warning event/request exhaustion causes at terminal MAX counters;
+    /// reporting does not change visibility, restore identities or retry commands.
     pub(crate) fn exhaustion_status(&self) -> crate::cache_diagnostics::CacheExhaustionStatus {
         use crate::cache_diagnostics::{CacheExhaustionCause, CacheExhaustionStatus};
         let mut status = CacheExhaustionStatus::EMPTY;
@@ -326,6 +386,9 @@ impl RuleEngineState {
         status
     }
 
+    /// Clears expired snoozes at monotonic `now` milliseconds, or every snooze
+    /// on reversal relative to last raw evaluation, then refreshes masks. Does not
+    /// clear remembered latches or promote unavailable raw measurements.
     pub(crate) fn expire(
         &mut self,
         now: u64,
@@ -338,6 +401,12 @@ impl RuleEngineState {
         self.refresh_masks();
     }
 
+    /// Applies fenced acknowledgment `command` using immutable `config`, current
+    /// optional `run_id` and monotonic `now` milliseconds. Returns accepted/rejected
+    /// masks; wrong run/time, zero/stale ID or exhausted event serial rejects.
+    /// Exact repeats return the cached result without extending snooze. Only
+    /// observed active/latched episodes qualify; acknowledgment plus prior clear
+    /// removes latches, and configured snooze deadlines saturate without wrapping.
     pub(crate) fn apply_command(
         &mut self,
         config: &ValidatedConfig,
@@ -392,10 +461,14 @@ impl RuleEngineState {
 
 /// Borrowed policy facade. Its configuration cannot be replaced independently of state.
 pub struct RuleEngine<'a> {
+    /// Immutable validated document governing this state's entire lifetime.
     config: &'a ValidatedConfig,
+    /// Mutable episodes whose widget indices/sources refer to the bound document.
     state: RuleEngineState,
 }
 impl<'a> RuleEngine<'a> {
+    /// Returns a facade bound to `config`, explicit `mode` and exact channel
+    /// `sources`; construction alone enables no qualified measurement/ECU traffic.
     pub fn new(
         config: &'a ValidatedConfig,
         mode: DataMode,
@@ -407,18 +480,25 @@ impl<'a> RuleEngine<'a> {
         }
     }
 
+    /// Returns current raw alerts/episode flags, without present-time qualification.
     pub const fn snapshot(&self) -> RuleAlerts { self.state.snapshot() }
 
+    /// Returns the same immutable validated configuration used during construction.
     pub const fn configuration(&self) -> &ValidatedConfig { self.config }
 }
 
 // Measured traced ARM candidate passes unchanged memory and named stack gates.
+/// Upper bound preserving reviewed owner storage/headroom across pointer widths.
 const _: () = assert!(core::mem::size_of::<RuleEngine<'_>>() <= 4376);
+/// Upper bound on coherent publication copied through shared transport.
 const _: () = assert!(core::mem::size_of::<RuleAlerts>() <= 680);
 
 #[cfg(test)]
+/// Constant-construction and terminal warning-identity regression fixtures.
 mod tests {
     use super::*;
+    /// Returns unit after comparing empty episode/engine constants to original
+    /// field values; panics if construction changes counters, flags or bindings.
     #[test]
     fn constant_episode_and_rule_storage_match_original_empty_fields() {
         for episode in [EpisodeState::default(), EpisodeState::EMPTY] {
@@ -464,6 +544,8 @@ mod tests {
             );
         }
     }
+    /// Returns unit after final serial overflow retains visible latch and rejects
+    /// acknowledgment without issuing MAX; panics on identity reuse or lost warning.
     #[test]
     fn event_exhaustion_preserves_visible_latch_and_disables_acknowledgment() {
         let mut c = dashboard_config::default_config();

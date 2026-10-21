@@ -1,5 +1,8 @@
+//! Immutable config/project admission regressions; fixture construction panics on invalid defaults.
+
 use dashboard_helper_protocol::*;
 use studio_helper::build_input::*;
+/// Returns a default binary-config build request with matching SHA256 and stock options.
 fn request() -> BuildRequest {
     let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
     let mut buf = vec![0; dashboard_config::MAX_FILE_BYTES];
@@ -13,6 +16,7 @@ fn request() -> BuildRequest {
     }
 }
 #[test]
+/// A matching digest cannot admit malformed codec bytes, and valid bytes cannot bypass digest identity.
 fn digest_and_codec_are_both_required() {
     let good = request();
     assert!(AcceptedInput::from_request(&good).is_ok());
@@ -25,6 +29,7 @@ fn digest_and_codec_are_both_required() {
     assert!(AcceptedInput::from_request(&bad).is_err());
 }
 
+/// Returns the default project encoded without original source bytes; fixture failures panic.
 fn project_bytes() -> Vec<u8> {
     let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
     dashboard_config_tools::project::Project::new(&config, Default::default(), None)
@@ -33,6 +38,7 @@ fn project_bytes() -> Vec<u8> {
         .unwrap()
 }
 #[test]
+/// Equal uploads receive distinct IDs; session, token, digest and upload-size mismatches deny build authority.
 fn project_tokens_are_unique_session_bound_and_digest_bound() {
     let session = SessionId::new("1".repeat(32)).unwrap();
     let a = UploadedProject::admit(session.clone(), project_bytes()).unwrap();

@@ -1,4 +1,7 @@
+//! Protocol guards separating descriptor observations from explicit flash authority.
+
 use dashboard_helper_protocol::*;
+/// Returns a complete descriptor-only scan with unknown capacity and no flash readiness.
 fn report() -> DeviceScanReport {
     DeviceScanReport {
         schema_version: 1,
@@ -25,6 +28,7 @@ fn report() -> DeviceScanReport {
     }
 }
 #[test]
+/// Setting readiness on descriptor-only evidence makes the otherwise-valid report inadmissible.
 fn descriptors_cannot_claim_flash_readiness() {
     let mut r = report();
     assert!(r.validate().is_ok());
@@ -34,6 +38,7 @@ fn descriptors_cannot_claim_flash_readiness() {
     assert!(r.validate().is_err());
 }
 #[test]
+/// A raw 4 MiB capacity value cannot replace the required capacity state/provenance.
 fn capacity_requires_explicit_provenance() {
     let mut r = report();
     let mut devices = r.devices.into_vec();
@@ -43,6 +48,7 @@ fn capacity_requires_explicit_provenance() {
 }
 
 #[test]
+/// Incomplete inspection cannot serialize a trusted information digest without completed facts.
 fn incomplete_inspection_cannot_retain_trusted_information_digest() {
     let report = DeviceInspection {
         session_id: SessionId::new("1".repeat(32)).unwrap(),

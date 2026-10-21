@@ -1,7 +1,9 @@
+//! Legacy FPS formatting and two-buffer header repair checked against fresh pixels.
 use dashboard_host_validation::render::{FpsMode, RenderState};
 use dashboard_host_validation::renderer::St7789Renderer;
 use dashboard_host_validation::{AlignedFrame, widgets};
 
+/// Checks ties-to-even integer FPS formatting, disabled output and explicit nonfinite/out-of-range markers.
 #[test]
 fn fps_text_has_bounded_output_and_explicit_invalid_values() {
     use dashboard_host_validation::render::format_fps;
@@ -25,6 +27,7 @@ fn fps_text_has_bounded_output_and_explicit_invalid_values() {
     assert!(format_fps(FpsMode::Off, f32::MAX, f32::MAX).is_empty());
 }
 
+/// Page clears invalidate both physical headers even when their formatted FPS values remain unchanged.
 #[test]
 fn page_transition_clears_each_buffer_before_returning_to_cached_header() {
     let mut state = RenderState::new();
@@ -52,6 +55,7 @@ fn page_transition_clears_each_buffer_before_returning_to_cached_header() {
     }
 }
 
+/// Alternating buffers converge to fresh headers across rounding boundaries and every FPS display mode.
 #[test]
 fn header_pixels_converge_after_rounding_boundaries_and_mode_changes() {
     let mut state = RenderState::new();
@@ -74,6 +78,7 @@ fn header_pixels_converge_after_rounding_boundaries_and_mode_changes() {
     }
 }
 
+/// Removing an opaque popup repairs corrupted header bytes in both buffers without requiring new telemetry.
 #[test]
 fn popup_removal_repairs_both_header_buffers_without_a_value_change() {
     let mut state = RenderState::new();

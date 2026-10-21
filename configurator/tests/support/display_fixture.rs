@@ -4,6 +4,9 @@ use std::sync::Arc;
 use dashboard_config::startup_asset::*;
 use dashboard_config_tools::project as p;
 
+/// Returns a valid maximum-size four-frame EASA with recipe `label` and distinct source
+/// identity `original_tag`, externalized without browser storage. The seven-byte GIF-like
+/// source is identity evidence only, not a decodable original. Panics on fixture drift.
 pub fn artwork(
     label: &str,
     original_tag: u8,

@@ -7,6 +7,9 @@ use dashboard_config_tools::project as p;
 use dashboard_configurator::editor::Editor;
 use dashboard_startup_tools::{Fit, Options, Sheet, SourceKind};
 
+/// Returns admitted shared artwork converted from `source` with `options`; fixture
+/// callers use GIF/contain or sprite-sheet/stretch with logical GIF background. Recipe
+/// mapping is limited to those combinations; conversion/admission failures panic.
 fn artwork(
     source: &[u8],
     options: Options,
@@ -44,6 +47,9 @@ fn artwork(
     };
     Arc::new(p::Artwork::new(converted.asset.into(), recipe, Some(Arc::from(source))).unwrap())
 }
+/// Builds tiny/maximum artwork outside timing, then prints seven raw native batches
+/// of readiness/save-status queries; --preview instead measures shared startup drawing.
+/// Fixture size, conversion and editor admission failures panic.
 fn run() {
     let tiny = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
     let small = artwork(
@@ -104,6 +110,8 @@ fn run() {
         }
     }
 }
+/// Prints seven 128-frame native render batches for `artwork` under fixture label
+/// `name`, after warmup; uses four sample times and panics on shared-render failure.
 fn preview(
     name: &str,
     artwork: &p::Artwork,
@@ -143,6 +151,8 @@ fn preview(
         );
     }
 }
+/// Runs the benchmark on a named thread with a 2 MiB stack; thread creation or
+/// fixture/worker panic propagates. Output is host timing, not RP2350 throughput.
 fn main() {
     std::thread::Builder::new()
         .name("readiness-benchmark".into())

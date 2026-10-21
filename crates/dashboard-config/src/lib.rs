@@ -1,3 +1,6 @@
+//! Bounded dashboard configuration, migration, validation and startup-asset contracts.
+//! Decode into [`ValidatedConfig`] before runtime publication; deserializing [`Config`]
+//! alone does not validate editable values. JSON support requires the `json` feature.
 #![no_std]
 
 #[cfg(feature = "json")]
@@ -44,14 +47,20 @@ pub use validate::*;
 /// Startup owns this result before publishing an immutable configuration to
 /// either executor. The fault survives even though a complete default loads.
 pub struct BootConfig {
+    /// Admitted input or the complete reviewed default after decode/validation failure.
     pub config: ValidatedConfig,
+    /// Original input failure; `None` means the supplied bytes were admitted.
     pub fault: Option<ConfigError>,
 }
 
 // Config storage plus proof/fault metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
+/// Compile-time 32-bit storage ceiling; excludes call-stack and executor allocations.
 const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_620);
 
+/// Decode `bytes` and return boot-owned configuration plus the retained input fault.
+/// Malformed, unsupported or invalid input selects the entire default; no partial
+/// configuration is published. Panics only if the reviewed default fails validation.
 #[inline(never)]
 pub fn load_at_boot(bytes: &[u8]) -> BootConfig {
     match decode(bytes) {

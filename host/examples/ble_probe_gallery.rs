@@ -1,4 +1,4 @@
-//! Synthetic BLE probe evidence: cargo run --locked --example ble_probe_gallery -- <output-dir>.
+//! Synthetic BLE probe evidence: `cargo run --locked --example ble_probe_gallery -- <output-dir>`.
 //! Converts RGB565 framebuffer bytes to PPM; no radio or hardware is accessed.
 use std::io::Write;
 use std::path::Path;
@@ -7,6 +7,8 @@ use dashboard_core::discovery::*;
 use dashboard_core::display::St7789Renderer;
 use dashboard_core::display::telemetry::FrameRate;
 use dashboard_host_validation::AlignedFrame;
+/// Renders live `p` at synthetic 12400ms and writes stem `name` with .ppm suffix under `dir`; rendering/I/O failures
+/// panic.
 fn save(
     dir: &Path,
     name: &str,
@@ -16,6 +18,8 @@ fn save(
     render(&mut St7789Renderer::new(&mut frame.0), p, 12_400).unwrap();
     save_frame(dir, name, &frame);
 }
+/// Converts all landscape RGB565 `frame` pixels to RGB888 P6 under `dir` with stem `name` and .ppm suffix.
+/// Existing files are replaced; create/write failures panic and may leave partial output.
 fn save_frame(
     dir: &Path,
     name: &str,
@@ -30,6 +34,8 @@ fn save_frame(
             .unwrap();
     }
 }
+/// Renders slot `ui` with supplied synthetic `diagnostics`, writing stem `name` plus .ppm beneath `dir`; failures
+/// panic.
 fn save_slots(
     dir: &Path,
     name: &str,
@@ -40,6 +46,10 @@ fn save_slots(
     render_slots(&mut St7789Renderer::new(&mut frame.0), ui, diagnostics).unwrap();
     save_frame(dir, name, &frame);
 }
+/// Emits synthetic scan/inspection/saved-slot/error/reset-evidence PPMs into the first CLI argument's directory.
+/// Missing arguments, fixture invariant failures and I/O errors panic; trailing arguments are ignored and existing
+/// images replaced. All radio, timing, memory and peer observations are fabricated display fixtures; no device is
+/// contacted.
 fn main() {
     let directory = std::env::args_os().nth(1).expect("output directory");
     let directory = Path::new(&directory);

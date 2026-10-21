@@ -1,7 +1,10 @@
+//! Browser field bindings, retained raw repairs and revision-aware accepted-edit feedback.
 use dashboard_configurator::event_adapters::FieldCommit;
 
 use super::*;
 
+/// Finalizes `commit` against `ui` and emits one accepted-revision event with `label`;
+/// disposed signals or no accepted change produce no event or simulator restart.
 fn finish_field(
     ui: Ui,
     commit: StoredValue<FieldCommit>,
@@ -23,6 +26,8 @@ fn finish_field(
     }
 }
 
+/// Returns a legacy ASCII control ID from `field`'s debug spelling; non-alphanumerics
+/// become hyphens. Registry bindings provide candidate-position IDs where available.
 pub fn field_id(field: RawField) -> String {
     format!("field-{field:?}")
         .chars()
@@ -36,6 +41,8 @@ pub fn field_id(field: RawField) -> String {
         .collect()
 }
 
+/// Returns the representative raw control for `error`, or `None` for unsupported
+/// semantic fields or missing widget/view IDs; range errors focus the first boundary.
 fn validation_raw(error: ValidationError) -> Option<RawField> {
     let field = match error.field {
         Field::BlePeer => return Some(RawField::Ble(BleField::Address)),
@@ -98,8 +105,13 @@ fn validation_raw(error: ValidationError) -> Option<RawField> {
     Some(RawField::Widget(error.widget?, field))
 }
 
+/// Returns `ui`'s bounded issue navigation, preserving exact candidate/raw provenance.
+/// Unsupported locations remain read-only; JSON syntax errors offer the retained editor.
 #[component]
-pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
+pub fn DiagnosticFocus(
+    /// Shared editor, diagnostic inspection and guarded field authority.
+    ui: Ui
+) -> impl IntoView {
     let syntax = move || {
         ui.editor.with(|e| {
             match e.json_draft().map(|d| d.state()) {
@@ -133,12 +145,28 @@ pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
     </details> }
 }
 
+/// Captured reducer authority for one browser input callback, rechecked on dispatch.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RawBinding {
-    Normal(FieldToken),
-    Located(InspectionTarget),
-    Retained(InspectionTarget),
+    /// Ordinary field edit within the captured editor revision.
+    Normal(
+        /// Revision/selection-aware field capability.
+        FieldToken,
+    ),
+    /// New raw input scoped to a current inspected object.
+    Located(
+        /// Object inspection proof with unambiguous stable ID.
+        InspectionTarget,
+    ),
+    /// Repair of an already retained raw row.
+    Retained(
+        /// Exact raw-row inspection authority.
+        InspectionTarget,
+    ),
 }
+/// Returns suitable authority for `field` in `editor` and `ui`'s current inspection.
+/// Pending JSON, stale/ambiguous inspection or unsupported located repairs return `None`.
+/// Fields outside the inspected owner use the ordinary reducer token.
 fn raw_binding(
     ui: Ui,
     editor: &Editor,
@@ -178,6 +206,9 @@ fn raw_binding(
     }
     Some(RawBinding::Normal(editor.field_token()))
 }
+/// Applies `text` for `field` through captured `binding` in `ui`; returns the quiet
+/// reducer outcome and refreshes inspection only on success. Reducers reject stale tokens
+/// and may retain invalid raw values without replacing the accepted configuration.
 fn dispatch_raw(
     ui: Ui,
     binding: RawBinding,
@@ -198,6 +229,8 @@ fn dispatch_raw(
     ok
 }
 
+/// Applies preset `text` to `field` in `ui` only if captured `token` is current and
+/// a suitable raw binding exists; otherwise shows a stale/unavailable notice.
 pub(super) fn preset_raw(
     ui: Ui,
     token: FieldToken,
@@ -218,6 +251,9 @@ pub(super) fn preset_raw(
     }
 }
 
+/// Returns retained text for `field` in `editor` before formatting candidate values.
+/// Absent objects/bands and inactive optional values produce an empty string; numbers
+/// retain schema units, colours use RGB hex and physical CAN IDs use hexadecimal.
 pub fn raw_value(
     editor: &Editor,
     field: RawField,
@@ -365,15 +401,31 @@ pub fn raw_value(
     })
 }
 
+/// Returns a raw text control in `ui` for `field` with visible `label`/`hint`.
+/// `id` overrides the current registry ID when nonempty; `accessible_label` overrides
+/// screen-reader text and `disabled` adds a reactive lock. Input retains numeric prefixes
+/// only across its own acknowledged edits; external revisions replace local text.
+/// DOM length is 1024 characters; the reducer independently enforces byte/schema bounds.
 #[component]
 pub fn TextField(
+    /// Shared editor, diagnostics and inspection signals.
     ui: Ui,
+    /// Raw parser field and stable object identity.
     field: RawField,
+    /// Visible label and accepted-edit event context.
     label: &'static str,
-    #[prop(default = "")] hint: &'static str,
-    #[prop(default = String::new())] id: String,
-    #[prop(optional)] accessible_label: Option<String>,
-    #[prop(optional)] disabled: Option<Signal<bool>>,
+    /// Supplemental field guidance; empty by default.
+    #[prop(default = "")]
+    hint: &'static str,
+    /// Explicit DOM ID; empty resolves the registry binding each render.
+    #[prop(default = String::new())]
+    id: String,
+    /// Optional accessible label independent of visible text.
+    #[prop(optional)]
+    accessible_label: Option<String>,
+    /// Optional additional disabled condition; absence leaves binding guards in charge.
+    #[prop(optional)]
+    disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
     let id = move || if id.is_empty() { ui.raw_dom(field) } else { id.clone() };
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
@@ -420,20 +472,45 @@ pub fn TextField(
     }
 }
 
+/// Returns a select control in `ui` with `label`, reactive `value`, and value/label
+/// `options`. `on_change` receives current field authority and selected text; the DOM
+/// is then restored from model state. `layout` selects layout locks, while
+/// `repair_invalid_draft` permits repair controls through the ordinary invalid guard.
+/// `dynamic_id` precedes nonempty `id` and inferred label binding; `accessible_label`,
+/// `disabled` and `disabled_values` add presentation/accessibility constraints.
 #[component]
 pub fn Choice(
+    /// Shared editor and inspection state.
     ui: Ui,
+    /// Visible text and inferred registry binding name.
     label: &'static str,
+    /// Current model selection, restored after every callback.
     value: Signal<String>,
+    /// Ordered (serialized value, visible label) choices.
     options: Vec<(String, String)>,
+    /// Reducer callback responsible for validating captured authority and value.
     on_change: Callback<(FieldToken, String)>,
-    #[prop(default = false)] layout: bool,
-    #[prop(default = false)] repair_invalid_draft: bool,
-    #[prop(default = String::new())] id: String,
-    #[prop(optional)] dynamic_id: Option<Signal<String>>,
-    #[prop(optional)] accessible_label: Option<String>,
-    #[prop(optional)] disabled: Option<Signal<bool>>,
-    #[prop(optional)] disabled_values: Option<Signal<Vec<String>>>,
+    /// Use layout readiness instead of the general invalid-state lock.
+    #[prop(default = false)]
+    layout: bool,
+    /// Allow invalid-draft repair; read-only inspection and explicit locks still apply.
+    #[prop(default = false)]
+    repair_invalid_draft: bool,
+    /// Static DOM ID; empty falls back to label binding.
+    #[prop(default = String::new())]
+    id: String,
+    /// Reactive DOM ID taking precedence over the static ID.
+    #[prop(optional)]
+    dynamic_id: Option<Signal<String>>,
+    /// Optional screen-reader label.
+    #[prop(optional)]
+    accessible_label: Option<String>,
+    /// Optional additional lock for the whole select.
+    #[prop(optional)]
+    disabled: Option<Signal<bool>>,
+    /// Values whose individual options cannot be selected in the browser.
+    #[prop(optional)]
+    disabled_values: Option<Signal<Vec<String>>>,
 ) -> impl IntoView {
     let id = move || {
         dynamic_id.map(|id| id.get()).unwrap_or_else(|| {
@@ -462,15 +539,29 @@ pub fn Choice(
     }
 }
 
+/// Returns a checkbox in `ui` with `label` and reactive `value`; `on_change` receives
+/// captured field authority and the new boolean. The DOM is restored from model state.
+/// `repair_invalid_draft` bypasses the ordinary invalid guard; `disabled` and read-only
+/// inspection still lock it. Nonempty `id` overrides the inferred registry binding.
 #[component]
 pub fn Toggle(
+    /// Shared editor and inspection state.
     ui: Ui,
+    /// Visible text and inferred registry binding name.
     label: &'static str,
+    /// Model boolean restored after callback completion.
     value: Signal<bool>,
+    /// Reducer callback receiving current authority and requested value.
     on_change: Callback<(FieldToken, bool)>,
-    #[prop(default = false)] repair_invalid_draft: bool,
-    #[prop(default = String::new())] id: String,
-    #[prop(optional)] disabled: Option<Signal<bool>>,
+    /// Permit retained repairs while the draft is invalid.
+    #[prop(default = false)]
+    repair_invalid_draft: bool,
+    /// Explicit DOM ID, or empty for registry lookup.
+    #[prop(default = String::new())]
+    id: String,
+    /// Additional reactive lock independent of editor readiness.
+    #[prop(optional)]
+    disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
     let id = move || {
         if id.is_empty() {
@@ -493,6 +584,7 @@ pub fn Toggle(
     }
 }
 
+/// Returns owned value/label pairs copied from `items`, preserving order and duplicates.
 pub fn choices(items: &[(&str, &str)]) -> Vec<(String, String)> {
     items
         .iter()
@@ -500,6 +592,8 @@ pub fn choices(items: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Returns concise repair guidance for `error`, retaining debug classification for
+/// unsupported cases. This formats diagnostics without changing accepted or draft state.
 pub fn error_text(error: EditorError) -> String {
     match error {
         EditorError::Validation(e) => {
@@ -616,10 +710,15 @@ pub fn error_text(error: EditorError) -> String {
 }
 
 /// Both picker and text entry use the same transactional raw-field path.
+/// Returns paired controls for `field` in `ui` with `label`; invalid colour text is
+/// retained while the picker displays black as a fallback. Accepted changes emit grouped feedback.
 #[component]
 pub fn ColorField(
+    /// Shared editor and inspection state.
     ui: Ui,
+    /// RGB raw field used by both text entry and picker.
     field: RawField,
+    /// Visible text and picker accessibility label.
     label: &'static str,
 ) -> impl IntoView {
     let focus_key = StoredValue::new(ui.editor.with_untracked(FieldCommit::begin));

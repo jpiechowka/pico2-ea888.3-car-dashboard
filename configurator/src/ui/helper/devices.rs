@@ -3,8 +3,15 @@ use dashboard_helper_protocol::DeviceStatus;
 
 use super::*;
 
+/// Returns device selection/inspection and explicit board confirmation for `ui`.
+/// Only descriptor-only candidates offer inspection; confirmation requires a complete
+/// current report and records the user's genuine-Pico-2-W assertion, not measured capacity.
+/// No enumeration, inspection or flashing starts merely by rendering the panel.
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+pub fn Panel(
+    /// Shared helper device observations and explicit physical-board confirmation state.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.helper;
     view! {
         {move ||state.view.with(|v|v.devices.clone()).map(|report|view! {

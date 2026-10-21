@@ -1,13 +1,18 @@
+//! Ignored physical two-adapter integration scenario; compilation alone does not validate radio behavior.
 use tokio::select;
 use tokio::time::Duration;
 use trouble_host::prelude::*;
 
+/// Shared serial-adapter discovery/setup and supervision checks.
 mod common;
 
+/// One concurrent logical link per test-side host.
 const CONNECTIONS_MAX: usize = 1;
+/// Three dynamic-channel slots per test-side host.
 const L2CAP_CHANNELS_MAX: usize = 3;
 
-/// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
+/// Exchanges ten indexed four-byte SDUs each way on SPSM 0xf2 through two physical HCI adapters.
+/// Explicitly ignored; task errors or the 30-second overall timeout fail the scenario.
 #[tokio::test]
 #[ignore = "requires two physical Zephyr HCI UART adapters"]
 async fn l2cap_connection_oriented_channels() {
@@ -20,6 +25,7 @@ async fn l2cap_connection_oriented_channels() {
 
     let local = tokio::task::LocalSet::new();
 
+    /// Four bytes in each of ten messages sent in each direction.
     const PAYLOAD_LEN: usize = 4;
 
     // Spawn peripheral
@@ -52,7 +58,7 @@ async fn l2cap_connection_oriented_channels() {
                     &mut scan_data[..],
                 ).unwrap();
 
-                loop {
+                {
                     println!("[peripheral] advertising");
                     let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..adv_data_len],
@@ -79,7 +85,6 @@ async fn l2cap_connection_oriented_channels() {
                         ch1.send(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
-                    break;
                 }
                 Ok(())
             } => {
@@ -112,7 +117,7 @@ async fn l2cap_connection_oriented_channels() {
                 };
 
                 println!("[central] connecting");
-                loop {
+                {
                     let conn = central.connect(&config).await.unwrap();
                     println!("[central] connected");
                     let mut ch1 = L2capChannel::create(&stack, &conn, 0xf2, &Default::default()).await?;
@@ -129,7 +134,6 @@ async fn l2cap_connection_oriented_channels() {
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
                     println!("[central] data received");
-                    break;
                 }
                 Ok(())
             } => {
@@ -147,7 +151,7 @@ async fn l2cap_connection_oriented_channels() {
         }
         Err(e) => {
             println!("Test timed out: {:?}", e);
-            assert!(false);
+            panic!("L2CAP hardware exchange timed out");
         }
     }
 }

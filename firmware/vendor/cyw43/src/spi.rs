@@ -1,3 +1,5 @@
+//! CYW43 SPI command framing, power sequencing and cached backplane/status access.
+//! Low-level transport owns CS and cancellation cleanup; this adapter exposes no recoverable bus error.
 use aligned::{A4, Aligned};
 use embassy_futures::yield_now;
 use embassy_time::Timer;
@@ -12,28 +14,34 @@ use crate::util::{slice8_mut, slice32_mut, slice32_ref};
 /// Implementors are expected to hold the CS pin low during an operation.
 pub trait SpiBusCyw43 {
     /// Issues a write command on the bus
-    /// First 32 bits of `word` are expected to be a cmd word
+    /// `write` begins with a command word followed by payload words; returns the trailing device status.
+    /// The implementation must preserve buffer ownership until hardware access ends, including cancellation.
     async fn cmd_write(&mut self, write: &[u32]) -> u32;
 
     /// Issues a read command on the bus
-    /// `write` is expected to be a 32 bit cmd word
+    /// `write` is a command word; returns trailing device status after filling `read`.
+    /// The implementation must preserve buffer ownership until hardware access ends, including cancellation.
     /// `read` will contain the response of the device
     /// Backplane reads have a response delay that produces one extra unspecified word at the beginning of `read`.
     /// Callers that want to read `n` word from the backplane, have to provide a slice that is `n+1` words long.
     async fn cmd_read(&mut self, write: u32, read: &mut [u32]) -> u32;
 
     /// Wait for events from the Device. A typical implementation would wait for the IRQ pin to be high.
-    /// The default implementation always reports ready, resulting in active polling of the device.
+    /// The default yields once, then returns without inspecting hardware, resulting in active polling.
     async fn wait_for_event(&mut self) {
         yield_now().await;
     }
 }
 
-/// Doc
+/// SPI runner adapter owning radio power, transport and cached register state.
 pub struct SpiBus<PWR, SPI> {
+    /// Last fully programmed window base; 0xAAAAAAAA forces first-time programming.
     backplane_window: u32,
+    /// Active-high radio regulator-enable output, exclusively owned.
     pwr: PWR,
+    /// Transport handling command clocks, response delay and chip select.
     spi: SPI,
+    /// Latest trailing status; zero means no cached nonzero status for the next status read.
     status: u32,
 }
 
@@ -42,6 +50,7 @@ where
     PWR: OutputPin,
     SPI: SpiBusCyw43,
 {
+    /// Returns an uninitialized adapter owning `pwr` and `spi`, with invalid window and empty status caches.
     pub(crate) fn new(pwr: PWR, spi: SPI) -> Self {
         Self {
             backplane_window: 0xAAAA_AAAA,
@@ -51,6 +60,8 @@ where
         }
     }
 
+    /// Selects the window for `addr` and returns its `len`-byte register value (internal callers use 1,2,4).
+    /// Four-byte access sets the hardware word flag; keeps that window selected.
     async fn backplane_readn(&mut self, addr: u32, len: u32) -> u32 {
         trace!("backplane_readn addr = {:08x} len = {}", addr, len);
 
@@ -68,6 +79,7 @@ where
         return val;
     }
 
+    /// Writes low `len` bytes of `val` at backplane `addr` (internal len is 1,2,4), keeping its window selected.
     async fn backplane_writen(&mut self, addr: u32, val: u32, len: u32) {
         trace!("backplane_writen addr = {:08x} len = {} val = {:08x}", addr, len, val);
 
@@ -80,6 +92,8 @@ where
         self.writen(FUNC_BACKPLANE, bus_addr, val, len).await;
     }
 
+    /// Programs changed window bytes for `addr`, updating the cache only after all writes finish.
+    /// Cancellation can leave hardware partially changed while the cache still names the old window.
     async fn backplane_set_window(&mut self, addr: u32) {
         let new_window = addr & !BACKPLANE_ADDRESS_MASK;
 
@@ -110,6 +124,8 @@ where
         self.backplane_window = new_window;
     }
 
+    /// Returns a `len`-byte value from `func`/`addr`, skipping the extra backplane response word.
+    /// Internal len is 1,2,4; updates trailing-status cache without checking error flags.
     async fn readn(&mut self, func: u32, addr: u32, len: u32) -> u32 {
         let cmd = cmd_word(READ, INC_ADDR, func, addr, len);
         let mut buf = [0; 2];
@@ -122,12 +138,15 @@ where
         if func == FUNC_BACKPLANE { buf[1] } else { buf[0] }
     }
 
+    /// Sends low `len` bytes of `val` to `func`/`addr` (internal len 1,2,4), caching trailing status.
     async fn writen(&mut self, func: u32, addr: u32, val: u32, len: u32) {
         let cmd = cmd_word(WRITE, INC_ADDR, func, addr, len);
 
         self.status = self.spi.cmd_write(&[cmd, val]).await;
     }
 
+    /// Returns a halfword-swapped 32-bit value from `func`/`addr` for pre-configuration bus testing.
+    /// Does not support backplane response delay; caches returned trailing status.
     async fn read32_swapped(&mut self, func: u32, addr: u32) -> u32 {
         let cmd = cmd_word(READ, INC_ADDR, func, addr, 4);
         let cmd = swap16(cmd);
@@ -138,6 +157,7 @@ where
         swap16(buf[0])
     }
 
+    /// Writes halfword-swapped command and `val` to `func`/`addr` during initial bus-mode setup.
     async fn write32_swapped(&mut self, func: u32, addr: u32, val: u32) {
         let cmd = cmd_word(WRITE, INC_ADDR, func, addr, 4);
         let buf = [swap16(cmd), swap16(val)];
@@ -151,8 +171,12 @@ where
     PWR: OutputPin,
     SPI: SpiBusCyw43,
 {
+    /// Selects SPI status/interrupt paths in the runner.
     const TYPE: BusType = BusType::Spi;
 
+    /// Power-cycles the radio (20 ms low, 250 ms high), tests bus words and configures framing/IRQs.
+    /// `bluetooth_enabled` adds the F1 interrupt. Pin failures/test mismatches panic; initial FEEDBEAD polling
+    /// has no timeout. Cancellation leaves partially initialized power/bus state.
     async fn init(&mut self, bluetooth_enabled: bool) {
         // Reset
         trace!("WL_REG off/on");
@@ -240,6 +264,8 @@ where
         self.write16(FUNC_BUS, REG_BUS_INTERRUPT_ENABLE, val).await;
     }
 
+    /// Fills logical WLAN `buf` bytes and caches status; internal caller supplies initialized whole-word backing.
+    /// Transport clocks rounded-up words but the command carries exact byte length.
     async fn wlan_read(&mut self, buf: &mut Aligned<A4, [u8]>) {
         let len_in_u8 = buf.len() as u32;
         let buf = slice32_mut(buf);
@@ -250,6 +276,8 @@ where
         self.status = self.spi.cmd_read(cmd, &mut buf[..len_in_u32]).await;
     }
 
+    /// Sends WLAN `buf` rounded to whole words, copying into a 513-word command buffer; caches status.
+    /// Internal callers supply initialized trailing bytes and at most 2048 payload bytes; larger input panics.
     async fn wlan_write(&mut self, buf: &Aligned<A4, [u8]>) {
         let buf = slice32_ref(buf);
         let cmd = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, buf.len() as u32 * 4);
@@ -261,6 +289,8 @@ where
         self.status = self.spi.cmd_write(&cmd_buf[..buf.len() + 1]).await;
     }
 
+    /// Copies backplane `addr` into `data` in at most 64-byte window-safe chunks, skipping response delay.
+    /// Panics for unaligned addr; cancellation preserves a completed prefix. No status-error propagation.
     #[allow(unused)]
     async fn bp_read(&mut self, mut addr: u32, mut data: &mut [u8]) {
         trace!("bp_read addr = {:08x}", addr);
@@ -297,6 +327,8 @@ where
         }
     }
 
+    /// Sends logical `data` bytes at four-byte-aligned backplane `addr`, in at most 64-byte window-safe chunks.
+    /// Scratch storage supplies rounded transport words; command length excludes padding. Cancellation may deliver a prefix.
     async fn bp_write(&mut self, mut addr: u32, mut data: &[u8]) {
         trace!("bp_write addr = {:08x}", addr);
 
@@ -329,49 +361,63 @@ where
         }
     }
 
+    /// Returns the low 8 bits from backplane register `addr`, retaining its selected window.
     async fn bp_read8(&mut self, addr: u32) -> u8 {
         self.backplane_readn(addr, 1).await as u8
     }
 
+    /// Writes 8-bit `val` at backplane `addr`, retaining its selected window and caching status.
     async fn bp_write8(&mut self, addr: u32, val: u8) {
         self.backplane_writen(addr, val as u32, 1).await
     }
 
+    /// Returns the low 16 bits from backplane register `addr`, retaining its selected window.
     async fn bp_read16(&mut self, addr: u32) -> u16 {
         self.backplane_readn(addr, 2).await as u16
     }
 
     #[allow(unused)]
+    /// Writes 16-bit `val` at backplane `addr`, retaining its selected window and caching status.
     async fn bp_write16(&mut self, addr: u32, val: u16) {
         self.backplane_writen(addr, val as u32, 2).await
     }
 
+    /// Copies backplane `addr` into `data` in at most 64-byte window-safe chunks, skipping response delay.
+    /// Panics for unaligned addr; cancellation preserves a completed prefix. No status-error propagation.
     #[allow(unused)]
+    /// Returns the low 32 bits from backplane register `addr`, retaining its selected window.
     async fn bp_read32(&mut self, addr: u32) -> u32 {
         self.backplane_readn(addr, 4).await
     }
 
+    /// Writes 32-bit `val` at backplane `addr`, retaining its selected window and caching status.
     async fn bp_write32(&mut self, addr: u32, val: u32) {
         self.backplane_writen(addr, val, 4).await
     }
 
+    /// Returns 8-bit data at `func`/`addr`, caching trailing status.
     async fn read8(&mut self, func: u32, addr: u32) -> u8 {
         self.readn(func, addr, 1).await as u8
     }
 
+    /// Writes 8-bit `val` at `func`/`addr` and caches trailing device status.
     async fn write8(&mut self, func: u32, addr: u32, val: u8) {
         self.writen(func, addr, val as u32, 1).await
     }
 
+    /// Returns 16-bit data at `func`/`addr`, caching trailing status.
     async fn read16(&mut self, func: u32, addr: u32) -> u16 {
         self.readn(func, addr, 2).await as u16
     }
 
     #[allow(unused)]
+    /// Writes 16-bit `val` at `func`/`addr` and caches trailing device status.
     async fn write16(&mut self, func: u32, addr: u32, val: u16) {
         self.writen(func, addr, val as u32, 2).await
     }
 
+    /// Returns 32-bit data at `func`/`addr`; a status-register read consumes cached nonzero status first.
+    /// A zero cache causes a fresh bus read, so zero is both a valid status and cache-empty sentinel.
     async fn read32(&mut self, func: u32, addr: u32) -> u32 {
         if func == FUNC_BUS && addr == SPI_STATUS_REGISTER && self.status != 0 {
             let status = self.status;
@@ -384,19 +430,24 @@ where
     }
 
     #[allow(unused)]
+    /// Writes 32-bit `val` at `func`/`addr` and caches trailing device status.
     async fn write32(&mut self, func: u32, addr: u32, val: u32) {
         self.writen(func, addr, val, 4).await
     }
 
+    /// Delegates transport IRQ waiting, or its yield-based polling fallback.
     async fn wait_for_event(&mut self) {
         self.spi.wait_for_event().await;
     }
 }
 
+/// Returns `x` with its low/high 16-bit halves exchanged; byte order within halves is unchanged.
 fn swap16(x: u32) -> u32 {
     x.rotate_left(16)
 }
 
+/// Returns SPI framing for `write`, increment flag `incr`, two-bit `func`, 17-bit `addr` and 11-bit byte `len`.
+/// Truncates out-of-field bits rather than validating them; internal callers bound their addresses/counts.
 fn cmd_word(write: bool, incr: bool, func: u32, addr: u32, len: u32) -> u32 {
     (write as u32) << 31 | (incr as u32) << 30 | (func & 0b11) << 28 | (addr & 0x1FFFF) << 11 | (len & 0x7FF)
 }

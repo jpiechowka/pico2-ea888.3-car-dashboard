@@ -1,3 +1,4 @@
+//! Permanent task wrappers with one concrete instrumented future per hardware owner.
 use core::pin::pin;
 use core::sync::atomic::Ordering;
 
@@ -23,12 +24,16 @@ use crate::bridge::Control as UiInput;
 use crate::{bridge, metrics, radio};
 
 #[embassy_executor::task]
+/// Owns radio `resources` on core0 indefinitely, measuring actual owner polls.
+/// Radio failures retain the bus owner until watchdog recovery; never cancel it.
 pub async fn probe_radio_task(resources: radio::Resources) {
     let mut owner = pin!(radio::run(resources));
     metrics::measure(0, core::future::poll_fn(|cx| radio::poll_owner(owner.as_mut(), cx))).await;
 }
 
 #[embassy_executor::task]
+/// Returns the single core1 UI future wrapped in polling-work instrumentation;
+/// avoids constructing a second large async future on the startup stack.
 pub fn probe_ui_task() -> impl core::future::Future<Output = ()> {
     // Own the future once; an outer async wrapper materializes another full
     // UI future on the stack before its first poll on the pinned compiler.
@@ -36,6 +41,10 @@ pub fn probe_ui_task() -> impl core::future::Future<Output = ()> {
 }
 
 #[embassy_executor::task]
+/// Owns SPI0 `spi`, command/data `dc`, chip-select `cs` and backlight `bl`.
+/// Initializes with backlight off, then transfers each READY frame in full and
+/// returns it to FREE only after HAL success/CS high. Failure latches fatal state
+/// and retains the framebuffer forever until watchdog reset; never cancel SPI.
 pub async fn probe_display_task(
     spi: Spi<'static, SPI0, Async>,
     dc: Peri<'static, PIN_16>,
@@ -77,6 +86,10 @@ pub async fn probe_display_task(
 }
 
 #[embassy_executor::task]
+/// Owns active-low buttons `a`, `b`, `x`, `y` on core0 and sends bounded controls.
+/// Polls every 10 ms after handling; queue backpressure can extend the interval.
+/// A hold inspects, X distinguishes short/hold, and Y hold requests recovery.
+/// This permanent task does not directly start BLE or mutate capture storage.
 pub async fn probe_inputs_task(
     a: Peri<'static, PIN_12>,
     b: Peri<'static, PIN_13>,
@@ -132,6 +145,9 @@ pub async fn probe_inputs_task(
 }
 
 #[embassy_executor::task]
+/// Owns exclusive I2C0 `bus` indefinitely, initializes/reads the retained encoder,
+/// and parks only between complete iterations. Normal failure retries after 200 ms;
+/// success waits 20 ms. Never cancels I2C: a stall remains owned for supervision.
 pub async fn probe_encoder_task(mut bus: I2c<'static, I2C0, embassy_rp::i2c::Async>) {
     metrics::measure(
         0,
@@ -181,21 +197,32 @@ pub async fn probe_encoder_task(mut bus: I2c<'static, I2C0, embassy_rp::i2c::Asy
     .await;
 }
 
+/// Watchdog and PIM715 RGB pin ownership transferred once from boot to supervisor.
 pub struct SupervisorResources {
+    /// Sole feeding and retained-failure-record owner.
     pub watchdog: RecoveryWatchdog,
+    /// Active-low PIM715 red output on GP26.
     pub red: Peri<'static, PIN_26>,
+    /// Active-low PIM715 green output on GP27.
     pub green: Peri<'static, PIN_27>,
+    /// Active-low PIM715 blue output on GP28.
     pub blue: Peri<'static, PIN_28>,
 }
 // Main transfers the sole owner before spawning. Argument-free task creation
 // avoids materializing a second complete supervisor future on the stack.
+/// One boot-filled mailbox avoiding a duplicated large supervisor task argument.
 pub static SUPERVISOR: Channel<CriticalSectionRawMutex, SupervisorResources, 1> = Channel::new();
 
 #[embassy_executor::task]
+/// Returns the permanent core0 supervisor future with per-poll work accounting.
 pub fn probe_supervisor_task() -> impl core::future::Future<Output = ()> {
     metrics::measure(0, probe_supervisor_task_run())
 }
 
+/// Takes boot-owned watchdog/RGB resources once and supervises every 50 ms.
+/// Requires encoder/UI/buttons/display and actual radio bus progress, with a
+/// 12-second host-start deadline. First failure records retained cause, latches
+/// fatal RGB, and stops feeding; no later healthy observation clears that failure.
 async fn probe_supervisor_task_run() {
     let SupervisorResources {
         mut watchdog,
@@ -292,6 +319,8 @@ async fn probe_supervisor_task_run() {
     }
 }
 
+/// Returns independent wrapping task counters plus display-active state;
+/// successful HAL completions supply the display count, never render attempts.
 fn progress() -> Progress {
     // The utility's acquisition owner is the encoder. Display tracks actual
     // transfer activity/completion; it does not publish dashboard generations.

@@ -1,3 +1,4 @@
+//! Producer-owned history under watch coalescing, display stalls and timed retained rendering.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
 use dashboard_host_validation::display::St7789Renderer;
@@ -9,6 +10,8 @@ use dashboard_host_validation::{AlignedFrame, colors};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 
+/// Reader cadence and a 124-second paint gap cannot alter literal producer history; both old buffers converge to its
+/// pixels.
 #[test]
 fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_display_stall() {
     for periods in [
@@ -75,6 +78,7 @@ fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_di
     }
 }
 
+/// Irregular real samples choose bucket endpoints while missing time remains gaps rather than synthesized values.
 #[test]
 fn irregular_acquisition_selects_real_samples_without_backfill_or_fps_ticks() {
     let mut state = SensorState::new();
@@ -95,6 +99,7 @@ fn irregular_acquisition_selects_real_samples_without_backfill_or_fps_ticks() {
     assert!(state.history().iter().any(|(_, v)| v.is_none()));
 }
 
+/// Accepted history changes and statistics reset change graph identity; a duplicate timestamp cannot do so.
 #[test]
 fn graph_identity_tracks_only_history_changes_and_reset_not_display_ticks() {
     let mut model = AcquisitionModel::demo();
@@ -111,6 +116,7 @@ fn graph_identity_tracks_only_history_changes_and_reset_not_display_ticks() {
     assert_ne!(model.snapshot().sensors[0].graph_cache_identity(), sampled);
 }
 
+/// Adjacent valid buckets connect, missing/faulted buckets break segments, and isolated newest samples remain visible.
 #[test]
 fn timed_graph_connects_only_adjacent_buckets_and_draws_isolated_points() {
     use dashboard_host_validation::history::History;
@@ -152,6 +158,7 @@ fn timed_graph_connects_only_adjacent_buckets_and_draws_isolated_points() {
     assert_eq!(gap.pixel(237, 11), 0xFFFF, "single newest point remains visible");
 }
 
+/// Producer time advances graph gaps in both retained buffers while current value and sample sequence stay unchanged.
 #[test]
 fn timer_scrolls_repeated_values_in_both_retained_buffers() {
     let mut model = AcquisitionModel::demo();

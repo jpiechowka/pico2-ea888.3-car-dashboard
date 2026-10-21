@@ -3,6 +3,9 @@ use dashboard_helper_protocol::BuildAttemptState;
 
 use super::*;
 
+/// Requests cleanup of attempt `id` in `ui` only when operations are available and
+/// the latest admitted storage view still grants a cleanup ID. Otherwise does nothing;
+/// the helper rechecks ownership/protection before any filesystem removal.
 fn remove(
     ui: Ui,
     id: &str,
@@ -17,8 +20,14 @@ fn remove(
     send(ui, Action::CleanupBuild);
 }
 
+/// Returns `ui`'s retained-build inventory and per-attempt confirmation controls.
+/// Protected/incomplete attempts stay read-only; deletion requires explicit confirmation
+/// and a fresh cleanup check. Rendering the panel does not fetch inventory or remove files.
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+pub fn Panel(
+    /// Shared helper storage inspection, cleanup selection and confirmation state.
+    ui: Ui
+) -> impl IntoView {
     view! {<details class="build-disclosure"><summary>"Build storage"</summary>
         <p>"Review the files retained by local builds. Removing an attempt frees its compiler output and saved inputs; your open Studio project and the Pico are unchanged."</p>
         <div class="helper-actions"><button disabled=move ||operation_unavailable(ui) on:click=move |_|send(ui,Action::Storage)>"Refresh build storage"</button></div>

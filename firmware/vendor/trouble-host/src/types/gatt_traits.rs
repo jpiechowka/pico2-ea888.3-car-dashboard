@@ -1,3 +1,5 @@
+//! Borrowed GATT value encodings and bounded owned decoding.
+//! Primitive encodings use native memory byte order; supported RP2350 and host targets are little-endian.
 use core::{mem, slice};
 
 use bt_hci::uuid::BluetoothUuid16;
@@ -26,8 +28,7 @@ pub trait AsGatt {
     const MIN_SIZE: usize;
     /// The maximum size the type might be
     const MAX_SIZE: usize;
-    /// Converts to gatt bytes.
-    /// Must return a slice of len in MIN_SIZE..=MAX_SIZE
+    /// Returns a borrowed encoding with length in MIN_SIZE..=MAX_SIZE; no allocation is required.
     fn as_gatt(&self) -> &[u8];
 }
 
@@ -35,19 +36,22 @@ pub trait AsGatt {
 ///
 /// Requires that the type implements AsGatt
 pub trait FromGatt: AsGatt + Sized {
-    /// Converts from gatt bytes.
-    /// Must return FromGattError::InvalidLength if data.len not in MIN_SIZE..=MAX_SIZE
+    /// Returns a value decoded from `data`; reject unsupported lengths with InvalidLength.
+    /// String implementations additionally reject malformed UTF-8 with InvalidCharacter.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 }
 
+/// Generates exact-width native-endian codecs for Copy types with every bit pattern valid and no padding.
 macro_rules! primitive {
     ($($ty:ty),*) => {
         $(
             impl FixedGattValue for $ty {
+                /// Exact in-memory width in bytes.
                 const SIZE: usize = mem::size_of::<Self>();
             }
 
             impl FromGatt for $ty {
+                /// Returns an unaligned native-endian copy of `data`; rejects any non-exact length.
                 fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
                     if data.len() != Self::SIZE {
                         Err(FromGattError::InvalidLength)
@@ -62,9 +66,12 @@ macro_rules! primitive {
             }
 
             impl AsGatt for $ty {
+                /// Native value width; shorter encodings are invalid.
                 const MIN_SIZE: usize = mem::size_of::<Self>();
+                /// Native value width; longer encodings are invalid.
                 const MAX_SIZE: usize = mem::size_of::<Self>();
 
+                /// Returns the initialized object bytes borrowed from self, without endian conversion.
                 fn as_gatt(&self) -> &[u8] {
                     // SAFETY
                     // - Slice is of type u8 so data is guaranteed valid for reads of any length
@@ -93,10 +100,12 @@ primitive!(
 );
 
 impl FixedGattValue for () {
+    /// Zero-byte value.
     const SIZE: usize = 0;
 }
 
 impl FromGatt for () {
+    /// Returns unit only for empty `data`; otherwise InvalidLength.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
@@ -107,19 +116,24 @@ impl FromGatt for () {
 }
 
 impl AsGatt for () {
+    /// Unit has no encoded bytes.
     const MIN_SIZE: usize = Self::SIZE;
+    /// Unit has no encoded bytes.
     const MAX_SIZE: usize = Self::SIZE;
 
+    /// Returns the empty slice.
     fn as_gatt(&self) -> &[u8] {
         &[]
     }
 }
 
 impl FixedGattValue for bool {
+    /// Boolean values occupy one encoded byte.
     const SIZE: usize = 1;
 }
 
 impl FromGatt for bool {
+    /// Returns false for one zero byte, true for any one nonzero byte in `data`; rejects other lengths.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
@@ -130,9 +144,12 @@ impl FromGatt for bool {
 }
 
 impl AsGatt for bool {
+    /// Both Boolean encodings occupy one byte.
     const MIN_SIZE: usize = Self::SIZE;
+    /// Both Boolean encodings occupy one byte.
     const MAX_SIZE: usize = Self::SIZE;
 
+    /// Returns the canonical one-byte encoding (zero or one).
     fn as_gatt(&self) -> &[u8] {
         match self {
             true => &[0x01],
@@ -142,21 +159,26 @@ impl AsGatt for bool {
 }
 
 impl<const N: usize> FromGatt for Vec<u8, N> {
+    /// Returns an owned copy of `data`, or InvalidLength when its byte length exceeds N.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         Self::from_slice(data).map_err(|_| FromGattError::InvalidLength)
     }
 }
 
 impl<const N: usize> AsGatt for Vec<u8, N> {
+    /// Empty values are admitted.
     const MIN_SIZE: usize = 0;
+    /// Maximum capacity in bytes.
     const MAX_SIZE: usize = N;
 
+    /// Returns the occupied byte prefix, excluding unused capacity.
     fn as_gatt(&self) -> &[u8] {
         self
     }
 }
 
 impl<const N: usize> FromGatt for [u8; N] {
+    /// Returns `data` copied into a zero-filled N-byte array; rejects lengths greater than N.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() <= Self::MAX_SIZE {
             let mut actual = [0; N];
@@ -169,25 +191,101 @@ impl<const N: usize> FromGatt for [u8; N] {
 }
 
 impl<const N: usize> AsGatt for [u8; N] {
+    /// Empty values are admitted.
     const MIN_SIZE: usize = 0;
+    /// Maximum capacity in bytes.
     const MAX_SIZE: usize = N;
 
+    /// Returns all N bytes, including any zeros added during decoding.
     fn as_gatt(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
 impl<const N: usize> FromGatt for String<N> {
+    /// Returns owned UTF-8 decoded from `data`; capacity overflow is InvalidLength, malformed text InvalidCharacter.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         String::from_utf8(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)?)
             .map_err(|_| FromGattError::InvalidCharacter)
     }
 }
 
+impl<const N: usize> AsGatt for String<N> {
+    /// Empty values are admitted.
+    const MIN_SIZE: usize = 0;
+    /// Maximum capacity in bytes.
+    const MAX_SIZE: usize = N;
+
+    /// Returns occupied UTF-8 bytes without a trailing NUL.
+    fn as_gatt(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+impl AsGatt for str {
+    /// Empty values are admitted.
+    const MIN_SIZE: usize = 0;
+
+    /// No additional compile-time bound beyond the slice/string length.
+    const MAX_SIZE: usize = usize::MAX;
+
+    /// Returns UTF-8 bytes without a trailing NUL.
+    fn as_gatt(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl AsGatt for [u8] {
+    /// Empty values are admitted.
+    const MIN_SIZE: usize = 0;
+
+    /// No additional compile-time bound beyond the slice/string length.
+    const MAX_SIZE: usize = usize::MAX;
+
+    /// Returns the original byte slice with no copy or length prefix.
+    fn as_gatt(&self) -> &[u8] {
+        self
+    }
+}
+
+impl AsGatt for crate::types::uuid::Uuid {
+    /// Smallest supported UUID width in bytes.
+    const MIN_SIZE: usize = 2;
+    /// Largest supported UUID width; intermediate lengths other than four remain invalid.
+    const MAX_SIZE: usize = 16;
+
+    /// Returns raw little-endian UUID bytes; 32-bit values are not expanded to 128 bits.
+    fn as_gatt(&self) -> &[u8] {
+        self.as_raw()
+    }
+}
+
+impl FromGatt for crate::types::uuid::Uuid {
+    /// Returns a UUID from little-endian `data` of exactly 2, 4 or 16 bytes; other lengths are InvalidLength.
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
+    }
+}
+
+impl<T: AsGatt + ?Sized> AsGatt for &T {
+    /// Same lower encoded-size bound as the referent.
+    const MIN_SIZE: usize = T::MIN_SIZE;
+
+    /// Same upper encoded-size bound as the referent.
+    const MAX_SIZE: usize = T::MAX_SIZE;
+
+    /// Returns the borrowed referent encoding, preserving its implementation-specific representation.
+    fn as_gatt(&self) -> &[u8] {
+        <T as AsGatt>::as_gatt(*self)
+    }
+}
+
 #[cfg(test)]
+/// Regressions for UTF-8 validity and fixed-capacity String decoding.
 mod bounded_string_tests {
     use super::*;
 
+    /// Empty/exact multibyte strings succeed; overflow and malformed UTF-8 return distinct errors.
     #[test]
     fn capacity_and_utf8_errors_are_results() {
         assert_eq!(String::<0>::from_gatt(b"").unwrap().as_str(), "");
@@ -195,59 +293,5 @@ mod bounded_string_tests {
         assert_eq!(String::<4>::from_gatt(b"abcde"), Err(FromGattError::InvalidLength));
         assert_eq!(String::<0>::from_gatt(b"a"), Err(FromGattError::InvalidLength));
         assert_eq!(String::<4>::from_gatt(&[0xff]), Err(FromGattError::InvalidCharacter));
-    }
-}
-
-impl<const N: usize> AsGatt for String<N> {
-    const MIN_SIZE: usize = 0;
-    const MAX_SIZE: usize = N;
-
-    fn as_gatt(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
-
-impl AsGatt for str {
-    const MIN_SIZE: usize = 0;
-
-    const MAX_SIZE: usize = usize::MAX;
-
-    fn as_gatt(&self) -> &[u8] {
-        self.as_bytes()
-    }
-}
-
-impl AsGatt for [u8] {
-    const MIN_SIZE: usize = 0;
-
-    const MAX_SIZE: usize = usize::MAX;
-
-    fn as_gatt(&self) -> &[u8] {
-        self
-    }
-}
-
-impl AsGatt for crate::types::uuid::Uuid {
-    const MIN_SIZE: usize = 2;
-    const MAX_SIZE: usize = 16;
-
-    fn as_gatt(&self) -> &[u8] {
-        self.as_raw()
-    }
-}
-
-impl FromGatt for crate::types::uuid::Uuid {
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
-    }
-}
-
-impl<T: AsGatt + ?Sized> AsGatt for &T {
-    const MIN_SIZE: usize = T::MIN_SIZE;
-
-    const MAX_SIZE: usize = T::MAX_SIZE;
-
-    fn as_gatt(&self) -> &[u8] {
-        <T as AsGatt>::as_gatt(*self)
     }
 }

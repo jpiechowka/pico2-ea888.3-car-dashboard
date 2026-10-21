@@ -19,35 +19,53 @@ use crate::editor::PointerTarget;
 /// The displayed canvas content, excluding borders and letterboxing. Values are
 /// CSS pixels from the same coordinate space as PointerEvent.clientX/clientY.
 pub struct ContentRect {
+    /// Left content edge in client CSS pixels, excluding borders/letterboxing.
     pub left: f64,
+    /// Top content edge in client CSS pixels.
     pub top: f64,
+    /// Positive content width in CSS pixels; checked before mapping.
     pub width: f64,
+    /// Positive content height in CSS pixels; checked before mapping.
     pub height: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Two-dimensional point; mapping results use panel pixels, drag origins use CSS pixels.
 pub struct PanelPoint {
+    /// Horizontal coordinate in the producing operation's coordinate space.
     pub x: f64,
+    /// Vertical coordinate in the producing operation's coordinate space.
     pub y: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Zero-based dashboard grid location below the header.
 pub struct Cell {
+    /// Horizontal cell index within the effective geometry.
     pub column: u8,
+    /// Vertical cell index within the effective geometry.
     pub row: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Pointer distance from the grabbed widget's top-left corner in native panel pixels.
 pub struct GrabOffset {
+    /// Horizontal distance; must remain inside the widget width.
     x: f64,
+    /// Vertical distance; validated against supported row heights when dropped.
     y: f64,
 }
 
 impl GrabOffset {
+    /// Anchor at the widget's top-left corner, with zero panel-pixel displacement.
     pub const TOP_LEFT: Self = Self { x: 0.0, y: 0.0 };
 
+    /// Returns the center of `span` placed in the first landscape row.
     pub fn center(span: Span) -> Self { Self::center_in(Geometry::Landscape, span) }
 
+    /// Returns the center of `span` at row/column zero in `geometry`, in panel pixels.
+    /// All current span/geometry combinations fit there; adding a nonfitting span
+    /// without updating this invariant would panic.
     pub fn center_in(
         geometry: Geometry,
         span: Span,
@@ -67,18 +85,33 @@ impl GrabOffset {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Mapping/admission rejection; callers retain the last accepted placement.
 pub enum GeometryError {
+    /// Nonfinite, nonpositive or unrepresentable CSS content bounds.
     InvalidRect,
+    /// A supplied pointer coordinate is NaN or infinite.
     NonFinitePointer,
+    /// Pointer lies outside half-open canvas bounds, including rounded panel edges.
     OutsideCanvas,
+    /// Pointer lands in the noninteractive header.
     Header,
+    /// Pointer does not lie inside the widget being grabbed.
     OutsideWidget,
+    /// Grab offset is nonfinite, negative or outside the widget's possible extent.
     InvalidOffset,
+    /// The snapped widget cannot fit within the effective grid.
     OutsideGrid,
+    /// Requested existing widget ID does not occur in the candidate configuration.
     MissingWidget,
+    /// Requested view ID does not occur in the candidate configuration.
     MissingView,
+    /// Adding a library widget would exceed the bounded widget collection.
     Capacity,
-    Validation(ValidationError),
+    /// Shared full-configuration validation rejected the placement candidate.
+    Validation(
+        /// Exact full-configuration validation rejection.
+        ValidationError,
+    ),
 }
 
 /// A physical client-space movement is required before layout mapping. Canvas
@@ -86,11 +119,16 @@ pub enum GeometryError {
 pub const DRAG_THRESHOLD_CSS_PX: f64 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Pointer-down origin and sticky movement threshold for one drag gesture.
 pub struct DragGesture {
+    /// Original pointer location in client CSS pixels, independent of canvas reflow.
     origin: PanelPoint,
+    /// Once true, remains true even if the pointer returns to its origin.
     dragging: bool,
 }
 impl DragGesture {
+    /// Returns a stationary gesture at `client_x`/`client_y` in CSS pixels, or
+    /// `NonFinitePointer` if either coordinate is not finite.
     pub fn new(
         client_x: f64,
         client_y: f64,
@@ -107,10 +145,14 @@ impl DragGesture {
         })
     }
 
+    /// Returns whether this gesture has ever crossed the CSS movement threshold.
     pub fn is_dragging(self) -> bool { self.dragging }
 
     /// The threshold is Euclidean distance in CSS pixels, independent of canvas
     /// scale. Once crossed, a gesture remains a drag even if it returns to origin.
+    /// Maps `client_x`/`client_y` inside `rect` using landscape geometry and the
+    /// supplied `target`, `span` and panel-pixel `offset`. Returns `Ok(None)` before
+    /// the threshold, otherwise the placement or the mapping rejection.
     pub fn placement(
         &mut self,
         rect: ContentRect,
@@ -123,6 +165,10 @@ impl DragGesture {
         self.placement_in(Geometry::Landscape, rect, (client_x, client_y), target, span, offset)
     }
 
+    /// Update movement from CSS `client` and map into `geometry` using `rect`.
+    /// Returns `Ok(None)` before the threshold; afterward library `target`s create
+    /// 1×1 placements, while existing widgets preserve `span` and panel `offset`.
+    /// Mapping errors do not clear an already-crossed drag threshold.
     pub fn placement_in(
         &mut self,
         geometry: Geometry,
@@ -156,6 +202,8 @@ impl DragGesture {
 }
 
 /// Half-open bounds keep right/bottom edges from becoming nonexistent cells.
+/// Returns landscape panel pixels for CSS `client_x`/`client_y` inside `rect`,
+/// or the same validation errors as [`panel_point_in`].
 pub fn panel_point(
     rect: ContentRect,
     client_x: f64,
@@ -164,6 +212,11 @@ pub fn panel_point(
     panel_point_in(Geometry::Landscape, rect, client_x, client_y)
 }
 
+/// Returns native `geometry` panel coordinates for CSS `client_x`/`client_y` in `rect`.
+/// Rejects malformed rectangle bounds, nonfinite pointers, exterior points and
+/// scaling that rounds onto the excluded right/bottom panel edge. Never clamps.
+/// Coordinates match [`PointerEvent.clientX`](https://www.w3.org/TR/pointerevents3/#pointerevent-interface)
+/// and the content box supplied by the browser adapter.
 pub fn panel_point_in(
     geometry: Geometry,
     rect: ContentRect,
@@ -201,6 +254,8 @@ pub fn panel_point_in(
     Ok(point)
 }
 
+/// Returns the landscape cell under CSS `client_x`/`client_y` in `rect`.
+/// Propagates rectangle/pointer errors and rejects header or exterior grid positions.
 pub fn cell_at(
     rect: ContentRect,
     client_x: f64,
@@ -209,6 +264,9 @@ pub fn cell_at(
     cell_at_in(Geometry::Landscape, rect, client_x, client_y)
 }
 
+/// Returns the `geometry` cell under CSS `client_x`/`client_y` in `rect`.
+/// Panel coordinates are floored before grid lookup; the header has no cell.
+/// Returns mapping errors or `OutsideGrid` when no cell contains the mapped point.
 pub fn cell_at_in(
     geometry: Geometry,
     rect: ContentRect,
@@ -227,6 +285,8 @@ pub fn cell_at_in(
 
 /// The grab offset is stored in panel pixels, so resizing the displayed canvas
 /// during a drag does not move the widget's anchor to its corner.
+/// Returns the landscape offset for CSS `client_x`/`client_y` in `rect` relative
+/// to `placement`, or the same mapping/containment errors as [`grab_offset_in`].
 pub fn grab_offset(
     rect: ContentRect,
     client_x: f64,
@@ -236,6 +296,9 @@ pub fn grab_offset(
     grab_offset_in(Geometry::Landscape, rect, client_x, client_y, placement)
 }
 
+/// Returns the panel-pixel offset of CSS `client_x`/`client_y` in `rect` from
+/// `placement` in `geometry`. Rejects invalid mapping/placement and pointers outside
+/// the widget's half-open rectangle; never changes the placement.
 pub fn grab_offset_in(
     geometry: Geometry,
     rect: ContentRect,
@@ -257,6 +320,8 @@ pub fn grab_offset_in(
 
 /// Subtract the original grab position, then snap the widget origin to the
 /// nearest cell. Half-cell ties advance right/down. No edge clamping occurs.
+/// Returns a landscape placement for CSS `client_x`/`client_y` in `rect`, preserving
+/// `span` and panel-pixel `offset`, or the same errors as [`drop_placement_in`].
 pub fn drop_placement(
     rect: ContentRect,
     client_x: f64,
@@ -267,6 +332,11 @@ pub fn drop_placement(
     drop_placement_in(Geometry::Landscape, rect, client_x, client_y, span, offset)
 }
 
+/// Returns a snapped `span` placement in `geometry` from CSS `client_x`/`client_y`
+/// inside `rect`, subtracting the original panel-pixel `offset` first.
+/// Rejects mapping/header errors, invalid offsets and out-of-grid results. Portrait
+/// offsets allow either row height; nearest-edge midpoint ties advance right/down.
+/// Internal edge lookups rely on every supported span fitting the supported grids.
 pub fn drop_placement_in(
     geometry: Geometry,
     rect: ContentRect,
@@ -309,6 +379,8 @@ pub fn drop_placement_in(
 /// Guide validity uses the same validator as import, reducer commits and boot.
 /// This is advisory only: the reducer still checks its pointer/revision token
 /// and validates the committed transaction independently.
+/// Tests placing `target` at `placement` in view ID `view` of `config`; returns
+/// `Ok(())` only for a fully valid cloned candidate, otherwise the admission error.
 pub fn validate_drop(
     config: &ValidatedConfig,
     view: u8,
@@ -320,6 +392,9 @@ pub fn validate_drop(
 
 /// Diagnose the layout actually visible in a rejected preview, including edits
 /// already made during recovery. Only the shared validator can approve it.
+/// Clones `config`, moves/adds `target` at `placement` in view ID `view`, and returns
+/// `Ok(())` only after full validation. Missing IDs, capacity and validation errors
+/// leave the supplied configuration untouched. New widget IDs are chosen unused.
 pub fn validate_draft_drop(
     config: &Config,
     view: u8,
@@ -358,6 +433,9 @@ pub fn validate_draft_drop(
 
 /// Row-major placement shared by library additions and duplicate commands.
 /// An invalid occupied rectangle blocks placement instead of inventing free space.
+/// Returns the first free location for `span` in view ID `view` of `config`, ignoring
+/// widget ID `except` when present. Returns `None` for a missing view, no fit or an
+/// invalid occupied rectangle; this placement search does not run full validation.
 pub fn first_free_placement(
     config: &Config,
     view: u8,

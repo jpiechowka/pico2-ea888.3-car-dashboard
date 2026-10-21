@@ -1,4 +1,5 @@
-//! RTC driver.
+//! RP2040 calendar RTC; separate from the RP2350 always-on timer.
+//! Register order follows the [SDK RTC driver](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_rtc/rtc.c).
 mod conversions;
 mod filter;
 
@@ -15,45 +16,57 @@ pub use crate::datetime::{DateTime, DayOfWeek, Error as DateTimeError};
 use crate::interrupt::typelevel::Binding;
 use crate::interrupt::{self, InterruptExt};
 
-// Static waker for the interrupt handler
+/// One async alarm waiter for the exclusive RTC singleton.
 static WAKER: AtomicWaker = AtomicWaker::new();
-// Static flag to indicate if an alarm has occurred
+/// Latched alarm occurrence; scheduling/disabling does not itself clear this flag.
 static ALARM_OCCURRED: AtomicBool = AtomicBool::new(false);
 
 /// A reference to the real time clock of the system
 pub struct Rtc<'d, T: Instance> {
+    /// Exclusive RTC peripheral ownership.
     inner: Peri<'d, T>,
 }
 
 impl<'d, T: Instance> Rtc<'d, T> {
-    /// Create a new instance of the real time clock, with the given date as an initial value.
-    ///
-    /// # Errors
-    ///
-    /// Will return `RtcError::InvalidDateTime` if the datetime is not a valid range.
-    pub fn new(inner: Peri<'d, T>, _irq: impl Binding<interrupt::typelevel::RTC_IRQ, InterruptHandler>) -> Self {
+    /// Returns a driver owning `inner` with handler binding `_irq`, sets the1 Hz divider and enables its NVIC line.
+    /// Does not load a date or start the clock. Configured RTC frequency must be nonzero and fit the divider.
+    pub fn new(
+        inner: Peri<'d, T>,
+        _irq: impl Binding<interrupt::typelevel::RTC_IRQ, InterruptHandler>,
+    ) -> Self {
         // Set the RTC divider
         inner.regs().clkdiv_m1().write(|w| w.set_clkdiv_m1(clk_rtc_freq() - 1));
 
         // Setup the IRQ
-        // Clear any pending interrupts from the RTC_IRQ interrupt and enable it, so we do not have unexpected interrupts after initialization
+        // Clear any pending interrupts from the RTC_IRQ interrupt and enable it, so we do not have unexpected
+        // interrupts after initialization
         interrupt::RTC_IRQ.unpend();
         unsafe { interrupt::RTC_IRQ.enable() };
 
         Self { inner }
     }
 
-    /// Enable or disable the leap year check. The rp2040 chip will always add a Feb 29th on every year that is divisible by 4, but this may be incorrect (e.g. on century years). This function allows you to disable this check.
+    /// Enable or disable the leap year check. The rp2040 chip will always add a Feb 29th on every year that is
+    /// divisible by 4, but this may be incorrect (e.g. on century years). This function allows you to disable this
+    /// check.
     ///
-    /// Leap year checking is enabled by default.
-    pub fn set_leap_year_check(&mut self, leap_year_check_enabled: bool) {
+    /// `leap_year_check_enabled` selects this check; restore/set_datetime rewrite CTRL and clear the override.
+    pub fn set_leap_year_check(
+        &mut self,
+        leap_year_check_enabled: bool,
+    ) {
         self.inner.regs().ctrl().modify(|w| {
             w.set_force_notleapyear(!leap_year_check_enabled);
         });
     }
 
-    /// Set the time from internal format
-    pub fn restore(&mut self, ymd: rp_pac::rtc::regs::Rtc1, hms: rp_pac::rtc::regs::Rtc0) {
+    /// Loads raw date `ymd` and time `hms`, then starts the clock; neither record is validated.
+    /// Busy-waits without a deadline for stop/start acknowledgment; clears other CTRL bits including leap override.
+    pub fn restore(
+        &mut self,
+        ymd: rp_pac::rtc::regs::Rtc1,
+        hms: rp_pac::rtc::regs::Rtc0,
+    ) {
         // disable RTC while we configure it
         self.inner.regs().ctrl().modify(|w| w.set_rtc_enable(false));
         while self.inner.regs().ctrl().read().rtc_active() {
@@ -75,24 +88,27 @@ impl<'d, T: Instance> Rtc<'d, T> {
         }
     }
 
-    /// Get the time in internal format
+    /// Returns raw date/time words, reading RTC0 before RTC1 as required by the hardware snapshot latch.
+    /// Does not require a running or calendar-valid clock.
     pub fn save(&mut self) -> (rp_pac::rtc::regs::Rtc1, rp_pac::rtc::regs::Rtc0) {
         let rtc_0: rp_pac::rtc::regs::Rtc0 = self.inner.regs().rtc_0().read();
         let rtc_1 = self.inner.regs().rtc_1().read();
         (rtc_1, rtc_0)
     }
 
-    /// Checks to see if this Rtc is running
-    pub fn is_running(&self) -> bool {
-        self.inner.regs().ctrl().read().rtc_active()
-    }
+    /// Returns the hardware RTC_ACTIVE indication, not date validity.
+    pub fn is_running(&self) -> bool { self.inner.regs().ctrl().read().rtc_active() }
 
-    /// Set the datetime to a new value.
+    /// Loads validated `t`, starts the RTC, and returns Ok or InvalidDateTime before any hardware change.
+    /// Waits without a deadline for stop/start; subsecond data and previous CTRL leap override are discarded.
     ///
     /// # Errors
     ///
     /// Will return `RtcError::InvalidDateTime` if the datetime is not a valid range.
-    pub fn set_datetime(&mut self, t: DateTime) -> Result<(), RtcError> {
+    pub fn set_datetime(
+        &mut self,
+        t: DateTime,
+    ) -> Result<(), RtcError> {
         conversions::validate_datetime(&t).map_err(RtcError::InvalidDateTime)?;
 
         // disable RTC while we configure it
@@ -117,11 +133,11 @@ impl<'d, T: Instance> Rtc<'d, T> {
         Ok(())
     }
 
-    /// Return the current datetime.
+    /// Returns the current whole-second snapshot, or NotRunning/InvalidDateTime.
     ///
     /// # Errors
     ///
-    /// Will return an `RtcError::InvalidDateTime` if the stored value in the system is not a valid [`DayOfWeek`].
+    /// Plain dates validate only weekday on read; chrono also rejects impossible calendar/time fields.
     pub fn now(&self) -> Result<DateTime, RtcError> {
         if !self.is_running() {
             return Err(RtcError::NotRunning);
@@ -133,7 +149,8 @@ impl<'d, T: Instance> Rtc<'d, T> {
         conversions::datetime_from_registers(rtc_0, rtc_1).map_err(RtcError::InvalidDateTime)
     }
 
-    /// Disable the alarm that was scheduled with [`schedule_alarm`].
+    /// Disables the match comparator and waits without a deadline for acknowledgment.
+    /// Leaves the software occurrence latch unchanged. Alarm configured by [`schedule_alarm`].
     ///
     /// [`schedule_alarm`]: #method.schedule_alarm
     pub fn disable_alarm(&mut self) {
@@ -144,24 +161,23 @@ impl<'d, T: Instance> Rtc<'d, T> {
         }
     }
 
-    /// Schedule an alarm. The `filter` determines at which point in time this alarm is set.
+    /// Replaces the comparator with `filter`, enables RTC interrupts and waits for match activation.
+    /// Field ranges are not validated; absent fields match any value. The IRQ disables the comparator,
+    /// so recurring alarms must be rearmed. An older software occurrence latch is not cleared here.
     ///
-    /// Keep in mind that the filter only triggers on the specified time. If you want to schedule this alarm every minute, you have to call:
     /// ```no_run
-    /// # #[cfg(feature = "chrono")]
-    /// # fn main() { }
     /// # #[cfg(not(feature = "chrono"))]
-    /// # fn main() {
-    /// # use embassy_rp::rtc::{Rtc, DateTimeFilter};
-    /// # let mut real_time_clock: Rtc<embassy_rp::peripherals::RTC> = unsafe { core::mem::zeroed() };
-    /// let now = real_time_clock.now().unwrap();
-    /// real_time_clock.schedule_alarm(
-    ///     DateTimeFilter::default()
-    ///         .minute(if now.minute == 59 { 0 } else { now.minute + 1 })
-    /// );
-    /// # }
+    /// fn next_minute(rtc: &mut embassy_rp::rtc::Rtc<'_, embassy_rp::peripherals::RTC>) {
+    ///     let now = rtc.now().unwrap();
+    ///     rtc.schedule_alarm(
+    ///         embassy_rp::rtc::DateTimeFilter::default().minute((now.minute + 1) % 60),
+    ///     );
+    /// }
     /// ```
-    pub fn schedule_alarm(&mut self, filter: DateTimeFilter) {
+    pub fn schedule_alarm(
+        &mut self,
+        filter: DateTimeFilter,
+    ) {
         self.disable_alarm();
 
         self.inner.regs().irq_setup_0().write(|w| {
@@ -180,18 +196,16 @@ impl<'d, T: Instance> Rtc<'d, T> {
         }
     }
 
-    /// Clear the interrupt. This should be called every time the `RTC_IRQ` interrupt is triggered,
-    /// or the next [`schedule_alarm`] will never fire.
+    /// Disables alarm matching to clear its hardware condition; does not consume the software occurrence latch.
+    /// The bound IRQ handler already disables matching; [`schedule_alarm`] rearms it.
     ///
     /// [`schedule_alarm`]: #method.schedule_alarm
-    pub fn clear_interrupt(&mut self) {
-        self.disable_alarm();
-    }
+    pub fn clear_interrupt(&mut self) { self.disable_alarm(); }
 
     /// Check if an alarm is scheduled.
     ///
     /// This function checks if the RTC alarm is currently active. If it is, it returns the alarm configuration
-    /// as a [`DateTimeFilter`]. Otherwise, it returns `None`.
+    /// as a [`DateTimeFilter`]. Returns None when inactive or when an enabled weekday field is invalid.
     pub fn alarm_scheduled(&self) -> Option<DateTimeFilter> {
         // Check if alarm is active
         if !self.inner.regs().irq_setup_0().read().match_active() {
@@ -242,8 +256,10 @@ impl<'d, T: Instance> Rtc<'d, T> {
 
     /// Wait for an RTC alarm to trigger.
     ///
-    /// This function will wait until the RTC alarm is triggered. If the alarm is already triggered, it will return immediately.
-    /// If no alarm is scheduled, it will wait indefinitely until one is scheduled and triggered.
+    /// This function will wait until the RTC alarm is triggered. If the alarm is already triggered, it will return
+    /// immediately. If no occurrence is latched, waits indefinitely for the bound handler. Cancellation leaves the
+    /// alarm and latch intact; successful completion consumes one latched occurrence and disables matching.
+    /// A previously latched occurrence can therefore complete a newly created wait immediately.
     pub async fn wait_for_alarm(&mut self) {
         poll_fn(|cx| {
             WAKER.register(cx.waker());
@@ -271,10 +287,14 @@ impl<'d, T: Instance> Rtc<'d, T> {
 
 /// Interrupt handler.
 pub struct InterruptHandler {
+    /// Zero-sized marker; peripheral binding supplies interrupt ownership.
     _empty: (),
 }
 
 impl crate::interrupt::typelevel::Handler<crate::interrupt::typelevel::RTC_IRQ> for InterruptHandler {
+    /// Disables matching, latches occurrence and wakes the waiter without waiting for hardware acknowledgment.
+    /// # Safety
+    /// Must be invoked only for the owned RTC IRQ, with no competing direct register owner.
     unsafe fn on_interrupt() {
         // Disable the alarm first thing, to prevent unexpected re-entry
         let rtc = crate::pac::RTC;
@@ -290,13 +310,18 @@ impl crate::interrupt::typelevel::Handler<crate::interrupt::typelevel::RTC_IRQ> 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RtcError {
     /// An invalid DateTime was given or stored on the hardware.
-    InvalidDateTime(DateTimeError),
+    InvalidDateTime(
+        /// Backend-specific invalid field/date/time reason.
+        DateTimeError,
+    ),
 
     /// The RTC clock is not running
     NotRunning,
 }
 
+/// Private RTC register access for the singleton token.
 trait SealedInstance {
+    /// Returns the instance register block.
     fn regs(&self) -> crate::pac::rtc::Rtc;
 }
 
@@ -305,8 +330,7 @@ trait SealedInstance {
 pub trait Instance: SealedInstance + PeripheralType {}
 
 impl SealedInstance for crate::peripherals::RTC {
-    fn regs(&self) -> crate::pac::rtc::Rtc {
-        crate::pac::RTC
-    }
+    /// Returns the RP2040 RTC register block.
+    fn regs(&self) -> crate::pac::rtc::Rtc { crate::pac::RTC }
 }
 impl Instance for crate::peripherals::RTC {}

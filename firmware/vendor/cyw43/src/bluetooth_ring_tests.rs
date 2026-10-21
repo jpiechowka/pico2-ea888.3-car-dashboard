@@ -1,3 +1,4 @@
+//! Full ring-to-HCI regressions for packet length, wrap, queue pressure and transport padding.
 extern crate std;
 
 use super::*;
@@ -7,6 +8,8 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes};
 use bt_hci_transport::Transport;
 use embassy_futures::block_on;
 
+/// Returns a legacy advertising HCI event with `length` data bytes and distinct RSSI.
+/// Fixture callers use0..=31 so header arithmetic and payload bytes fit.
 fn advertisement(length: u8) -> std::vec::Vec<u8> {
     let mut packet = std::vec![4, 0x3e, 12 + length, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, length];
     packet.extend((0..length).map(|i| i + 0x40));
@@ -15,6 +18,7 @@ fn advertisement(length: u8) -> std::vec::Vec<u8> {
 }
 
 #[test]
+/// Every legacy data length survives header/payload wrap without admitting transport padding.
 fn ring_payload_offsets_wrap_and_padding_preserve_every_legacy_data_length() {
     for length in 0..=31 {
         let packet = advertisement(length);
@@ -44,6 +48,7 @@ fn ring_payload_offsets_wrap_and_padding_preserve_every_legacy_data_length() {
 }
 
 #[test]
+/// A full host queue retains the next ring record and resumes in order without a fresh interrupt.
 fn ring_batch_and_full_queue_retry_keep_packet_order_without_new_irq() {
     let packets: std::vec::Vec<_> = (0..6).map(|n| [4, 0xff, 2, n, 0x5a]).collect();
     let slices: std::vec::Vec<_> = packets.iter().map(|p| &p[..]).collect();
@@ -70,6 +75,7 @@ fn ring_batch_and_full_queue_retry_keep_packet_order_without_new_irq() {
 }
 
 #[test]
+/// The maximum HCI event payload survives ring wrap with all255 bytes and no transport padding.
 fn ring_maximum_event_preserves_all_255_bytes_and_drops_padding() {
     let mut packet = std::vec![4, 0xff, 255];
     packet.extend(0..255);
@@ -88,6 +94,7 @@ fn ring_maximum_event_preserves_all_255_bytes_and_drops_padding() {
 }
 
 #[test]
+/// A missing RSSI remains an invalid inner report; ring alignment bytes cannot repair it.
 fn short_report_remains_invalid_instead_of_consuming_ring_padding_as_rssi() {
     for length in 0..=31 {
         let mut packet = advertisement(length);

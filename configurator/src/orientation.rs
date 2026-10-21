@@ -3,6 +3,11 @@ use dashboard_config::{Config, Geometry, Placement};
 
 use crate::editor::EditorError;
 
+/// Repack views whose effective geometry differs between `before` and `after`.
+/// Returns the number of changed widget placements, preserving vector order/spans.
+/// Duplicate IDs or orphan widgets fail before mutation; a later view that cannot
+/// fit returns `LayoutCannotFit` after earlier views may have moved. Callers therefore
+/// operate on a candidate and publish only after this and full validation succeed.
 pub fn repack_changed_views(
     before: &Config,
     after: &mut Config,
@@ -55,6 +60,10 @@ pub fn repack_changed_views(
     Ok(moved)
 }
 
+/// Search `geometry` for nonoverlapping positions in `placements` from `index` against
+/// bitmask `occupied`; returns true with chosen positions or false restoring this
+/// suffix. Tries each original position before row-major alternatives and preserves
+/// spans. Caller supplies `index <= placements.len()` and at most eight widgets.
 fn pack(
     geometry: Geometry,
     placements: &mut [Placement],

@@ -1,3 +1,5 @@
+//! Byte-identity, archive framing, filesystem alias and resource-admission regressions.
+//! Fixtures are created exclusively under fresh process/counter-specific temporary directories.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,9 +9,15 @@ use dashboard_provenance::{verify_archive, verify_tree};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
+/// Process-local suffix for disjoint concurrently executing test fixture directories.
 static NEXT: AtomicU64 = AtomicU64::new(0);
-struct Fixture(PathBuf);
+/// Owned temporary fixture; dropping removes only its freshly created directory tree.
+struct Fixture(
+    /// Exclusive fixture root allocated by create_dir, never an existing directory.
+    PathBuf,
+);
 impl Fixture {
+    /// Return a fresh process/counter-named temporary directory; collision/I/O failures panic.
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
             "dashboard-provenance-{}-{}",
@@ -20,6 +28,8 @@ impl Fixture {
         Self(path)
     }
 
+    /// Create fixture-relative trusted `name` and write exact `bytes`, creating parent directories.
+    /// Inputs are test literals, not untrusted paths; any I/O failure panics.
     fn write(
         &self,
         name: &str,
@@ -31,8 +41,10 @@ impl Fixture {
     }
 }
 impl Drop for Fixture {
+    /// Remove the owned fixture tree; cleanup failures panic rather than silently leaking evidence.
     fn drop(&mut self) { fs::remove_dir_all(&self.0).unwrap(); }
 }
+/// Return lowercase SHA256 for exact fixture `bytes`, without newline normalization.
 fn digest(bytes: &[u8]) -> String {
     sha2_const_stable::Sha256::new()
         .update(bytes)
@@ -41,6 +53,8 @@ fn digest(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+/// Return JSON original/modified hash maps from trusted `original`/`modified` path-byte pairs.
+/// Duplicate fixture keys collapse during collection; duplicate-key rejection tests use raw JSON.
 fn maps(
     original: &[(&str, &[u8])],
     modified: &[(&str, &[u8])],
@@ -54,6 +68,7 @@ fn maps(
     serde_json::to_vec(&serde_json::json!({"original":map(original),"modified":map(modified)})).unwrap()
 }
 #[test]
+/// Overlay replacements/additions pass; newline changes, extra files and missing helpers fail.
 fn exact_overlay_preserves_original_additions_and_rejects_changed_missing_extra_files() {
     let f = Fixture::new();
     f.write("src/lib.rs", b"patched\n");
@@ -75,6 +90,7 @@ fn exact_overlay_preserves_original_additions_and_rejects_changed_missing_extra_
     assert!(verify_tree(&f.0, &m, false).is_err());
 }
 #[test]
+/// Only a real root target directory can be skipped; nested targets and a target file remain errors.
 fn only_real_vendor_top_level_target_directory_is_ignored() {
     let f = Fixture::new();
     f.write("src/lib.rs", b"source");
@@ -90,6 +106,7 @@ fn only_real_vendor_top_level_target_directory_is_ignored() {
     assert!(verify_tree(&f.0, &m, true).is_err());
 }
 #[test]
+/// Paths, digest alphabet/length, duplicate JSON keys and empty originals fail admission.
 fn manifest_rejects_noncanonical_paths_bad_hashes_duplicates_and_empty_original() {
     let f = Fixture::new();
     f.write("a", b"x");
@@ -118,6 +135,7 @@ fn manifest_rejects_noncanonical_paths_bad_hashes_duplicates_and_empty_original(
     assert!(verify_tree(&f.0, duplicate.as_bytes(), false).is_err());
 }
 #[test]
+/// Matching bytes do not admit multiple hard links to the same filesystem object.
 fn hard_linked_source_is_rejected_even_when_its_bytes_match() {
     let f = Fixture::new();
     f.write("a", b"x");
@@ -126,6 +144,7 @@ fn hard_linked_source_is_rejected_even_when_its_bytes_match() {
 }
 #[cfg(unix)]
 #[test]
+/// Unix symlinks at root, ancestors, source entries or ignored target boundaries are rejected.
 fn symlink_root_ancestor_source_and_ignored_target_are_rejected() {
     use std::os::unix::fs::symlink;
     let outer = Fixture::new();
@@ -141,6 +160,8 @@ fn symlink_root_ancestor_source_and_ignored_target_are_rejected() {
     symlink("../../outside", outer.0.join("real/src/a")).unwrap();
     assert!(verify_tree(&outer.0.join("real"), &m, false).is_err());
 }
+/// Write and return a gzip/tar fixture at `path` with member `names` and exact payloads.
+/// `link` substitutes zero-length symlinks to outside for every member; encoder/I/O failures panic.
 fn archive(
     path: &Path,
     names: &[(&str, &[u8])],
@@ -166,6 +187,7 @@ fn archive(
     bytes
 }
 #[test]
+/// Original hashes govern archives; duplicate/foreign/linked/changed members and gzip tails fail.
 fn archive_checks_original_not_overlay_and_rejects_duplicates_foreign_roots_links_and_bad_gzip() {
     let f = Fixture::new();
     let path = f.0.join("source.crate");
@@ -200,12 +222,14 @@ fn archive_checks_original_not_overlay_and_rejects_duplicates_foreign_roots_link
 }
 
 #[test]
+/// Current repository HAL/radio manifests must match their complete physical source trees.
 fn reviewed_repository_manifests_and_complete_trees_are_accepted() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/vendor");
     dashboard_provenance::check_hal(&root, None).unwrap();
     dashboard_provenance::check_radio(&root).unwrap();
 }
 #[test]
+/// Manifest edits cannot change compiled-in release identity or remove required overlay paths.
 fn pinned_release_and_overlay_inventory_cannot_be_changed_by_the_manifest() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/vendor/embassy-rp-provenance.json");
     let baseline: serde_json::Value = serde_json::from_slice(&fs::read(source).unwrap()).unwrap();
@@ -235,6 +259,7 @@ fn pinned_release_and_overlay_inventory_cannot_be_changed_by_the_manifest() {
 }
 
 #[test]
+/// Oversized JSON and sparse oversized source files fail bounded admission before full consumption.
 fn resource_limits_fail_before_reading_unbounded_inputs() {
     let f = Fixture::new();
     f.write("a", b"x");
@@ -255,6 +280,8 @@ fn resource_limits_fail_before_reading_unbounded_inputs() {
 }
 #[cfg(windows)]
 #[test]
+/// Windows junctions are rejected before lexical parent normalization or target-directory skipping.
+/// Fixtures use native PowerShell junction creation; the real underlying source remains intact.
 fn windows_junction_root_ancestor_and_ignored_target_are_rejected() {
     use std::process::Command;
     let f = Fixture::new();
@@ -292,6 +319,7 @@ fn windows_junction_root_ancestor_and_ignored_target_are_rejected() {
 
 #[cfg(unix)]
 #[test]
+/// Unix filenames containing literal backslashes cannot impersonate slash-separated manifest paths.
 fn a_native_backslash_filename_cannot_impersonate_a_manifest_directory() {
     let f = Fixture::new();
     f.write("a\\b", b"x");
@@ -302,6 +330,7 @@ fn a_native_backslash_filename_cannot_impersonate_a_manifest_directory() {
     );
 }
 #[test]
+/// Traversal, hardlink/PAX types, excessive declared sizes and missing/nonzero tar tails fail.
 fn archive_paths_types_declared_sizes_and_end_blocks_are_validated_without_extraction() {
     let f = Fixture::new();
     let path = f.0.join("a.crate");
@@ -340,6 +369,7 @@ fn archive_paths_types_declared_sizes_and_end_blocks_are_validated_without_extra
 }
 
 #[test]
+/// Zero-filled file payload cannot replace either of the two required post-member tar EOF blocks.
 fn zero_file_data_cannot_substitute_for_tar_end_blocks() {
     let f = Fixture::new();
     let path = f.0.join("zero.crate");

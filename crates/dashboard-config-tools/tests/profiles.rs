@@ -1,17 +1,22 @@
+//! CLI profile identity, closed option parsing and legacy capture replay coverage.
+
 use std::process::Command;
 
+/// Invoke the built CLI with `args`; return captured output, panicking only on spawn/I/O failure.
 fn invoke(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_dashboard-config"))
         .args(args)
         .output()
         .unwrap()
 }
+/// Return successful CLI JSON for `args`; panic with stderr on rejection or invalid output.
 fn json(args: &[&str]) -> serde_json::Value {
     let output = invoke(args);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// Catalogue export preserves failed legacy evidence and separate requested/actual clocks.
 #[test]
 fn profiles_export_requested_and_actual_legacy_identity() {
     let data = json(&["profiles"]);
@@ -26,6 +31,7 @@ fn profiles_export_requested_and_actual_legacy_identity() {
     assert!(data.to_string().len() < 65536);
 }
 
+/// Defaults and explicit false flags produce the exact shared feature set, including vehicle BLE.
 #[test]
 fn build_options_defaults_and_false_features_are_exact() {
     let data = json(&["build-options"]);
@@ -60,6 +66,7 @@ fn build_options_defaults_and_false_features_are_exact() {
     assert_eq!(data["requested"]["optimization"], "size_s");
 }
 
+/// Explicit 290 MHz custom input resolves exactly and carries no named legacy rounding flag.
 #[test]
 fn exact_custom_clock_is_not_legacy_rounding() {
     let data = json(&[
@@ -86,6 +93,7 @@ fn exact_custom_clock_is_not_legacy_rounding() {
     );
 }
 
+/// Invalid aliases, conflicts, unknown options, decimal forms and PLL requests emit no success JSON.
 #[test]
 fn bad_cli_requests_never_emit_success_json() {
     for args in [
@@ -144,6 +152,7 @@ fn bad_cli_requests_never_emit_success_json() {
     }
 }
 
+/// Capture-only benchmark flags stay outside normalized Studio recipes; Expert still gates clocks.
 #[test]
 fn capture_adapter_keeps_benchmark_separate_and_requires_expert() {
     let unavailable = json(&["capture-options", "--features", "frame-trace"]);
@@ -192,6 +201,7 @@ fn capture_adapter_keeps_benchmark_separate_and_requires_expert() {
     assert_eq!(data["normalized"]["requested"]["expert"], true);
 }
 
+/// An absent historical backend remains absent; explicit normalized vehicle recipes retain BLE.
 #[test]
 fn legacy_unavailable_capture_never_enables_vehicle_transport() {
     for features in ["", "target-bench"] {
@@ -236,6 +246,7 @@ fn legacy_unavailable_capture_never_enables_vehicle_transport() {
     );
 }
 
+/// All 32 feature-boolean combinations and four optimization modes survive CLI normalization.
 #[test]
 fn every_boolean_combination_and_optimization_survives_normalization() {
     for mask in 0..32 {
@@ -279,6 +290,7 @@ fn every_boolean_combination_and_optimization_survives_normalization() {
     }
 }
 
+/// Forged derived clocks and oversized normalized JSON cannot enter capture replay.
 #[test]
 fn capture_rejects_tampered_and_oversized_normalized_evidence() {
     let mut n = json(&["build-options"]);
@@ -296,6 +308,7 @@ fn capture_rejects_tampered_and_oversized_normalized_evidence() {
     );
 }
 
+/// Longan stays explicit; conflicting backends and tampered normalized features are rejected.
 #[test]
 fn explicit_legacy_transport_is_preserved_and_backend_conflicts_rejected() {
     let data = json(&["capture-options", "--features", "longan-rx12"]);

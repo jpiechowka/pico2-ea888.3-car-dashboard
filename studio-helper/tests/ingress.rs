@@ -1,8 +1,11 @@
+//! Process-output overflow must not block job cancellation or lose loss accounting.
 use dashboard_helper_protocol::*;
 use studio_helper::jobs::JobStore;
 use studio_helper::jobs::ingress::*;
 use studio_helper::jobs::logs::LogInput;
 #[test]
+/// Assert queue saturation counts dropped bytes, leaves control cancellation usable,
+/// resets drained loss deltas and distinguishes an empty queue from a closed receiver.
 fn process_channel_bounds_logs_without_blocking_control() {
     let (tx, rx) = process_log_channel();
     let log = LogInput {

@@ -1,3 +1,4 @@
+//! Independent Debug pixel oracles, unavailable-data semantics and per-row clipping.
 use dashboard_config::ControlMap;
 use dashboard_host_validation::AlignedFrame;
 use dashboard_host_validation::backlight::Brightness;
@@ -12,6 +13,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Text;
 
+/// Returns a synthetic fully populated Debug fixture with valid zero work/timing,
+/// 290.4MHz configured CPU metadata and two production-sized framebuffers.
 fn measured() -> DebugData<'static> {
     DebugData {
         reset_cause: Some("POR"),
@@ -63,6 +66,9 @@ fn measured() -> DebugData<'static> {
     }
 }
 
+/// Clears/draws the independent literal `text` oracle in `frame`, clipped to
+/// pixel x=`x`, baseline `y`, `width` and ten-pixel row height using `color`.
+/// Callers supply representable panel coordinates; the framebuffer target is infallible.
 fn literal(
     frame: &mut AlignedFrame,
     x: i32,
@@ -83,6 +89,8 @@ fn literal(
     .unwrap();
 }
 
+/// Every measured Debug line matches fixed independent text/baselines, including valid zeros and the scanout
+/// qualification.
 #[test]
 fn complete_measured_screen_matches_independent_literal_bitmap() {
     let data = measured();
@@ -130,6 +138,7 @@ fn complete_measured_screen_matches_independent_literal_bitmap() {
     assert!(actual.0 == expected.0);
 }
 
+/// Missing work/cycle/SP observations produce unavailable glyphs while separately known capacity remains visible.
 #[test]
 fn unavailable_work_and_stack_observations_are_not_rendered_as_zero() {
     let map = ControlMap::default();
@@ -151,6 +160,7 @@ fn unavailable_work_and_stack_observations_are_not_rendered_as_zero() {
     }
 }
 
+/// CPU Hz formatting retains exact fractional MHz down to one Hz and distinguishes absent metadata from zero.
 #[test]
 fn exact_hz_preserves_fractional_and_sub100mhz_clocks_without_overflow() {
     let map = ControlMap::default();
@@ -174,6 +184,7 @@ fn exact_hz_preserves_fractional_and_sub100mhz_clocks_without_overflow() {
     }
 }
 
+/// Independent row repaint removes cleared faults and bounds/sanitizes labels without corrupting UTF-8.
 #[test]
 fn per_line_replay_clears_fault_and_sanitizes_bounded_utf8_labels() {
     let map = ControlMap::default();
@@ -222,6 +233,8 @@ fn per_line_replay_clears_fault_and_sanitizes_bounded_utf8_labels() {
     assert!(actual.0 == expected.0);
 }
 
+/// Returns independent expected landscape pixel bounds for `line`, including
+/// full-width footer rows; does not call the production position helper.
 fn bounds(line: DebugLine) -> Rectangle {
     use DebugLine::*;
     let (x, y, w) = match line {
@@ -261,18 +274,27 @@ fn bounds(line: DebugLine) -> Rectangle {
     Rectangle::new(Point::new(x, y - 7), Size::new(w, 10))
 }
 
+/// Write-counting target that panics if any drawing operation escapes its expected clip.
 struct Guard {
+    /// Actual target bounds exposed to the renderer, possibly translated or oversized.
     target: Rectangle,
+    /// Intersection where this operation is permitted to emit pixels.
     allowed: Rectangle,
+    /// Total emitted pixels, including overdraw, used to reject silently empty rows.
     pixels: usize,
 }
 impl Dimensions for Guard {
+    /// Returns the synthetic target bounds used to exercise intersection clipping.
     fn bounding_box(&self) -> Rectangle { self.target }
 }
 impl DrawTarget for Guard {
+    /// Production panel pixel format.
     type Color = Rgb565;
+    /// Bounds violations panic as test failures instead of becoming recoverable draw errors.
     type Error = core::convert::Infallible;
 
+    /// Counts `pixels` after checking every coordinate against the allowed area.
+    /// Returns `Ok(())`; an escaped pixel panics before it is counted.
     fn draw_iter<I>(
         &mut self,
         pixels: I,
@@ -288,6 +310,7 @@ impl DrawTarget for Guard {
     }
 }
 
+/// Maximal numbers/labels cannot escape each row, column, panel or translated actual target bounds.
 #[test]
 fn every_operation_clips_maximum_values_to_row_column_panel_and_actual_target() {
     let mut data = measured();
@@ -365,6 +388,8 @@ fn every_operation_clips_maximum_values_to_row_column_panel_and_actual_target() 
     }
 }
 
+/// Extreme numeric fields preserve units/colour/order, ordinary backpressure stays white, and invalid work stays
+/// unavailable.
 #[test]
 fn max_numeric_text_keeps_color_units_and_configured_requested_order() {
     let map = ControlMap::default();
@@ -389,6 +414,7 @@ fn max_numeric_text_keeps_color_units_and_configured_requested_order() {
     }
 }
 
+/// Negative completed-transfer FPS renders the same unavailable marker as missing timing evidence.
 #[test]
 fn negative_fps_is_unavailable_instead_of_a_negative_transfer_rate() {
     let map = ControlMap::default();
@@ -403,6 +429,7 @@ fn negative_fps_is_unavailable_instead_of_a_negative_transfer_rate() {
     assert!(actual.0 == expected.0);
 }
 
+/// Used-over-capacity, missing stack and nonphysical buffer indices remain explicitly unavailable.
 #[test]
 fn impossible_memory_and_buffer_observations_remain_unavailable() {
     let map = ControlMap::default();
@@ -430,6 +457,7 @@ fn impossible_memory_and_buffer_observations_remain_unavailable() {
     }
 }
 
+/// Remapped navigation hints retain protected Y recovery and HAL-versus-scanout wording within the two footer rows.
 #[test]
 fn remapped_footer_preserves_scanout_qualification_and_recovery_below_fault_rows() {
     use dashboard_config::{ButtonId, ControlAction, ControlPage};

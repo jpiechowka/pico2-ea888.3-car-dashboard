@@ -1,4 +1,8 @@
-//! GPIO driver.
+//! Owned GPIO pins, digital levels and one interrupt waiter per pin. Input reads
+//! observe SIO sampling; output queries report requested latch/direction state,
+//! not electrical voltage. Pin drop disconnects the mux but retains SIO latches.
+//! Register semantics: <https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf>
+//! section 2.19; RP235x package features select 30 or 48 bank-0 pins.
 #![macro_use]
 use core::convert::Infallible;
 use core::future::Future;
@@ -14,14 +18,19 @@ use crate::pac::common::{RW, Reg};
 use crate::{RegExt, interrupt, pac, peripherals};
 
 #[cfg(any(feature = "rp2040", feature = "rp235xa"))]
+/// Number of user-bank pins on the selected package.
 pub(crate) const BANK0_PIN_COUNT: usize = 30;
 #[cfg(feature = "rp235xb")]
+/// Number of user-bank pins on the selected package.
 pub(crate) const BANK0_PIN_COUNT: usize = 48;
 
+/// One IRQ waiter per user-bank pin; exclusive pin borrowing prevents concurrent waits.
 static BANK0_WAKERS: [AtomicWaker; BANK0_PIN_COUNT] = [const { AtomicWaker::new() }; BANK0_PIN_COUNT];
 #[cfg(feature = "qspi-as-gpio")]
+/// Number of external flash-interface pads exposed by qspi-as-gpio.
 const QSPI_PIN_COUNT: usize = 6;
 #[cfg(feature = "qspi-as-gpio")]
+/// One IRQ waiter per QSPI pad when those pins are available for GPIO.
 static QSPI_WAKERS: [AtomicWaker; QSPI_PIN_COUNT] = [const { AtomicWaker::new() }; QSPI_PIN_COUNT];
 
 /// Represents a digital input or output level.
@@ -35,6 +44,7 @@ pub enum Level {
 }
 
 impl From<bool> for Level {
+    /// Returns High for `val` true and Low for false.
     fn from(val: bool) -> Self {
         match val {
             true => Self::High,
@@ -44,6 +54,7 @@ impl From<bool> for Level {
 }
 
 impl From<Level> for bool {
+    /// Returns true for High `level`, false for Low.
     fn from(level: Level) -> bool {
         match level {
             Level::Low => false,
@@ -74,7 +85,7 @@ pub enum Drive {
     _4mA,
     /// 8 mA drive.
     _8mA,
-    /// 1 2mA drive.
+    /// 12 mA drive.
     _12mA,
 }
 /// Slew rate of an output
@@ -87,7 +98,7 @@ pub enum SlewRate {
     Slow,
 }
 
-/// A GPIO bank with up to 32 pins.
+/// GPIO register bank; bank 0 contains up to 48 pins on RP235xB.
 #[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Bank {
@@ -116,89 +127,97 @@ pub struct DormantWakeConfig {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Input<'d> {
+    /// Exclusive pad ownership and shared configuration/cleanup implementation.
     pin: Flex<'d>,
 }
 
 impl<'d> Input<'d> {
-    /// Create GPIO input driver for a [Pin] with the provided [Pull] configuration.
+    /// Returns an input owning `pin`, with output disabled and resistor selection `pull`.
+    /// Reinitializes pad/mux configuration; does not preserve its previous settings.
     #[inline]
-    pub fn new(pin: Peri<'d, impl Pin>, pull: Pull) -> Self {
+    pub fn new(
+        pin: Peri<'d, impl Pin>,
+        pull: Pull,
+    ) -> Self {
         let mut pin = Flex::new(pin);
         pin.set_as_input();
         pin.set_pull(pull);
         Self { pin }
     }
 
-    /// Set the pin's Schmitt trigger.
+    /// Sets input Schmitt hysteresis to `enable`, preserving other pad settings.
     #[inline]
-    pub fn set_schmitt(&mut self, enable: bool) {
+    pub fn set_schmitt(
+        &mut self,
+        enable: bool,
+    ) {
         self.pin.set_schmitt(enable)
     }
 
-    /// Get whether the pin input level is high.
+    /// Returns whether the sampled SIO input is high, after configured input inversion.
     #[inline]
-    pub fn is_high(&self) -> bool {
-        self.pin.is_high()
-    }
+    pub fn is_high(&self) -> bool { self.pin.is_high() }
 
-    /// Get whether the pin input level is low.
+    /// Returns whether the sampled SIO input is low, after configured input inversion.
     #[inline]
-    pub fn is_low(&self) -> bool {
-        self.pin.is_low()
-    }
+    pub fn is_low(&self) -> bool { self.pin.is_low() }
 
-    /// Returns current pin level
+    /// Returns the sampled SIO input level, after configured input inversion.
     #[inline]
-    pub fn get_level(&self) -> Level {
-        self.pin.get_level()
-    }
+    pub fn get_level(&self) -> Level { self.pin.get_level() }
 
-    /// Configure the input logic inversion of this pin.
+    /// Sets input inversion to `invert`; does not change the separate IRQ override.
     #[inline]
-    pub fn set_inversion(&mut self, invert: bool) {
+    pub fn set_inversion(
+        &mut self,
+        invert: bool,
+    ) {
         self.pin.set_input_inversion(invert)
     }
 
-    /// Wait until the pin is high. If it is already high, return immediately.
+    /// Waits for the level-high IRQ condition; an already-high input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_high(&mut self) {
-        self.pin.wait_for_high().await;
-    }
+    pub async fn wait_for_high(&mut self) { self.pin.wait_for_high().await; }
 
-    /// Wait until the pin is low. If it is already low, return immediately.
+    /// Waits for the level-low IRQ condition; an already-low input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_low(&mut self) {
-        self.pin.wait_for_low().await;
-    }
+    pub async fn wait_for_low(&mut self) { self.pin.wait_for_low().await; }
 
-    /// Wait for the pin to undergo a transition from low to high.
+    /// Waits for low-to-high edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_rising_edge(&mut self) {
-        self.pin.wait_for_rising_edge().await;
-    }
+    pub async fn wait_for_rising_edge(&mut self) { self.pin.wait_for_rising_edge().await; }
 
-    /// Wait for the pin to undergo a transition from high to low.
+    /// Waits for high-to-low edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_falling_edge(&mut self) {
-        self.pin.wait_for_falling_edge().await;
-    }
+    pub async fn wait_for_falling_edge(&mut self) { self.pin.wait_for_falling_edge().await; }
 
-    /// Wait for the pin to undergo any transition, i.e low to high OR high to low.
+    /// Waits for either edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_any_edge(&mut self) {
-        self.pin.wait_for_any_edge().await;
-    }
+    pub async fn wait_for_any_edge(&mut self) { self.pin.wait_for_any_edge().await; }
 
-    /// Configure dormant wake.
+    /// Arms conditions from `cfg` and returns a borrowed guard that disables all this
+    /// pin's dormant-wake conditions on drop; clears selected stale edge flags first.
+    /// Does not enter dormant mode or preserve a previous wake configuration.
     #[inline]
-    pub fn dormant_wake(&mut self, cfg: DormantWakeConfig) -> DormantWake<'_> {
+    pub fn dormant_wake(
+        &mut self,
+        cfg: DormantWakeConfig,
+    ) -> DormantWake<'_> {
         self.pin.dormant_wake(cfg)
     }
 
-    /// Set the pin's pad isolation
+    /// Sets electrical pad isolation to `isolate`; other pad and SIO configuration is retained.
     #[cfg(feature = "_rp235x")]
     #[inline]
-    pub fn set_pad_isolation(&mut self, isolate: bool) {
+    pub fn set_pad_isolation(
+        &mut self,
+        isolate: bool,
+    ) {
         self.pin.set_pad_isolation(isolate)
     }
 }
@@ -219,6 +238,9 @@ pub enum InterruptTrigger {
     AnyEdge,
 }
 
+/// Enables GPIO bank IRQs at priority P3 on the calling core.
+/// # Safety
+/// Call during exclusive HAL initialization with the matching handlers installed.
 pub(crate) unsafe fn init() {
     interrupt::IO_IRQ_BANK0.disable();
     interrupt::IO_IRQ_BANK0.set_priority(interrupt::Priority::P3);
@@ -233,7 +255,12 @@ pub(crate) unsafe fn init() {
 }
 
 #[cfg(feature = "rt")]
-fn irq_handler<const N: usize>(bank: pac::io::Io, wakers: &[AtomicWaker; N]) {
+/// Scans `bank` pending events on the current core, disarms each triggered pin and
+/// wakes its entry in `wakers`; `N` must match the bank's implemented pin count.
+fn irq_handler<const N: usize>(
+    bank: pac::io::Io,
+    wakers: &[AtomicWaker; N],
+) {
     let cpu = SIO.cpuid().read() as usize;
     // There are two sets of interrupt registers, one for cpu0 and one for cpu1
     // and here we are selecting the set that belongs to the currently executing
@@ -248,7 +275,7 @@ fn irq_handler<const N: usize>(bank: pac::io::Io, wakers: &[AtomicWaker; N]) {
         // each pin. Each group consists of four trigger levels LEVEL_LOW,
         // LEVEL_HIGH, EDGE_LOW, and EDGE_HIGH for each pin.
         let pin_group = pin % 8;
-        let event = (intsx.read().0 >> (pin_group * 4)) & 0xf;
+        let event = (intsx.read().0 >> (pin_group * 4)) & 0xF;
 
         // no more than one event can be awaited per pin at any given time, so
         // we can just clear all interrupt enables for that pin without having
@@ -262,23 +289,28 @@ fn irq_handler<const N: usize>(bank: pac::io::Io, wakers: &[AtomicWaker; N]) {
 
 #[cfg(feature = "rt")]
 #[interrupt]
-fn IO_IRQ_BANK0() {
-    irq_handler(pac::IO_BANK0, &BANK0_WAKERS);
-}
+/// Dispatches current-core user-bank GPIO events to their registered waiters.
+fn IO_IRQ_BANK0() { irq_handler(pac::IO_BANK0, &BANK0_WAKERS); }
 
 #[cfg(all(feature = "rt", feature = "qspi-as-gpio"))]
 #[interrupt]
-fn IO_IRQ_QSPI() {
-    irq_handler(pac::IO_QSPI, &QSPI_WAKERS);
-}
+/// Dispatches current-core QSPI GPIO events to their registered waiters.
+fn IO_IRQ_QSPI() { irq_handler(pac::IO_QSPI, &QSPI_WAKERS); }
 
+/// Armed GPIO wait tied to the CPU interrupt bank that created it; drop disarms.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct InputFuture<'d> {
+    /// Exclusive erased pin token retained for this driver or wait.
     pin: Peri<'d, AnyPin>,
+    /// Original CPU interrupt register bank, retained if the future is polled elsewhere.
     interrupts: pac::io::Int,
 }
 
-fn disarm_wait(interrupts: pac::io::Int, pin: usize) {
+/// Clears all four enable bits for bank-local `pin` in `interrupts`, preserving adjacent pins.
+fn disarm_wait(
+    interrupts: pac::io::Int,
+    pin: usize,
+) {
     interrupts.inte(pin / 8).write_clear(|w| {
         w.set_edge_high(pin % 8, true);
         w.set_edge_low(pin % 8, true);
@@ -288,15 +320,16 @@ fn disarm_wait(interrupts: pac::io::Int, pin: usize) {
 }
 
 impl Drop for InputFuture<'_> {
-    fn drop(&mut self) {
-        disarm_wait(self.interrupts, self.pin.pin() as usize);
-    }
+    /// Disarms the original CPU's pin wait on completion or cancellation; stale waker may remain.
+    fn drop(&mut self) { disarm_wait(self.interrupts, self.pin.pin() as usize); }
 }
 
+/// In-memory register regressions for cancellation and original-bank polling.
 #[cfg(test)]
 mod wait_tests {
     use super::*;
 
+    /// Checks cancellation clears only the owned four-bit interrupt-enable group.
     #[test]
     fn cancellation_disarms_only_the_owned_pin() {
         let mut registers = [0u32; 4096];
@@ -307,10 +340,11 @@ mod wait_tests {
         };
         drop(wait);
         let clear_mask = registers[(0x3000 + 4) / 4];
-        assert_eq!(clear_mask, 0xf << 8);
+        assert_eq!(clear_mask, 0xF << 8);
         assert_eq!(registers[0x3000 / 4], 0);
     }
 
+    /// Checks readiness uses the saved bank and ignores neighboring enabled pins.
     #[test]
     fn wait_observes_its_original_interrupt_bank() {
         let mut registers = [0u32; 4096];
@@ -329,7 +363,12 @@ mod wait_tests {
 }
 
 impl<'d> InputFuture<'d> {
-    fn new(pin: Peri<'d, AnyPin>, level: InterruptTrigger) -> Self {
+    /// Returns an armed wait for `level` on `pin`; clears stale edges and retains
+    /// the calling CPU's interrupt bank. IRQ delivery must remain enabled on that CPU.
+    fn new(
+        pin: Peri<'d, AnyPin>,
+        level: InterruptTrigger,
+    ) -> Self {
         let pin_group = (pin.pin() % 8) as usize;
         let interrupts = pin.int_proc();
         disarm_wait(interrupts, pin.pin() as usize);
@@ -349,9 +388,8 @@ impl<'d> InputFuture<'d> {
         // Each INTR register is divided into 8 groups, one group for each
         // pin, and each group consists of LEVEL_LOW, LEVEL_HIGH, EDGE_LOW,
         // and EDGE_HIGH.
-        interrupts
-            .inte((pin.pin() / 8) as usize)
-            .write_set(|w| match level {
+        interrupts.inte((pin.pin() / 8) as usize).write_set(|w| {
+            match level {
                 InterruptTrigger::LevelHigh => {
                     w.set_level_high(pin_group, true);
                 }
@@ -368,16 +406,23 @@ impl<'d> InputFuture<'d> {
                     w.set_edge_high(pin_group, true);
                     w.set_edge_low(pin_group, true);
                 }
-            });
+            }
+        });
 
         Self { pin, interrupts }
     }
 }
 
 impl<'d> Future for InputFuture<'d> {
+    /// Completion means the handler cleared all enable bits for this pin.
     type Output = ();
 
-    fn poll(self: FuturePin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    /// Registers `cx` and returns Ready when `self`'s saved interrupt-enable group is clear.
+    /// External register mutation can therefore produce readiness without a physical event.
+    fn poll(
+        self: FuturePin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         // We need to register/re-register the waker for each poll because any
         // calls to wake will deregister the waker.
         let waker = match self.pin.bank() {
@@ -413,13 +458,18 @@ impl<'d> Future for InputFuture<'d> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Output<'d> {
+    /// Exclusive pad ownership and shared configuration/cleanup implementation.
     pin: Flex<'d>,
 }
 
 impl<'d> Output<'d> {
-    /// Create GPIO output driver for a [Pin] with the provided [Level].
+    /// Returns an output owning `pin`, writing `initial_output` before enabling SIO output.
+    /// Reinitializes pad/mux; an already-enabled SIO latch can be exposed during setup.
     #[inline]
-    pub fn new(pin: Peri<'d, impl Pin>, initial_output: Level) -> Self {
+    pub fn new(
+        pin: Peri<'d, impl Pin>,
+        initial_output: Level,
+    ) -> Self {
         let mut pin = Flex::new(pin);
         match initial_output {
             Level::High => pin.set_high(),
@@ -430,70 +480,73 @@ impl<'d> Output<'d> {
         Self { pin }
     }
 
-    /// Set the pin's drive strength.
+    /// Programs nominal pad drive `strength`; this is not a current regulator or load measurement.
     #[inline]
-    pub fn set_drive_strength(&mut self, strength: Drive) {
+    pub fn set_drive_strength(
+        &mut self,
+        strength: Drive,
+    ) {
         self.pin.set_drive_strength(strength)
     }
 
-    /// Set the pin's slew rate.
+    /// Programs pad transition-rate selection `slew_rate`, preserving other pad settings.
     #[inline]
-    pub fn set_slew_rate(&mut self, slew_rate: SlewRate) {
+    pub fn set_slew_rate(
+        &mut self,
+        slew_rate: SlewRate,
+    ) {
         self.pin.set_slew_rate(slew_rate)
     }
 
-    /// Configure the output logic inversion of this pin.
+    /// Sets pad output inversion to `invert`; SIO latch readback remains uninverted.
     #[inline]
-    pub fn set_inversion(&mut self, invert: bool) {
+    pub fn set_inversion(
+        &mut self,
+        invert: bool,
+    ) {
         self.pin.set_output_inversion(invert)
     }
 
-    /// Set the output as high.
+    /// Sets the SIO output latch high; physical drive depends on direction/isolation/overrides.
     #[inline]
-    pub fn set_high(&mut self) {
-        self.pin.set_high()
-    }
+    pub fn set_high(&mut self) { self.pin.set_high() }
 
-    /// Set the output as low.
+    /// Sets the SIO output latch low; physical drive depends on direction/isolation/overrides.
     #[inline]
-    pub fn set_low(&mut self) {
-        self.pin.set_low()
-    }
+    pub fn set_low(&mut self) { self.pin.set_low() }
 
-    /// Set the output level.
+    /// Stores requested `level` using an atomic SIO set/clear operation.
     #[inline]
-    pub fn set_level(&mut self, level: Level) {
+    pub fn set_level(
+        &mut self,
+        level: Level,
+    ) {
         self.pin.set_level(level)
     }
 
-    /// Is the output pin set as high?
+    /// Returns whether the SIO output latch is high, without measuring the pad.
     #[inline]
-    pub fn is_set_high(&self) -> bool {
-        self.pin.is_set_high()
-    }
+    pub fn is_set_high(&self) -> bool { self.pin.is_set_high() }
 
-    /// Is the output pin set as low?
+    /// Returns whether the SIO output latch is low, without measuring the pad.
     #[inline]
-    pub fn is_set_low(&self) -> bool {
-        self.pin.is_set_low()
-    }
+    pub fn is_set_low(&self) -> bool { self.pin.is_set_low() }
 
-    /// What level output is set to
+    /// Returns the requested output latch level, without measuring the pad.
     #[inline]
-    pub fn get_output_level(&self) -> Level {
-        self.pin.get_output_level()
-    }
+    pub fn get_output_level(&self) -> Level { self.pin.get_output_level() }
 
-    /// Toggle pin output
+    /// Atomically toggles the SIO output latch; physical output follows direction and overrides.
     #[inline]
-    pub fn toggle(&mut self) {
-        self.pin.toggle()
-    }
+    pub fn toggle(&mut self) { self.pin.toggle() }
 
-    /// Set the pin's pad isolation
+    /// Sets electrical pad isolation to `isolate`; other pad and SIO configuration is retained.
     #[cfg(feature = "_rp235x")]
     #[inline]
-    pub fn set_pad_isolation(&mut self, isolate: bool) {
+    pub fn set_pad_isolation(
+        &mut self,
+        isolate: bool,
+    ) {
         self.pin.set_pad_isolation(isolate)
     }
 }
@@ -502,13 +555,18 @@ impl<'d> Output<'d> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OutputOpenDrain<'d> {
+    /// Exclusive pad ownership and shared configuration/cleanup implementation.
     pin: Flex<'d>,
 }
 
 impl<'d> OutputOpenDrain<'d> {
-    /// Create GPIO output driver for a [Pin] in open drain mode with the provided [Level].
+    /// Returns an open-drain owner of `pin`: `initial_output` Low drives low, High
+    /// releases the pad. Initializes the latch low; an external/internal pull-up is separate.
     #[inline]
-    pub fn new(pin: Peri<'d, impl Pin>, initial_output: Level) -> Self {
+    pub fn new(
+        pin: Peri<'d, impl Pin>,
+        initial_output: Level,
+    ) -> Self {
         let mut pin = Flex::new(pin);
         pin.set_low();
         match initial_output {
@@ -518,9 +576,12 @@ impl<'d> OutputOpenDrain<'d> {
         Self { pin }
     }
 
-    /// Set the pin's pull-up.
+    /// Enables the weak pull-up when `enable` is true, otherwise removes both pulls.
     #[inline]
-    pub fn set_pullup(&mut self, enable: bool) {
+    pub fn set_pullup(
+        &mut self,
+        enable: bool,
+    ) {
         if enable {
             self.pin.set_pull(Pull::Up);
         } else {
@@ -528,117 +589,110 @@ impl<'d> OutputOpenDrain<'d> {
         }
     }
 
-    /// Set the pin's drive strength.
+    /// Programs nominal pad drive `strength`; this is not a current regulator or load measurement.
     #[inline]
-    pub fn set_drive_strength(&mut self, strength: Drive) {
+    pub fn set_drive_strength(
+        &mut self,
+        strength: Drive,
+    ) {
         self.pin.set_drive_strength(strength)
     }
 
-    /// Set the pin's slew rate.
+    /// Programs pad transition-rate selection `slew_rate`, preserving other pad settings.
     #[inline]
-    pub fn set_slew_rate(&mut self, slew_rate: SlewRate) {
+    pub fn set_slew_rate(
+        &mut self,
+        slew_rate: SlewRate,
+    ) {
         self.pin.set_slew_rate(slew_rate)
     }
 
-    /// Set the output as high.
+    /// Releases the output driver; a pull-up or external device determines the measured level.
     #[inline]
     pub fn set_high(&mut self) {
         // For Open Drain High, disable the output pin.
         self.pin.set_as_input()
     }
 
-    /// Set the output as low.
+    /// Enables the low output driver.
     #[inline]
     pub fn set_low(&mut self) {
         // For Open Drain Low, enable the output pin.
         self.pin.set_as_output()
     }
 
-    /// Set the output level.
+    /// Sets `level` Low to drive low, or High to release the pad.
     #[inline]
-    pub fn set_level(&mut self, level: Level) {
+    pub fn set_level(
+        &mut self,
+        level: Level,
+    ) {
         match level {
             Level::Low => self.set_low(),
             Level::High => self.set_high(),
         }
     }
 
-    /// Is the output level high?
+    /// Returns whether the output driver is released; does not measure the pad.
     #[inline]
-    pub fn is_set_high(&self) -> bool {
-        !self.is_set_low()
-    }
+    pub fn is_set_high(&self) -> bool { !self.is_set_low() }
 
-    /// Is the output level low?
+    /// Returns whether the low output driver is enabled; does not measure the pad.
     #[inline]
-    pub fn is_set_low(&self) -> bool {
-        self.pin.is_set_as_output()
-    }
+    pub fn is_set_low(&self) -> bool { self.pin.is_set_as_output() }
 
-    /// What level output is set to
+    /// Returns Low when driving low or High when released; does not measure the pad.
     #[inline]
-    pub fn get_output_level(&self) -> Level {
-        self.is_set_high().into()
-    }
+    pub fn get_output_level(&self) -> Level { self.is_set_high().into() }
 
-    /// Toggle pin output
+    /// Atomically switches between driving low and releasing the pad.
     #[inline]
-    pub fn toggle(&mut self) {
-        self.pin.toggle_set_as_output()
-    }
+    pub fn toggle(&mut self) { self.pin.toggle_set_as_output() }
 
-    /// Get whether the pin input level is high.
+    /// Returns whether the sampled SIO input is high, after configured input inversion.
     #[inline]
-    pub fn is_high(&self) -> bool {
-        self.pin.is_high()
-    }
+    pub fn is_high(&self) -> bool { self.pin.is_high() }
 
-    /// Get whether the pin input level is low.
+    /// Returns whether the sampled SIO input is low, after configured input inversion.
     #[inline]
-    pub fn is_low(&self) -> bool {
-        self.pin.is_low()
-    }
+    pub fn is_low(&self) -> bool { self.pin.is_low() }
 
-    /// Returns current pin level
+    /// Returns the sampled SIO input level, after configured input inversion.
     #[inline]
-    pub fn get_level(&self) -> Level {
-        self.is_high().into()
-    }
+    pub fn get_level(&self) -> Level { self.is_high().into() }
 
-    /// Wait until the pin is high. If it is already high, return immediately.
+    /// Waits for the level-high IRQ condition; an already-high input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_high(&mut self) {
-        self.pin.wait_for_high().await;
-    }
+    pub async fn wait_for_high(&mut self) { self.pin.wait_for_high().await; }
 
-    /// Wait until the pin is low. If it is already low, return immediately.
+    /// Waits for the level-low IRQ condition; an already-low input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_low(&mut self) {
-        self.pin.wait_for_low().await;
-    }
+    pub async fn wait_for_low(&mut self) { self.pin.wait_for_low().await; }
 
-    /// Wait for the pin to undergo a transition from low to high.
+    /// Waits for low-to-high edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_rising_edge(&mut self) {
-        self.pin.wait_for_rising_edge().await;
-    }
+    pub async fn wait_for_rising_edge(&mut self) { self.pin.wait_for_rising_edge().await; }
 
-    /// Wait for the pin to undergo a transition from high to low.
+    /// Waits for high-to-low edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_falling_edge(&mut self) {
-        self.pin.wait_for_falling_edge().await;
-    }
+    pub async fn wait_for_falling_edge(&mut self) { self.pin.wait_for_falling_edge().await; }
 
-    /// Wait for the pin to undergo any transition, i.e low to high OR high to low.
+    /// Waits for either edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
-    pub async fn wait_for_any_edge(&mut self) {
-        self.pin.wait_for_any_edge().await;
-    }
+    pub async fn wait_for_any_edge(&mut self) { self.pin.wait_for_any_edge().await; }
 
-    /// Set the pin's pad isolation
+    /// Sets electrical pad isolation to `isolate`; other pad and SIO configuration is retained.
     #[cfg(feature = "_rp235x")]
     #[inline]
-    pub fn set_pad_isolation(&mut self, isolate: bool) {
+    pub fn set_pad_isolation(
+        &mut self,
+        isolate: bool,
+    ) {
         self.pin.set_pad_isolation(isolate)
     }
 }
@@ -651,14 +705,14 @@ impl<'d> OutputOpenDrain<'d> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Flex<'d> {
+    /// Exclusive erased pin token retained for this driver or wait.
     pin: Peri<'d, AnyPin>,
 }
 
 impl<'d> Flex<'d> {
-    /// Wrap the pin in a `Flex`.
-    ///
-    /// The pin remains disconnected. The initial output level is unspecified, but can be changed
-    /// before the pin is put into output mode.
+    /// Returns a flexible owner of `pin`, selecting SIO and resetting pad/mux fields.
+    /// Existing SIO output-enable and output latches are retained; this does not
+    /// guarantee a disconnected input. Set direction and level explicitly.
     #[inline]
     pub fn new(pin: Peri<'d, impl Pin>) -> Self {
         pin.pad_ctrl().write(|w| {
@@ -677,14 +731,16 @@ impl<'d> Flex<'d> {
         Self { pin: pin.into() }
     }
 
+    /// Returns this pin's mask within its 32-bit SIO register word.
     #[inline]
-    fn bit(&self) -> u32 {
-        1 << (self.pin.pin() % 32)
-    }
+    fn bit(&self) -> u32 { 1 << (self.pin.pin() % 32) }
 
-    /// Set the pin's pull.
+    /// Applies resistor selection `pull` and enables digital input; preserves other pad fields.
     #[inline]
-    pub fn set_pull(&mut self, pull: Pull) {
+    pub fn set_pull(
+        &mut self,
+        pull: Pull,
+    ) {
         self.pin.pad_ctrl().modify(|w| {
             w.set_ie(true);
             let (pu, pd) = match pull {
@@ -697,9 +753,12 @@ impl<'d> Flex<'d> {
         });
     }
 
-    /// Set the pin's drive strength.
+    /// Programs nominal pad drive `strength`; this is not a current regulator or load measurement.
     #[inline]
-    pub fn set_drive_strength(&mut self, strength: Drive) {
+    pub fn set_drive_strength(
+        &mut self,
+        strength: Drive,
+    ) {
         self.pin.pad_ctrl().modify(|w| {
             w.set_drive(match strength {
                 Drive::_2mA => pac::pads::vals::Drive::_2M_A,
@@ -710,17 +769,23 @@ impl<'d> Flex<'d> {
         });
     }
 
-    /// Set the pin's slew rate.
+    /// Programs pad transition-rate selection `slew_rate`, preserving other pad settings.
     #[inline]
-    pub fn set_slew_rate(&mut self, slew_rate: SlewRate) {
+    pub fn set_slew_rate(
+        &mut self,
+        slew_rate: SlewRate,
+    ) {
         self.pin.pad_ctrl().modify(|w| {
             w.set_slewfast(slew_rate == SlewRate::Fast);
         });
     }
 
-    /// Set the pin's Schmitt trigger.
+    /// Sets input Schmitt hysteresis to `enable`, preserving other pad settings.
     #[inline]
-    pub fn set_schmitt(&mut self, enable: bool) {
+    pub fn set_schmitt(
+        &mut self,
+        enable: bool,
+    ) {
         self.pin.pad_ctrl().modify(|w| {
             w.set_schmitt(enable);
         });
@@ -730,34 +795,29 @@ impl<'d> Flex<'d> {
     ///
     /// The pull setting is left unchanged.
     #[inline]
-    pub fn set_as_input(&mut self) {
-        self.pin.sio_oe().value_clr().write_value(self.bit())
-    }
+    pub fn set_as_input(&mut self) { self.pin.sio_oe().value_clr().write_value(self.bit()) }
 
     /// Put the pin into output mode.
     ///
-    /// The pin level will be whatever was set before (or low by default). If you want it to begin
+    /// The pin level will be whatever the retained SIO latch contains. If you want it to begin
     /// at a specific level, call `set_high`/`set_low` on the pin first.
     #[inline]
-    pub fn set_as_output(&mut self) {
-        self.pin.sio_oe().value_set().write_value(self.bit())
-    }
+    pub fn set_as_output(&mut self) { self.pin.sio_oe().value_set().write_value(self.bit()) }
 
-    /// Set as output pin.
+    /// Returns whether the SIO output-enable latch is set, before OE override/isolation.
     #[inline]
-    fn is_set_as_output(&self) -> bool {
-        (self.pin.sio_oe().value().read() & self.bit()) != 0
-    }
+    fn is_set_as_output(&self) -> bool { (self.pin.sio_oe().value().read() & self.bit()) != 0 }
 
-    /// Toggle output pin.
+    /// Atomically toggles the SIO output-enable latch, retaining its output value.
     #[inline]
-    pub fn toggle_set_as_output(&mut self) {
-        self.pin.sio_oe().value_xor().write_value(self.bit())
-    }
+    pub fn toggle_set_as_output(&mut self) { self.pin.sio_oe().value_xor().write_value(self.bit()) }
 
-    /// Configure the input logic inversion of this pin.
+    /// Sets input inversion to `invert`; does not change the separate IRQ override.
     #[inline]
-    pub fn set_input_inversion(&mut self, invert: bool) {
+    pub fn set_input_inversion(
+        &mut self,
+        invert: bool,
+    ) {
         self.pin.gpio().ctrl().modify(|w| {
             w.set_inover(if invert {
                 pac::io::vals::Inover::INVERT
@@ -767,9 +827,12 @@ impl<'d> Flex<'d> {
         });
     }
 
-    /// Configure the output enable inversion of this pin
+    /// Sets output-enable inversion to `invert`; direction-latch readback remains uninverted.
     #[inline]
-    pub fn set_output_enable_inversion(&mut self, invert: bool) {
+    pub fn set_output_enable_inversion(
+        &mut self,
+        invert: bool,
+    ) {
         self.pin.gpio().ctrl().modify(|w| {
             w.set_oeover(if invert {
                 pac::io::vals::Oeover::INVERT
@@ -779,9 +842,12 @@ impl<'d> Flex<'d> {
         })
     }
 
-    /// Configure the output logic inversion of this pin.
+    /// Sets pad output inversion to `invert`; SIO latch readback remains uninverted.
     #[inline]
-    pub fn set_output_inversion(&mut self, invert: bool) {
+    pub fn set_output_inversion(
+        &mut self,
+        invert: bool,
+    ) {
         self.pin.gpio().ctrl().modify(|w| {
             w.set_outover(if invert {
                 pac::io::vals::Outover::INVERT
@@ -791,102 +857,94 @@ impl<'d> Flex<'d> {
         });
     }
 
-    /// Get whether the pin input level is high.
+    /// Returns whether the sampled SIO input is high, after configured input inversion.
     #[inline]
-    pub fn is_high(&self) -> bool {
-        !self.is_low()
-    }
-    /// Get whether the pin input level is low.
+    pub fn is_high(&self) -> bool { !self.is_low() }
+
+    /// Returns whether the sampled SIO input is low, after configured input inversion.
 
     #[inline]
-    pub fn is_low(&self) -> bool {
-        self.pin.sio_in().read() & self.bit() == 0
-    }
+    pub fn is_low(&self) -> bool { self.pin.sio_in().read() & self.bit() == 0 }
 
-    /// Returns current pin level
+    /// Returns the sampled SIO input level, after configured input inversion.
     #[inline]
-    pub fn get_level(&self) -> Level {
-        self.is_high().into()
-    }
+    pub fn get_level(&self) -> Level { self.is_high().into() }
 
-    /// Set the output as high.
+    /// Sets the SIO output latch high; physical drive depends on direction/isolation/overrides.
     #[inline]
-    pub fn set_high(&mut self) {
-        self.pin.sio_out().value_set().write_value(self.bit())
-    }
+    pub fn set_high(&mut self) { self.pin.sio_out().value_set().write_value(self.bit()) }
 
-    /// Set the output as low.
+    /// Sets the SIO output latch low; physical drive depends on direction/isolation/overrides.
     #[inline]
-    pub fn set_low(&mut self) {
-        self.pin.sio_out().value_clr().write_value(self.bit())
-    }
+    pub fn set_low(&mut self) { self.pin.sio_out().value_clr().write_value(self.bit()) }
 
-    /// Set the output level.
+    /// Stores requested `level` using an atomic SIO set/clear operation.
     #[inline]
-    pub fn set_level(&mut self, level: Level) {
+    pub fn set_level(
+        &mut self,
+        level: Level,
+    ) {
         match level {
             Level::Low => self.set_low(),
             Level::High => self.set_high(),
         }
     }
 
-    /// Is the output level high?
+    /// Returns whether the SIO output latch is high, without measuring the pad.
     #[inline]
-    pub fn is_set_high(&self) -> bool {
-        !self.is_set_low()
-    }
+    pub fn is_set_high(&self) -> bool { !self.is_set_low() }
 
-    /// Is the output level low?
+    /// Returns whether the SIO output latch is low, without measuring the pad.
     #[inline]
-    pub fn is_set_low(&self) -> bool {
-        (self.pin.sio_out().value().read() & self.bit()) == 0
-    }
+    pub fn is_set_low(&self) -> bool { (self.pin.sio_out().value().read() & self.bit()) == 0 }
 
-    /// What level output is set to
+    /// Returns the requested output latch level, without measuring the pad.
     #[inline]
-    pub fn get_output_level(&self) -> Level {
-        self.is_set_high().into()
-    }
+    pub fn get_output_level(&self) -> Level { self.is_set_high().into() }
 
-    /// Toggle pin output
+    /// Atomically toggles the SIO output latch; physical output follows direction and overrides.
     #[inline]
-    pub fn toggle(&mut self) {
-        self.pin.sio_out().value_xor().write_value(self.bit())
-    }
+    pub fn toggle(&mut self) { self.pin.sio_out().value_xor().write_value(self.bit()) }
 
-    /// Wait until the pin is high. If it is already high, return immediately.
+    /// Waits for the level-high IRQ condition; an already-high input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_high(&mut self) {
-        InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelHigh).await;
-    }
+    pub async fn wait_for_high(&mut self) { InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelHigh).await; }
 
-    /// Wait until the pin is low. If it is already low, return immediately.
+    /// Waits for the level-low IRQ condition; an already-low input needs no new edge.
+    /// Completes after IRQ handling, with no timeout. Cancellation disarms this pin's wait.
     #[inline]
-    pub async fn wait_for_low(&mut self) {
-        InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelLow).await;
-    }
+    pub async fn wait_for_low(&mut self) { InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelLow).await; }
 
-    /// Wait for the pin to undergo a transition from low to high.
+    /// Waits for low-to-high edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
     pub async fn wait_for_rising_edge(&mut self) {
         InputFuture::new(self.pin.reborrow(), InterruptTrigger::EdgeHigh).await;
     }
 
-    /// Wait for the pin to undergo a transition from high to low.
+    /// Waits for high-to-low edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
     pub async fn wait_for_falling_edge(&mut self) {
         InputFuture::new(self.pin.reborrow(), InterruptTrigger::EdgeLow).await;
     }
 
-    /// Wait for the pin to undergo any transition, i.e low to high OR high to low.
+    /// Waits for either edge after arming, discarding previously latched edges.
+    /// Edges during setup may be missed; no timeout/debounce. Cancellation disarms this pin.
     #[inline]
     pub async fn wait_for_any_edge(&mut self) {
         InputFuture::new(self.pin.reborrow(), InterruptTrigger::AnyEdge).await;
     }
 
-    /// Configure dormant wake.
+    /// Arms conditions from `cfg` and returns a borrowed guard that disables all this
+    /// pin's dormant-wake conditions on drop; clears selected stale edge flags first.
+    /// Does not enter dormant mode or preserve a previous wake configuration.
     #[inline]
-    pub fn dormant_wake(&mut self, cfg: DormantWakeConfig) -> DormantWake<'_> {
+    pub fn dormant_wake(
+        &mut self,
+        cfg: DormantWakeConfig,
+    ) -> DormantWake<'_> {
         let idx = self.pin._pin() as usize;
         self.pin.io().intr(idx / 8).write(|w| {
             w.set_edge_high(idx % 8, cfg.edge_high);
@@ -904,10 +962,13 @@ impl<'d> Flex<'d> {
         }
     }
 
-    /// Set the pin's pad isolation
+    /// Sets electrical pad isolation to `isolate`; other pad and SIO configuration is retained.
     #[cfg(feature = "_rp235x")]
     #[inline]
-    pub fn set_pad_isolation(&mut self, isolate: bool) {
+    pub fn set_pad_isolation(
+        &mut self,
+        isolate: bool,
+    ) {
         self.pin.pad_ctrl().modify(|w| {
             w.set_iso(isolate);
         });
@@ -915,6 +976,8 @@ impl<'d> Flex<'d> {
 }
 
 impl<'d> Drop for Flex<'d> {
+    /// Resets pad fields, disconnects the mux and clears dormant wake enables;
+    /// SIO output and output-enable latches are retained.
     #[inline]
     fn drop(&mut self) {
         let idx = self.pin._pin() as usize;
@@ -937,11 +1000,14 @@ impl<'d> Drop for Flex<'d> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DormantWake<'w> {
+    /// Borrowed pad held until wake configuration is removed.
     pin: Peri<'w, AnyPin>,
+    /// Selected edge flags to acknowledge during cleanup.
     cfg: DormantWakeConfig,
 }
 
 impl<'w> Drop for DormantWake<'w> {
+    /// Clears selected latched edges and all dormant-wake enables for this pin.
     fn drop(&mut self) {
         let idx = self.pin._pin() as usize;
         self.pin.io().intr(idx / 8).write(|w| {
@@ -957,15 +1023,17 @@ impl<'w> Drop for DormantWake<'w> {
     }
 }
 
+/// Internal pin encoding and register selection; implementations must encode valid package pins.
 pub(crate) trait SealedPin: Sized {
+    /// Returns bank in bit 7 and bank-local pin index in bits 0..6.
     fn pin_bank(&self) -> u8;
 
     #[inline]
-    fn _pin(&self) -> u8 {
-        self.pin_bank() & 0x7f
-    }
+    /// Returns the bank-local pin number from the encoded token.
+    fn _pin(&self) -> u8 { self.pin_bank() & 0x7F }
 
     #[inline]
+    /// Returns QSPI for encoded bank one when enabled, otherwise bank zero.
     fn _bank(&self) -> Bank {
         match self.pin_bank() >> 7 {
             #[cfg(feature = "qspi-as-gpio")]
@@ -974,6 +1042,7 @@ pub(crate) trait SealedPin: Sized {
         }
     }
 
+    /// Returns this pin's IO register bank.
     fn io(&self) -> pac::io::Io {
         match self._bank() {
             Bank::Bank0 => crate::pac::IO_BANK0,
@@ -982,10 +1051,10 @@ pub(crate) trait SealedPin: Sized {
         }
     }
 
-    fn gpio(&self) -> pac::io::Gpio {
-        self.io().gpio(self._pin() as _)
-    }
+    /// Returns the pin's mux/override register pair; invalid stolen indices can panic.
+    fn gpio(&self) -> pac::io::Gpio { self.io().gpio(self._pin() as _) }
 
+    /// Returns this pin's pad-control register; invalid stolen indices can panic.
     fn pad_ctrl(&self) -> Reg<pac::pads::regs::GpioCtrl, RW> {
         let block = match self._bank() {
             Bank::Bank0 => crate::pac::PADS_BANK0,
@@ -995,6 +1064,7 @@ pub(crate) trait SealedPin: Sized {
         block.gpio(self._pin() as _)
     }
 
+    /// Returns the SIO output-latch word selected for this chip and pin.
     fn sio_out(&self) -> pac::sio::Gpio {
         if cfg!(feature = "rp2040") {
             SIO.gpio_out(self._bank() as _)
@@ -1003,6 +1073,7 @@ pub(crate) trait SealedPin: Sized {
         }
     }
 
+    /// Returns the SIO output-enable word selected for this chip and pin.
     fn sio_oe(&self) -> pac::sio::Gpio {
         if cfg!(feature = "rp2040") {
             SIO.gpio_oe(self._bank() as _)
@@ -1011,6 +1082,7 @@ pub(crate) trait SealedPin: Sized {
         }
     }
 
+    /// Returns the sampled SIO input word selected for this chip and pin.
     fn sio_in(&self) -> Reg<u32, RW> {
         if cfg!(feature = "rp2040") {
             SIO.gpio_in(self._bank() as _)
@@ -1019,6 +1091,7 @@ pub(crate) trait SealedPin: Sized {
         }
     }
 
+    /// Returns this pin bank's interrupt registers for the currently executing CPU.
     fn int_proc(&self) -> pac::io::Int {
         let proc = SIO.cpuid().read();
         self.io().int_proc(proc as _)
@@ -1030,57 +1103,55 @@ pub(crate) trait SealedPin: Sized {
 pub trait Pin: PeripheralType + Into<AnyPin> + SealedPin + Sized + 'static {
     /// Returns the pin number within a bank
     #[inline]
-    fn pin(&self) -> u8 {
-        self._pin()
-    }
+    fn pin(&self) -> u8 { self._pin() }
 
     /// Returns the bank of this pin
     #[inline]
-    fn bank(&self) -> Bank {
-        self._bank()
-    }
+    fn bank(&self) -> Bank { self._bank() }
 }
 
 /// Type-erased GPIO pin
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AnyPin {
+    /// Bank discriminator in bit 7, bank-local pin index in bits 0..6.
     pin_bank: u8,
 }
 
 impl AnyPin {
-    /// Unsafely create a new type-erased pin.
+    /// Returns a token encoded by `pin_bank` (bank in bit 7, bank-local index in bits 0..6).
+    /// Does not initialize hardware or validate the encoding.
     ///
     /// # Safety
     ///
-    /// You must ensure that you’re only using one instance of this type at a time.
-    pub unsafe fn steal(pin_bank: u8) -> Peri<'static, Self> {
-        Peri::new_unchecked(Self { pin_bank })
-    }
+    /// The encoding must identify a supported, physically available pin on the selected
+    /// chip, and no other token/driver may own it. QSPI GPIO also requires execution
+    /// and memory users to be independent of the repurposed external flash interface.
+    pub unsafe fn steal(pin_bank: u8) -> Peri<'static, Self> { Peri::new_unchecked(Self { pin_bank }) }
 }
 
 impl_peripheral!(AnyPin);
 
 impl Pin for AnyPin {}
 impl SealedPin for AnyPin {
-    fn pin_bank(&self) -> u8 {
-        self.pin_bank
-    }
+    /// Returns bank in bit 7 and bank-local pin index in bits 0..6.
+    fn pin_bank(&self) -> u8 { self.pin_bank }
 }
 
 // ==========================
 
+/// Implements valid bank/index encoding and ownership-preserving type erasure for one singleton.
 macro_rules! impl_pin {
     ($name:ident, $bank:expr, $pin_num:expr) => {
         impl Pin for peripherals::$name {}
         impl SealedPin for peripherals::$name {
             #[inline]
-            fn pin_bank(&self) -> u8 {
-                ($bank as u8) * 128 + $pin_num
-            }
+            /// Returns bank in bit 7 and bank-local pin index in bits 0..6.
+            fn pin_bank(&self) -> u8 { ($bank as u8) * 128 + $pin_num }
         }
 
         impl From<peripherals::$name> for crate::gpio::AnyPin {
+            /// Consumes `val` and returns its erased bank/index token without changing hardware.
             fn from(val: peripherals::$name) -> Self {
                 Self {
                     pin_bank: val.pin_bank(),
@@ -1174,264 +1245,273 @@ impl_pin!(PIN_QSPI_SD3, Bank::Qspi, 5);
 
 // ====================
 
+/// embedded-hal 0.2 adapters; hardware operations are infallible but not electrical verification.
 mod eh02 {
     use super::*;
 
     impl<'d> embedded_hal_02::digital::v2::InputPin for Input<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
-        fn is_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_high())
-        }
+        /// Returns Ok with sampled high state; never returns an error.
 
-        fn is_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_low())
-        }
+        fn is_high(&self) -> Result<bool, Self::Error> { Ok(self.is_high()) }
+
+        /// Returns Ok with sampled low state; never returns an error.
+
+        fn is_low(&self) -> Result<bool, Self::Error> { Ok(self.is_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::OutputPin for Output<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
-        fn set_high(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_high())
-        }
+        /// Requests high (release for open drain) and returns Ok; no electrical verification.
 
-        fn set_low(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_low())
-        }
+        fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
+
+        /// Requests low and returns Ok; no electrical verification.
+
+        fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::StatefulOutputPin for Output<'d> {
-        fn is_set_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_high())
-        }
+        /// Returns Ok with requested high/released state, not measured voltage.
+        fn is_set_high(&self) -> Result<bool, Self::Error> { Ok(self.is_set_high()) }
 
-        fn is_set_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_low())
-        }
+        /// Returns Ok with requested low/driving state, not measured voltage.
+
+        fn is_set_low(&self) -> Result<bool, Self::Error> { Ok(self.is_set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::ToggleableOutputPin for Output<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
+
         #[inline]
-        fn toggle(&mut self) -> Result<(), Self::Error> {
-            Ok(self.toggle())
-        }
+        /// Toggles requested output state and returns Ok; no electrical verification.
+        fn toggle(&mut self) -> Result<(), Self::Error> { Ok(self.toggle()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::InputPin for OutputOpenDrain<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
-        fn is_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_high())
-        }
+        /// Returns Ok with sampled high state; never returns an error.
 
-        fn is_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_low())
-        }
+        fn is_high(&self) -> Result<bool, Self::Error> { Ok(self.is_high()) }
+
+        /// Returns Ok with sampled low state; never returns an error.
+
+        fn is_low(&self) -> Result<bool, Self::Error> { Ok(self.is_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::OutputPin for OutputOpenDrain<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
         #[inline]
-        fn set_high(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_high())
-        }
+        /// Requests high (release for open drain) and returns Ok; no electrical verification.
+        fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
 
         #[inline]
-        fn set_low(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_low())
-        }
+        /// Requests low and returns Ok; no electrical verification.
+        fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::StatefulOutputPin for OutputOpenDrain<'d> {
-        fn is_set_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_high())
-        }
+        /// Returns Ok with requested high/released state, not measured voltage.
+        fn is_set_high(&self) -> Result<bool, Self::Error> { Ok(self.is_set_high()) }
 
-        fn is_set_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_low())
-        }
+        /// Returns Ok with requested low/driving state, not measured voltage.
+
+        fn is_set_low(&self) -> Result<bool, Self::Error> { Ok(self.is_set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::ToggleableOutputPin for OutputOpenDrain<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
+
         #[inline]
-        fn toggle(&mut self) -> Result<(), Self::Error> {
-            Ok(self.toggle())
-        }
+        /// Toggles requested output state and returns Ok; no electrical verification.
+        fn toggle(&mut self) -> Result<(), Self::Error> { Ok(self.toggle()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::InputPin for Flex<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
-        fn is_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_high())
-        }
+        /// Returns Ok with sampled high state; never returns an error.
 
-        fn is_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_low())
-        }
+        fn is_high(&self) -> Result<bool, Self::Error> { Ok(self.is_high()) }
+
+        /// Returns Ok with sampled low state; never returns an error.
+
+        fn is_low(&self) -> Result<bool, Self::Error> { Ok(self.is_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::OutputPin for Flex<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
 
-        fn set_high(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_high())
-        }
+        /// Requests high (release for open drain) and returns Ok; no electrical verification.
 
-        fn set_low(&mut self) -> Result<(), Self::Error> {
-            Ok(self.set_low())
-        }
+        fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
+
+        /// Requests low and returns Ok; no electrical verification.
+
+        fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::StatefulOutputPin for Flex<'d> {
-        fn is_set_high(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_high())
-        }
+        /// Returns Ok with requested high/released state, not measured voltage.
+        fn is_set_high(&self) -> Result<bool, Self::Error> { Ok(self.is_set_high()) }
 
-        fn is_set_low(&self) -> Result<bool, Self::Error> {
-            Ok(self.is_set_low())
-        }
+        /// Returns Ok with requested low/driving state, not measured voltage.
+
+        fn is_set_low(&self) -> Result<bool, Self::Error> { Ok(self.is_set_low()) }
     }
 
     impl<'d> embedded_hal_02::digital::v2::ToggleableOutputPin for Flex<'d> {
+        /// Register access does not produce recoverable errors.
         type Error = Infallible;
+
         #[inline]
-        fn toggle(&mut self) -> Result<(), Self::Error> {
-            Ok(self.toggle())
-        }
+        /// Toggles requested output state and returns Ok; no electrical verification.
+        fn toggle(&mut self) -> Result<(), Self::Error> { Ok(self.toggle()) }
     }
 }
 
 impl<'d> embedded_hal_1::digital::ErrorType for Input<'d> {
+    /// Register access does not produce recoverable errors.
     type Error = Infallible;
 }
 
 impl<'d> embedded_hal_1::digital::InputPin for Input<'d> {
-    fn is_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_high())
-    }
+    /// Returns Ok with sampled high state; never returns an error.
+    fn is_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_high()) }
 
-    fn is_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_low())
-    }
+    /// Returns Ok with sampled low state; never returns an error.
+
+    fn is_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::ErrorType for Output<'d> {
+    /// Register access does not produce recoverable errors.
     type Error = Infallible;
 }
 
 impl<'d> embedded_hal_1::digital::OutputPin for Output<'d> {
-    fn set_high(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_high())
-    }
+    /// Requests high (release for open drain) and returns Ok; no electrical verification.
+    fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
 
-    fn set_low(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_low())
-    }
+    /// Requests low and returns Ok; no electrical verification.
+
+    fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::StatefulOutputPin for Output<'d> {
-    fn is_set_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_high())
-    }
+    /// Returns Ok with requested high/released state, not measured voltage.
+    fn is_set_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_high()) }
 
-    fn is_set_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_low())
-    }
+    /// Returns Ok with requested low/driving state, not measured voltage.
+
+    fn is_set_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::ErrorType for OutputOpenDrain<'d> {
+    /// Register access does not produce recoverable errors.
     type Error = Infallible;
 }
 
 impl<'d> embedded_hal_1::digital::OutputPin for OutputOpenDrain<'d> {
-    fn set_high(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_high())
-    }
+    /// Requests high (release for open drain) and returns Ok; no electrical verification.
+    fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
 
-    fn set_low(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_low())
-    }
+    /// Requests low and returns Ok; no electrical verification.
+
+    fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::StatefulOutputPin for OutputOpenDrain<'d> {
-    fn is_set_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_high())
-    }
+    /// Returns Ok with requested high/released state, not measured voltage.
+    fn is_set_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_high()) }
 
-    fn is_set_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_low())
-    }
+    /// Returns Ok with requested low/driving state, not measured voltage.
+
+    fn is_set_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::InputPin for OutputOpenDrain<'d> {
-    fn is_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_high())
-    }
+    /// Returns Ok with sampled high state; never returns an error.
+    fn is_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_high()) }
 
-    fn is_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_low())
-    }
+    /// Returns Ok with sampled low state; never returns an error.
+
+    fn is_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::ErrorType for Flex<'d> {
+    /// Register access does not produce recoverable errors.
     type Error = Infallible;
 }
 
 impl<'d> embedded_hal_1::digital::InputPin for Flex<'d> {
-    fn is_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_high())
-    }
+    /// Returns Ok with sampled high state; never returns an error.
+    fn is_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_high()) }
 
-    fn is_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_low())
-    }
+    /// Returns Ok with sampled low state; never returns an error.
+
+    fn is_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::OutputPin for Flex<'d> {
-    fn set_high(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_high())
-    }
+    /// Requests high (release for open drain) and returns Ok; no electrical verification.
+    fn set_high(&mut self) -> Result<(), Self::Error> { Ok(self.set_high()) }
 
-    fn set_low(&mut self) -> Result<(), Self::Error> {
-        Ok(self.set_low())
-    }
+    /// Requests low and returns Ok; no electrical verification.
+
+    fn set_low(&mut self) -> Result<(), Self::Error> { Ok(self.set_low()) }
 }
 
 impl<'d> embedded_hal_1::digital::StatefulOutputPin for Flex<'d> {
-    fn is_set_high(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_high())
-    }
+    /// Returns Ok with requested high/released state, not measured voltage.
+    fn is_set_high(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_high()) }
 
-    fn is_set_low(&mut self) -> Result<bool, Self::Error> {
-        Ok((*self).is_set_low())
-    }
+    /// Returns Ok with requested low/driving state, not measured voltage.
+
+    fn is_set_low(&mut self) -> Result<bool, Self::Error> { Ok((*self).is_set_low()) }
 }
 
 impl<'d> embedded_hal_async::digital::Wait for Flex<'d> {
+    /// Returns Ok after the high-level IRQ; no timeout, and cancellation disarms this wait.
     async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
         self.wait_for_high().await;
         Ok(())
     }
+
+    /// Returns Ok after the low-level IRQ; no timeout, and cancellation disarms this wait.
 
     async fn wait_for_low(&mut self) -> Result<(), Self::Error> {
         self.wait_for_low().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed rising-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_rising_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_rising_edge().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed falling-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_falling_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_falling_edge().await;
         Ok(())
     }
+
+    /// Returns Ok after either newly armed edge IRQ; no debounce/timeout, cancellation disarms.
 
     async fn wait_for_any_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_any_edge().await;
@@ -1440,25 +1520,34 @@ impl<'d> embedded_hal_async::digital::Wait for Flex<'d> {
 }
 
 impl<'d> embedded_hal_async::digital::Wait for Input<'d> {
+    /// Returns Ok after the high-level IRQ; no timeout, and cancellation disarms this wait.
     async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
         self.wait_for_high().await;
         Ok(())
     }
+
+    /// Returns Ok after the low-level IRQ; no timeout, and cancellation disarms this wait.
 
     async fn wait_for_low(&mut self) -> Result<(), Self::Error> {
         self.wait_for_low().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed rising-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_rising_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_rising_edge().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed falling-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_falling_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_falling_edge().await;
         Ok(())
     }
+
+    /// Returns Ok after either newly armed edge IRQ; no debounce/timeout, cancellation disarms.
 
     async fn wait_for_any_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_any_edge().await;
@@ -1467,25 +1556,34 @@ impl<'d> embedded_hal_async::digital::Wait for Input<'d> {
 }
 
 impl<'d> embedded_hal_async::digital::Wait for OutputOpenDrain<'d> {
+    /// Returns Ok after the high-level IRQ; no timeout, and cancellation disarms this wait.
     async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
         self.wait_for_high().await;
         Ok(())
     }
+
+    /// Returns Ok after the low-level IRQ; no timeout, and cancellation disarms this wait.
 
     async fn wait_for_low(&mut self) -> Result<(), Self::Error> {
         self.wait_for_low().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed rising-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_rising_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_rising_edge().await;
         Ok(())
     }
 
+    /// Returns Ok after a newly armed falling-edge IRQ; no debounce/timeout, cancellation disarms.
+
     async fn wait_for_falling_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_falling_edge().await;
         Ok(())
     }
+
+    /// Returns Ok after either newly armed edge IRQ; no debounce/timeout, cancellation disarms.
 
     async fn wait_for_any_edge(&mut self) -> Result<(), Self::Error> {
         self.wait_for_any_edge().await;

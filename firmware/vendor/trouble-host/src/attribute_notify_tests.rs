@@ -1,3 +1,5 @@
+//! In-memory subscription, indication ownership and queued-write failure regressions.
+
 use super::*;
 use crate::attribute::{Characteristic, CharacteristicProp, PermissionLevel, Service};
 use crate::connection::ConnParams;
@@ -10,6 +12,7 @@ use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+/// Returns a one-client server and byte characteristic supporting write, notify and indicate, initially 7.
 fn server() -> (
     AttributeServer<'static, NoopRawMutex, DefaultPacketPool, 8, 1>,
     Characteristic<u8>,
@@ -30,6 +33,8 @@ fn server() -> (
     (AttributeServer::new(table), characteristic)
 }
 
+/// Connects `conn` to `server`, writes little-endian subscription `bits` to `cccd`, and asserts ATT success.
+/// Panics on fixture admission/process failure; the caller supplies notify/indicate bit combinations.
 fn subscribe(
     server: &AttributeServer<'_, NoopRawMutex, DefaultPacketPool, 8, 1>,
     conn: &Connection<'_, DefaultPacketPool>,
@@ -53,6 +58,7 @@ fn subscribe(
 }
 
 #[test]
+/// Denied CCCD access and an oversized payload each fail before enqueueing any bulk notification.
 fn bulk_notify_checks_permissions_and_does_not_hide_assembly_failure() {
     for oversized in [false, true] {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
@@ -93,6 +99,7 @@ fn bulk_notify_checks_permissions_and_does_not_hide_assembly_failure() {
 }
 
 #[test]
+/// Bulk indication success requires confirmation; dropping the active send closes its bearer.
 fn bulk_indications_wait_for_confirmation_and_cancel_closes_bearer() {
     for confirm in [false, true] {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
@@ -132,6 +139,7 @@ fn bulk_indications_wait_for_confirmation_and_cancel_closes_bearer() {
 }
 
 #[test]
+/// Idle confirmations are discarded, unsent waiter cancellation preserves the link, and later sends serialize.
 fn concurrent_indications_serialize_and_idle_confirmations_cannot_complete_a_send() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();
@@ -179,6 +187,7 @@ fn concurrent_indications_serialize_and_idle_confirmations_cannot_complete_a_sen
 }
 
 #[test]
+/// Oversized assembly releases the indication slot; a later queued send reports disconnection even after confirmation.
 fn indication_assembly_failure_releases_slot_without_disconnect_or_false_success() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();
@@ -220,6 +229,8 @@ fn indication_assembly_failure_releases_slot_without_disconnect_or_false_success
 
 #[test]
 #[cfg(feature = "att-queued-writes")]
+/// Invalid handles/permissions cannot queue writes; invalid execute flags preserve staged bytes,
+/// while cancel discards them and commit updates the value exactly once.
 fn prepared_writes_check_permissions_and_reject_invalid_execute_flags_without_clearing() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();

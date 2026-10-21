@@ -1,4 +1,7 @@
 //! Serial Peripheral Interface
+//!
+//! Eight-bit bus transfers; external chip select belongs to the caller. Async cancellation aborts
+//! DMA but does not undo clocked bytes, drain FIFOs or deassert CS. Frequency derives from clk_peri.
 use core::marker::PhantomData;
 
 use embassy_embedded_hal::SetConfig;
@@ -22,7 +25,7 @@ pub enum Error {
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct Config {
-    /// Frequency.
+    /// Requested maximum SCK frequency in Hz; hardware divisors round the actual rate down.
     pub frequency: u32,
     /// Phase.
     pub phase: Phase,
@@ -31,6 +34,7 @@ pub struct Config {
 }
 
 impl Default for Config {
+    /// Returns 1 MHz, first-edge capture and idle-low configuration.
     fn default() -> Self {
         Self {
             frequency: 1_000_000,
@@ -42,36 +46,28 @@ impl Default for Config {
 
 /// SPI driver.
 pub struct Spi<'d, T: Instance, M: Mode> {
+    /// Exclusive hardware SPI owner.
     inner: Peri<'d, T>,
+    /// TX DMA owner; async methods require this channel.
     tx_dma: Option<Channel<'d>>,
+    /// RX DMA owner; async read/transfer methods panic when absent.
     rx_dma: Option<Channel<'d>>,
+    /// Retains peripheral lifetime and blocking/async mode in the type.
     phantom: PhantomData<(&'d mut T, M)>,
 }
 
-fn div_roundup(a: u32, b: u32) -> u32 {
-    (a + b - 1) / b
-}
+/// Pure prescaler arithmetic shared by constructors and rate changes.
+#[path = "spi_divider.rs"]
+mod divider;
 
-fn calc_prescs(freq: u32) -> (u8, u8) {
-    let clk_peri = crate::clocks::clk_peri_freq();
-
-    // final SPI frequency: spi_freq = clk_peri / presc / postdiv
-    // presc must be in 2..=254, and must be even
-    // postdiv must be in 1..=256
-
-    // divide extra by 2, so we get rid of the "presc must be even" requirement
-    let ratio = div_roundup(clk_peri, freq * 2);
-    if ratio > 127 * 256 {
-        panic!("Requested too low SPI frequency");
-    }
-
-    let presc = div_roundup(ratio, 256);
-    let postdiv = if presc == 1 { ratio } else { div_roundup(ratio, presc) };
-
-    ((presc * 2) as u8, (postdiv - 1) as u8)
-}
+/// Returns (CPSDVSR, SCR) for `freq` Hz using current peripheral-clock metadata.
+/// Panics for unavailable/zero clocks, zero request or a rate below the hardware minimum.
+fn calc_prescs(freq: u32) -> (u8, u8) { divider::calc_prescs(crate::clocks::clk_peri_freq(), freq) }
 
 impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
+    /// Returns enabled `inner` configured by `config`, consuming optional `clk`/`mosi`/`miso`/`cs`
+    /// pins and `tx_dma`/`rx_dma` channels. Pins use function 1, Schmitt input and no pulls;
+    /// omitted pins stay unconfigured. Zero/unavailable clocks and rates below the hardware minimum panic.
     fn new_inner(
         inner: Peri<'d, T>,
         clk: Option<Peri<'d, AnyPin>>,
@@ -155,11 +151,14 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         }
     }
 
-    /// Private function to apply SPI configuration (phase, polarity, frequency) settings.
+    /// Applies eight-bit phase/polarity/frequency from `config` to `inner`; invalid rates can panic.
     ///
     /// Driver should be disabled before making changes and re-enabled after the modifications
     /// are applied.
-    fn apply_config(inner: &Peri<'d, T>, config: &Config) {
+    fn apply_config(
+        inner: &Peri<'d, T>,
+        config: &Config,
+    ) {
         let p = inner.regs();
         let (presc, postdiv) = calc_prescs(config.frequency);
 
@@ -172,8 +171,12 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         });
     }
 
-    /// Write data to SPI blocking execution until done.
-    pub fn blocking_write(&mut self, data: &[u8]) -> Result<(), Error> {
+    /// Sends `data`, discards RX bytes and returns success after BUSY clears.
+    /// Waits have no timeout; no external chip select is changed.
+    pub fn blocking_write(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), Error> {
         let p = self.inner.regs();
         for &b in data {
             while !p.sr().read().tnf() {}
@@ -185,8 +188,12 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         Ok(())
     }
 
-    /// Transfer data in place to SPI blocking execution until done.
-    pub fn blocking_transfer_in_place(&mut self, data: &mut [u8]) -> Result<(), Error> {
+    /// Exchanges `data` in place and returns success after BUSY clears.
+    /// Waits have no timeout; hardware stalls can leave a received prefix.
+    pub fn blocking_transfer_in_place(
+        &mut self,
+        data: &mut [u8],
+    ) -> Result<(), Error> {
         let p = self.inner.regs();
         for b in data {
             while !p.sr().read().tnf() {}
@@ -198,8 +205,11 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         Ok(())
     }
 
-    /// Read data from SPI blocking execution until done.
-    pub fn blocking_read(&mut self, data: &mut [u8]) -> Result<(), Error> {
+    /// Fills `data` while transmitting zeros; returns success after BUSY clears, without timeout.
+    pub fn blocking_read(
+        &mut self,
+        data: &mut [u8],
+    ) -> Result<(), Error> {
         let p = self.inner.regs();
         for b in data {
             while !p.sr().read().tnf() {}
@@ -211,8 +221,13 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         Ok(())
     }
 
-    /// Transfer data to SPI blocking execution until done.
-    pub fn blocking_transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Error> {
+    /// Exchanges max(`read`.len(), `write`.len()) bytes, zero-padding TX and discarding excess RX.
+    /// Returns success after BUSY clears; waits have no timeout.
+    pub fn blocking_transfer(
+        &mut self,
+        read: &mut [u8],
+        write: &[u8],
+    ) -> Result<(), Error> {
         let p = self.inner.regs();
         let len = read.len().max(write.len());
         for i in 0..len {
@@ -229,15 +244,19 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         Ok(())
     }
 
-    /// Block execution until SPI is done.
+    /// Spins until hardware BUSY clears and returns success; no timeout or RX FIFO drain.
     pub fn flush(&mut self) -> Result<(), Error> {
         let p = self.inner.regs();
         while p.sr().read().bsy() {}
         Ok(())
     }
 
-    /// Set SPI frequency.
-    pub fn set_frequency(&mut self, freq: u32) {
+    /// Sets requested `freq` Hz by disabling/reconfiguring/enabling SPI.
+    /// Caller must first finish transfers; zero/unavailable clocks and rates below the hardware minimum panic.
+    pub fn set_frequency(
+        &mut self,
+        freq: u32,
+    ) {
         let (presc, postdiv) = calc_prescs(freq);
         let p = self.inner.regs();
         // disable
@@ -253,8 +272,12 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
         p.cr1().write(|w| w.set_sse(true));
     }
 
-    /// Set SPI config.
-    pub fn set_config(&mut self, config: &Config) {
+    /// Applies `config` by disabling/reconfiguring/enabling SPI; does not await active transfers.
+    /// Invalid frequency can panic after the peripheral has been disabled.
+    pub fn set_config(
+        &mut self,
+        config: &Config,
+    ) {
         let p = self.inner.regs();
 
         // disable
@@ -269,7 +292,7 @@ impl<'d, T: Instance, M: Mode> Spi<'d, T, M> {
 }
 
 impl<'d, T: Instance> Spi<'d, T, Blocking> {
-    /// Create an SPI driver in blocking mode.
+    /// Returns blocking `inner` using `clk`, `mosi`, `miso` and `config`; chip select stays external.
     pub fn new_blocking(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -289,7 +312,7 @@ impl<'d, T: Instance> Spi<'d, T, Blocking> {
         )
     }
 
-    /// Create an SPI driver in blocking mode supporting writes only.
+    /// Returns blocking transmit-only `inner` using `clk`, `mosi` and `config`; no MISO pin is configured.
     pub fn new_blocking_txonly(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -308,12 +331,16 @@ impl<'d, T: Instance> Spi<'d, T, Blocking> {
         )
     }
 
-    /// Create an SPI driver in blocking mode supporting writes only, without SCK pin.
-    pub fn new_blocking_txonly_nosck(inner: Peri<'d, T>, mosi: Peri<'d, impl MosiPin<T> + 'd>, config: Config) -> Self {
+    /// Returns transmit-only `inner` using `mosi` and `config`, with no external SCK/MISO configured.
+    pub fn new_blocking_txonly_nosck(
+        inner: Peri<'d, T>,
+        mosi: Peri<'d, impl MosiPin<T> + 'd>,
+        config: Config,
+    ) -> Self {
         Self::new_inner(inner, None, Some(mosi.into()), None, None, None, None, config)
     }
 
-    /// Create an SPI driver in blocking mode supporting reads only.
+    /// Returns blocking receive-only `inner` using `clk`, `miso` and `config`; reads clock dummy zeros.
     pub fn new_blocking_rxonly(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -334,7 +361,8 @@ impl<'d, T: Instance> Spi<'d, T, Blocking> {
 }
 
 impl<'d, T: Instance> Spi<'d, T, Async> {
-    /// Create an SPI driver in async mode supporting DMA operations.
+    /// Returns DMA `inner` with `clk`, `mosi`, `miso` and `config`.
+    /// Consumes `tx_dma`/`rx_dma`; `irq` binds both completion handlers and enables their IRQs.
     pub fn new<TxDma: ChannelInstance, RxDma: ChannelInstance>(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -361,7 +389,8 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         )
     }
 
-    /// Create an SPI driver in async mode supporting DMA write operations only.
+    /// Returns DMA transmit-only `inner` using `clk`, `mosi`, `tx_dma` and `config`.
+    /// `irq` binds TX completion; async read/transfer methods panic because no RX DMA exists.
     pub fn new_txonly<TxDma: ChannelInstance>(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -383,8 +412,8 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         )
     }
 
-    /// Create an SPI driver in async mode supporting DMA write operations only,
-    /// without SCK pin.
+    /// Returns DMA transmit-only `inner` using `mosi`, `tx_dma` and `config`, without external SCK.
+    /// `irq` binds TX completion; async read/transfer methods panic because no RX DMA exists.
     pub fn new_txonly_nosck<TxDma: ChannelInstance>(
         inner: Peri<'d, T>,
         mosi: Peri<'d, impl MosiPin<T> + 'd>,
@@ -405,7 +434,8 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         )
     }
 
-    /// Create an SPI driver in async mode supporting DMA read operations only.
+    /// Returns DMA receive-only `inner` using `clk`, `miso` and `config`.
+    /// `tx_dma` clocks zero bytes; `rx_dma` receives them. `irq` binds both completion handlers.
     pub fn new_rxonly<TxDma: ChannelInstance, RxDma: ChannelInstance>(
         inner: Peri<'d, T>,
         clk: Peri<'d, impl ClkPin<T> + 'd>,
@@ -431,8 +461,13 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         )
     }
 
-    /// Write data to SPI using DMA.
-    pub async fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
+    /// Sends `buffer` through DMA, waits for SPI idle, drains RX and clears overrun.
+    /// Returns success; hardware waits are unbounded. Cancellation aborts DMA but skips final
+    /// FIFO/idle cleanup, so it does not establish a reusable transaction boundary.
+    pub async fn write(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Error> {
         let tx_transfer = unsafe {
             // If we don't assign future to a variable, the data register pointer
             // is held across an await and makes the future non-Send.
@@ -456,8 +491,12 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         Ok(())
     }
 
-    /// Read data from SPI using DMA.
-    pub async fn read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills `buffer` via RX DMA while TX DMA clocks zeros; returns after both transfers complete.
+    /// Panics without RX DMA. Cancellation aborts DMA and may leave partial output/FIFO data.
+    pub async fn read(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
         // Start RX first. Transfer starts when TX starts, if RX
         // is not started yet we might lose bytes.
         let rx_transfer = unsafe {
@@ -482,17 +521,34 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
         Ok(())
     }
 
-    /// Transfer data to SPI using DMA.
-    pub async fn transfer(&mut self, rx_buffer: &mut [u8], tx_buffer: &[u8]) -> Result<(), Error> {
+    /// Exchanges `tx_buffer` into `rx_buffer`, zero-padding short TX and discarding excess RX.
+    /// Returns success after DMA completion; TX-longer cleanup also waits for SPI idle.
+    /// Panics without RX DMA; cancellation can leave partial output and pending peripheral bytes.
+    pub async fn transfer(
+        &mut self,
+        rx_buffer: &mut [u8],
+        tx_buffer: &[u8],
+    ) -> Result<(), Error> {
         self.transfer_inner(rx_buffer, tx_buffer).await
     }
 
-    /// Transfer data in place to SPI using DMA.
-    pub async fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Error> {
+    /// Exchanges `words` in place; returns after TX/RX DMA completion.
+    /// TX consumes each byte before corresponding RX writes it. Cancellation leaves partial output.
+    pub async fn transfer_in_place(
+        &mut self,
+        words: &mut [u8],
+    ) -> Result<(), Error> {
         self.transfer_inner(words, words).await
     }
 
-    async fn transfer_inner(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(), Error> {
+    /// Exchanges raw `tx`/`rx` spans and returns success after required DMA/overflow cleanup.
+    /// Private callers retain both spans for this future; exact in-place aliasing is supported.
+    /// Requires both DMA channels; dropping aborts them without completing peripheral cleanup.
+    async fn transfer_inner(
+        &mut self,
+        rx: *mut [u8],
+        tx: *const [u8],
+    ) -> Result<(), Error> {
         // Start RX first. Transfer starts when TX starts, if RX
         // is not started yet we might lose bytes.
         let rx_transfer = unsafe {
@@ -541,12 +597,17 @@ impl<'d, T: Instance> Spi<'d, T, Async> {
     }
 }
 
+/// Restricts mode markers to blocking and async.
 trait SealedMode {}
 
+/// Per-instance register and DMA request metadata.
 trait SealedInstance {
+    /// DMA pacing source for TX FIFO space.
     const TX_DREQ: pac::dma::vals::TreqSel;
+    /// DMA pacing source for RX FIFO data.
     const RX_DREQ: pac::dma::vals::TreqSel;
 
+    /// Returns the owned instance raw register block.
     fn regs(&self) -> pac::spi::Spi;
 }
 
@@ -558,15 +619,17 @@ pub trait Mode: SealedMode {}
 #[allow(private_bounds)]
 pub trait Instance: SealedInstance + PeripheralType {}
 
+/// Defines register/DREQ metadata for each hardware SPI singleton.
 macro_rules! impl_instance {
     ($type:ident, $irq:ident, $tx_dreq:expr, $rx_dreq:expr) => {
         impl SealedInstance for peripherals::$type {
-            const TX_DREQ: pac::dma::vals::TreqSel = $tx_dreq;
+            /// DMA pacing source for RX FIFO data.
             const RX_DREQ: pac::dma::vals::TreqSel = $rx_dreq;
+            /// DMA pacing source for TX FIFO space.
+            const TX_DREQ: pac::dma::vals::TreqSel = $tx_dreq;
 
-            fn regs(&self) -> pac::spi::Spi {
-                pac::$type
-            }
+            /// Returns this singleton raw SPI register block.
+            fn regs(&self) -> pac::spi::Spi { pac::$type }
         }
         impl Instance for peripherals::$type {}
     };
@@ -594,6 +657,7 @@ pub trait MosiPin<T: Instance>: GpioPin {}
 /// MISO pin.
 pub trait MisoPin<T: Instance>: GpioPin {}
 
+/// Marks GPIO support for one instance-specific SPI signal alternate function.
 macro_rules! impl_pin {
     ($pin:ident, $instance:ident, $function:ident) => {
         impl $function<peripherals::$instance> for peripherals::$pin {}
@@ -667,6 +731,7 @@ impl_pin!(PIN_46, SPI1, ClkPin);
 #[cfg(feature = "rp235xb")]
 impl_pin!(PIN_47, SPI1, MosiPin);
 
+/// Seals an existing blocking/async marker as a valid driver mode.
 macro_rules! impl_mode {
     ($name:ident) => {
         impl SealedMode for $name {}
@@ -685,79 +750,129 @@ impl_mode!(Async);
 // ====================
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::spi::Transfer<u8> for Spi<'d, T, M> {
+    /// Uninhabited driver error; runtime failure is currently a stall or panic.
     type Error = Error;
-    fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Self::Error> {
+
+    /// Exchanges `words` in place and returns their received view after blocking completion.
+    fn transfer<'w>(
+        &mut self,
+        words: &'w mut [u8],
+    ) -> Result<&'w [u8], Self::Error> {
         self.blocking_transfer_in_place(words)?;
         Ok(words)
     }
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_02::blocking::spi::Write<u8> for Spi<'d, T, M> {
+    /// Uninhabited driver error; runtime failure is currently a stall or panic.
     type Error = Error;
 
-    fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+    /// Sends `words` and returns after blocking idle/FIFO cleanup.
+    fn write(
+        &mut self,
+        words: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(words)
     }
 }
 
 impl embedded_hal_1::spi::Error for Error {
-    fn kind(&self) -> embedded_hal_1::spi::ErrorKind {
-        match *self {}
-    }
+    /// No error value can be constructed, so this has no reachable return case.
+    fn kind(&self) -> embedded_hal_1::spi::ErrorKind { match *self {} }
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_1::spi::ErrorType for Spi<'d, T, M> {
+    /// Uninhabited driver error; runtime failure is currently a stall or panic.
     type Error = Error;
 }
 
 impl<'d, T: Instance, M: Mode> embedded_hal_1::spi::SpiBus<u8> for Spi<'d, T, M> {
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
+    /// Returns success immediately; this trait adapter performs no additional hardware wait.
+    fn flush(&mut self) -> Result<(), Self::Error> { Ok(()) }
 
-    fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+    /// Fills `words` with zero-clocked RX bytes; returns after blocking completion.
+    fn read(
+        &mut self,
+        words: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_transfer(words, &[])
     }
 
-    fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+    /// Sends `words` and returns after blocking idle/FIFO cleanup.
+    fn write(
+        &mut self,
+        words: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(words)
     }
 
-    fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+    /// Exchanges `write` into `read` with length padding/discard; returns after blocking completion.
+    fn transfer(
+        &mut self,
+        read: &mut [u8],
+        write: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_transfer(read, write)
     }
 
-    fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+    /// Exchanges `words` in place; returns after blocking completion.
+    fn transfer_in_place(
+        &mut self,
+        words: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_transfer_in_place(words)
     }
 }
 
 impl<'d, T: Instance> embedded_hal_async::spi::SpiBus<u8> for Spi<'d, T, Async> {
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
+    /// Returns success immediately; does not wait for DMA-cancellation remnants or SPI idle.
+    async fn flush(&mut self) -> Result<(), Self::Error> { Ok(()) }
 
-    async fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+    /// Sends `words`; returns the DMA-write result after idle/FIFO cleanup.
+    async fn write(
+        &mut self,
+        words: &[u8],
+    ) -> Result<(), Self::Error> {
         self.write(words).await
     }
 
-    async fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+    /// Fills `words` using zero-clocked DMA; returns the read result with partial-output cancellation.
+    async fn read(
+        &mut self,
+        words: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.read(words).await
     }
 
-    async fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+    /// Exchanges `write` into `read`; returns the DMA result with partial-output cancellation.
+    async fn transfer(
+        &mut self,
+        read: &mut [u8],
+        write: &[u8],
+    ) -> Result<(), Self::Error> {
         self.transfer(read, write).await
     }
 
-    async fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+    /// Exchanges `words` in place; returns the DMA result with partial-output cancellation.
+    async fn transfer_in_place(
+        &mut self,
+        words: &mut [u8],
+    ) -> Result<(), Self::Error> {
         self.transfer_in_place(words).await
     }
 }
 
 impl<'d, T: Instance, M: Mode> SetConfig for Spi<'d, T, M> {
+    /// Eight-bit phase/polarity/requested-rate configuration.
     type Config = Config;
+    /// No returned configuration error is produced; invalid rates can panic.
     type ConfigError = ();
-    fn set_config(&mut self, config: &Self::Config) -> Result<(), ()> {
+
+    /// Applies `config` and returns success; inherits idle precondition and panic behavior.
+    fn set_config(
+        &mut self,
+        config: &Self::Config,
+    ) -> Result<(), ()> {
         self.set_config(config);
 
         Ok(())

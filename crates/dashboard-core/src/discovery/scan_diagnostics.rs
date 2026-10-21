@@ -1,16 +1,23 @@
+//! Retained scan-batch framing evidence, independent of catalogue and inspection lifetimes.
 /// Failure to decode a controller's legacy advertising-report batch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanErrorKind {
+    /// Batch/record length was insufficient or inconsistent.
     InvalidSize,
+    /// Decoded report contained a value outside the supported controller representation.
     InvalidValue,
 }
 
+/// Bounded context for one rejected controller batch record; never a reconstructed packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScanFailure {
+    /// Framing versus value failure classification.
     pub kind: ScanErrorKind,
+    /// Scan request generation producing this error.
     pub revision: u32,
     /// Zero-based position in the controller's batch, not a catalogue index.
     pub index: u8,
+    /// Report count declared by the controller batch header.
     pub total_reports: u8,
     /// Concatenated HCI report bytes, excluding the subevent and report count.
     pub report_bytes: u16,
@@ -18,23 +25,30 @@ pub struct ScanFailure {
     pub remaining_bytes: u16,
     /// Failed record's Data_Length byte, absent if its header is truncated.
     pub declared_data_len: Option<u8>,
+    /// Boot-relative receipt time in milliseconds.
     pub at_ms: u64,
 }
 
 /// Global counters survive ordinary scan pauses and catalogue clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScanDiagnostics {
+    /// Saturating count of all recorded scan failures.
     pub total: u32,
+    /// Saturating count of length/framing failures.
     pub invalid_size: u32,
+    /// Saturating count of decoded-value failures.
     pub invalid_value: u32,
+    /// Most recently recorded failure, still replaced after counters saturate.
     pub last: Option<ScanFailure>,
 }
 
 impl Default for ScanDiagnostics {
+    /// Returns zero counters with no retained failure.
     fn default() -> Self { Self::new() }
 }
 
 impl ScanDiagnostics {
+    /// Returns zero counters with no retained failure; performs no radio operation.
     pub const fn new() -> Self {
         Self {
             total: 0,
@@ -44,6 +58,8 @@ impl ScanDiagnostics {
         }
     }
 
+    /// Adds `failure` to `self`'s total/category counts with saturation and replaces
+    /// latest context, returning unit. Does not reject older timestamps or generations.
     pub fn record(
         &mut self,
         failure: ScanFailure,
@@ -58,10 +74,13 @@ impl ScanDiagnostics {
 }
 
 #[cfg(test)]
+/// Counter/provenance regressions independent of the radio transport.
 mod tests {
     use super::*;
 
     #[test]
+    /// Returns unit after checking separate category counts and latest context replacement;
+    /// panics if a later failure loses its generation, framing or timestamp evidence.
     fn errors_retain_their_kind_and_latest_batch_context() {
         let mut diagnostics = ScanDiagnostics::new();
         let first = ScanFailure {
@@ -95,6 +114,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after confirming saturated counters still replace latest evidence
+    /// for both categories; panics on count wrap or frozen diagnostic context.
     fn saturated_counts_still_replace_the_latest_failure() {
         let mut diagnostics = ScanDiagnostics {
             total: u32::MAX,

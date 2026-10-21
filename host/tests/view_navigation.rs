@@ -1,3 +1,4 @@
+//! Named-view navigation and warning rotation share completed feedback and raw warning state.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::backlight::{Backlight, Brightness};
 use dashboard_host_validation::dashboard::Overlay;
@@ -6,6 +7,8 @@ use dashboard_host_validation::popup::Popup;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::view_state::{ViewSelection, WarningPager};
 
+/// Returns two validated views with five oil warnings, one-millisecond activation and 500 ms pages.
+/// `mode` selects page capacity; `scope` selects current/all-view eligibility. Panics on fixture invalidity.
 fn config(
     mode: WarningMode,
     scope: WarningScope,
@@ -42,6 +45,7 @@ fn config(
     validate(cfg).unwrap()
 }
 
+/// Extreme rotation wraps without overflow and changes selection only on Dashboard with multiple views.
 #[test]
 fn rotation_wraps_without_overflow_and_respects_diagnostic_pages() {
     let cfg = config(WarningMode::CycleOne, WarningScope::AllViews);
@@ -60,6 +64,7 @@ fn rotation_wraps_without_overflow_and_respects_diagnostic_pages() {
     assert!(!ViewSelection::new(&one).rotate(&one, Page::Dashboard, 1));
 }
 
+/// Warning pages advance by elapsed time, reset on scope/view changes and reject stale/reversed time.
 #[test]
 fn warning_pages_cycle_on_time_and_scope_resets_without_frame_counting() {
     for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
@@ -108,6 +113,7 @@ fn warning_pages_cycle_on_time_and_scope_resets_without_frame_counting() {
     );
 }
 
+/// Feedback outranks warnings; navigation cancels old Off, while invisible rotation never wakes the display.
 #[test]
 fn feedback_diagnostics_and_shutdown_have_one_overlay_policy() {
     let cfg = config(WarningMode::CycleOne, WarningScope::AllViews);
@@ -163,6 +169,7 @@ fn feedback_diagnostics_and_shutdown_have_one_overlay_policy() {
     assert_eq!(bl.brightness(), Brightness::Full);
 }
 
+/// Warning-set churn preserves scheduled cursor/deadline and view order while new episodes interrupt.
 #[test]
 fn set_churn_preserves_cursor_deadline_and_configured_view_order() {
     let mut cfg = config(WarningMode::CycleOne, WarningScope::AllViews).config().clone();
@@ -206,6 +213,7 @@ fn set_churn_preserves_cursor_deadline_and_configured_view_order() {
     );
 }
 
+/// Retained warning pixels and RGB phase follow the same completed overlay, never a queued replacement.
 #[test]
 fn multiple_warning_pixels_and_indicator_follow_the_same_completed_overlay() {
     use dashboard_host_validation::configured_scene::Layout;
@@ -312,6 +320,7 @@ fn multiple_warning_pixels_and_indicator_follow_the_same_completed_overlay() {
     assert!(PopupText::new("żółć").is_none());
 }
 
+/// Rotation cancels the old clear completion without satisfying a newly requested Off popup's dwell.
 #[test]
 fn rotation_cancels_only_old_off_completion_even_when_new_off_is_requested() {
     use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
@@ -351,6 +360,7 @@ fn rotation_cancels_only_old_off_completion_even_when_new_off_is_requested() {
     assert_eq!(bl.compare(), 0);
 }
 
+/// Both paging modes visit all 64 rules once per cycle and restart cleanly after feedback interruption.
 #[test]
 fn all64_warnings_are_reached_in_both_modes_and_feedback_restarts_cleanly() {
     for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
@@ -421,6 +431,7 @@ fn all64_warnings_are_reached_in_both_modes_and_feedback_restarts_cleanly() {
     }
 }
 
+/// Single-warning mode uses its rule palette; list mode uses the global palette even for one line.
 #[test]
 fn warning_palettes_follow_actual_rule_and_list_mode_even_for_a_single_line() {
     use dashboard_host_validation::AlignedFrame;
@@ -474,6 +485,7 @@ fn warning_palettes_follow_actual_rule_and_list_mode_even_for_a_single_line() {
     }
 }
 
+/// Stable priority ordering still rotates through lower-priority rules in both paging modes.
 #[test]
 fn priorities_are_stable_and_lower_priorities_rotate() {
     for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
@@ -504,6 +516,7 @@ fn priorities_are_stable_and_lower_priorities_rotate() {
     }
 }
 
+/// New critical episodes around page boundaries interrupt immediately without starving persistent rules.
 #[test]
 fn repeated_new_episodes_interrupt_without_erasing_scheduled_rotation() {
     for offset in [-1i64, 0, 1] {
@@ -557,6 +570,8 @@ fn repeated_new_episodes_interrupt_without_erasing_scheduled_rotation() {
     }
 }
 
+/// Maximum-length warnings invalidate both retained frames on stale, cleared and acknowledged changes.
+/// Optionally writes raw RGB565 evidence to WARNING_EVIDENCE_DIR; I/O failure panics.
 #[test]
 fn max_message_status_changes_invalidate_both_retained_frames() {
     use dashboard_host_validation::configured_scene::Layout;
@@ -660,6 +675,7 @@ fn max_message_status_changes_invalidate_both_retained_frames() {
     }
 }
 
+/// Repeated interruptions and a long stall retain bounded rotation; a replacement acquisition run resets it.
 #[test]
 fn interruption_churn_and_long_stall_keep_bounded_rotation_and_run_reset() {
     let mut raw = config(WarningMode::CycleOne, WarningScope::AllViews).config().clone();
@@ -702,6 +718,7 @@ fn interruption_churn_and_long_stall_keep_bounded_rotation_and_run_reset() {
     assert_eq!(p.select(&c, &replacement.snapshot(), 1, 4502, true).unwrap().rules, 1);
 }
 
+/// A new warning outside the current view interrupts snooze without displaying that out-of-scope rule.
 #[test]
 fn out_of_view_event_interrupts_snooze_without_overriding_current_view_scope() {
     use dashboard_host_validation::warning_state::WarningCommand;

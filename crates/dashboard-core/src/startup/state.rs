@@ -1,32 +1,52 @@
+//! Completion-gated startup phases with bounded fallback deadlines and one-shot input consumption.
 use super::{StartupProfile, StartupStatus};
 use crate::display::pipeline::FrameToken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Startup screen selection; acquisition and framebuffer ownership remain external.
 pub enum Phase {
+    /// Optional brief or detailed initialization facts.
     Status,
+    /// Optional procedural/custom artwork.
     Splash,
+    /// Startup has ended or was disabled; normal selected screen is allowed.
     Dashboard,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why startup stopped; initially disabled startup has no recorded exit reason.
 pub enum Exit {
+    /// Configured display duration or bounded transfer-stall fallback elapsed.
     Finished,
+    /// Ordinary startup button/encoder gesture consumed as skip.
     Skip,
+    /// Protected recovery gesture exits startup while retaining recovery handling.
     Recovery,
+    /// Invalid profile or explicit runtime fault bypassed optional startup.
     Fault,
+    /// Attention interrupted startup because the profile enables this policy.
     Attention,
+    /// A recognized completion or active-loop clock moved backward.
     Clock,
 }
 
 /// At most one identity waits for its first completed phase frame. No buffer owner.
 pub struct Startup {
+    /// Current presentation phase; Dashboard is terminal for normal advance calls.
     phase: Phase,
+    /// Millisecond entry time for the current phase's duration-plus-500-ms hard deadline.
     entered: u64,
+    /// Last accepted loop/completion clock, or explicit finish time, in milliseconds.
     last: u64,
+    /// First matching completion clock of this phase, if observed; not physical scanout.
     visible: Option<u64>,
+    /// First submitted frame token awaiting exact completion for this phase.
     first: Option<FrameToken>,
+    /// Last explicit exit reason, absent before an exit or for initially disabled startup.
     exit: Option<Exit>,
 }
 impl Startup {
+    /// Returns startup selection for `profile` at millisecond origin `now`, skipping
+    /// zero-duration/disabled stages. Invalid profiles immediately finish with Fault.
     pub fn new(
         profile: StartupProfile,
         now: u64,
@@ -53,6 +73,8 @@ impl Startup {
     }
 
     /// A corrupt optional profile must never prevent dashboard recovery.
+    /// Returns decoded `bytes` and state at millisecond origin `now`; malformed
+    /// encoding returns the default profile paired with an already fault-ended state.
     pub fn from_encoded(
         bytes: &[u8],
         now: u64,
@@ -68,16 +90,23 @@ impl Startup {
         }
     }
 
+    /// Returns the current startup/normal-screen phase.
     pub const fn phase(&self) -> Phase { self.phase }
 
+    /// Returns whether startup still owns screen selection.
     pub const fn active(&self) -> bool { !matches!(self.phase, Phase::Dashboard) }
 
+    /// Returns whether the active phase has neither a submitted first frame nor a completed one.
     pub const fn needs_first_frame(&self) -> bool { self.active() && self.visible.is_none() && self.first.is_none() }
 
+    /// Returns the explicit exit reason, or `None` before exit/when initially disabled.
     pub const fn exit(&self) -> Option<Exit> { self.exit }
 
+    /// Returns the last stored millisecond clock once inactive, otherwise `None`.
     pub const fn ended_at(&self) -> Option<u64> { if self.active() { None } else { Some(self.last) } }
 
+    /// Ends startup with `reason` and stores `now` milliseconds as its input cutoff.
+    /// This explicit override does not reject clock regression or a prior terminal state.
     pub fn finish_at(
         &mut self,
         reason: Exit,
@@ -87,6 +116,8 @@ impl Startup {
         self.finish(reason);
     }
 
+    /// Ends startup with `reason`, discarding the tracked first token while retaining
+    /// the last clock. Does not cancel DMA/release framebuffer ownership or alter acquisition.
     pub fn finish(
         &mut self,
         reason: Exit,
@@ -97,6 +128,11 @@ impl Startup {
     }
 
     /// Consume startup gestures once, preserving protected recovery and rejecting late encoder observations.
+    /// At `now` milliseconds, uses `buttons` and `encoder` to exit active startup;
+    /// recovery takes priority, while skip clears ordinary button actions. Suppresses
+    /// held inputs in `gestures` on either exit and drains the active encoder batch.
+    /// After exit, removes only encoder observations at/before the recorded cutoff;
+    /// recovery remains in `buttons` for the normal control owner to handle.
     pub fn consume_inputs(
         &mut self,
         gestures: &mut crate::controls::ControlGestures,
@@ -127,6 +163,8 @@ impl Startup {
         }
     }
 
+    /// Retains `token` only as the first submission of an active, not-yet-visible
+    /// phase. Additional submissions do not replace its completion identity.
     pub fn submitted(
         &mut self,
         token: FrameToken,
@@ -136,6 +174,9 @@ impl Startup {
         }
     }
 
+    /// Observes `token` completion at `now` milliseconds. Exact first-token match
+    /// starts visible dwell and updates the monotonic clock; backward matching
+    /// completion ends startup with Clock. Other/late tokens are inert.
     pub fn completed(
         &mut self,
         token: FrameToken,
@@ -153,6 +194,11 @@ impl Startup {
     }
 
     /// Called once per actual loop; a stalled transfer never releases ownership.
+    /// Advances under `profile` at monotonic `now` milliseconds, with `fault` taking
+    /// priority over optionally enabled `attention` interruption. A phase expires
+    /// after its first completion plus duration, or entry plus duration+500 ms even
+    /// without completion. At most one phase transition occurs per call; inactive
+    /// state is unchanged, and invalid profile/backward time ends startup.
     pub fn advance(
         &mut self,
         profile: StartupProfile,
@@ -195,6 +241,9 @@ impl Startup {
         }
     }
 
+    /// Returns milliseconds since this phase's first completion at `now`, saturating
+    /// backward differences to zero; returns zero until completion. Finishing does
+    /// not erase the stored completion, so callers normally use this only while active.
     pub fn elapsed(
         &self,
         now: u64,
@@ -203,6 +252,9 @@ impl Startup {
     }
 
     /// Appearance seeking has no physical-completion claim.
+    /// Returns phase and phase-relative milliseconds for `profile` at overall
+    /// `elapsed` milliseconds. Uses profile duration helpers without validating the
+    /// raw profile; completed startup returns Dashboard and zero relative time.
     pub fn preview(
         profile: StartupProfile,
         elapsed: u64,

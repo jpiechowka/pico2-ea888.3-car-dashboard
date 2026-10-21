@@ -2,7 +2,12 @@
 use std::io::{IsTerminal, Write};
 use std::sync::OnceLock;
 use std::sync::mpsc::{SyncSender, sync_channel};
+/// Lazily created 64-message terminal queue; `bool` selects error colouring.
 static LOG: OnceLock<SyncSender<(bool, String)>> = OnceLock::new();
+/// Queue sanitized `context`/`message` with `error` severity for best-effort stderr.
+/// Removes control characters and keeps at most 512 Unicode scalar values after
+/// formatting. A full/disconnected queue or thread/I/O failure drops output;
+/// callers never block on terminal writes. This function performs no secret redaction.
 pub(crate) fn event(
     error: bool,
     context: &str,

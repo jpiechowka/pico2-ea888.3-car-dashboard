@@ -1,3 +1,6 @@
+//! Nonextracting gzip/tar verification with exact compressed and original-member byte identities.
+//! [Raw tar iteration](https://docs.rs/tar/0.4.46/tar/struct.Entries.html#method.raw)
+//! exposes extension headers for rejection rather than applying path/sparse rewrites.
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
@@ -6,7 +9,13 @@ use flate2::bufread::GzDecoder;
 
 use crate::{ENTRY_LIMIT, FILE_LIMIT, Maps, Result, TOTAL_LIMIT, canonical, checked_archive, hash_reader, parse};
 
-/// Hash originals without extracting. Input files must stay unchanged during verification.
+/// Verify gzip/tar `path` against compressed `expected_hash` and original-file map in bounded `json`.
+/// `prefix` must be one canonical root component. Overlay hashes are parsed but do not replace
+/// upstream bytes here. Accept regular files and empty directories only; reject duplicate paths,
+/// links, extensions/sparse entries, foreign roots, extra/missing files and resource excess.
+/// Require exact gzip EOF, aligned tar EOF with two zero blocks after the last member, and valid
+/// trailer/checksums. Return success without extracting/executing anything. Files must remain
+/// unchanged; a second compressed digest checks consumed bytes, not an atomic filesystem snapshot.
 pub fn verify_archive(
     path: &Path,
     prefix: &str,
@@ -117,12 +126,19 @@ pub fn verify_archive(
     }
     Ok(())
 }
+/// Decompressed-byte ceiling and rolling tar-terminator evidence around reader `R`.
 struct Bounded<R> {
+    /// Single-member gzip decoder; buffered compressed leftovers are inspected after tar EOF.
     inner: R,
+    /// Bytes returned so far, maintained at or below TOTAL_LIMIT.
     total: u64,
+    /// Last 1024 decoded bytes modulo this array; initialized nonzero to reject missing EOF blocks.
     tail: [u8; 1024],
 }
 impl<R: Read> Read for Bounded<R> {
+    /// Fill `bytes` up to the remaining decoded allowance and return the number read.
+    /// At the limit, consume one probe byte to distinguish EOF from excess data; excess returns
+    /// an error without changing total/tail. Empty destinations and underlying errors follow Read.
     fn read(
         &mut self,
         bytes: &mut [u8],
@@ -144,11 +160,16 @@ impl<R: Read> Read for Bounded<R> {
     }
 }
 
+/// Exact compressed-byte digest while the bounded underlying reader is consumed.
 struct Compressed<R> {
+    /// Archive file capped at FILE_LIMIT + 1, independent of decompressed-byte limits.
     inner: R,
+    /// SHA256 state over bytes returned by successful reads, including buffer read-ahead.
     hash: sha2_const_stable::Sha256,
 }
 impl<R: Read> Read for Compressed<R> {
+    /// Fill `bytes` from the underlying reader; return its count and hash only returned bytes.
+    /// Read errors propagate without advancing the digest; no rewind is supported by this wrapper.
     fn read(
         &mut self,
         bytes: &mut [u8],
@@ -156,5 +177,70 @@ impl<R: Read> Read for Compressed<R> {
         let count = self.inner.read(bytes)?;
         self.hash = self.hash.clone().update(&bytes[..count]);
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+/// Decoded-limit EOF discrimination and digest accounting at reader boundaries.
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    /// Exact decoded limit still admits EOF; one additional byte is consumed only to reject excess.
+    #[test]
+    fn decoded_limit_distinguishes_empty_buffer_eof_and_excess() {
+        let mut bounded = Bounded {
+            inner: Cursor::new([42]),
+            total: TOTAL_LIMIT,
+            tail: [0; 1024],
+        };
+        assert_eq!(bounded.read(&mut []).unwrap(), 0);
+        assert_eq!(bounded.inner.position(), 0);
+        assert!(
+            bounded
+                .read(&mut [0])
+                .unwrap_err()
+                .to_string()
+                .contains("decoded byte limit")
+        );
+        assert_eq!(bounded.inner.position(), 1);
+        assert_eq!(bounded.total, TOTAL_LIMIT);
+        assert_eq!(bounded.tail, [0; 1024]);
+        assert_eq!(bounded.read(&mut [0]).unwrap(), 0);
+    }
+
+    /// Last-byte allowance bounds each read and preserves exact trailing bytes before subsequent EOF.
+    #[test]
+    fn decoded_reader_caps_requested_buffer_to_remaining_allowance() {
+        let mut bounded = Bounded {
+            inner: Cursor::new([42]),
+            total: TOTAL_LIMIT - 1,
+            tail: [0; 1024],
+        };
+        let mut guarded = [0xA5; 3];
+        assert_eq!(bounded.read(&mut guarded[1..]).unwrap(), 1);
+        assert_eq!(guarded, [0xA5, 42, 0xA5]);
+        assert_eq!(bounded.total, TOTAL_LIMIT);
+        assert_eq!(bounded.tail[1023], 42);
+        assert_eq!(bounded.read(&mut guarded).unwrap(), 0);
+    }
+
+    /// Hashing includes exactly bytes returned across partial reads, excluding unused destination space.
+    #[test]
+    fn compressed_digest_tracks_consumed_bytes_only() {
+        let mut reader = Compressed {
+            inner: Cursor::new(b"abc"),
+            hash: sha2_const_stable::Sha256::new(),
+        };
+        let mut buffer = [0xA5; 2];
+        assert_eq!(reader.read(&mut []).unwrap(), 0);
+        assert_eq!(reader.read(&mut buffer).unwrap(), 2);
+        assert_eq!(reader.read(&mut buffer).unwrap(), 1);
+        assert_eq!(reader.read(&mut buffer).unwrap(), 0);
+        assert_eq!(
+            reader.hash.finalize(),
+            sha2_const_stable::Sha256::new().update(b"abc").finalize()
+        );
     }
 }

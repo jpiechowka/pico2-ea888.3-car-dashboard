@@ -1,3 +1,6 @@
+//! Cooperative USB session fencing prevents old I/O from consuming a new host's traffic.
+
+/// Production generation guard, including its internal exhaustion regression.
 #[path = "../../firmware/ble-probe/src/usb_session.rs"]
 mod usb_session;
 use core::future::{Future, poll_fn, ready};
@@ -10,6 +13,7 @@ use std::task::Wake;
 
 use usb_session::{Changed, Session};
 
+/// Reconfiguration rejects a pending old read before it can consume the new host's first packet.
 #[test]
 fn reset_while_read_pending_preserves_the_next_hosts_first_packet() {
     let session = Session::new();
@@ -35,6 +39,7 @@ fn reset_while_read_pending_preserves_the_next_hosts_first_packet() {
     ));
     assert_eq!(new.as_mut().poll(&mut cx), Poll::Ready(Ok(b'N')));
 }
+/// A newly writable endpoint cannot cause a stale session's pending write to enqueue bytes.
 #[test]
 fn pending_old_write_never_enqueues_after_reconfiguration() {
     let session = Session::new();
@@ -59,12 +64,19 @@ fn pending_old_write_never_enqueues_after_reconfiguration() {
     assert_eq!(old.as_mut().poll(&mut cx), Poll::Ready(Err(Changed)));
     assert!(queued.borrow().is_empty(), "no old byte may reach newly enabled DPRAM");
 }
-struct Counter(AtomicUsize);
+/// Thread-safe count of explicit wake notifications.
+struct Counter(
+    /// Sequentially consistent wake count, initially zero.
+    AtomicUsize,
+);
 impl Wake for Counter {
+    /// Consumes this `self` reference and records one wake notification.
     fn wake(self: Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
 
+    /// Borrows `self` and records one wake without consuming the caller's reference.
     fn wake_by_ref(self: &Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
 }
+/// Deconfiguration wakes a stalled guard and rejects it without polling the endpoint again.
 #[test]
 fn configuration_false_wakes_a_pending_guard_without_endpoint_progress() {
     let session = Session::new();
@@ -89,6 +101,7 @@ fn configuration_false_wakes_a_pending_guard_without_endpoint_progress() {
     assert_eq!(guarded.as_mut().poll(&mut cx), Poll::Ready(Err(Changed)));
     assert_eq!(polls.get(), 1);
 }
+/// Stale generations never poll; current endpoint errors remain nested inside successful guarding.
 #[test]
 fn stale_tokens_never_poll_even_immediately_ready_io_and_current_error_is_preserved() {
     let session = Session::new();
@@ -101,6 +114,7 @@ fn stale_tokens_never_poll_even_immediately_ready_io_and_current_error_is_preser
     let mut current = pin!(session.guard(session.current().unwrap(), ready(Err::<(), _>("endpoint error"))));
     assert_eq!(current.as_mut().poll(&mut cx), Poll::Ready(Ok(Err("endpoint error"))));
 }
+/// A pending generation-change future resolves when configuration is cleared.
 #[test]
 fn session_change_wait_is_woken_and_resolves_for_reset() {
     let session = Session::new();

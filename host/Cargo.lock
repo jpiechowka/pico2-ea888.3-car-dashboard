@@ -312,10 +312,12 @@ dependencies = [
  "embedded-graphics",
  "heapless",
  "micromath",
+ "proc-macro2",
  "profont",
  "serde_json",
  "serialport",
  "sha2-const-stable",
+ "syn 2.0.119",
  "trouble-host",
 ]
 

@@ -4,20 +4,38 @@ use dashboard_core::discovery::names::SavedIdentity;
 use dashboard_core::discovery::{capture, capture_store as journal, capture_ui as ui};
 
 #[derive(Debug)]
+/// Journal failure or capture-format policy preventing admission.
 pub enum Error<E> {
-    Journal(journal::Error<E>),
+    /// Physical storage, journal integrity, generation or slot-bound failure.
+    Journal(
+        /// Original journal error, including the storage-specific cause.
+        journal::Error<E>,
+    ),
+    /// At least one persisted copy uses an unknown journal or capture version.
     Unsupported,
+    /// A supported capture is malformed or an input payload fails decoding.
     Corrupt,
+    /// A save expected an empty slot but inspection found retained data.
     Changed,
 }
 #[derive(Clone, Copy)]
+/// Inspection result covering both journal copies while the caller retains storage ownership.
 pub struct Admission {
+    /// UI state distinguishing readable-but-blocked, unsupported, corrupt and empty slots.
     pub slot: ui::Slot,
+    /// Newest supported header-valid copy, which can remain readable when writes are blocked.
     selected: Option<journal::StoredCapture>,
+    /// Either copy has an unknown journal schema or capture header version.
     unsupported: bool,
+    /// A journal-valid copy contains a malformed supported capture header.
     malformed: bool,
+    /// Both physical copies are entirely empty according to the journal scan.
     empty: bool,
 }
+/// Inspects both copies of `slot` through exclusive `storage`. Returns readable
+/// metadata plus replacement policy; it validates capture headers, not full bodies.
+/// Unknown inactive copies also block replacement. Journal failures propagate;
+/// generation exhaustion remains readable but blocked. Performs no writes.
 pub async fn inspect<S: journal::Storage>(
     storage: &mut S,
     slot: u8,
@@ -73,6 +91,10 @@ pub async fn inspect<S: journal::Storage>(
     })
 }
 
+/// Selects the newest supported header-valid copy in `slot` and reads it into
+/// `destination` via `storage`. Returns its metadata or empty/version/corruption/
+/// journal failure. The caller must decode the full returned payload before use;
+/// unknown sibling copies do not hide a readable supported copy.
 pub async fn load<S: journal::Storage>(
     storage: &mut S,
     slot: u8,
@@ -93,6 +115,10 @@ pub async fn load<S: journal::Storage>(
 
 /// Derive a directory label only after loading and fully decoding the selected
 /// supported copy. The caller lends its existing payload buffer exclusively.
+/// `storage` scans `slot`, `bytes` receives its selected payload, and `decoder`
+/// validates the complete capture. Returns slot state and optional saved identity;
+/// unsupported/corrupt data never supplies a label. Empty/unreadable selections
+/// return their state with no identity; load/decode errors propagate.
 pub async fn directory_entry<S: journal::Storage>(
     storage: &mut S,
     decoder: &mut capture::Decoder,
@@ -116,6 +142,11 @@ pub async fn directory_entry<S: journal::Storage>(
     Ok((admitted.slot, Some(SavedIdentity::from_capture(&view))))
 }
 
+/// Reinspects both copies of `slot` in `storage`, fully validates `payload` with
+/// `decoder`, then returns metadata for the committed/readback-verified copy.
+/// `overwrite` permits replacing nonempty known data, never unknown formats;
+/// false rejects a slot that became nonempty. Journal failures can leave a torn
+/// inactive copy while preserving the prior committed copy. Never cancel mutation.
 pub async fn save<S: journal::Storage>(
     storage: &mut S,
     decoder: &mut capture::Decoder,

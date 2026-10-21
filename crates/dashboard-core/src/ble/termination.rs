@@ -3,8 +3,11 @@
 
 /// Normal reason only. This never excuses unfinished work or a local ingress fault.
 /// Missing, reserved and other reasons (including 0x00) cannot establish clean teardown.
+/// Returns true only when optional HCI `reason` is remote-user 0x13 or local-host 0x16.
 pub const fn normal_reason(reason: Option<u8>) -> bool { matches!(reason, Some(0x13 | 0x16)) }
 
+/// Returns a diagnostic label for raw HCI `reason`; unmapped values retain the generic
+/// unrecognized label and must not be inferred to mean success.
 pub const fn reason_label(reason: u8) -> &'static str {
     match reason {
         0x08 => "Connection timeout",

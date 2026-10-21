@@ -14,10 +14,15 @@ use leptos::leptos_dom::helpers::{AnimationFrameRequestHandle, request_animation
 use super::*;
 
 #[derive(Default)]
+/// Single browser animation-frame owner plus nonreused focus request identity.
 pub struct FocusState {
+    /// Checked focus generation; exhaustion permanently rejects new requests.
     requests: FocusRequests,
+    /// Scheduled callback cancelled when superseded; absent before scheduling or after consumption.
     frame: Option<AnimationFrameRequestHandle>,
 }
+/// Invalidates pending focus authority in `ui` and cancels its owned frame, if any;
+/// disposed state is ignored so cleanup can safely run after teardown.
 pub fn cancel_focus(ui: Ui) {
     let _ = ui.focus.try_update(|state| {
         state.requests.cancel();
@@ -26,9 +31,13 @@ pub fn cancel_focus(ui: Ui) {
         }
     });
 }
+/// Returns HTML element with exact `id`, or `None` without window/document, a match
+/// or an HTML-compatible node. Labels are never interpolated into a CSS selector.
 fn element(id: &str) -> Option<web_sys::HtmlElement> {
     web_sys::window()?.document()?.get_element_by_id(id)?.dyn_into().ok()
 }
+/// Returns whether `element` is connected, enabled, nonzero-sized and outside hidden,
+/// inert or closed-dialog ancestors. A failed closest lookup is treated as no such ancestor.
 fn usable(element: &web_sys::HtmlElement) -> bool {
     let rect = element.get_bounding_client_rect();
     element.is_connected()
@@ -40,6 +49,7 @@ fn usable(element: &web_sys::HtmlElement) -> bool {
             .flatten()
             .is_none()
 }
+/// Requests focus on `element` without automatic scrolling; browser rejection is ignored.
 fn focus(element: &web_sys::HtmlElement) {
     let _ = element.focus_with_options(&{
         let options = web_sys::FocusOptions::new();
@@ -47,6 +57,7 @@ fn focus(element: &web_sys::HtmlElement) {
         options
     });
 }
+/// Focuses `ui`'s active workspace tab if state and element still exist.
 pub fn focus_tab(ui: Ui) {
     if let Some(active) = ui.workspace.try_with_untracked(WorkspaceState::active)
         && let Some(tab) = element(&format!("studio-tab-{}", active.id()))
@@ -54,6 +65,10 @@ pub fn focus_tab(ui: Ui) {
         focus(&tab);
     }
 }
+/// Replaces `ui`'s pending focus with next-frame inspection of `target` in `workspace`.
+/// Optional `field` selects an editable DOM destination only after fresh authority checks;
+/// pending JSON opens its editor and unavailable controls fall back to read-only detail.
+/// Stale/lifetime/workspace changes abandon the callback; scheduling/exhaustion reports a notice.
 fn schedule_inspection(
     ui: Ui,
     target: InspectionTarget,
@@ -124,6 +139,8 @@ fn schedule_inspection(
     }
 }
 
+/// Schedules `ui`'s JSON textarea focus for exact draft `handle`; newer focus requests,
+/// draft replacement or leaving Diagnostics invalidate it. Scheduling failure shows a notice.
 pub(super) fn focus_json(
     ui: Ui,
     handle: dashboard_configurator::json_draft::JsonDraftHandle,
@@ -158,7 +175,9 @@ pub(super) fn focus_json(
         }
     }
 }
-/// Reveal a static workspace region after its hidden panel has rendered.
+/// Reveals static region `id` in `ui` after `workspace` has rendered. A newer request
+/// or workspace switch cancels authority; missing/unusable elements are ignored and
+/// scheduling/identity exhaustion reports a notice.
 pub(super) fn focus_region(
     ui: Ui,
     workspace: Workspace,
@@ -190,6 +209,8 @@ pub(super) fn focus_region(
         }
     }
 }
+/// Resolves `target` in `ui`, opens its workspace/group and schedules inspection focus.
+/// Stale targets only show a notice; successful channel inspection updates the source-channel tab.
 pub fn inspect(
     ui: Ui,
     target: FieldTarget,
@@ -208,6 +229,9 @@ pub fn inspect(
         Err(_) => ui.notice.set("Field changed; refresh commands and results".into()),
     }
 }
+/// Opens exact `target` in `ui`'s Diagnostics workspace after validating its authority.
+/// Existing JSON is focused preferentially; otherwise schedules read-only detail.
+/// Rejected locations show a notice without changing inspection state.
 pub fn inspect_location(
     ui: Ui,
     target: InspectionTarget,
@@ -225,6 +249,9 @@ pub fn inspect_location(
         ui.notice.set("Field changed; refresh commands and results".into());
     }
 }
+/// Schedules focus for `request` in `ui` only while its appearance session, editor
+/// authority and Views workspace remain current; opens containing disclosure groups.
+/// New focus requests cancel it and scheduling/exhaustion failures report a notice.
 fn schedule_appearance(
     ui: Ui,
     request: AppearanceRequest,
@@ -272,6 +299,8 @@ fn schedule_appearance(
         }
     }
 }
+/// Returns the current appearance source offer in `ui` bound to caller-captured `stamp`.
+/// The offer must still be validated before dispatch; this function does not apply it.
 pub(super) fn offer(
     ui: Ui,
     stamp: EditorStamp,
@@ -279,6 +308,9 @@ pub(super) fn offer(
     ui.appearance
         .with(|session| ui.editor.with(|editor| session.offer(editor, stamp)))
 }
+/// Closes `request` in `ui` only with matching `captured` appearance authority, then
+/// schedules return focus to its surviving scope control/source/tab. Stale closure
+/// reports a notice; later editor/session/workspace changes invalidate return focus.
 pub(super) fn close_appearance(
     ui: Ui,
     request: AppearanceRequest,
@@ -335,6 +367,9 @@ pub(super) fn close_appearance(
         }
     }
 }
+/// Returns a blocking reason for `command` in `ui` at `stamp` with appearance `offer`,
+/// or `None` when dispatch is currently allowed. Appearance application additionally
+/// requires the session offer to remain current.
 pub(super) fn availability(
     ui: Ui,
     command: Command,
@@ -347,6 +382,8 @@ pub(super) fn availability(
     ui.editor
         .with(|editor| command.availability_with_appearance(editor, stamp, Some(offer)))
 }
+/// Captures fresh editor/source authority in `ui` and dispatches `command`; returns
+/// whether dispatch and any appearance staging succeeded, not async export completion.
 pub(super) fn execute_current(
     ui: Ui,
     command: Command,
@@ -355,6 +392,10 @@ pub(super) fn execute_current(
     execute(ui, command, stamp, offer(ui, stamp))
 }
 
+/// Executes `command` in `ui` only with current `stamp` and appearance `offer`.
+/// Returns false with a notice on admission/dispatch/staging failure; true means the
+/// effect was dispatched, not that asynchronous export succeeded. Rejected commands
+/// preserve import/pointer/draft state. Panics if Ui::run stops invoking its closure synchronously.
 pub(super) fn execute(
     ui: Ui,
     command: Command,
@@ -412,6 +453,8 @@ pub(super) fn execute(
         }
     }
 }
+/// Returns whether `event` targets an input/select/textarea or inherited editable HTML.
+/// Missing/non-element targets conservatively suppress editing shortcuts.
 fn editable(event: &web_sys::KeyboardEvent) -> bool {
     let Some(target) = event.target().and_then(|e| e.dyn_into::<web_sys::Element>().ok()) else {
         return true;
@@ -429,6 +472,9 @@ fn editable(event: &web_sys::KeyboardEvent) -> bool {
     }
     false
 }
+/// Returns `input`'s value only if its JS length is at most 128 UTF-16 code units;
+/// reflection/type/conversion failures return `None`. The query model separately
+/// enforces 128 UTF-8 bytes after this preallocation bound.
 fn search_text(input: &web_sys::HtmlInputElement) -> Option<String> {
     // Check JS string length before copying it into Rust. A paste of arbitrary
     // size is rejected without allocating that entire DOM value in the model.
@@ -444,14 +490,21 @@ fn search_text(input: &web_sys::HtmlInputElement) -> Option<String> {
 }
 
 #[derive(Clone, Copy)]
+/// Owner-local native modal, checked session lifetime and return-focus destination.
 struct Palette {
+    /// Native dialog element, absent until mounted or after teardown.
     dialog: NodeRef<leptos::html::Dialog>,
+    /// Bounded query input focused after successful modal opening.
     search: NodeRef<leptos::html::Input>,
+    /// Studio-owned open state used to ignore duplicate queued native close events.
     active: RwSignal<bool>,
+    /// Checked modal session issuer; exhaustion prevents reopening.
     sessions: StoredValue<FocusRequests>,
+    /// Original focus destination; local browser reference cleared on closure/failure.
     invoker: StoredValue<Option<web_sys::HtmlElement>, LocalStorage>,
 }
 impl Palette {
+    /// Returns the mounted native dialog, or `None` after disposal or type mismatch.
     fn native(self) -> Option<web_sys::HtmlDialogElement> {
         self.dialog
             .try_get_untracked()
@@ -459,6 +512,9 @@ impl Palette {
             .and_then(|node| (*node).clone().dyn_into().ok())
     }
 
+    /// Opens the modal for `ui` once, cancelling pending field focus and remembering
+    /// the active invoker. Missing dialog, session exhaustion or showModal failure
+    /// reports a notice; successful opening focuses the search input if mounted.
     fn open(
         self,
         ui: Ui,
@@ -498,6 +554,8 @@ impl Palette {
         }
     }
 
+    /// Closes the active modal in `ui`, invalidates its session/focus and restores
+    /// a usable invoker or active workspace tab. Duplicate native close events do nothing.
     fn close(
         self,
         ui: Ui,
@@ -523,8 +581,15 @@ impl Palette {
     }
 }
 
+/// Returns `ui`'s native modal command/field search and installs keyboard shortcuts.
+/// Queries retain their last valid value above 128 UTF-8 bytes; commands/field results
+/// capture authority and revalidate on activation. Cleanup removes the listener,
+/// cancels owned focus and closes the modal without dispatching editor actions.
 #[component]
-pub fn CommandPalette(ui: Ui) -> impl IntoView {
+pub fn CommandPalette(
+    /// Shared registry navigation, command authority and deferred-focus owner.
+    ui: Ui
+) -> impl IntoView {
     let palette = Palette {
         dialog: NodeRef::new(),
         search: NodeRef::new(),

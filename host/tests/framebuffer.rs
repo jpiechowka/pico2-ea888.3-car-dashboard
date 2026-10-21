@@ -1,8 +1,10 @@
+//! Production framebuffer byte order, bounded clipping and exact source-iterator consumption.
 use dashboard_host_validation::renderer::{FrameBuffer, HEIGHT, St7789Renderer, WIDTH};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
+/// Fixed storage size/alignment and full clears preserve big-endian panel RGB565 for all primary colours.
 #[test]
 fn storage_is_fixed_size_aligned_and_clear_writes_big_endian_pixels() {
     assert_eq!(size_of::<FrameBuffer>(), WIDTH * HEIGHT * 2);
@@ -16,6 +18,7 @@ fn storage_is_fixed_size_aligned_and_clear_writes_big_endian_pixels() {
     }
 }
 
+/// Deterministic random clipped rectangles and short sources match an independent per-coordinate colour oracle.
 #[test]
 fn clipped_contiguous_pixels_match_independent_coordinate_reference() {
     let mut seed = 0x12345678u32;
@@ -58,6 +61,7 @@ fn clipped_contiguous_pixels_match_independent_coordinate_reference() {
     }
 }
 
+/// Odd/even widths at the final panel row write only their clipped pixels, including zero-width spans.
 #[test]
 fn solid_fill_handles_odd_row_edges_without_touching_neighbours() {
     for x in [0, 1, 2, 317, 318, 319] {
@@ -84,6 +88,7 @@ fn solid_fill_handles_odd_row_edges_without_touching_neighbours() {
     }
 }
 
+/// Solid fill handles row alignment, negative origins and overrun against a sentinel-filled independent reference.
 #[test]
 fn solid_spans_match_nonzero_pixels_across_rows_and_alignments() {
     for (x, y, width, height) in [
@@ -128,6 +133,7 @@ fn solid_spans_match_nonzero_pixels_across_rows_and_alignments() {
     }
 }
 
+/// Extreme/unrepresentable geometry leaves bytes unchanged and cannot even poll the supplied colour iterator.
 #[test]
 fn unrepresentable_geometry_cannot_overflow_or_consume_unbounded_colors() {
     for rect in [
@@ -147,6 +153,7 @@ fn unrepresentable_geometry_cannot_overflow_or_consume_unbounded_colors() {
     }
 }
 
+/// Clipped source consumption stops exactly after the final needed value or first exhaustion, without extra next calls.
 #[test]
 fn contiguous_fill_preserves_consumption_at_clipping_and_exhaustion_boundaries() {
     // An extra next(), a missing row skip, or a write after exhaustion must fail.
@@ -218,6 +225,7 @@ fn contiguous_fill_preserves_consumption_at_clipping_and_exhaustion_boundaries()
     }
 }
 
+/// Both orientations expose packed row widths and exactly bound final-row/final-pixel access in the same storage.
 #[test]
 fn both_geometries_use_packed_rows_and_bound_last_pixel() {
     use dashboard_config::Geometry;
@@ -253,6 +261,7 @@ fn both_geometries_use_packed_rows_and_bound_last_pixel() {
     }
 }
 
+/// Solid and contiguous fills agree with independent clipping at portrait's bottom-right corner.
 #[test]
 fn portrait_clipped_bottom_rows_match_reference_for_solid_and_contiguous() {
     use dashboard_config::Geometry;

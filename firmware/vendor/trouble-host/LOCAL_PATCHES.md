@@ -276,3 +276,98 @@ directly instead of inheriting a production import gated by the unrelated
 `connection-params-update` feature. CI and a local reduced-feature build
 reproduced the missing-type compilation error. This changes only test source;
 the production feature boundary and firmware behavior remain unchanged.
+
+## Rust contract audit (2026-10-21)
+
+The documentation review covers private state, retained optional features,
+generated contracts and tests as well as the firmware's selected client path.
+Additional corrections found by tracing those implementations:
+
+- Packet allocation metadata is separate from each leased byte buffer. Allocating
+  or freeing another packet must not borrow the bytes of a live packet. The
+  metadata lock grants one affine lease per buffer; only its owner accesses those
+  bytes. Focused Miri regressions reproduce the old invalidation and check live
+  shared/mutable slices, exhaustion, reuse and zero-sized pools/buffers. Miri's
+  experimental alias model is not a complete soundness or hardware proof.
+- First L2CAP fragments must fit their declared SDU length and allocated capacity
+  before reassembly state is published. Failure requests disconnect and wakes
+  cleanup instead of retaining an impossible assembly.
+- SDU credit calculation widens the two-byte length-prefix addition before
+  ceiling division, including a 65,535-byte SDU. Split/merge transfers references
+  without a transient count overflow and requires the same channel manager as
+  well as slot index. Cancelled credit grants check refunds against peer grants
+  received in the meantime; overflow requests disconnect instead of wrapping.
+- Channel operations and connection command wrappers reject a stack from a
+  different owner before data transfer/controller I/O. A listener constructor
+  with no error return asserts this precondition. Equal numeric indices or
+  controller handles do not establish ownership.
+- Secure Connections rejects a peer with the same public-key X coordinate as
+  the local key, including the valid opposite-Y point, in both crypto backends.
+  Debug peers remain rejected. A retained bond rejected by an earlier encryption
+  attempt falls back to fresh pairing rather than unwrapping an absent resume
+  state. These pairing paths remain excluded from the probe image.
+- Bonding diagnostic text now matches its wire flag. Decoder tests include byte
+  255 and OOB selection tests cover both flag values; these changes do not alter
+  their wire encodings.
+- ACL locks, reserved credits and queued PDUs retain an exact local connection
+  slot independently of application references. A reused numeric HCI handle
+  cannot redirect an old host-queued PDU, release a new peer's lock or refund its
+  credits. Queue failure/cancellation, dequeue and destruction balance leases;
+  SMP uses an explicit already-borrowed enqueue path without reborrowing its
+  active connection table.
+- An asynchronous ACL write rechecks that slot before every transport poll and
+  registers a close wakeup. A blocked sender stops after terminal/local close or
+  final connection-owner drop, preserving only previously accepted fragments.
+  Generic transports can have partial effects while Pending. The selected CYW
+  transport waits for capacity before synchronous publication; bytes already
+  accepted into its queue cannot be retracted. Acceptance is not peer delivery.
+- Stack and unbuilt-builder destruction drain borrowed connection queues before
+  channel storage, then reset initialized MaybeUninit-backed records. Retained
+  inbound packets, partial reassembly and queued SDUs no longer leak packet-pool
+  capacity when the same HostResources is reused. No controller I/O is performed.
+- Channel listeners reject duplicate admission before mutating the shared flag;
+  cloning the connection first also prevents a reference-limit panic from leaving
+  a flag without an owner. Foreign-stack constructors retain the same admission
+  rule. Pending-request lookup skips tokens already held by callers.
+- Listener waits check the retained connection slot before every pending lookup;
+  Drop rejects unclaimed requests only while that exact link remains connected.
+  An old listener cannot consume or reject a new peer's request after controller
+  handle reuse. Terminal channel teardown wakes the wait; a local close may wait
+  for that teardown or another channel event.
+- Reused connection slots clear old OOB and legacy-key observations. Connection
+  rate changes update retained state before attempting bounded event delivery.
+  Selected OOB pairing without required peer data fails before cryptographic use;
+  legitimate unilateral OOB selection and legacy key lengths 7 through 16 retain
+  explicit regression coverage. Legacy pairing remains excluded by firmware.
+- ATT UUID32 requests, service filters and declarations expand to Bluetooth-base
+  UUID128; matching canonicalizes only the ATT boundary. Generic UUID equality
+  is unchanged. Group queries allow primary/secondary service types only. Prepare
+  Write, Execute Write and Read Multiple Variable request encoders now match
+  their existing decoders, including exact buffer limits and empty tails.
+- Denied Read Multiple Variable and Prepare Write events retain their failing
+  handle instead of unwrapping an unavailable generic request handle. Default
+  and explicit errors keep the original opcode/handle; Write Commands remain
+  response-free. Retained bonded CCCDs are found by identity before a vacant
+  table entry can consume that peer's reconnect.
+- Automatic connection/security/client-table diagnostics expose addresses rather
+  than identity keys and omit raw restored attribute bytes. Actual logger and
+  formatter regressions cover these sites. Explicit public key-formatting traits
+  remain separate APIs; callers must not treat them as redacted log payloads.
+
+Actual production-future regressions cover delayed transport admission, handle
+reuse, disconnect wakeups, cancellation refunds, stack recreation, complete SMP
+exchanges and emitted ATT bytes. Strict native Clippy and private rustdoc pass; physical
+tests remain opt-in. See the [dated audit](../../../docs/validation/rust-documentation-audit-2026-10-21.md)
+for target-image gates and review limits.
+
+Remaining retained-API limits are explicit: controller completed-packet counts
+are trusted and malformed duplicate reports can overcredit; per-link budgets do
+not prove controller-global capacity. Custom pool/table domains still require
+caller admission, and untyped connection-parameter tokens require their original
+stack. These constraints are not new hardware qualifications.
+
+References: Bluetooth Core [Security Manager 2.3.5.6.1](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html),
+[L2CAP credit-based segmentation](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/logical-link-control-and-adaptation-protocol-specification.html),
+and [Miri's validation scope](https://github.com/rust-lang/miri).
+These software regressions do not identify the cause of a photographed reset or
+disconnect, establish pairing interoperability, or qualify live radio timing.

@@ -1,3 +1,5 @@
+//! Actual channel/host parameter negotiation and cancellation regressions with an in-memory HCI recorder.
+
 extern crate std;
 use super::*;
 use crate::l2cap::{L2capChannel, L2capChannelConfig};
@@ -11,43 +13,76 @@ use core::task::{Context, Waker};
 use embassy_futures::block_on;
 
 #[derive(Default)]
+/// Records ACL payloads and asynchronous command opcodes; one-shot failure switches exercise host cleanup without hardware.
 struct ParamController {
+    /// Submitted ACL data bytes, excluding the HCI ACL header.
     acl: RefCell<std::vec::Vec<std::vec::Vec<u8>>>,
+    /// Asynchronous HCI opcodes in submission order.
     commands: RefCell<std::vec::Vec<u16>>,
+    /// Optional HCI status consumed by the next asynchronous command.
     fail_command: RefCell<Option<bt_hci::param::Error>>,
+    /// One-shot transport failure before recording the next ACL packet.
     fail_acl: RefCell<bool>,
+    /// Maximum recorded ACL writes before transport waits; None leaves it unbounded.
+    acl_limit: core::cell::Cell<Option<usize>>,
+    /// Last transport-capacity waiter, deliberately independent of connection state.
+    acl_waker: RefCell<Option<Waker>>,
 }
 impl embedded_io::ErrorType for ParamController {
+    /// Synthetic transport failure type; ACL writes use Other.
     type Error = embedded_io::ErrorKind;
 }
 impl Controller for ParamController {
+    /// 259-byte owned receive scratch; reads intentionally never finish.
     type Buffer<'a> = [u8; 259];
+    /// Returns zeroed 259-byte scratch without resource limits.
     fn alloc_buf(&self) -> Result<Self::Buffer<'_>, Self::Error> {
         Ok([0; 259])
     }
+    /// Returns a permanently pending receive future; the unused output buffer is never written.
     async fn read<'a>(&self, _: &'a mut Self::Buffer<'_>) -> Result<ControllerToHostPacket<'a>, Self::Error> {
         core::future::pending().await
     }
+    /// Records `packet` payload and returns Ok, or consumes the one-shot failure before recording bytes.
     async fn write_acl_data(&self, packet: &AclPacket<'_>) -> Result<(), Self::Error> {
         if self.fail_acl.replace(false) {
             return Err(embedded_io::ErrorKind::Other);
         }
+        poll_fn(|cx| {
+            if self
+                .acl_limit
+                .get()
+                .is_some_and(|limit| self.acl.borrow().len() >= limit)
+            {
+                *self.acl_waker.borrow_mut() = Some(cx.waker().clone());
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        })
+        .await;
         self.acl.borrow_mut().push(packet.data().to_vec());
         Ok(())
     }
+    /// Panics: synchronous-data transport is outside these fixtures; returns no result.
     async fn write_sync_data(&self, _: &bt_hci::data::SyncPacket<'_>) -> Result<(), Self::Error> {
         unreachable!()
     }
+    /// Panics: ISO transport is outside these fixtures; returns no result.
     async fn write_iso_data(&self, _: &bt_hci::data::IsoPacket<'_>) -> Result<(), Self::Error> {
         unreachable!()
     }
 }
+/// Synchronous command execution is deliberately unsupported by this recorder.
 impl<C: SyncCmd> ControllerCmdSync<C> for ParamController {
+    /// Panics for every synchronous command; returns no result.
     async fn exec(&self, _: &C) -> Result<C::Return, cmd::Error<Self::Error>> {
         unreachable!()
     }
 }
+/// Asynchronous commands retain their opcode and consume an optional injected HCI failure.
 impl<C: AsyncCmd> ControllerCmdAsync<C> for ParamController {
+    /// Records the command opcode; returns Ok or the injected HCI failure, consuming that failure.
     async fn exec(&self, _: &C) -> Result<(), cmd::Error<Self::Error>> {
         self.commands.borrow_mut().push(C::OPCODE.to_raw());
         match self.fail_command.borrow_mut().take() {
@@ -58,6 +93,7 @@ impl<C: AsyncCmd> ControllerCmdAsync<C> for ParamController {
 }
 
 #[test]
+/// A full application queue sends a rejected parameter response; zero signaling identifiers never produce output.
 fn parameter_requests_reject_queue_pressure_and_ignore_invalid_zero_identifiers() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(ParamController::default(), &mut resources).build();
@@ -97,6 +133,7 @@ fn parameter_requests_reject_queue_pressure_and_ignore_invalid_zero_identifiers(
 
 #[cfg(feature = "central")]
 #[test]
+/// Unknown connection rejects without ACL reply; other controller errors preserve status and send rejection under the original identifier.
 fn connection_parameter_controller_errors_preserve_failure_and_reply_identity() {
     for error in [
         bt_hci::param::Error::CMD_DISALLOWED,
@@ -143,6 +180,7 @@ fn connection_parameter_controller_errors_preserve_failure_and_reply_identity() 
 
 #[cfg(feature = "central")]
 #[test]
+/// Accept, explicit reject and invalid override preserve the peer identifier; only valid acceptance issues a controller update.
 fn connection_parameter_reply_matches_original_identifier_for_accept_reject_and_invalid_override() {
     for action in 0..3 {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
@@ -190,6 +228,7 @@ fn connection_parameter_reply_matches_original_identifier_for_accept_reject_and_
 
 #[cfg(feature = "connection-params-update")]
 #[test]
+/// Link-layer acceptance emits only LE Remote Connection Parameter Request Reply, with no unrelated update or L2CAP signal.
 fn link_layer_parameter_reply_does_not_start_an_unrelated_connection_update() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(ParamController::default(), &mut resources).build();
@@ -216,6 +255,7 @@ fn link_layer_parameter_reply_does_not_start_an_unrelated_connection_update() {
 }
 
 #[test]
+/// Zero/one-byte first K-frames reject and close except ordinary HCI reassembly legitimately awaiting missing bytes.
 fn short_dynamic_frames_fail_at_ingress_in_both_reassembly_modes() {
     for length in [0u8, 1] {
         for fragmented in [false, true] {
@@ -271,6 +311,7 @@ fn short_dynamic_frames_fail_at_ingress_in_both_reassembly_modes() {
     }
 }
 
+/// Initializes `host` with eight 251-byte ACL credits for deterministic signaling tests; duplicate initialization panics.
 fn ready_channel_host(host: BleHost<'_, ParamController, DefaultPacketPool>) {
     host.state
         .initialized
@@ -283,6 +324,7 @@ fn ready_channel_host(host: BleHost<'_, ParamController, DefaultPacketPool>) {
     host.connections().set_link_credits(8);
 }
 
+/// Injects a response into `host` for `handle` and `identifier`; `invalid` selects zero MPS, `rejected` selects refusal. Deliberately ignores admission errors so callers inspect create completion.
 fn channel_response(
     host: BleHost<'_, ParamController, DefaultPacketPool>,
     handle: ConnHandle,
@@ -300,6 +342,7 @@ fn channel_response(
 }
 
 #[test]
+/// A nominally successful response with zero MPS makes the actual pending create return an error.
 fn invalid_channel_success_returns_error_when_actual_create_is_polled() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(ParamController::default(), &mut resources).build();
@@ -320,6 +363,7 @@ fn invalid_channel_success_returns_error_when_actual_create_is_polled() {
 }
 
 #[test]
+/// Malformed, rejected, mismatched and disconnected handshakes retain their slot until the owning future completes or drops, then permit another link.
 fn failed_channel_create_reserves_slot_until_poll_or_cancel_then_allows_reuse() {
     // Malformed success, explicit rejection, wrong identifier and link loss.
     for failure in 0..4 {
@@ -384,6 +428,7 @@ fn failed_channel_create_reserves_slot_until_poll_or_cancel_then_allows_reuse() 
 }
 
 #[test]
+/// A transport error releases the create reservation; a subsequent real handshake succeeds in the same slot.
 fn channel_create_send_error_releases_slot_for_successful_retry() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(ParamController::default(), &mut resources).build();
@@ -413,6 +458,7 @@ fn channel_create_send_error_releases_slot_for_successful_retry() {
 }
 
 #[test]
+/// Canceling after peer success retains the slot until the control path sends/confirms disconnect, after which a new create succeeds.
 fn cancelled_create_after_success_keeps_channel_until_disconnect_is_processed() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(ParamController::default(), &mut resources).build();
@@ -451,4 +497,155 @@ fn cancelled_create_after_success_keeps_channel_until_disconnect_is_processed() 
     let identifier = stack.controller.acl.borrow().last().unwrap()[5];
     channel_response(host, handle, identifier, false, false);
     assert!(matches!(retry.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
+}
+
+/// A transport blocked after reserving credits cannot publish bytes after its exact link closes and the numeric handle is reused.
+#[test]
+fn pending_acl_transport_does_not_retarget_reused_handle() {
+    let mut resources = HostResources::<DefaultPacketPool, 2, 1>::new();
+    let stack = crate::new(ParamController::default(), &mut resources).build();
+    let host = stack.host();
+    host.state
+        .initialized
+        .init(InitialState {
+            acl_max: 251,
+            acl_total: 4,
+        })
+        .ok()
+        .unwrap();
+    let mgr = host.connections();
+    mgr.set_link_credits(4);
+    let handle = ConnHandle::new(1);
+    mgr.connect(handle, Address::random([1; 6]), LeConnRole::Central, ConnParams::new())
+        .unwrap();
+    let old = block_on(mgr.accept(LeConnRole::Central, &[]));
+    let mut sender = block_on(host.l2cap_pdu(handle)).unwrap();
+    stack.controller.acl_limit.set(Some(0));
+    let mut send = pin!(sender.send(&[42]));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(send.as_mut().poll(&mut cx).is_pending());
+    mgr.disconnected(handle, Status::SUCCESS).unwrap();
+    mgr.connect(handle, Address::random([2; 6]), LeConnRole::Central, ConnParams::new())
+        .unwrap();
+    let new = block_on(mgr.accept(LeConnRole::Central, &[]));
+    assert_ne!(old.index(), new.index());
+    stack.controller.acl_limit.set(None);
+    assert!(matches!(
+        send.as_mut().poll(&mut cx),
+        Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
+    ));
+    assert!(stack.controller.acl.borrow().is_empty());
+    let Poll::Ready(Ok(new_lock)) = mgr.poll_acquire_acl_send_lock(handle, None) else {
+        panic!("new link lock unchanged");
+    };
+    let Poll::Ready(Ok(_grant)) = new_lock.poll_request_to_send(4, None) else {
+        panic!("new credits unchanged");
+    };
+}
+
+/// Counts executor wakeups independently of the deliberately blocked transport.
+#[derive(Default)]
+struct AclWakeCount(
+    /// Monotonic count observed by the polling test.
+    std::sync::atomic::AtomicUsize,
+);
+impl std::task::Wake for AclWakeCount {
+    /// Records one wake through the owned `self` handle without polling any future reentrantly.
+    fn wake(self: std::sync::Arc<Self>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Terminal close, local close and last-owner drop wake a transport-blocked sender; already submitted prefixes remain untouched.
+#[test]
+fn pending_acl_transport_close_wakes_and_preserves_only_committed_prefix() {
+    for prefix in [0, 1] {
+        for close in 0..3 {
+            let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+            let stack = crate::new(ParamController::default(), &mut resources).build();
+            let host = stack.host();
+            host.state
+                .initialized
+                .init(InitialState {
+                    acl_max: 2,
+                    acl_total: 4,
+                })
+                .ok()
+                .unwrap();
+            let mgr = host.connections();
+            mgr.set_link_credits(4);
+            let handle = ConnHandle::new(1);
+            mgr.connect(handle, Address::random([1; 6]), LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            let mut owner = Some(block_on(mgr.accept(LeConnRole::Central, &[])));
+            let mut sender = block_on(host.l2cap_pdu(handle)).unwrap();
+            stack.controller.acl_limit.set(Some(prefix));
+            let mut send = pin!(sender.send(&[1, 2, 3, 4]));
+            let wakes = std::sync::Arc::new(AclWakeCount::default());
+            let waker = Waker::from(wakes.clone());
+            let mut cx = Context::from_waker(&waker);
+            assert!(send.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(stack.controller.acl.borrow().len(), prefix);
+            let before = wakes.0.load(std::sync::atomic::Ordering::SeqCst);
+            match close {
+                0 => mgr.disconnected(handle, Status::SUCCESS).unwrap(),
+                1 => owner.as_ref().unwrap().disconnect(),
+                _ => drop(owner.take()),
+            }
+            assert!(wakes.0.load(std::sync::atomic::Ordering::SeqCst) > before);
+            assert!(matches!(
+                send.as_mut().poll(&mut cx),
+                Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
+            ));
+            assert_eq!(stack.controller.acl.borrow().len(), prefix);
+            if prefix != 0 {
+                assert_eq!(stack.controller.acl.borrow()[0], [1, 2]);
+            }
+        }
+    }
+}
+
+/// Live transport resumption sends all fragments; canceling its capacity wait refunds only the unsubmitted fragment's credit.
+#[test]
+fn pending_acl_transport_live_resume_and_cancellation_balance_credits() {
+    for cancel in [false, true] {
+        let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+        let stack = crate::new(ParamController::default(), &mut resources).build();
+        let host = stack.host();
+        host.state
+            .initialized
+            .init(InitialState {
+                acl_max: 2,
+                acl_total: 4,
+            })
+            .ok()
+            .unwrap();
+        let mgr = host.connections();
+        mgr.set_link_credits(4);
+        let handle = ConnHandle::new(1);
+        mgr.connect(handle, Address::random([1; 6]), LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let _owner = block_on(mgr.accept(LeConnRole::Central, &[]));
+        let mut sender = block_on(host.l2cap_pdu(handle)).unwrap();
+        stack.controller.acl_limit.set(Some(1));
+        {
+            let mut send = pin!(sender.send(&[1, 2, 3, 4]));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(send.as_mut().poll(&mut cx).is_pending());
+            if !cancel {
+                stack.controller.acl_limit.set(None);
+                assert!(matches!(send.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+            }
+        }
+        let remaining = if cancel { 3 } else { 2 };
+        assert_eq!(stack.controller.acl.borrow().len(), if cancel { 1 } else { 2 });
+        drop(sender);
+        let Poll::Ready(Ok(lock)) = mgr.poll_acquire_acl_send_lock(handle, None) else {
+            panic!("lock released");
+        };
+        let Poll::Ready(Ok(_grant)) = lock.poll_request_to_send(remaining, None) else {
+            panic!("only unsubmitted credits refunded");
+        };
+        assert!(!lock.has_link_credits(1));
+    }
 }

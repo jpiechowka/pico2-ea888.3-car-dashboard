@@ -3,17 +3,24 @@ use dashboard_core::discovery::capture_ui::Slot;
 use dashboard_core::discovery::{capture, capture_store as journal, *};
 use embassy_futures::block_on;
 
+/// Production capture policy layered over opaque journal storage.
 #[path = "../../firmware/ble-probe/src/capture_admission.rs"]
 mod admission;
 
+/// In-memory four-slot NOR model with deterministic read failures and mutation accounting.
 #[derive(Clone)]
 struct Flash {
+    /// Reserved capture range, initialized erased to FF.
     bytes: Vec<u8>,
+    /// Attempted bounded reads, including the injected failure.
     reads: usize,
+    /// Zero-based read attempt to fail; None disables injection.
     fail_at: Option<usize>,
+    /// Completed page programs and sector erases.
     writes: usize,
 }
 impl Flash {
+    /// Returns erased four-slot storage with zero counters and no injected failure.
     fn new() -> Self {
         Self {
             bytes: vec![255; journal::SLOT_BYTES * 4],
@@ -23,6 +30,8 @@ impl Flash {
         }
     }
 
+    /// Returns the backing index for absolute flash `offset` and byte `length`.
+    /// Panics on underflow, unrepresentable offset or range outside the reserved four-slot span.
     fn index(
         offset: u32,
         length: usize,
@@ -33,8 +42,12 @@ impl Flash {
     }
 }
 impl journal::Storage for Flash {
+    /// Injected storage read failure without hardware diagnostics.
     type Error = ();
 
+    /// Reads at most one page from absolute `offset` into `bytes`, counting the attempt.
+    /// Returns Err at the configured attempt without changing output; otherwise Ok after copying.
+    /// Panics for oversized output or an address outside the modeled region.
     async fn read(
         &mut self,
         offset: u32,
@@ -51,6 +64,8 @@ impl journal::Storage for Flash {
         Ok(())
     }
 
+    /// Erases one sector at absolute aligned `offset` to FF and increments writes; returns Ok.
+    /// Panics on misalignment or a range outside the modeled region.
     async fn erase_sector(
         &mut self,
         offset: u32,
@@ -62,6 +77,8 @@ impl journal::Storage for Flash {
         Ok(())
     }
 
+    /// Programs `bytes` at absolute aligned `offset` by clearing NOR bits and counts success; returns Ok.
+    /// Panics on address/alignment failure or a forbidden zero-to-one bit transition; earlier bytes may change.
     async fn program_page(
         &mut self,
         offset: u32,
@@ -78,6 +95,8 @@ impl journal::Storage for Flash {
     }
 }
 
+/// Returns encoded selected-peer evidence for display-order `address`, address-type `random` and AD `name` bytes.
+/// Uses a fixed stock build and capture time 12 ms; panics on overlong AD length, selection or encoding failure.
 fn evidence(
     address: [u8; 6],
     random: bool,
@@ -112,11 +131,15 @@ fn evidence(
     bytes
 }
 
+/// Returns owned capture `bytes` with version set to u16::MAX, leaving checksums unchanged.
+/// Panics for fewer than ten bytes; version rejection intentionally precedes header CRC validation.
 fn future(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
     bytes
 }
 
+/// Returns capture `bytes` with zero CPU Hz and recomputed body/header CRCs.
+/// Panics on short input or if header admission/full semantic rejection differs from the intended fixture.
 fn malformed_body(mut bytes: Vec<u8>) -> Vec<u8> {
     // CPU Hz follows the frozen 24-byte header and 32-byte source digest.
     // A zero clock passes checksums/header admission but fails semantic decoding.
@@ -133,6 +156,7 @@ fn malformed_body(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
+/// Directory reads reuse scratch/decoder without leaking another slot's name and perform no writes.
 #[test]
 fn directory_reuses_one_buffer_without_borrowing_identity_from_another_slot() {
     block_on(async {
@@ -193,6 +217,7 @@ fn directory_reuses_one_buffer_without_borrowing_identity_from_another_slot() {
     });
 }
 
+/// A supported copy supplies its own label while an unknown sibling blocks overwrite in either generation order.
 #[test]
 fn label_uses_selected_supported_generation_when_a_future_sibling_blocks_replacement() {
     block_on(async {
@@ -241,6 +266,7 @@ fn label_uses_selected_supported_generation_when_a_future_sibling_blocks_replace
     });
 }
 
+/// Future, semantically corrupt, CRC-damaged and out-of-range slots cannot publish a stale decoder identity.
 #[test]
 fn no_label_is_published_for_future_corrupt_or_unreadable_copies() {
     block_on(async {
@@ -279,6 +305,7 @@ fn no_label_is_published_for_future_corrupt_or_unreadable_copies() {
     });
 }
 
+/// Failure at every directory read boundary returns no identity and leaves all flash bytes/writes unchanged.
 #[test]
 fn each_directory_read_failure_returns_no_identity_and_performs_no_writes() {
     block_on(async {
@@ -312,6 +339,7 @@ fn each_directory_read_failure_returns_no_identity_and_performs_no_writes() {
     });
 }
 
+/// Identity changes only after admitted overwrite commits a newer payload; reset returns an empty unlabeled slot.
 #[test]
 fn reset_and_save_replace_identity_only_from_new_committed_payload() {
     block_on(async {

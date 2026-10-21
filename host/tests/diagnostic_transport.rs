@@ -1,9 +1,14 @@
+//! Exact bridge framing and bounded ISO-TP reassembly; software fixtures do not qualify a physical bridge or ECU.
 use dashboard_host_validation::diagnostics::CanFrame;
 use dashboard_host_validation::diagnostics::isotp::{IsoError, IsoTpRx, RxEvent};
 use dashboard_host_validation::diagnostics::longan::{BridgeError, Rx12};
 
+/// Returns a standard 0x7E8 data frame carrying `bytes`; panics if more than eight
+/// bytes are supplied. Its explicit DLC is independent of unqualified RX12 records.
 fn frame(bytes: &[u8]) -> CanFrame { CanFrame::new(0x7E8, bytes).unwrap() }
 
+/// Every record split requires an explicit boundary, and receive loss discards partial bytes until a new epoch is
+/// confirmed.
 #[test]
 fn longan_requires_boundary_and_never_guesses_after_an_error() {
     let bytes = [0, 0, 7, 0xE8, 3, 0x41, 5, 0x46, 0, 0, 0, 0];
@@ -43,6 +48,7 @@ fn longan_requires_boundary_and_never_guesses_after_an_error() {
     }
 }
 
+/// Known-DLC CAN, 14-byte TX and 12-byte raw RX remain distinct; invalid identifiers remove RX synchronization.
 #[test]
 fn raw_record_and_tx_widths_are_distinct_and_invalid_ids_desynchronize() {
     assert!(CanFrame::new(0x800, &[0]).is_err());
@@ -62,6 +68,7 @@ fn raw_record_and_tx_widths_are_distinct_and_invalid_ids_desynchronize() {
     assert_eq!(rx.push(0), Err(BridgeError::Unsynchronized));
 }
 
+/// Single frames enforce PCI/DLC, ignore foreign source/epoch, admit the exact deadline and reject clock reversal.
 #[test]
 fn single_frame_checks_dlc_pci_epoch_source_and_deadline() {
     let mut rx = IsoTpRx::new();
@@ -89,6 +96,8 @@ fn single_frame_checks_dlc_pci_epoch_source_and_deadline() {
     assert_eq!(rx.on_frame(&frame(&[3, 0x41, 5, 70]), 1, 9), Err(IsoError::Clock));
 }
 
+/// Segmented payloads require acknowledged flow control after each four-frame block and preserve four-bit sequence
+/// wrap.
 #[test]
 fn segmented_reply_requires_flow_control_and_handles_sequence_wrap_and_blocks() {
     let payload: Vec<u8> = (0..200).collect();
@@ -118,6 +127,7 @@ fn segmented_reply_requires_flow_control_and_handles_sequence_wrap_and_blocks() 
     assert!(!rx.active());
 }
 
+/// Duplicate/out-of-order/truncated frames, missing FC acknowledgment and receive timeout abort the active reassembly.
 #[test]
 fn multi_frame_aborts_on_duplicate_sequence_missing_fc_truncation_and_timeouts() {
     for bad in [
@@ -147,6 +157,7 @@ fn multi_frame_aborts_on_duplicate_sequence_missing_fc_truncation_and_timeouts()
     assert!(!rx.active());
 }
 
+/// Legal consecutive-frame delays through 1000ms remain admitted;1001ms exceeds the independent N_Cr bound.
 #[test]
 fn transport_n_cr_allows_legal_delays_and_expires_after_one_second() {
     for now in [150, 1000, 1001] {
@@ -163,6 +174,8 @@ fn transport_n_cr_allows_legal_delays_and_expires_after_one_second() {
     }
 }
 
+/// Invalid/busy begin leaves admission controlled; oversized payload requests overflow FC and exact u64-max deadlines
+/// remain valid.
 #[test]
 fn oversized_reply_gets_overflow_flow_control_and_invalid_begin_is_atomic() {
     let mut rx = IsoTpRx::new();
@@ -179,6 +192,8 @@ fn oversized_reply_gets_overflow_flow_control_and_invalid_begin_is_atomic() {
     assert!(rx.on_frame(&frame(&[1, 0x41]), 2, u64::MAX).is_ok());
 }
 
+/// Every 1..256-byte payload round-trips through padding, block FC and all sequence values within fixed receiver/event
+/// sizes.
 #[test]
 fn every_supported_payload_length_roundtrips_with_padding_and_all_sequence_values() {
     assert!(std::mem::size_of::<IsoTpRx>() <= 336);

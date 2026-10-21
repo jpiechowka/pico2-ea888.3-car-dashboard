@@ -13,15 +13,23 @@ use crate::widgets::primitives::draw_mini_graph;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Stable suite kernel IDs; each operates on shared production implementations.
 pub enum Kernel {
+    /// Full landscape RGB565 buffer clear.
     Clear = 0,
+    /// Partially off-panel contiguous fill with deterministic source pixels.
     Clipped = 1,
+    /// Sixty-point graph plus legacy boost widget text rendering.
     GraphWidget = 2,
+    /// Sixty-four canonical sensor/history updates and snapshot publication per run.
     History = 3,
 }
 impl Kernel {
+    /// Fixed suite ordering used by result records and operation-budget accounting.
     pub const ALL: [Self; 4] = [Self::Clear, Self::Clipped, Self::GraphWidget, Self::History];
 
+    /// Returns the reference FNV-1a checksum after eight runs with a fresh fixture
+    /// and initially zero framebuffer. Checksums identify output, not timing or hardware health.
     pub const fn expected_checksum(self) -> u32 {
         match self {
             Self::Clear => 3402950085,
@@ -32,16 +40,23 @@ impl Kernel {
     }
 }
 
+/// Untimed deterministic setup shared by native/target workload execution.
 pub struct Fixture {
+    /// Seeded production sensor state; mutated only by the History kernel.
     history: SensorState,
+    /// Next synthetic history step; timestamp is step*5000 milliseconds.
     next: u64,
+    /// Fixed sixty graph values, including a spike at index16.
     graph: [f32; 60],
+    /// Sticky conjunction of history-ingestion success across all runs.
     valid: bool,
 }
 impl Default for Fixture {
+    /// Returns the same deterministic seeded fixture as [`Self::new`].
     fn default() -> Self { Self::new() }
 }
 impl Fixture {
+    /// Returns sixty seeded sensor steps and fixed graph data; setup is outside timed work.
     pub fn new() -> Self {
         let mut history = SensorState::new();
         for step in 0..60 {
@@ -58,6 +73,10 @@ impl Fixture {
     }
 
     #[inline(never)]
+    /// Executes one `kind` operation against caller-owned `frame`, with optimizer
+    /// barriers. Rendering kernels mutate pixels; History performs64 ingestions and
+    /// advances fixture state. Intended for the bounded eight-iteration suite;
+    /// unbounded reuse can eventually overflow synthetic timestamp arithmetic.
     pub fn run(
         &mut self,
         kind: Kernel,
@@ -116,8 +135,13 @@ impl Fixture {
         black_box(frame);
     }
 
+    /// Returns the current owned sensor snapshot for untimed correctness inspection.
     pub fn snapshot(&self) -> SensorSnapshot { self.history.snapshot() }
 
+    /// Returns FNV-1a of the output for `kind`: full `frame` bytes for rendering,
+    /// or canonical history/value/extrema metadata for History. Returns Checksum
+    /// after any failed ingestion or missing required history evidence. Does not
+    /// compare against the expected constant; caller performs that untimed admission.
     pub fn checksum(
         &self,
         kind: Kernel,

@@ -1,3 +1,5 @@
+//! Advertising command bytes, admission and real ControlRunner cancellation tests using a deterministic controller model.
+
 extern crate std;
 use super::*;
 use crate::advertise::Advertisement;
@@ -10,15 +12,23 @@ use core::pin::pin;
 use core::task::Waker;
 use embassy_futures::block_on;
 
+/// Records commands and models advertising-set constraints, enable state and injected HCI failures without a radio.
 struct AdvController {
+    /// Ordered HCI opcode and serialized parameter bytes, recorded even for failed commands.
     commands: RefCell<std::vec::Vec<(u16, std::vec::Vec<u8>)>>,
+    /// Opcode whose execution returns Command Disallowed; None permits modeled execution.
     fail: Cell<Option<u16>>,
+    /// Controller-reported advertising-set capacity; defaults to two.
     supported_sets: Cell<u8>,
+    /// Per-handle properties used to reject unsupported advertising-data commands.
     set_properties: RefCell<std::collections::BTreeMap<u8, u16>>,
+    /// Last accepted payload per set; Clear Advertising Sets removes all entries.
     advertising_data: RefCell<std::collections::BTreeMap<u8, std::vec::Vec<u8>>>,
+    /// Currently enabled handles; clearing configuration while any remain enabled fails.
     enabled_sets: RefCell<std::collections::BTreeSet<u8>>,
 }
 impl Default for AdvController {
+    /// Returns an empty two-set model with no injected failure or active advertiser.
     fn default() -> Self {
         Self {
             commands: RefCell::new(std::vec::Vec::new()),
@@ -31,27 +41,35 @@ impl Default for AdvController {
     }
 }
 impl embedded_io::ErrorType for AdvController {
+    /// No transport failures; modeled failures use HCI status.
     type Error = core::convert::Infallible;
 }
 impl Controller for AdvController {
+    /// 259-byte owned receive buffer; receive futures remain pending.
     type Buffer<'a> = [u8; 259];
+    /// Returns zeroed 259-byte receive scratch.
     fn alloc_buf(&self) -> Result<Self::Buffer<'_>, Self::Error> {
         Ok([0; 259])
     }
+    /// Returns a permanently pending receive future; unused scratch is never modified.
     async fn read<'a>(&self, _: &'a mut Self::Buffer<'_>) -> Result<ControllerToHostPacket<'a>, Self::Error> {
         core::future::pending().await
     }
+    /// Panics because ACL writes are outside advertising fixtures; returns no result.
     async fn write_acl_data(&self, _: &AclPacket<'_>) -> Result<(), Self::Error> {
         unreachable!()
     }
+    /// Panics because synchronous data is outside advertising fixtures; returns no result.
     async fn write_sync_data(&self, _: &bt_hci::data::SyncPacket<'_>) -> Result<(), Self::Error> {
         unreachable!()
     }
+    /// Panics because ISO data is outside advertising fixtures; returns no result.
     async fn write_iso_data(&self, _: &bt_hci::data::IsoPacket<'_>) -> Result<(), Self::Error> {
         unreachable!()
     }
 }
 impl<C: SyncCmd> ControllerCmdSync<C> for AdvController {
+    /// Serializes and records `cmd`, then returns modeled advertising/startup data or HCI failure. Panics for oversized parameters, malformed fixture commands or unsupported return decoding.
     async fn exec(&self, cmd: &C) -> Result<C::Return, cmd::Error<Self::Error>> {
         let mut bytes = std::vec![0; cmd.params().size()];
         cmd.params().write_hci(&mut bytes[..]).unwrap();
@@ -97,7 +115,7 @@ impl<C: SyncCmd> ControllerCmdSync<C> for AdvController {
             if bytes[0] == 0 && bytes[1] == 0 {
                 enabled.clear();
             } else {
-                for set in bytes[2..].chunks_exact(4) {
+                for set in bytes[2..].as_chunks::<4>().0 {
                     if bytes[0] == 0 {
                         enabled.remove(&set[0]);
                     } else {
@@ -119,10 +137,12 @@ impl<C: SyncCmd> ControllerCmdSync<C> for AdvController {
     }
 }
 impl<C: AsyncCmd> ControllerCmdAsync<C> for AdvController {
+    /// Panics because asynchronous HCI commands are outside these fixtures; returns no result.
     async fn exec(&self, _: &C) -> Result<(), cmd::Error<Self::Error>> {
         unreachable!()
     }
 }
+/// Marks `stack` initialized with one 251-byte ACL packet; duplicate initialization panics.
 fn initialized(stack: &crate::Stack<'_, AdvController, DefaultPacketPool>) {
     stack
         .host()
@@ -137,6 +157,7 @@ fn initialized(stack: &crate::Stack<'_, AdvController, DefaultPacketPool>) {
 }
 
 #[test]
+/// Empty legacy updates write zero-length commands clearing old bytes; either 32-byte payload rejects the entire update before I/O.
 fn legacy_empty_updates_clear_previous_payloads_and_oversized_updates_are_atomic() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -172,6 +193,7 @@ fn legacy_empty_updates_clear_previous_payloads_and_oversized_updates_are_atomic
 }
 
 #[test]
+/// Dropping a waiter for an already-owned advertising command cannot cancel the active advertiser.
 fn invalid_start_and_dropped_waiter_do_not_cancel_an_existing_advertiser() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -194,6 +216,7 @@ fn invalid_start_and_dropped_waiter_do_not_cancel_an_existing_advertiser() {
 }
 
 #[test]
+/// Scan-response command failure prevents enable and leaves cancellation work for the control runner.
 fn advertising_command_failure_never_enables_and_releases_through_cancellation() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -222,14 +245,19 @@ fn advertising_command_failure_never_enables_and_releases_through_cancellation()
 }
 
 #[cfg(feature = "extended-advertising")]
+/// Extended advertising batching, controller capacity and cancellation acknowledgment regressions.
 mod extended {
     use super::*;
     use crate::advertise::{AdvHandle, AdvSet, AdvertisementSet};
 
+    /// LE Set Extended Advertising Data opcode.
     const DATA: u16 = 0x2037;
+    /// LE Set Extended Scan Response Data opcode.
     const SCAN: u16 = 0x2038;
+    /// LE Set Extended Advertising Enable opcode.
     const ENABLE: u16 = 0x2039;
 
+    /// Returns default parameters and no address override carrying borrowed `data`.
     fn set(data: Advertisement<'_>) -> AdvertisementSet<'_> {
         AdvertisementSet {
             params: Default::default(),
@@ -238,6 +266,7 @@ mod extended {
         }
     }
 
+    /// Returns a nonanonymous, nonconnectable extended advertisement borrowing `bytes`.
     fn nonscannable(bytes: &[u8]) -> Advertisement<'_> {
         Advertisement::ExtNonconnectableNonscannableUndirected {
             anonymous: false,
@@ -245,6 +274,7 @@ mod extended {
         }
     }
 
+    /// Returns `count` sequential handles with unlimited duration/events; fixtures keep count within the u8 domain.
     fn handles(count: usize) -> std::vec::Vec<AdvSet> {
         (0..count)
             .map(|i| AdvSet {
@@ -256,6 +286,7 @@ mod extended {
     }
 
     #[test]
+    /// Scannable extended and directed legacy types skip forbidden data commands but still reach enable.
     fn scannable_extended_and_directed_legacy_sets_skip_unsupported_adv_data_commands() {
         let peer = crate::Address::random([1, 2, 3, 4, 5, 0xc6]);
         for data in [
@@ -278,6 +309,7 @@ mod extended {
     }
 
     #[test]
+    /// Complete 251-byte data/scan commands preserve payloads and fragment preferences; subsequent empty updates clear supported payloads.
     fn complete_251_byte_commands_and_empty_clear_preserve_exact_payloads() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1, 2>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -316,6 +348,7 @@ mod extended {
     }
 
     #[test]
+    /// An invalid later set, oversized legacy payload or nonempty connectable-extended data rejects the entire batch before writes.
     fn invalid_later_payloads_and_legacy_limits_reject_the_entire_batch_before_io() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1, 2>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -343,6 +376,7 @@ mod extended {
     }
 
     #[test]
+    /// Empty updates are no-ops; empty enables, mismatched lengths and 64-set batches reject before controller calls.
     fn zero_mismatched_and_64_set_requests_do_not_reach_the_controller() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -360,6 +394,7 @@ mod extended {
     }
 
     #[test]
+    /// Duplicate or reserved handles reject the whole update before modifying any set.
     fn duplicate_and_reserved_update_handles_reject_before_the_first_set_write() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1, 2>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -375,6 +410,7 @@ mod extended {
     }
 
     #[test]
+    /// The largest admitted enable batch serializes all 63 records into 254 bytes without handle/count truncation.
     fn all_63_sets_fit_the_enable_packet_without_count_or_handle_truncation() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1, 63>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -389,7 +425,7 @@ mod extended {
         assert_eq!(*opcode, ENABLE);
         assert_eq!(&bytes[..2], &[1, 63]);
         assert_eq!(bytes.len(), 254);
-        for (i, record) in bytes[2..].chunks_exact(4).enumerate() {
+        for (i, record) in bytes[2..].as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(record, &[i as u8, 0, 0, 0]);
         }
         assert_eq!(commands.iter().filter(|(op, _)| *op == DATA).count(), 63);
@@ -399,6 +435,7 @@ mod extended {
     }
 
     #[test]
+    /// Insufficient host/controller capacity stops after the capacity query, leaving advertising ownership idle.
     fn capacity_failure_never_modifies_sets_or_acquires_cancellation() {
         for controller_capacity in [0, 1, 2] {
             // Two sets cannot fit this host even when the controller supports them.
@@ -415,6 +452,7 @@ mod extended {
     }
 
     #[test]
+    /// Each injected setup failure stops before later commands; failures after ownership acquisition require cancellation cleanup.
     fn setup_errors_stop_before_enable_and_retain_cancellation_ownership() {
         for failed in [0x203b, 0x203d, 0x2036, 0x2035, DATA, SCAN, ENABLE] {
             let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
@@ -447,6 +485,7 @@ mod extended {
     }
 
     #[test]
+    /// Only the active owner schedules disable; the actual control runner releases admission after cleanup and permits restart after setup failure.
     fn dropped_waiter_cannot_cancel_active_set_and_real_cleanup_allows_reuse() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -503,6 +542,7 @@ mod extended {
     }
 
     #[test]
+    /// Restart waits for disable, clears retained payloads before changing type and recovers after a failed clear via control cleanup.
     fn type_restart_waits_for_disable_then_clears_old_data_and_clear_errors_are_recoverable() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();
@@ -559,6 +599,7 @@ mod extended {
     }
 
     #[test]
+    /// Accepting one set disables the others before restart without issuing a disconnect for the accepted link.
     fn accepting_one_connection_disables_remaining_sets_before_restart() {
         let mut resources = HostResources::<DefaultPacketPool, 1, 1, 2>::new();
         let stack = crate::new(AdvController::default(), &mut resources).build();

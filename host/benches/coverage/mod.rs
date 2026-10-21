@@ -1,8 +1,12 @@
 //! Fixed inputs and acceptance checks shared by benchmarks and host tests.
+/// Deterministic terminal and replay workloads for diagnostic acquisition.
 pub mod diagnostics;
+/// Fill primitives verified against an independent coordinate oracle.
 pub mod fills;
+/// Retained scenes and panel damage compared to complete pixels.
 pub mod scenes;
 
+/// Registers all verified fill/scene/diagnostic/history workloads with Criterion `c`; failed prechecks panic.
 pub fn benchmarks(c: &mut criterion::Criterion) {
     fills::benchmarks(c);
     scenes::benchmarks(c);
@@ -10,6 +14,7 @@ pub fn benchmarks(c: &mut criterion::Criterion) {
     history(c);
 }
 
+/// Registers constant-history rendering and unchanged-tick workloads with `c` after exact-output verification.
 fn history(c: &mut criterion::Criterion) {
     verify_history();
     use std::hint::black_box;
@@ -54,6 +59,7 @@ fn history(c: &mut criterion::Criterion) {
     });
 }
 
+/// Asserts repeated no-sample ticks preserve state and a constant graph draws exactly its expected white row.
 pub fn verify_history() {
     use dashboard_host_validation::display::{FrameBuffer, St7789Renderer};
     use dashboard_host_validation::sensor_state::SensorState;

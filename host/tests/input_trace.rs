@@ -1,5 +1,7 @@
+//! Software input provenance through consumption, obscuration and completed frame publication.
 use dashboard_host_validation::input_trace::{InputTracker, Observation};
 
+/// Warning-only pixel changes cannot claim unrelated input latency, and obscured events cannot leak into later frames.
 #[test]
 fn visible_warning_without_feedback_excludes_unrelated_input_damage() {
     use dashboard_host_validation::AlignedFrame;
@@ -49,6 +51,8 @@ fn visible_warning_without_feedback_excludes_unrelated_input_damage() {
     assert_eq!(tracker.submitted().unwrap().observed_us, 90);
 }
 
+/// Coalescing retains oldest observation/latest acceptance and consumption, with monotonic IDs and explicit discard
+/// counters.
 #[test]
 fn batches_keep_oldest_observation_and_distinct_consumption_identity() {
     let a = Observation::new(10, 60).unwrap();
@@ -77,6 +81,7 @@ fn batches_keep_oldest_observation_and_distinct_consumption_identity() {
     assert_eq!(tracker.counters().invalid, 1);
 }
 
+/// Invalid timestamp order/backward consumption leaves pending metadata intact, including at u64 saturation boundaries.
 #[test]
 fn malformed_and_regressed_metadata_never_changes_pending_trace() {
     assert!(Observation::new(2, 1).is_none());
@@ -89,6 +94,8 @@ fn malformed_and_regressed_metadata_never_changes_pending_trace() {
     assert_eq!(tracker.pending().unwrap().consumed_us, u64::MAX);
 }
 
+/// Applied reset provenance joins current input without contaminating older frames; impossible timing/zero transfer
+/// fails admission.
 #[test]
 fn reset_acknowledgement_keeps_original_consumption_and_old_completions_stay_separate() {
     use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};

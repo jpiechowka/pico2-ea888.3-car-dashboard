@@ -1,4 +1,12 @@
-//! UART driver.
+//! PL011 UART with blocking FIFO or async DMA transfers, plus interrupt-buffered adapters.
+//!
+//! Byte writes finish at FIFO/DMA admission; flush also waits for the shift register.
+//! DMA cancellation aborts synchronously with an unbounded BUSY wait and may leave
+//! a transmitted/received prefix; it does not reset UART FIFO/error state. Pins and
+//! UART configuration remain installed when unbuffered handles are dropped.
+//! Break framing uses the reported RSR behavior in
+//! [Raspberry Pi issue 367](https://github.com/raspberrypi/pico-feedback/issues/367),
+//! an open hardware-behavior report, not a qualification of every silicon revision.
 use core::future::poll_fn;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -7,7 +15,7 @@ use core::task::Poll;
 use embassy_futures::select::{Either, select};
 use embassy_hal_internal::{Peri, PeripheralType};
 use embassy_sync::waitqueue::AtomicWaker;
-use embassy_time::{Delay, Timer};
+use embassy_time::Timer;
 use pac::uart::regs::Uartris;
 
 use crate::clocks::clk_peri_freq;
@@ -35,6 +43,7 @@ pub enum DataBits {
 }
 
 impl DataBits {
+    /// Returns the two-bit PL011 word-length encoding.
     fn bits(&self) -> u8 {
         match self {
             Self::DataBits5 => 0b00,
@@ -59,9 +68,9 @@ pub enum Parity {
 /// Stop bits.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StopBits {
-    #[doc = "1 stop bit"]
+    /// 1 stop bit
     STOP1,
-    #[doc = "2 stop bits"]
+    /// 2 stop bits
     STOP2,
 }
 
@@ -69,7 +78,7 @@ pub enum StopBits {
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Config {
-    /// Baud rate.
+    /// Requested bits per second; zero panics, representable divisor limits clamp the actual rate.
     pub baudrate: u32,
     /// Word length.
     pub data_bits: DataBits,
@@ -88,6 +97,7 @@ pub struct Config {
 }
 
 impl Default for Config {
+    /// Returns 115200 baud, 8N1, with no signal inversion.
     fn default() -> Self {
         Self {
             baudrate: 115200,
@@ -119,7 +129,11 @@ pub enum Error {
 }
 
 impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    /// Writes the variant name to `f`; returns the formatter result.
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         core::fmt::Debug::fmt(self, f)
     }
 }
@@ -132,47 +146,77 @@ impl core::error::Error for Error {}
 #[non_exhaustive]
 pub enum ReadToBreakError {
     /// Read this many bytes, but never received a line break.
-    MissingBreak(usize),
+    MissingBreak(
+        /// Number of payload bytes retained before capacity was exhausted.
+        usize,
+    ),
     /// Other, standard issue with the serial request
-    Other(Error),
+    Other(
+        /// Receive fault; an unspecified prefix may already have been consumed.
+        Error,
+    ),
 }
 
 /// Internal DMA state of UART RX.
 pub struct DmaState {
+    /// Wakes the active DMA receive future when an error IRQ latches.
     rx_err_waker: AtomicWaker,
+    /// Latched raw UART interrupt error bits, cleared by the receive owner.
     rx_errs: AtomicU16,
 }
 
 /// UART driver.
 pub struct Uart<'d, M: Mode> {
+    /// Transmit half; owns its DMA channel when async.
     tx: UartTx<'d, M>,
+    /// Receive half; owns its DMA channel and error IRQ when async.
     rx: UartRx<'d, M>,
 }
 
 /// UART TX driver.
 pub struct UartTx<'d, M: Mode> {
+    /// Static register, request-line and interrupt identity.
     info: &'static Info,
+    /// Exclusive transmit DMA channel, absent for blocking handles.
     tx_dma: Option<dma::Channel<'d>>,
+    /// Compile-time blocking/DMA mode marker.
     phantom: PhantomData<M>,
 }
 
 /// UART RX driver.
 pub struct UartRx<'d, M: Mode> {
+    /// Static register, request-line and interrupt identity.
     info: &'static Info,
+    /// Per-UART receive error latch shared with the IRQ.
     dma_state: &'static DmaState,
+    /// Exclusive receive DMA channel, absent for blocking handles.
     rx_dma: Option<dma::Channel<'d>>,
+    /// Compile-time blocking/DMA mode marker.
     phantom: PhantomData<M>,
 }
 
-fn baud_divisors(clk_base: u32, baudrate: u32) -> (u32, u32) {
-    assert!(clk_base != 0 && baudrate != 0, "UART clock and baudrate must be nonzero");
+/// Returns integer/fractional PL011 divisors for `clk_base` hertz and `baudrate` bits/s.
+/// Rounds the combined 16.6 ratio then clamps to 1..=65535; either zero input panics.
+fn baud_divisors(
+    clk_base: u32,
+    baudrate: u32,
+) -> (u32, u32) {
+    assert!(
+        clk_base != 0 && baudrate != 0,
+        "UART clock and baudrate must be nonzero"
+    );
     // Round the entire 16.6 divisor, so a fractional carry reaches IBRD.
-    let divisor = ((4 * u64::from(clk_base) + u64::from(baudrate) / 2) / u64::from(baudrate))
-        .clamp(64, 65535 * 64);
+    let divisor = ((4 * u64::from(clk_base) + u64::from(baudrate) / 2) / u64::from(baudrate)).clamp(64, 65535 * 64);
     ((divisor >> 6) as u32, (divisor & 63) as u32)
 }
 
-fn bit_duration_us(bits: u32, divx64: u32, clock_hz: u32) -> u64 {
+/// Returns ceiling microseconds for `bits` at raw divisor `divx64` and `clock_hz`.
+/// Uses wide arithmetic; zero clock or a result beyond u64 panics.
+fn bit_duration_us(
+    bits: u32,
+    divx64: u32,
+    clock_hz: u32,
+) -> u64 {
     assert!(clock_hz != 0, "UART clock must be nonzero");
     // u32 bit counts and the full 16.6 hardware divisor can exceed u64
     // before division, even though the resulting duration fits.
@@ -180,6 +224,16 @@ fn bit_duration_us(bits: u32, divx64: u32, clock_hz: u32) -> u64 {
     u64::try_from(micros).expect("UART duration exceeds timer range")
 }
 
+/// Returns ceiling microseconds for 15 bit periods using `divx64` and `clock_hz`.
+/// Shares break timing arithmetic; zero clock panics.
+fn lcr_wait_us(
+    divx64: u32,
+    clock_hz: u32,
+) -> u64 {
+    bit_duration_us(15, divx64, clock_hz)
+}
+
+/// Clears RX DMA/error gating in `regs`, preserving transmit DMA enable.
 fn disable_rx_dma(regs: pac::uart::Uart) {
     regs.uartdmacr().write_clear(|reg| {
         reg.set_rxdmae(true);
@@ -187,18 +241,35 @@ fn disable_rx_dma(regs: pac::uart::Uart) {
     });
 }
 
+/// Returns whether `regs` reports both TX FIFO empty and no active shift-register transfer.
 fn tx_drained(regs: pac::uart::Uart) -> bool {
     let flags = regs.uartfr().read();
     flags.txfe() && !flags.busy()
 }
 
 #[derive(Debug, PartialEq, Eq)]
+/// Whether a consumed break ends the requested payload or needs another DMA segment.
 enum BreakProgress {
-    Continue(usize),
-    Complete(usize),
+    /// Continue at this payload offset, overwriting the consumed break marker.
+    Continue(
+        /// Valid payload byte count.
+        usize,
+    ),
+    /// Finish with this payload count, excluding the consumed break marker.
+    Complete(
+        /// Valid payload byte count.
+        usize,
+    ),
 }
 
-fn break_progress(transferred: usize, capacity: usize, last_was_break: bool, min_count: usize) -> Result<BreakProgress, ReadToBreakError> {
+/// Classifies `transferred` bytes within `capacity` using `last_was_break` and payload minimum `min_count`.
+/// Returns completion/continuation count excluding the break marker, or MissingBreak for full data.
+fn break_progress(
+    transferred: usize,
+    capacity: usize,
+    last_was_break: bool,
+    min_count: usize,
+) -> Result<BreakProgress, ReadToBreakError> {
     if transferred == capacity && !last_was_break {
         // A break after a full data buffer may have intervening data in FIFO.
         // Keep that boundary for the next read instead of claiming completion.
@@ -213,6 +284,7 @@ fn break_progress(transferred: usize, capacity: usize, last_was_break: bool, min
     }
 }
 
+/// Clears the consumed break/error DMA gate in `regs`; later FIFO errors retain their own byte flags.
 fn clear_consumed_break(regs: pac::uart::Uart) {
     // ECR clears the receive DMA error gate. The break's zero byte has already
     // been consumed; any later FIFO error remains attached to its own byte.
@@ -223,6 +295,7 @@ fn clear_consumed_break(regs: pac::uart::Uart) {
     });
 }
 
+/// Enables receive fault interrupt masks in `regs` for a new DMA segment.
 fn arm_rx_errors(regs: pac::uart::Uart) {
     regs.uartimsc().write_set(|w| {
         w.set_oeim(true);
@@ -232,9 +305,14 @@ fn arm_rx_errors(regs: pac::uart::Uart) {
     });
 }
 
-struct BreakGuard(pac::uart::Uart);
+/// Clears UART break assertion when completed or cancelled.
+struct BreakGuard(
+    /// Register bank whose break flag is leased.
+    pac::uart::Uart,
+);
 
 impl BreakGuard {
+    /// Asserts break in `regs` and returns its cancellation guard.
     fn new(regs: pac::uart::Uart) -> Self {
         regs.uartlcr_h().write_set(|w| w.set_brk(true));
         Self(regs)
@@ -242,21 +320,29 @@ impl BreakGuard {
 }
 
 impl Drop for BreakGuard {
-    fn drop(&mut self) {
-        self.0.uartlcr_h().write_clear(|w| w.set_brk(true));
-    }
+    /// Releases break immediately, including when its timer future is cancelled.
+    fn drop(&mut self) { self.0.uartlcr_h().write_clear(|w| w.set_brk(true)); }
 }
 
-fn break_duration_us(regs: pac::uart::Uart, bits: u32) -> u64 {
+/// Returns ceiling duration for at least `bits` or two configured frames from `regs`.
+/// Reads baud/framing and cached peripheral hertz; zero clock panics.
+fn break_duration_us(
+    regs: pac::uart::Uart,
+    bits: u32,
+) -> u64 {
     let lcr = regs.uartlcr_h().read();
     let frame_bits = 1 + u32::from(lcr.wlen()) + 5 + u32::from(lcr.pen()) + 1 + u32::from(lcr.stp2());
-    let divx64 = (u32::from(regs.uartibrd().read().baud_divint()) << 6)
-        + u32::from(regs.uartfbrd().read().baud_divfrac());
+    let divx64 =
+        (u32::from(regs.uartibrd().read().baud_divint()) << 6) + u32::from(regs.uartfbrd().read().baud_divfrac());
     bit_duration_us(bits.max(2 * frame_bits), divx64, clk_peri_freq())
 }
 
 impl<'d, M: Mode> UartTx<'d, M> {
-    fn new_inner(info: &'static Info, tx_dma: Option<Channel<'d>>) -> Self {
+    /// Returns a TX handle for `info`, retaining optional `tx_dma`; hardware is already configured.
+    fn new_inner(
+        info: &'static Info,
+        tx_dma: Option<Channel<'d>>,
+    ) -> Self {
         Self {
             info,
             tx_dma,
@@ -264,8 +350,12 @@ impl<'d, M: Mode> UartTx<'d, M> {
         }
     }
 
-    /// Transmit the provided buffer blocking execution until done.
-    pub fn blocking_write(&mut self, buffer: &[u8]) -> Result<(), Error> {
+    /// Queues all `buffer` bytes into the TX FIFO and returns `Ok(())`; empty input is a no-op.
+    /// Spins without a timeout for space (CTS may stall); success does not mean wire idle.
+    pub fn blocking_write(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Error> {
         let r = self.info.regs;
         for &b in buffer {
             while r.uartfr().read().txff() {}
@@ -274,16 +364,14 @@ impl<'d, M: Mode> UartTx<'d, M> {
         Ok(())
     }
 
-    /// Flush UART TX blocking execution until done.
+    /// Spins until TX FIFO and shifter are empty, then returns `Ok(())`; no timeout or peer acknowledgment.
     pub fn blocking_flush(&mut self) -> Result<(), Error> {
         while !tx_drained(self.info.regs) {}
         Ok(())
     }
 
-    /// Check if UART is busy transmitting.
-    pub fn busy(&self) -> bool {
-        self.info.regs.uartfr().read().busy()
-    }
+    /// Returns the hardware BUSY flag; this does not include bytes in a software ring.
+    pub fn busy(&self) -> bool { self.info.regs.uartfr().read().busy() }
 
     /// Assert a break condition after waiting for the transmit buffers to empty,
     /// for the specified number of bit times. This condition must be asserted
@@ -292,7 +380,12 @@ impl<'d, M: Mode> UartTx<'d, M> {
     ///
     /// This method may block for a long amount of time since it has to wait
     /// for the transmit fifo to empty, which may take a while on slow links.
-    pub async fn send_break(&mut self, bits: u32) {
+    /// Cancellation releases the asserted break; FIFO draining can block polling.
+    /// Panics for unavailable clock metadata; `bits` is rounded up to two full frames.
+    pub async fn send_break(
+        &mut self,
+        bits: u32,
+    ) {
         let regs = self.info.regs;
         let wait_usecs = break_duration_us(regs, bits);
 
@@ -303,14 +396,19 @@ impl<'d, M: Mode> UartTx<'d, M> {
 }
 
 impl<'d> UartTx<'d, Blocking> {
-    /// Create a new UART TX instance for blocking mode operations.
-    pub fn new_blocking<T: Instance>(_uart: Peri<'d, T>, tx: Peri<'d, impl TxPin<T>>, config: Config) -> Self {
+    /// Returns a blocking transmitter owning `_uart` and `tx`, applying `config`.
+    /// Zero baud/clock panics after pin setup; retains UART/pin configuration on drop.
+    pub fn new_blocking<T: Instance>(
+        _uart: Peri<'d, T>,
+        tx: Peri<'d, impl TxPin<T>>,
+        config: Config,
+    ) -> Self {
         Uart::<Blocking>::init(T::info(), Some(tx.into()), None, None, None, config);
         Self::new_inner(T::info(), None)
     }
 
-    /// Convert this uart TX instance into a buffered uart using the provided
-    /// irq and transmit buffer.
+    /// Returns a same-core buffered TX using nonempty `tx_buffer` and handler proof `_irq`.
+    /// Panics on wrong peripheral T, already-initialized ring or another core's IRQ ownership.
     pub fn into_buffered<T: Instance>(
         self,
         _irq: impl Binding<T::Interrupt, BufferedInterruptHandler<T>>,
@@ -325,13 +423,14 @@ impl<'d> UartTx<'d, Blocking> {
         BufferedUartTx {
             info: T::info(),
             state: T::buffered_state(),
-                _not_send_sync: PhantomData,
+            _not_send_sync: PhantomData,
         }
     }
 }
 
 impl<'d> UartTx<'d, Async> {
-    /// Create a new DMA-enabled UART which can only send data
+    /// Returns a transmitter owning `_uart`, `tx` and `tx_dma`, configured by `config`.
+    /// `irq` proves DMA completion routing; zero baud/clock panics after pin setup.
     pub fn new<T: Instance, TxDma: ChannelInstance>(
         _uart: Peri<'d, T>,
         tx: Peri<'d, impl TxPin<T>>,
@@ -343,8 +442,12 @@ impl<'d> UartTx<'d, Async> {
         Self::new_inner(T::info(), Some(Channel::new(tx_dma, irq)))
     }
 
-    /// Write to UART TX from the provided buffer using DMA.
-    pub async fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
+    /// DMA-copies all `buffer` bytes into TX and returns `Ok(())`, without draining the wire.
+    /// Cancellation aborts DMA but preserves queued bytes; no UART TX error is reported.
+    pub async fn write(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Error> {
         let transfer = unsafe {
             self.info.regs.uartdmacr().write_set(|reg| {
                 reg.set_txdmae(true);
@@ -364,6 +467,8 @@ impl<'d> UartTx<'d, Async> {
 }
 
 impl<'d, M: Mode> UartRx<'d, M> {
+    /// Returns a receiver for `info`/`dma_state` and optional `rx_dma`. `has_irq`
+    /// must match DMA presence (debug assertion); it unmasks UART errors on this core.
     fn new_inner(
         info: &'static Info,
         dma_state: &'static DmaState,
@@ -385,8 +490,12 @@ impl<'d, M: Mode> UartRx<'d, M> {
         }
     }
 
-    /// Read from UART RX blocking execution until done.
-    pub fn blocking_read(&mut self, mut buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills `buffer` by polling FIFO and returns `Ok(())`; empty input returns immediately.
+    /// Receive errors consume the bad byte and preserve an unspecified valid prefix; no timeout.
+    pub fn blocking_read(
+        &mut self,
+        mut buffer: &mut [u8],
+    ) -> Result<(), Error> {
         while !buffer.is_empty() {
             let received = self.drain_fifo(buffer).map_err(|(_i, e)| e)?;
             buffer = &mut buffer[received..];
@@ -397,7 +506,10 @@ impl<'d, M: Mode> UartRx<'d, M> {
     /// Returns Ok(len) if no errors occurred. Returns Err((len, err)) if an error was
     /// encountered. In both cases, `len` is the number of *good* bytes copied into
     /// `buffer`.
-    fn drain_fifo(&mut self, buffer: &mut [u8]) -> Result<usize, (usize, Error)> {
+    fn drain_fifo(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<usize, (usize, Error)> {
         let r = self.info.regs;
         for (i, b) in buffer.iter_mut().enumerate() {
             if r.uartfr().read().rxfe() {
@@ -423,6 +535,7 @@ impl<'d, M: Mode> UartRx<'d, M> {
 }
 
 impl<'d, M: Mode> Drop for UartRx<'d, M> {
+    /// Masks this core's UART IRQ and RX DMA flags for async ownership; keeps TX configuration.
     fn drop(&mut self) {
         if self.rx_dma.is_some() {
             self.info.interrupt.disable();
@@ -433,14 +546,19 @@ impl<'d, M: Mode> Drop for UartRx<'d, M> {
 }
 
 impl<'d> UartRx<'d, Blocking> {
-    /// Create a new UART RX instance for blocking mode operations.
-    pub fn new_blocking<T: Instance>(_uart: Peri<'d, T>, rx: Peri<'d, impl RxPin<T>>, config: Config) -> Self {
+    /// Returns a blocking receiver owning `_uart` and `rx`, applying `config`.
+    /// Zero baud/clock panics after pin setup; retains UART/pin configuration on drop.
+    pub fn new_blocking<T: Instance>(
+        _uart: Peri<'d, T>,
+        rx: Peri<'d, impl RxPin<T>>,
+        config: Config,
+    ) -> Self {
         Uart::<Blocking>::init(T::info(), None, Some(rx.into()), None, None, config);
         Self::new_inner(T::info(), T::dma_state(), false, None)
     }
 
-    /// Convert this uart RX instance into a buffered uart using the provided
-    /// irq and receive buffer.
+    /// Returns a same-core buffered RX using nonempty `rx_buffer` and handler proof `_irq`.
+    /// Panics on wrong peripheral T, already-initialized ring or another core's IRQ ownership.
     pub fn into_buffered<T: Instance>(
         self,
         _irq: impl Binding<T::Interrupt, BufferedInterruptHandler<T>>,
@@ -455,17 +573,22 @@ impl<'d> UartRx<'d, Blocking> {
         BufferedUartRx {
             info: T::info(),
             state: T::buffered_state(),
-                _not_send_sync: PhantomData,
+            _not_send_sync: PhantomData,
         }
     }
 }
 
 /// Interrupt handler.
 pub struct InterruptHandler<T: Instance> {
+    /// Binds the handler to its peripheral identity.
     _uart: PhantomData<T>,
 }
 
 impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
+    /// Latches enabled receive errors and wakes DMA RX, masking observed flags to stop repeated IRQs.
+    ///
+    /// # Safety
+    /// Run only for T's UART IRQ with initialized exclusive DMA receive state.
     unsafe fn on_interrupt() {
         let uart = T::info().regs;
         if !uart.uartdmacr().read().rxdmae() {
@@ -484,7 +607,8 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 impl<'d> UartRx<'d, Async> {
-    /// Create a new DMA-enabled UART which can only receive data
+    /// Returns a receiver owning `_uart`, `rx` and `rx_dma`, configured by `config`.
+    /// `irq` proves UART-error and DMA completion routing; zero baud/clock panics after pin setup.
     pub fn new<T: Instance, RxDma: ChannelInstance>(
         _uart: Peri<'d, T>,
         rx: Peri<'d, impl RxPin<T>>,
@@ -498,8 +622,13 @@ impl<'d> UartRx<'d, Async> {
         Self::new_inner(T::info(), T::dma_state(), true, Some(Channel::new(rx_dma, irq)))
     }
 
-    /// Read from UART RX into the provided buffer.
-    pub async fn read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills `buffer` using FIFO then DMA, returning `Ok(())` or the first latched receive fault.
+    /// Empty input clears old interrupt error flags but consumes no byte. Errors/cancellation
+    /// can consume a prefix; DMA abort does not restore FIFO contents or UART masks.
+    pub async fn read(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
         // clear error flags before we drain the fifo. errors that have accumulated
         // in the flags will also be present in the fifo.
         self.dma_state.rx_errs.store(0, Ordering::Relaxed);
@@ -598,58 +727,22 @@ impl<'d> UartRx<'d, Async> {
         unreachable!("unrecognized rx error");
     }
 
-    /// Read from the UART, waiting for a break.
-    ///
-    /// We read until one of the following occurs:
-    ///
-    /// * We read `buffer.len()` bytes without a break
-    ///     * returns `Err(ReadToBreakError::MissingBreak(buffer.len()))`
-    /// * We read `n` bytes then a break occurs
-    ///     * returns `Ok(n)`
-    /// * We encounter some error OTHER than a break
-    ///     * returns `Err(ReadToBreakError::Other(error))`
-    ///
-    /// **NOTE**: you MUST provide a buffer one byte larger than your largest expected
-    /// message to reliably detect the framing on one single call to `read_to_break()`.
-    ///
-    /// * If you expect a message of 20 bytes + break, and provide a 20-byte buffer:
-    ///     * The first call to `read_to_break()` will return `Err(ReadToBreakError::MissingBreak(20))`
-    ///     * The next call to `read_to_break()` will immediately return `Ok(0)`, from the "stale" break
-    /// * If you expect a message of 20 bytes + break, and provide a 21-byte buffer:
-    ///     * The first call to `read_to_break()` will return `Ok(20)`.
-    ///     * The next call to `read_to_break()` will work as expected
-    ///
-    /// **NOTE**: In the UART context, a break refers to a break condition (the line being held low for
-    /// for longer than a single character), not an ASCII line break.
-    pub async fn read_to_break(&mut self, buffer: &mut [u8]) -> Result<usize, ReadToBreakError> {
+    /// Reads into `buffer` until a hardware break, returning payload length excluding its zero byte.
+    /// Reserve one extra byte beyond the largest payload. Full/empty buffers return
+    /// MissingBreak(length); other faults return Other(error) after possible partial consumption.
+    /// Cancellation aborts DMA without rolling back bytes or acknowledging a wire boundary.
+    pub async fn read_to_break(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<usize, ReadToBreakError> {
         self.read_to_break_with_count(buffer, 0).await
     }
 
-    /// Read from the UART, waiting for a break as soon as at least `min_count` bytes have been read.
-    ///
-    /// We read until one of the following occurs:
-    ///
-    /// * We read `buffer.len()` bytes without a break
-    ///     * returns `Err(ReadToBreakError::MissingBreak(buffer.len()))`
-    /// * We read `n > min_count` bytes then a break occurs
-    ///     * returns `Ok(n)`
-    /// * We encounter some error OTHER than a break
-    ///     * returns `Err(ReadToBreakError::Other(error))`
-    ///
-    /// If a break occurs before `min_count` bytes have been read, the break will be ignored and the read will continue
-    ///
-    /// **NOTE**: you MUST provide a buffer one byte larger than your largest expected
-    /// message to reliably detect the framing on one single call to `read_to_break()`.
-    ///
-    /// * If you expect a message of 20 bytes + break, and provide a 20-byte buffer:
-    ///     * The first call to `read_to_break()` will return `Err(ReadToBreakError::MissingBreak(20))`
-    ///     * The next call to `read_to_break()` will immediately return `Ok(0)`, from the "stale" line break
-    /// * If you expect a message of 20 bytes + break, and provide a 21-byte buffer:
-    ///     * The first call to `read_to_break()` will return `Ok(20)`.
-    ///     * The next call to `read_to_break()` will work as expected
-    ///
-    /// **NOTE**: In the UART context, a break refers to a break condition (the line being held low for
-    /// for longer than a single character), not an ASCII line break.
+    /// Reads `buffer` until a break after at least `min_count` payload bytes, ignoring earlier breaks.
+    /// Returns payload length excluding the accepted break marker, MissingBreak when full,
+    /// or Other for a receive fault. Empty buffers return MissingBreak(0). A minimum at/above
+    /// capacity cannot fit its terminating marker. Cancellation loses consumed progress;
+    /// an out-of-range DMA write pointer panics. RSR interpretation follows the module's issue link.
     pub async fn read_to_break_with_count(
         &mut self,
         buffer: &mut [u8],
@@ -804,7 +897,8 @@ impl<'d> UartRx<'d, Async> {
 }
 
 impl<'d> Uart<'d, Blocking> {
-    /// Create a new UART without hardware flow control
+    /// Returns a blocking UART owning `uart`, `tx` and `rx`, applying `config` without flow control.
+    /// Zero baud/clock panics after pin setup.
     pub fn new_blocking<T: Instance>(
         uart: Peri<'d, T>,
         tx: Peri<'d, impl TxPin<T>>,
@@ -814,7 +908,8 @@ impl<'d> Uart<'d, Blocking> {
         Self::new_inner(uart, tx.into(), rx.into(), None, None, false, None, None, config)
     }
 
-    /// Create a new UART with hardware flow control (RTS/CTS)
+    /// Returns a blocking UART owning `uart`, `tx`, `rx`, `rts` and `cts`, applying `config`.
+    /// CTS may stall writes indefinitely; zero baud/clock panics after pin setup.
     pub fn new_with_rtscts_blocking<T: Instance>(
         uart: Peri<'d, T>,
         tx: Peri<'d, impl TxPin<T>>,
@@ -836,8 +931,8 @@ impl<'d> Uart<'d, Blocking> {
         )
     }
 
-    /// Convert this uart instance into a buffered uart using the provided
-    /// irq, transmit and receive buffers.
+    /// Returns same-core buffered halves using nonempty `tx_buffer`/`rx_buffer` and `_irq` proof.
+    /// Panics on wrong peripheral T, already-initialized rings or another core's IRQ ownership.
     pub fn into_buffered<T: Instance>(
         self,
         _irq: impl Binding<T::Interrupt, BufferedInterruptHandler<T>>,
@@ -867,7 +962,8 @@ impl<'d> Uart<'d, Blocking> {
 }
 
 impl<'d> Uart<'d, Async> {
-    /// Create a new DMA enabled UART without hardware flow control
+    /// Returns a UART owning `uart`, `tx`, `rx`, `tx_dma` and `rx_dma`, applying `config`.
+    /// `irq` proves UART-error and both DMA handlers; zero baud/clock panics after pin setup.
     pub fn new<T: Instance, TxDma: ChannelInstance, RxDma: ChannelInstance>(
         uart: Peri<'d, T>,
         tx: Peri<'d, impl TxPin<T>>,
@@ -895,7 +991,8 @@ impl<'d> Uart<'d, Async> {
         )
     }
 
-    /// Create a new DMA enabled UART with hardware flow control (RTS/CTS)
+    /// Returns a UART owning `uart`, `tx`, `rx`, `rts`, `cts`, `tx_dma` and `rx_dma`, applying `config`.
+    /// `irq` proves UART-error and both DMA handlers. CTS can stall; zero baud/clock panics.
     pub fn new_with_rtscts<T: Instance, TxDma: ChannelInstance, RxDma: ChannelInstance>(
         uart: Peri<'d, T>,
         tx: Peri<'d, impl TxPin<T>>,
@@ -927,6 +1024,8 @@ impl<'d> Uart<'d, Async> {
 }
 
 impl<'d, M: Mode> Uart<'d, M> {
+    /// Configures `_uart` with `tx`/`rx`, optional `rts`/`cts`, and `config`; returns both halves.
+    /// `has_irq` must match `rx_dma` presence; `tx_dma` supplies optional TX DMA ownership.
     fn new_inner<T: Instance>(
         _uart: Peri<'d, T>,
         mut tx: Peri<'d, AnyPin>,
@@ -953,6 +1052,8 @@ impl<'d, M: Mode> Uart<'d, M> {
         }
     }
 
+    /// Configures `info` and optional `tx`/`rx`/`rts`/`cts` pins from `config`; enables UART/FIFOs.
+    /// Pin effects precede baud admission; zero baud/clock panics without rollback.
     fn init(
         info: &Info,
         tx: Option<Peri<'_, AnyPin>>,
@@ -1061,20 +1162,24 @@ impl<'d, M: Mode> Uart<'d, M> {
         });
     }
 
-    fn lcr_modify<R>(info: &Info, f: impl FnOnce(&mut crate::pac::uart::regs::UartlcrH) -> R) -> R {
+    /// Disables UART at `info`, waits roughly15 bit periods, applies `f` to line control,
+    /// restores control, and returns its callback result. Callback panic skips restoration;
+    /// callers must exclude RX/TX reconfiguration races. This is not a FIFO flush.
+    fn lcr_modify<R>(
+        info: &Info,
+        f: impl FnOnce(&mut crate::pac::uart::regs::UartlcrH) -> R,
+    ) -> R {
         let r = info.regs;
 
         // Notes from PL011 reference manual:
         //
-        // - Before writing the LCR, if the UART is enabled it needs to be
-        //   disabled and any current TX + RX activity has to be completed
+        // - Before writing the LCR, if the UART is enabled it needs to be disabled and any current TX + RX activity has
+        //   to be completed
         //
-        // - There is a BUSY flag which waits for the current TX char, but this is
-        //   OR'd with TX FIFO !FULL, so not usable when FIFOs are enabled and
-        //   potentially nonempty
+        // - There is a BUSY flag which waits for the current TX char, but this is OR'd with TX FIFO !FULL, so not
+        //   usable when FIFOs are enabled and potentially nonempty
         //
-        // - FIFOs can't be set to disabled whilst a character is in progress
-        //   (else "FIFO integrity is not guaranteed")
+        // - FIFOs can't be set to disabled whilst a character is in progress (else "FIFO integrity is not guaranteed")
         //
         // Combination of these means there is no general way to halt and poll for
         // end of TX character, if FIFOs may be enabled. Either way, there is no
@@ -1094,14 +1199,9 @@ impl<'d, M: Mode> Uart<'d, M> {
                 w.set_rxe(false);
             });
 
-            // Note: Maximise precision here. Show working, the compiler will mop this up.
-            // Create a 16.6 fixed-point fractional division ratio; then scale to 32-bits.
-            let mut brdiv_ratio = 64 * r.uartibrd().read().0 + r.uartfbrd().read().0;
-            brdiv_ratio <<= 10;
-            // 3662 is ~(15 * 244.14) where 244.14 is 16e6 / 2^16
-            let scaled_freq = clk_base / 3662;
-            let wait_time_us = brdiv_ratio / scaled_freq;
-            embedded_hal_1::delay::DelayNs::delay_us(&mut Delay, wait_time_us);
+            let divx64 = 64 * r.uartibrd().read().0 + r.uartfbrd().read().0;
+            let wait_time_us = lcr_wait_us(divx64, clk_base);
+            embassy_time::block_for(embassy_time::Duration::from_micros(wait_time_us));
         }
 
         let res = r.uartlcr_h().modify(f);
@@ -1111,12 +1211,21 @@ impl<'d, M: Mode> Uart<'d, M> {
         res
     }
 
-    /// sets baudrate on runtime
-    pub fn set_baudrate(&mut self, baudrate: u32) {
+    /// Replaces baud timing with rounded/clamped `baudrate` bits/s; zero baud/clock panics.
+    /// Briefly disables UART; caller must quiesce RX/TX, including split or buffered users.
+    pub fn set_baudrate(
+        &mut self,
+        baudrate: u32,
+    ) {
         Self::set_baudrate_inner(self.tx.info, baudrate);
     }
 
-    fn set_baudrate_inner(info: &Info, baudrate: u32) {
+    /// Writes rounded/clamped divisors at `info` for `baudrate` then latches via line control.
+    /// Zero baud/clock panics; prior pin/configuration changes are not rolled back.
+    fn set_baudrate_inner(
+        info: &Info,
+        baudrate: u32,
+    ) {
         let r = info.regs;
 
         let clk_base = crate::clocks::clk_peri_freq();
@@ -1132,64 +1241,79 @@ impl<'d, M: Mode> Uart<'d, M> {
 }
 
 impl<'d, M: Mode> Uart<'d, M> {
-    /// Transmit the provided buffer blocking execution until done.
-    pub fn blocking_write(&mut self, buffer: &[u8]) -> Result<(), Error> {
+    /// Queues all `buffer` bytes into the TX FIFO and returns `Ok(())`; empty input is a no-op.
+    /// Spins without a timeout for space (CTS may stall); success does not mean wire idle.
+    pub fn blocking_write(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Error> {
         self.tx.blocking_write(buffer)
     }
 
-    /// Flush UART TX blocking execution until done.
-    pub fn blocking_flush(&mut self) -> Result<(), Error> {
-        self.tx.blocking_flush()
-    }
+    /// Spins until TX FIFO and shifter are empty, then returns `Ok(())`; no timeout or peer acknowledgment.
+    pub fn blocking_flush(&mut self) -> Result<(), Error> { self.tx.blocking_flush() }
 
-    /// Read from UART RX blocking execution until done.
-    pub fn blocking_read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills `buffer` by polling FIFO and returns `Ok(())`; empty input returns immediately.
+    /// Receive errors consume the bad byte and preserve an unspecified valid prefix; no timeout.
+    pub fn blocking_read(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
         self.rx.blocking_read(buffer)
     }
 
-    /// Check if UART is busy transmitting.
-    pub fn busy(&self) -> bool {
-        self.tx.busy()
-    }
+    /// Returns the hardware BUSY flag; this does not include bytes in a software ring.
+    pub fn busy(&self) -> bool { self.tx.busy() }
 
-    /// Wait until TX is empty and send break condition.
-    pub async fn send_break(&mut self, bits: u32) {
+    /// Drains TX then holds break for `bits` bit times, at least two configured frames.
+    /// Cancellation releases break; the initial drain is blocking without a timeout.
+    /// Cancellation releases the asserted break; FIFO draining can block polling.
+    /// Panics for unavailable clock metadata; `bits` is rounded up to two full frames.
+    pub async fn send_break(
+        &mut self,
+        bits: u32,
+    ) {
         self.tx.send_break(bits).await
     }
 
-    /// Split the Uart into a transmitter and receiver, which is particularly
-    /// useful when having two tasks correlating to transmitting and receiving.
-    pub fn split(self) -> (UartTx<'d, M>, UartRx<'d, M>) {
-        (self.tx, self.rx)
-    }
+    /// Returns independently owned TX/RX halves; shared baud/framing registers remain common.
+    pub fn split(self) -> (UartTx<'d, M>, UartRx<'d, M>) { (self.tx, self.rx) }
 
-    /// Split the Uart into a transmitter and receiver by mutable reference,
-    /// which is particularly useful when having two tasks correlating to
-    /// transmitting and receiving.
-    pub fn split_ref(&mut self) -> (&mut UartTx<'d, M>, &mut UartRx<'d, M>) {
-        (&mut self.tx, &mut self.rx)
-    }
+    /// Returns disjoint mutable TX/RX borrows for the lifetime of this UART borrow.
+    pub fn split_ref(&mut self) -> (&mut UartTx<'d, M>, &mut UartRx<'d, M>) { (&mut self.tx, &mut self.rx) }
 }
 
 impl<'d> Uart<'d, Async> {
-    /// Write to UART TX from the provided buffer.
-    pub async fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
+    /// DMA-copies all `buffer` bytes into TX and returns `Ok(())`, without draining the wire.
+    /// Cancellation aborts DMA but preserves queued bytes; no UART TX error is reported.
+    pub async fn write(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Error> {
         self.tx.write(buffer).await
     }
 
-    /// Read from UART RX into the provided buffer.
-    pub async fn read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    /// Fills `buffer` using FIFO then DMA, returning `Ok(())` or the first latched receive fault.
+    /// Empty input clears old interrupt error flags but consumes no byte. Errors/cancellation
+    /// can consume a prefix; DMA abort does not restore FIFO contents or UART masks.
+    pub async fn read(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
         self.rx.read(buffer).await
     }
 
-    /// Read until the buffer is full or a line break occurs.
+    /// Reads `buf` until hardware break; returns payload count or MissingBreak/receive fault.
     ///
     /// See [`UartRx::read_to_break()`] for more details
-    pub async fn read_to_break<'a>(&mut self, buf: &'a mut [u8]) -> Result<usize, ReadToBreakError> {
+    pub async fn read_to_break<'a>(
+        &mut self,
+        buf: &'a mut [u8],
+    ) -> Result<usize, ReadToBreakError> {
         self.rx.read_to_break(buf).await
     }
 
-    /// Read until the buffer is full or a line break occurs after at least `min_count` bytes have been read.
+    /// Reads `buf` until hardware break after `min_count` bytes; returns count or MissingBreak/receive fault.
     ///
     /// See [`UartRx::read_to_break_with_count()`] for more details
     pub async fn read_to_break_with_count<'a>(
@@ -1202,7 +1326,10 @@ impl<'d> Uart<'d, Async> {
 }
 
 impl<'d, M: Mode> embedded_hal_02::serial::Read<u8> for UartRx<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
+
+    /// Returns one FIFO byte, WouldBlock when empty, or a receive fault after consuming the bad byte.
     fn read(&mut self) -> Result<u8, nb::Error<Self::Error>> {
         let r = self.info.regs;
         if r.uartfr().read().rxfe() {
@@ -1226,9 +1353,14 @@ impl<'d, M: Mode> embedded_hal_02::serial::Read<u8> for UartRx<'d, M> {
 }
 
 impl<'d, M: Mode> embedded_hal_02::serial::Write<u8> for UartTx<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 
-    fn write(&mut self, word: u8) -> Result<(), nb::Error<Self::Error>> {
+    /// Queues `word` and returns success, or WouldBlock if TX FIFO is full; does not flush.
+    fn write(
+        &mut self,
+        word: u8,
+    ) -> Result<(), nb::Error<Self::Error>> {
         let r = self.info.regs;
         if r.uartfr().read().txff() {
             return Err(nb::Error::WouldBlock);
@@ -1238,6 +1370,7 @@ impl<'d, M: Mode> embedded_hal_02::serial::Write<u8> for UartTx<'d, M> {
         Ok(())
     }
 
+    /// Returns success only with empty TX FIFO and idle shifter; otherwise WouldBlock.
     fn flush(&mut self) -> Result<(), nb::Error<Self::Error>> {
         if !tx_drained(self.info.regs) {
             return Err(nb::Error::WouldBlock);
@@ -1247,50 +1380,63 @@ impl<'d, M: Mode> embedded_hal_02::serial::Write<u8> for UartTx<'d, M> {
 }
 
 impl<'d, M: Mode> embedded_hal_02::blocking::serial::Write<u8> for UartTx<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 
-    fn bwrite_all(&mut self, buffer: &[u8]) -> Result<(), Self::Error> {
+    /// Queues all `buffer` bytes, returning success; waits indefinitely for FIFO space.
+    fn bwrite_all(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(buffer)
     }
 
-    fn bflush(&mut self) -> Result<(), Self::Error> {
-        self.blocking_flush()
-    }
+    /// Waits indefinitely for TX FIFO/shifter drain and returns success.
+    fn bflush(&mut self) -> Result<(), Self::Error> { self.blocking_flush() }
 }
 
 impl<'d, M: Mode> embedded_hal_02::serial::Read<u8> for Uart<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 
-    fn read(&mut self) -> Result<u8, nb::Error<Self::Error>> {
-        embedded_hal_02::serial::Read::read(&mut self.rx)
-    }
+    /// Returns one FIFO byte, WouldBlock when empty, or a receive fault after consuming the bad byte.
+    fn read(&mut self) -> Result<u8, nb::Error<Self::Error>> { embedded_hal_02::serial::Read::read(&mut self.rx) }
 }
 
 impl<'d, M: Mode> embedded_hal_02::serial::Write<u8> for Uart<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 
-    fn write(&mut self, word: u8) -> Result<(), nb::Error<Self::Error>> {
+    /// Queues `word` and returns success, or WouldBlock if TX FIFO is full; does not flush.
+    fn write(
+        &mut self,
+        word: u8,
+    ) -> Result<(), nb::Error<Self::Error>> {
         embedded_hal_02::serial::Write::write(&mut self.tx, word)
     }
 
-    fn flush(&mut self) -> Result<(), nb::Error<Self::Error>> {
-        embedded_hal_02::serial::Write::flush(&mut self.tx)
-    }
+    /// Returns success only with empty TX FIFO and idle shifter; otherwise WouldBlock.
+    fn flush(&mut self) -> Result<(), nb::Error<Self::Error>> { embedded_hal_02::serial::Write::flush(&mut self.tx) }
 }
 
 impl<'d, M: Mode> embedded_hal_02::blocking::serial::Write<u8> for Uart<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 
-    fn bwrite_all(&mut self, buffer: &[u8]) -> Result<(), Self::Error> {
+    /// Queues all `buffer` bytes, returning success; waits indefinitely for FIFO space.
+    fn bwrite_all(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<(), Self::Error> {
         self.blocking_write(buffer)
     }
 
-    fn bflush(&mut self) -> Result<(), Self::Error> {
-        self.blocking_flush()
-    }
+    /// Waits indefinitely for TX FIFO/shifter drain and returns success.
+    fn bflush(&mut self) -> Result<(), Self::Error> { self.blocking_flush() }
 }
 
 impl embedded_hal_nb::serial::Error for Error {
+    /// Returns the portable serial error category; break maps to Other.
     fn kind(&self) -> embedded_hal_nb::serial::ErrorKind {
         match *self {
             Self::Framing => embedded_hal_nb::serial::ErrorKind::FrameFormat,
@@ -1302,18 +1448,22 @@ impl embedded_hal_nb::serial::Error for Error {
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::ErrorType for UartRx<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::ErrorType for UartTx<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::ErrorType for Uart<'d, M> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Read for UartRx<'d, M> {
+    /// Returns one FIFO byte, WouldBlock when empty, or a receive fault after consuming the bad byte.
     fn read(&mut self) -> nb::Result<u8, Self::Error> {
         let r = self.info.regs;
         if r.uartfr().read().rxfe() {
@@ -1337,72 +1487,92 @@ impl<'d, M: Mode> embedded_hal_nb::serial::Read for UartRx<'d, M> {
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Write for UartTx<'d, M> {
-    fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
+    /// Queues `char` and returns success, or WouldBlock if TX FIFO is full; does not flush.
+    fn write(
+        &mut self,
+        char: u8,
+    ) -> nb::Result<(), Self::Error> {
         embedded_hal_02::serial::Write::write(self, char)
     }
 
-    fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        embedded_hal_02::serial::Write::flush(self)
-    }
+    /// Returns success only with empty TX FIFO and idle shifter; otherwise WouldBlock.
+    fn flush(&mut self) -> nb::Result<(), Self::Error> { embedded_hal_02::serial::Write::flush(self) }
 }
 
 impl<'d> embedded_io::ErrorType for UartTx<'d, Blocking> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 }
 
 impl<'d> embedded_io::Write for UartTx<'d, Blocking> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+    /// Queues all `buf` bytes and returns their count; waits indefinitely for FIFO space.
+    fn write(
+        &mut self,
+        buf: &[u8],
+    ) -> Result<usize, Self::Error> {
         self.blocking_write(buf).map(|_| buf.len())
     }
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        self.blocking_flush()
-    }
+    /// Waits indefinitely for TX FIFO/shifter drain and returns success.
+    fn flush(&mut self) -> Result<(), Self::Error> { self.blocking_flush() }
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Read for Uart<'d, M> {
-    fn read(&mut self) -> Result<u8, nb::Error<Self::Error>> {
-        embedded_hal_02::serial::Read::read(&mut self.rx)
-    }
+    /// Returns one FIFO byte, WouldBlock when empty, or a receive fault after consuming the bad byte.
+    fn read(&mut self) -> Result<u8, nb::Error<Self::Error>> { embedded_hal_02::serial::Read::read(&mut self.rx) }
 }
 
 impl<'d, M: Mode> embedded_hal_nb::serial::Write for Uart<'d, M> {
-    fn write(&mut self, char: u8) -> nb::Result<(), Self::Error> {
+    /// Queues `char` and returns success, or WouldBlock if TX FIFO is full; does not flush.
+    fn write(
+        &mut self,
+        char: u8,
+    ) -> nb::Result<(), Self::Error> {
         embedded_hal_nb::serial::Write::write(&mut self.tx, char)
     }
 
-    fn flush(&mut self) -> nb::Result<(), Self::Error> {
-        embedded_hal_nb::serial::Write::flush(&mut self.tx)
-    }
+    /// Returns success only with empty TX FIFO and idle shifter; otherwise WouldBlock.
+    fn flush(&mut self) -> nb::Result<(), Self::Error> { embedded_hal_nb::serial::Write::flush(&mut self.tx) }
 }
 
 impl<'d> embedded_io::ErrorType for Uart<'d, Blocking> {
+    /// UART receive fault; transmit adapters currently report no hardware errors.
     type Error = Error;
 }
 
 impl<'d> embedded_io::Write for Uart<'d, Blocking> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+    /// Queues all `buf` bytes and returns their count; waits indefinitely for FIFO space.
+    fn write(
+        &mut self,
+        buf: &[u8],
+    ) -> Result<usize, Self::Error> {
         self.blocking_write(buf).map(|_| buf.len())
     }
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        self.blocking_flush()
-    }
+    /// Waits indefinitely for TX FIFO/shifter drain and returns success.
+    fn flush(&mut self) -> Result<(), Self::Error> { self.blocking_flush() }
 }
 
+/// Immutable register/IRQ/DMA identity shared by both halves.
 struct Info {
+    /// UART register bank for this peripheral.
     regs: pac::uart::Uart,
+    /// Transmit FIFO DMA request selector.
     tx_dreq: pac::dma::vals::TreqSel,
+    /// Receive FIFO DMA request selector.
     rx_dreq: pac::dma::vals::TreqSel,
+    /// UART error/buffered interrupt line.
     interrupt: Interrupt,
 }
 
 #[cfg(test)]
+/// Pure arithmetic and in-memory PAC write-mask regressions; no hardware emulation.
 mod regression_tests {
     use super::*;
     extern crate std;
     use std::boxed::Box;
 
+    /// Returns leaked test identity around `regs`; caller retains the backing register array.
     fn fake_info(regs: pac::uart::Uart) -> &'static Info {
         Box::leak(Box::new(Info {
             regs,
@@ -1412,7 +1582,17 @@ mod regression_tests {
         }))
     }
 
+    /// Checks conservative line-control waits at low clocks and maximum baud divisors.
     #[test]
+    fn line_control_wait_handles_low_clock_and_rounds_up() {
+        assert_eq!(lcr_wait_us(64, 1000), 240_000);
+        assert_eq!(lcr_wait_us(64, 150_000_000), 2);
+        assert_eq!(lcr_wait_us(65535 * 64 + 63, 1), 15_728_636_250_000);
+        assert_eq!(bit_duration_us(0, 64, 1000), 0);
+    }
+
+    #[test]
+    /// Checks fractional carry, wide input arithmetic and divisor clamping.
     fn baud_rounding_carries_into_integer_and_handles_large_clocks() {
         assert_eq!(baud_divisors(150_000_000, 115_200), (81, 24));
         assert_eq!(baud_divisors(1023, 32), (2, 0));
@@ -1422,6 +1602,7 @@ mod regression_tests {
     }
 
     #[test]
+    /// Checks ceiling timing and full-width bit-count arithmetic.
     fn long_break_duration_does_not_overflow() {
         assert_eq!(bit_duration_us(20, 64, 16_000_000), 20);
         assert_eq!(bit_duration_us(1, 64, 150_000_000), 1);
@@ -1429,6 +1610,7 @@ mod regression_tests {
     }
 
     #[test]
+    /// Checks the RX-only atomic clear mask, preserving TX DMA.
     fn receive_dma_cleanup_preserves_transmit_enable() {
         let mut storage = [0u32; 4096];
         let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
@@ -1438,19 +1620,32 @@ mod regression_tests {
     }
 
     #[test]
+    /// Checks FIFO admission and shifter drain through both serial trait adapters.
     fn both_nonblocking_traits_return_pending_for_full_or_busy_transmitter() {
         let mut storage = [0u32; 4096];
         let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
         let mut tx = UartTx::<Blocking>::new_inner(fake_info(regs), None);
         regs.uartfr().write(|w| w.set_txff(true));
-        assert_eq!(embedded_hal_02::serial::Write::write(&mut tx, 42), Err(nb::Error::WouldBlock));
-        assert_eq!(embedded_hal_nb::serial::Write::write(&mut tx, 42), Err(nb::Error::WouldBlock));
+        assert_eq!(
+            embedded_hal_02::serial::Write::write(&mut tx, 42),
+            Err(nb::Error::WouldBlock)
+        );
+        assert_eq!(
+            embedded_hal_nb::serial::Write::write(&mut tx, 42),
+            Err(nb::Error::WouldBlock)
+        );
         regs.uartfr().write(|w| {
             w.set_txfe(true);
             w.set_busy(true);
         });
-        assert_eq!(embedded_hal_02::serial::Write::flush(&mut tx), Err(nb::Error::WouldBlock));
-        assert_eq!(embedded_hal_nb::serial::Write::flush(&mut tx), Err(nb::Error::WouldBlock));
+        assert_eq!(
+            embedded_hal_02::serial::Write::flush(&mut tx),
+            Err(nb::Error::WouldBlock)
+        );
+        assert_eq!(
+            embedded_hal_nb::serial::Write::flush(&mut tx),
+            Err(nb::Error::WouldBlock)
+        );
         regs.uartfr().write(|w| w.set_txfe(true));
         assert_eq!(embedded_hal_nb::serial::Write::flush(&mut tx), Ok(()));
         assert_eq!(embedded_hal_nb::serial::Write::write(&mut tx, 42), Ok(()));
@@ -1458,23 +1653,24 @@ mod regression_tests {
     }
 
     #[test]
+    /// Checks scope cancellation clears the asserted break mask.
     fn break_guard_clears_break_when_scope_is_canceled() {
         let mut storage = [0u32; 4096];
         let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
         let guard = BreakGuard::new(regs);
-        assert_eq!(storage[(0x2000 + 0x2c) / 4], 1);
-        assert_eq!(storage[(0x3000 + 0x2c) / 4], 0);
+        assert_eq!(storage[(0x2000 + 0x2C) / 4], 1);
+        assert_eq!(storage[(0x3000 + 0x2C) / 4], 0);
         drop(guard);
-        assert_eq!(storage[(0x3000 + 0x2c) / 4], 1);
+        assert_eq!(storage[(0x3000 + 0x2C) / 4], 1);
     }
 
     #[test]
     #[should_panic(expected = "must be nonzero")]
-    fn zero_baud_is_rejected_before_programming() {
-        baud_divisors(150_000_000, 0);
-    }
+    /// Rejects zero baud in the production admission helper.
+    fn zero_baud_is_rejected_before_programming() { baud_divisors(150_000_000, 0); }
 
     #[test]
+    /// Checks early break marker exclusion and minimum payload boundary.
     fn early_break_does_not_count_its_zero_byte_toward_minimum() {
         assert_eq!(break_progress(1, 8, true, 1), Ok(BreakProgress::Continue(0)));
         assert_eq!(break_progress(4, 8, true, 3), Ok(BreakProgress::Complete(3)));
@@ -1483,12 +1679,14 @@ mod regression_tests {
     }
 
     #[test]
+    /// Rejects full data buffers even when minimum-count framing remains unmet.
     fn full_data_buffer_never_restarts_empty_dma_for_unmet_minimum() {
         assert_eq!(break_progress(8, 8, false, 9), Err(ReadToBreakError::MissingBreak(8)));
         assert_eq!(break_progress(8, 8, false, 0), Err(ReadToBreakError::MissingBreak(8)));
     }
 
     #[test]
+    /// Checks continued receive clears old break state and enables receive error IRQs.
     fn continuing_after_break_clears_dma_gate_and_rearms_error_mask() {
         let mut storage = [0u32; 4096];
         let regs = unsafe { pac::uart::Uart::from_ptr(storage.as_mut_ptr().cast()) };
@@ -1497,17 +1695,22 @@ mod regression_tests {
         assert_eq!(regs.uartrsr().read().0, 0);
         assert_eq!(regs.uarticr().read().0, (1 << 9) | (1 << 7));
         arm_rx_errors(regs);
-        assert_eq!(storage[(0x2000 + 0x38) / 4], 0xf << 7);
+        assert_eq!(storage[(0x2000 + 0x38) / 4], 0xF << 7);
     }
 }
 
+/// Restricts operation modes to the HAL blocking/async markers.
 trait SealedMode {}
 
+/// Provides per-UART identity and exactly one buffered/DMA state allocation.
 trait SealedInstance {
+    /// Returns this UART's immutable register/IRQ/DMA identity.
     fn info() -> &'static Info;
 
+    /// Returns the singleton IRQ-buffered ring state.
     fn buffered_state() -> &'static buffered::State;
 
+    /// Returns the singleton receive-DMA error state.
     fn dma_state() -> &'static DmaState;
 }
 
@@ -1515,6 +1718,7 @@ trait SealedInstance {
 #[allow(private_bounds)]
 pub trait Mode: SealedMode {}
 
+/// Implements sealed/public mode markers without runtime state.
 macro_rules! impl_mode {
     ($name:ident) => {
         impl SealedMode for $name {}
@@ -1537,10 +1741,13 @@ pub trait Instance: SealedInstance + PeripheralType {
     type Interrupt: interrupt::typelevel::Interrupt;
 }
 
+/// Generates identity and independent buffered/DMA state for each UART peripheral.
 macro_rules! impl_instance {
     ($inst:ident, $irq:ident, $tx_dreq:expr, $rx_dreq:expr) => {
         impl SealedInstance for peripherals::$inst {
+            /// Returns this UART's immutable register/IRQ/DMA identity.
             fn info() -> &'static Info {
+                /// Immutable per-instance hardware routing.
                 static INFO: Info = Info {
                     regs: pac::$inst,
                     tx_dreq: $tx_dreq,
@@ -1550,12 +1757,16 @@ macro_rules! impl_instance {
                 &INFO
             }
 
+            /// Returns the singleton IRQ-buffered ring state.
             fn buffered_state() -> &'static buffered::State {
+                /// Per-instance reusable software ring and IRQ ownership state.
                 static STATE: buffered::State = buffered::State::new();
                 &STATE
             }
 
+            /// Returns the singleton receive-DMA error state.
             fn dma_state() -> &'static DmaState {
+                /// Per-instance DMA receive error latch and waiter.
                 static STATE: DmaState = DmaState {
                     rx_err_waker: AtomicWaker::new(),
                     rx_errs: AtomicU16::new(0),
@@ -1564,6 +1775,7 @@ macro_rules! impl_instance {
             }
         }
         impl Instance for peripherals::$inst {
+            /// UART peripheral interrupt associated with this instance.
             type Interrupt = crate::interrupt::typelevel::$irq;
         }
     };
@@ -1591,6 +1803,7 @@ pub trait CtsPin<T: Instance>: crate::gpio::Pin {}
 /// Trait for Request To Send (RTS) pins.
 pub trait RtsPin<T: Instance>: crate::gpio::Pin {}
 
+/// Implements only hardware-valid UART pin-role mappings.
 macro_rules! impl_pin {
     ($pin:ident, $instance:ident, $function:ident) => {
         impl $function<peripherals::$instance> for peripherals::$pin {}

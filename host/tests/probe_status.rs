@@ -1,12 +1,18 @@
+//! Probe RGB qualification, fault precedence and cross-thread latch conservation.
+
+/// Production cross-core channels used to exercise real bounded report overflow.
 #[allow(dead_code)]
 #[path = "../../firmware/ble-probe/src/bridge.rs"]
 mod bridge;
+/// Production atomic status policy, independent of physical PWM/GPIO writes.
 #[path = "../../firmware/ble-probe/src/status.rs"]
 mod status;
 
 use dashboard_core::discovery::{capture_ui as cap, *};
 use status::{Fault, Status};
 
+/// Publishes `model` with a fresh live capture UI into `status`.
+/// Returns active-low RGB levels at 0 ms without an external fatal fault.
 fn levels(
     status: &Status,
     model: &Probe,
@@ -15,6 +21,7 @@ fn levels(
     status.levels(0, false)
 }
 
+/// Scan-only faults retain a 500 ms red phase across healthy activity until recovery.
 #[test]
 fn scan_only_faults_blink_slowly_and_remain_latched_across_healthy_publications() {
     for fault in [Fault::Scan, Fault::Advertisement] {
@@ -48,6 +55,7 @@ fn scan_only_faults_blink_slowly_and_remain_latched_across_healthy_publications(
     }
 }
 
+/// Non-scan faults override scan blinking in either order; fatal status overrides both patterns.
 #[test]
 fn non_scan_faults_override_scan_blink_and_fatal_overrides_both() {
     for fault in [
@@ -71,6 +79,7 @@ fn non_scan_faults_override_scan_blink_and_fatal_overrides_both() {
     }
 }
 
+/// Scanning energizes only blue under the board's active-low electrical convention.
 #[test]
 fn scanning_drives_only_the_active_low_blue_channel() {
     let status = Status::new();
@@ -79,6 +88,8 @@ fn scanning_drives_only_the_active_low_blue_channel() {
     assert_eq!(levels(&status, &model), [true, true, false]);
 }
 
+/// Returns a model inspecting the selected public peer after a click at 20 ms.
+/// `status` receives scanning/report/input transitions; panics if the click is not admitted.
 fn start(status: &Status) -> Probe {
     let mut model = Probe::new();
     status.event(
@@ -108,6 +119,7 @@ fn start(status: &Status) -> Probe {
     status.input(&mut model, Input::Click, 20).unwrap();
     model
 }
+/// Delivers `item` to `model` under its current request generation through `status` fault observation.
 fn event(
     status: &Status,
     model: &mut Probe,
@@ -121,6 +133,8 @@ fn event(
         },
     );
 }
+/// Populates `model` with link, GAP service/name characteristic and four completed stages.
+/// `status` observes each current-generation item; link starts at 25 ms with ATT MTU 23.
 fn inventory(
     status: &Status,
     model: &mut Probe,
@@ -166,6 +180,8 @@ fn inventory(
         event(status, model, InspectionItem::StageComplete(stage));
     }
 }
+/// Reports terminal cleanup for `model` at 50 ms through `status`, with reason 0x16.
+/// `cleanup_complete` controls the independent cleanup acknowledgment.
 fn end(
     status: &Status,
     model: &mut Probe,
@@ -181,6 +197,8 @@ fn end(
         },
     );
 }
+/// Reports completion then Paused for `model` through `status` at the current generation.
+/// `limited` marks capacity-limited enumeration, preventing clean success.
 fn complete(
     status: &Status,
     model: &mut Probe,
@@ -203,6 +221,7 @@ fn complete(
     );
 }
 
+/// Connection and complete inventory remain non-green until acknowledged normal cleanup.
 #[test]
 fn connection_and_inventory_cannot_turn_green_before_terminal_cleanup() {
     let status = Status::new();
@@ -228,6 +247,7 @@ fn connection_and_inventory_cannot_turn_green_before_terminal_cleanup() {
     assert_eq!(levels(&status, &model), [true, false, true]);
 }
 
+/// All termination bytes and absence retain inventory; only 0x13/0x16 qualify clean success.
 #[test]
 fn terminal_reason_is_checked_after_completed_inventory_without_losing_evidence() {
     // Includes the observed 0x22 after all stages finished, HCI success (not a
@@ -272,6 +292,7 @@ fn terminal_reason_is_checked_after_completed_inventory_without_losing_evidence(
     }
 }
 
+/// Local ingress failure before or after teardown prevents success without replacing the first cause.
 #[test]
 fn late_ingress_error_cannot_hide_behind_normal_disconnect_or_overwrite_first_failure() {
     for prior in [
@@ -318,6 +339,7 @@ fn late_ingress_error_cannot_hide_behind_normal_disconnect_or_overwrite_first_fa
     }
 }
 
+/// Recovery advances generation so stale terminal context cannot relatch or contaminate scanning.
 #[test]
 fn stale_terminal_context_and_disconnect_do_not_poison_recovered_scan() {
     let status = Status::new();
@@ -349,6 +371,7 @@ fn stale_terminal_context_and_disconnect_do_not_poison_recovered_scan() {
     assert_eq!(status.fault_latch(), FaultLatch::EMPTY);
 }
 
+/// Green qualification independently rejects missing/abnormal/mismatched reasons and local errors.
 #[test]
 fn green_defensively_requires_reason_and_no_local_error_even_in_a_precompleted_model() {
     for case in 0..4 {
@@ -367,6 +390,7 @@ fn green_defensively_requires_reason_and_no_local_error_even_in_a_precompleted_m
     }
 }
 
+/// Operation timeout remains the first failure; a failed connection needs no disconnect reason.
 #[test]
 fn first_operation_failure_survives_abnormal_teardown_and_failed_connect_needs_no_reason() {
     for connected in [false, true] {
@@ -402,6 +426,7 @@ fn first_operation_failure_survives_abnormal_teardown_and_failed_connect_needs_n
     }
 }
 
+/// Leaving a clean inspection restores blue scanning, then amber when explicitly paused.
 #[test]
 fn completed_live_probe_returns_to_blue_on_back_and_amber_when_paused() {
     let status = Status::new();
@@ -434,6 +459,7 @@ fn completed_live_probe_returns_to_blue_on_back_and_amber_when_paused() {
     assert_eq!(levels(&status, &model), [false, false, true]);
 }
 
+/// Completed enumeration retains rejected/truncated read evidence and remains red.
 #[test]
 fn rejected_reads_and_truncation_cannot_hide_behind_complete_enumeration() {
     for (result, failure, truncated) in [
@@ -470,6 +496,7 @@ fn rejected_reads_and_truncation_cannot_hide_behind_complete_enumeration() {
     }
 }
 
+/// Fixed-size standard values qualify only at their exact lengths across all 0..=64-byte replies.
 #[test]
 fn successful_att_reply_with_invalid_standard_field_length_is_not_clean() {
     for (service, uuid, required) in [
@@ -514,6 +541,7 @@ fn successful_att_reply_with_invalid_standard_field_length_is_not_clean() {
     }
 }
 
+/// Every probe error stays latched through a successful retry; protected recovery clears it and peers.
 #[test]
 fn every_probe_failure_latches_across_retry_and_only_y_recovery_clears() {
     for error in [
@@ -564,6 +592,7 @@ fn every_probe_failure_latches_across_retry_and_only_y_recovery_clears() {
     }
 }
 
+/// Back and recovery invalidate late failure, cleanup and completion events from the prior generation.
 #[test]
 fn cancel_and_recovery_reject_late_failure_and_completion_generations() {
     for input in [Input::Back, Input::Recover] {
@@ -607,6 +636,7 @@ fn cancel_and_recovery_reject_late_failure_and_completion_generations() {
     }
 }
 
+/// Missing stages, malformed declarations, omissions, incomplete cleanup and limited results latch red.
 #[test]
 fn short_invalid_limited_and_missing_stage_results_are_red() {
     for case in 0..5 {
@@ -637,6 +667,7 @@ fn short_invalid_limited_and_missing_stage_results_are_red() {
     }
 }
 
+/// Post-completion corruption of timing, peer, link, MTU or stages removes green eligibility.
 #[test]
 fn clean_green_requires_matching_peer_link_timestamps_and_all_stages() {
     for case in 0..7 {
@@ -658,6 +689,7 @@ fn clean_green_requires_matching_peer_link_timestamps_and_all_stages() {
     }
 }
 
+/// New fault evidence relatches despite saturated lifetime counters; activity never clears it.
 #[test]
 fn faults_win_every_activity_update_even_after_diagnostic_counters_saturate() {
     for fault in [
@@ -691,6 +723,7 @@ fn faults_win_every_activity_update_even_after_diagnostic_counters_saturate() {
     }
 }
 
+/// Concurrent activity publication cannot overwrite scan faults recorded after recovery.
 #[test]
 fn concurrent_activity_publication_never_loses_a_fault_after_recovery() {
     use std::sync::{Arc, Barrier};
@@ -714,6 +747,7 @@ fn concurrent_activity_publication_never_loses_a_fault_after_recovery() {
     assert_eq!(status.levels(0, false), [false, true, true]);
 }
 
+/// Missing optional encoder and invalidated USB sessions are neutral; established-device failures latch.
 #[test]
 fn optional_encoder_and_normal_usb_reset_are_neutral_but_actual_failures_latch() {
     let status = Status::new();
@@ -728,6 +762,7 @@ fn optional_encoder_and_normal_usb_reset_are_neutral_but_actual_failures_latch()
     assert_eq!(status.levels(0, false), [false, true, true]);
 }
 
+/// Blink phases use elapsed milliseconds without overflow; fatal red overrides recovery and activity.
 #[test]
 fn blinking_uses_elapsed_milliseconds_and_fatal_fault_overrides_recovery() {
     let status = Status::new();
@@ -753,6 +788,7 @@ fn blinking_uses_elapsed_milliseconds_and_fatal_fault_overrides_recovery() {
     assert_eq!(Status::new().levels(u64::MAX, false), [true, true, true]);
 }
 
+/// Pending capture work is magenta and saved browsing amber, even after a clean live inspection.
 #[test]
 fn capture_activity_and_saved_browsing_never_present_saved_evidence_as_live_success() {
     let status = Status::new();
@@ -786,6 +822,7 @@ fn capture_activity_and_saved_browsing_never_present_saved_evidence_as_live_succ
     assert_eq!(status.levels(0, false), [false, false, true]);
 }
 
+/// Capture timeout or a failed hidden request still latches red after leaving its screen.
 #[test]
 fn capture_failure_and_timeout_survive_back_and_hidden_completion() {
     for timeout in [false, true] {
@@ -809,6 +846,7 @@ fn capture_failure_and_timeout_survive_back_and_hidden_completion() {
     }
 }
 
+/// Empty/saved slots and expected admission rejections are neutral; damaged/unavailable slots latch red.
 #[test]
 fn empty_slots_and_admission_guards_are_neutral_corrupt_or_unknown_slots_are_red() {
     for (slot, red) in [
@@ -849,6 +887,7 @@ fn empty_slots_and_admission_guards_are_neutral_corrupt_or_unknown_slots_are_red
     assert_eq!(status.levels(0, false), [true, true, false]);
 }
 
+/// A later valid advertisement cannot erase fault evidence from a malformed earlier packet.
 #[test]
 fn malformed_advertisement_is_latched_even_if_a_valid_packet_immediately_replaces_it() {
     let status = Status::new();
@@ -874,6 +913,7 @@ fn malformed_advertisement_is_latched_even_if_a_valid_packet_immediately_replace
     assert_eq!(levels(&status, &model), [false, true, true]);
 }
 
+/// Actual 32-entry channel overflow relatches after recovery even when its drop counter is saturated.
 #[test]
 fn actual_report_channel_overflow_relatches_after_clear_with_a_saturated_counter() {
     use core::sync::atomic::Ordering;
@@ -908,6 +948,7 @@ fn actual_report_channel_overflow_relatches_after_clear_with_a_saturated_counter
     while bridge::REPORTS.try_receive().is_ok() {}
 }
 
+/// Stale peer rejection latches red, while exhausted request generations force fatal blinking.
 #[test]
 fn idle_stale_peer_rejection_latches_and_request_exhaustion_remains_fatal() {
     let status = Status::new();
@@ -921,6 +962,7 @@ fn idle_stale_peer_rejection_latches_and_request_exhaustion_remains_fatal() {
     assert_eq!(status.levels(125, false), [true, true, true]);
 }
 
+/// Recovery preserves a pending storage fence; only its matching late failure adds new fault evidence.
 #[test]
 fn late_storage_failure_after_recovery_is_new_evidence_but_stale_reply_is_ignored() {
     let status = Status::new();
@@ -950,6 +992,7 @@ fn late_storage_failure_after_recovery_is_new_evidence_but_stale_reply_is_ignore
     assert_eq!(status.levels(0, false), [false, true, true]);
 }
 
+/// The first fault and all nine source bits survive repeated publication until explicit recovery.
 #[test]
 fn latch_retains_first_and_all_sources_until_recovery() {
     for first in Fault::ALL {
@@ -973,6 +1016,7 @@ fn latch_retains_first_and_all_sources_until_recovery() {
     }
 }
 
+/// Concurrent writers conserve every fault bit and retain one stable first cause through later faults.
 #[test]
 fn concurrent_sources_and_activity_cannot_lose_latched_bits_or_first_cause() {
     let status = Status::new();

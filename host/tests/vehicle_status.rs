@@ -1,9 +1,11 @@
+//! Header status distinguishes qualified fresh vehicle data from startup, raw transport and BLE-only readiness.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::diagnostics::service::{LinkSnapshot, LinkState};
 use dashboard_host_validation::diagnostics::session::Counters;
 use dashboard_host_validation::samples::{Quantity, Sample, Source};
 use dashboard_host_validation::vehicle_status::VehicleStatus;
 
+/// Returns a synthetic link observation in `state` with no faults, raw records or diagnostic counters.
 fn link(state: LinkState) -> LinkSnapshot {
     LinkSnapshot {
         state,
@@ -16,6 +18,7 @@ fn link(state: LinkState) -> LinkSnapshot {
     }
 }
 
+/// Startup/raw/recovery states cannot imply live vehicle samples; explicit demo mode retains its own status.
 #[test]
 fn startup_raw_and_recovery_states_never_claim_vehicle_data() {
     let samples = DashboardSnapshot::EMPTY;
@@ -39,6 +42,7 @@ fn startup_raw_and_recovery_states_never_claim_vehicle_data() {
     );
 }
 
+/// Status changes at sample freshness boundaries without publication and rejects future or unqualified provenance.
 #[test]
 fn actual_fresh_sample_is_required_and_staleness_changes_without_new_publication() {
     let mut model = AcquisitionModel::new();
@@ -78,6 +82,7 @@ fn actual_fresh_sample_is_required_and_staleness_changes_without_new_publication
     );
 }
 
+/// Every status transition repairs both physical headers even when no sensor or FPS value changes.
 #[test]
 fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
     use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
@@ -127,6 +132,7 @@ fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
     }
 }
 
+/// BLE adapter/synthetic/security phases never map to vehicle Data or Demo status.
 #[test]
 fn ble_readiness_never_claims_qualified_vehicle_data() {
     use dashboard_host_validation::ble::link::LinkState as Ble;

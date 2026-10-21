@@ -4,29 +4,42 @@ use dashboard_config::Orientation;
 use super::FrameBuffer;
 use super::damage::DamagePlan;
 
+/// Exclusive ST7789 command/payload owner. Implementations retain byte borrows
+/// until the underlying transfer is finished. Async cancellation is unsupported
+/// by this protocol; ordinary returned errors must obey the CS rules below.
 #[allow(async_fn_in_trait)]
 pub trait PanelBus {
+    /// Underlying bus failure, potentially after partial command/pixel effects.
     type Error;
-    /// Send command and parameters; leave CS high even on error.
+    /// Sends `command` with DC low and `parameters` with DC high. Returns success
+    /// or a transport error; leaves CS high on either normal return.
     async fn command(
         &mut self,
         command: u8,
         parameters: &[u8],
     ) -> Result<(), Self::Error>;
-    /// Send RAMWR and hold CS low in data mode; leave CS high on error.
+    /// Sends RAMWR and returns success with CS low/data mode ready for payloads,
+    /// or a transport error with CS high.
     async fn begin_pixels(&mut self) -> Result<(), Self::Error>;
-    /// Preserve CS; invoke callback after polling the first payload write once.
+    /// Writes wire-order RGB565 `bytes`, preserving CS. Invokes `on_started`, if
+    /// present, after first polling the actual payload future. Returns the bus
+    /// result; an error may follow partial pixels. Completion does not imply scanout.
     async fn pixels<F: FnOnce()>(
         &mut self,
         bytes: &[u8],
         on_started: Option<F>,
     ) -> Result<(), Self::Error>;
-    /// Called after every successful begin, including a failed payload.
+    /// Releases CS after every successful begin, including a returned payload
+    /// error. The caller must already have awaited the payload before invoking it.
     fn end_pixels(&mut self);
 }
 
 /// The framebuffer borrow spans every region. Never cancel an active transfer
 /// and release its lease. Empty plans emit no commands and no start callback.
+/// Uses exclusive `bus` to send immutable `frame` bytes selected by `plan`;
+/// invokes `on_started` at the first payload's first poll. Returns success or the
+/// first bus error, releasing CS after returned payload errors. Cancellation may
+/// bypass that cleanup; earlier regions can remain changed on failure.
 pub async fn flush_plan<B: PanelBus>(
     bus: &mut B,
     frame: &FrameBuffer,
@@ -49,7 +62,10 @@ pub async fn flush_plan<B: PanelBus>(
     Ok(())
 }
 
-/// Source-derived address modes, retaining the existing ML/MH/RGB bits.
+/// Returns the MADCTL byte for `orientation`; ML/MH/RGB remain zero in this
+/// application's existing mapping. Bit meanings and native window dimensions:
+/// [Pimoroni ST7789 driver](https://github.com/pimoroni/pimoroni-pico/blob/main/drivers/st7789/st7789.cpp).
+/// The upstream driver uses a different ML policy for landscape.
 pub const fn madctl(orientation: Orientation) -> u8 {
     match orientation {
         Orientation::Landscape => 0x60,
@@ -62,13 +78,16 @@ pub const fn madctl(orientation: Orientation) -> u8 {
 /// Owned by the flusher. Register state and successfully completed pixels are
 /// separate: a payload failure can leave MADCTL programmed but content unknown.
 pub struct PanelState {
+    /// Last known successful MADCTL mode; `None` after a failed mode command.
     programmed: Option<Orientation>,
+    /// Last fully completed payload's mode; `None` during transfer/after failure.
     completed: Option<Orientation>,
 }
 
 impl PanelState {
     /// Successful controller initialization programs orientation but does not
     /// establish any valid pixel contents. The first update must be full.
+    /// Returns tracking state for the already programmed `orientation`; does no I/O.
     pub const fn initialized(orientation: Orientation) -> Self {
         Self {
             programmed: Some(orientation),
@@ -76,22 +95,36 @@ impl PanelState {
         }
     }
 
+    /// Returns known register orientation, or `None` if a mode write left it uncertain.
     pub const fn programmed_orientation(&self) -> Option<Orientation> { self.programmed }
 
+    /// Returns the fully completed pixel orientation, or `None` while contents are unknown.
     pub const fn completed_orientation(&self) -> Option<Orientation> { self.completed }
 }
 
+/// Admission or I/O error; only bus errors may follow partial panel mutation.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FlushError<E> {
+    /// Logical plan dimensions disagree with the submitted orientation.
     GeometryMismatch,
+    /// New/unknown pixel orientation requires exactly one full-frame plan.
     FullRewriteRequired,
-    Bus(E),
+    /// Underlying command or payload operation failed.
+    Bus(
+        /// Original bus error; state already records the resulting uncertainty.
+        E,
+    ),
 }
 
 /// Validate immutable frame metadata before any I/O. A mode change always
 /// rewrites all RAM, even when its bytes equal the previous black frame.
 /// Only the flusher calls this, after the preceding HAL payload has returned.
 /// Cancellation is unsupported: the caller retains the request on failure.
+/// Uses `bus` and updates `state` while transferring immutable `frame` according
+/// to `plan` in `orientation`; `on_started` observes the first payload poll.
+/// Returns admission errors before I/O, a bus error with completed pixels marked
+/// unknown, or success with the orientation committed. Empty plans succeed only
+/// when the same orientation already has valid completed contents.
 pub async fn flush_oriented_plan<B: PanelBus>(
     bus: &mut B,
     state: &mut PanelState,

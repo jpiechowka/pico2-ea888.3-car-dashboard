@@ -1,3 +1,5 @@
+//! Header cache identity, clipped RGB565 source alignment, exact labels and sparse graph pixel contracts.
+
 use dashboard_host_validation::render::{FpsMode, RenderState};
 use dashboard_host_validation::renderer::St7789Renderer;
 use dashboard_host_validation::{AlignedFrame, primitives, ui, widgets};
@@ -6,6 +8,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Text;
 
+/// Returns a black landscape frame with `colors` consumed in `rect` source order under renderer clipping.
+/// Rendering is infallible; short streams leave untouched pixels black.
 fn draw_colors(
     rect: Rectangle,
     colors: impl IntoIterator<Item = Rgb565>,
@@ -17,6 +21,7 @@ fn draw_colors(
     frame
 }
 
+/// Changing visible header content invalidates both physical buffers even under alternating rendering.
 #[test]
 fn a_changed_header_invalidates_both_alternating_frames() {
     let mut state = RenderState::new();
@@ -34,6 +39,7 @@ fn a_changed_header_invalidates_both_alternating_frames() {
     }
 }
 
+/// Repeated render order cannot transfer one physical buffer's header validity to the other.
 #[test]
 fn header_cache_tracks_buffers_independently_when_render_order_repeats() {
     let mut state = RenderState::new();
@@ -50,6 +56,7 @@ fn header_cache_tracks_buffers_independently_when_render_order_repeats() {
     assert!(!state.check_header_dirty(1, FpsMode::Combined, 41.0, 39.0));
 }
 
+/// Invalid buffer IDs conservatively request redraw without marking a valid buffer current.
 #[test]
 fn unknown_header_buffer_id_fails_open_without_corrupting_valid_cache() {
     let mut state = RenderState::new();
@@ -58,6 +65,7 @@ fn unknown_header_buffer_id_fails_open_without_corrupting_valid_cache() {
     assert!(state.check_header_dirty(0, FpsMode::Instant, 1.0, 0.0));
 }
 
+/// Header dirtiness follows the selected FPS mode's rounded visible text, excluding hidden values.
 #[test]
 fn header_only_tracks_values_visible_in_each_fps_mode() {
     let mut state = RenderState::new();
@@ -78,6 +86,7 @@ fn header_only_tracks_values_visible_in_each_fps_mode() {
     assert!(state.check_header_dirty(0, FpsMode::Combined, 5.0, 100.0));
 }
 
+/// Removing a popup or clearing display pixels invalidates otherwise unchanged header content.
 #[test]
 fn popup_and_display_clear_force_header_redraw() {
     let mut state = RenderState::new();
@@ -93,6 +102,7 @@ fn popup_and_display_clear_force_header_redraw() {
     assert!(state.check_header_dirty(0, FpsMode::Off, 0.0, 0.0));
 }
 
+/// Left clipping skips hidden source colors instead of shifting them into the first visible column.
 #[test]
 fn left_clipping_keeps_the_original_source_column() {
     let frame = draw_colors(
@@ -103,6 +113,7 @@ fn left_clipping_keeps_the_original_source_column() {
     assert_eq!(frame.pixel(1, 0), Rgb565::BLUE.into_storage());
 }
 
+/// Right clipping consumes the hidden tail color before starting the next source row.
 #[test]
 fn right_clipping_discards_the_hidden_pixel_before_the_next_row() {
     let frame = draw_colors(
@@ -113,6 +124,7 @@ fn right_clipping_discards_the_hidden_pixel_before_the_next_row() {
     assert_eq!(frame.pixel(319, 1), Rgb565::BLUE.into_storage());
 }
 
+/// Top clipping skips a complete source row before copying visible colors.
 #[test]
 fn top_clipping_discards_an_entire_source_row() {
     let frame = draw_colors(
@@ -123,6 +135,7 @@ fn top_clipping_discards_an_entire_source_row() {
     assert_eq!(frame.pixel(4, 0), Rgb565::WHITE.into_storage());
 }
 
+/// Bottom clipping retains only the first visible row without wrapping off-screen colors.
 #[test]
 fn bottom_clipping_keeps_only_the_first_source_row() {
     let frame = draw_colors(
@@ -133,6 +146,7 @@ fn bottom_clipping_keeps_only_the_first_source_row() {
     assert_eq!(frame.pixel(4, 239), Rgb565::GREEN.into_storage());
 }
 
+/// Four-corner clipping preserves each visible pixel's original 3x3 source index.
 #[test]
 fn clipped_rgb565_rows_keep_their_original_source_positions() {
     let colors = [
@@ -166,6 +180,7 @@ fn clipped_rgb565_rows_keep_their_original_source_positions() {
     }
 }
 
+/// Rectangles wholly outside each display edge leave the entire black framebuffer unchanged.
 #[test]
 fn completely_outside_contiguous_fill_leaves_the_frame_untouched() {
     for rect in [
@@ -179,6 +194,7 @@ fn completely_outside_contiguous_fill_leaves_the_frame_untouched() {
     }
 }
 
+/// A short clipped stream cannot reuse its final hidden pixel for missing visible source elements.
 #[test]
 fn truncated_clipped_color_stream_never_reuses_a_hidden_pixel() {
     let mut frame = AlignedFrame::boxed();
@@ -194,6 +210,7 @@ fn truncated_clipped_color_stream_never_reuses_a_hidden_pixel() {
     assert_eq!(frame.pixel(1, 5), 0);
 }
 
+/// Red/blue framebuffer bytes decode as the panel's big-endian RGB565 words.
 #[test]
 fn unclipped_rgb565_is_big_endian_on_the_wire() {
     let frame = draw_colors(
@@ -204,6 +221,7 @@ fn unclipped_rgb565_is_big_endian_on_the_wire() {
     assert_eq!(frame.pixel(11, 10), 0x001F);
 }
 
+/// Odd-aligned and clipped solid fills equal an independent rectangle-containment oracle for every display pixel.
 #[test]
 fn solid_fill_matches_a_pixel_reference_at_odd_and_clipped_edges() {
     for (x, width) in [(-1, 4), (1, 1), (1, 4), (318, 4)] {
@@ -221,6 +239,8 @@ fn solid_fill_matches_a_pixel_reference_at_odd_and_clipped_edges() {
     }
 }
 
+/// Compares the rendered peak label for canonical `max_boost_bar` and unit toggle `psi` to independently drawn
+/// `expected`. Panics on any pixel mismatch in the label bounds.
 fn assert_boost_peak_text(
     expected: &str,
     psi: bool,
@@ -255,15 +275,19 @@ fn assert_boost_peak_text(
     }
 }
 
+/// The bar maximum label retains two decimal places and the MAX prefix.
 #[test]
 fn bar_peak_label_is_preserved() { assert_boost_peak_text("MAX 2.00", false, 2.0); }
 
+/// The PSI maximum label converts a canonical two-bar peak before one-decimal formatting.
 #[test]
 fn psi_peak_label_converts_the_canonical_bar_value() { assert_boost_peak_text("MAX 29.0", true, 2.0); }
 
+/// A small canonical peak rounds only after conversion to PSI.
 #[test]
 fn psi_peak_label_rounds_small_bar_values_after_conversion() { assert_boost_peak_text("MAX 1.5", true, 0.1); }
 
+/// The newest impulse still affects pixels when the graph history reaches full capacity.
 #[test]
 fn newest_graph_impulse_is_visible_at_full_history_capacity() {
     let mut samples = [0.0f32; 60];
@@ -301,6 +325,7 @@ fn newest_graph_impulse_is_visible_at_full_history_capacity() {
     assert!(steady.0 != impulse.0, "newest impulse must change graph pixels");
 }
 
+/// Every partial/wrapped ring count places its newest valid point at the rightmost padded graph coordinate.
 #[test]
 fn newest_graph_point_reaches_right_edge_at_every_partial_and_wrapped_count() {
     for count in 1..=60 {
@@ -328,6 +353,8 @@ fn newest_graph_point_reaches_right_edge_at_every_partial_and_wrapped_count() {
     }
 }
 
+/// Returns a black frame with a 64x20 white graph over 0..100 using `samples`, ring capacity `size`, oldest `start` and
+/// `count`. Invalid ring metadata draws nothing; NaNs remain gaps.
 fn graph_frame(
     samples: &[f32],
     size: usize,
@@ -352,6 +379,7 @@ fn graph_frame(
     frame
 }
 
+/// A two-point graph includes the second endpoint rather than stopping after its first sample.
 #[test]
 fn two_sample_graph_draws_its_latest_endpoint() {
     let flat = graph_frame(&[0.0, 0.0], 2, 0, 2);
@@ -359,6 +387,7 @@ fn two_sample_graph_draws_its_latest_endpoint() {
     assert!(flat.0 != rising.0, "second sample must affect graph pixels");
 }
 
+/// The newest ring element affects pixels after wrapping from start 17 to physical index 16.
 #[test]
 fn newest_wrapped_graph_sample_changes_the_pixels() {
     let steady = [0.0f32; 60];
@@ -370,6 +399,7 @@ fn newest_wrapped_graph_sample_changes_the_pixels() {
     );
 }
 
+/// Zero/oversized capacities, excessive count and out-of-range starts draw no graph pixels.
 #[test]
 fn malformed_graph_ring_metadata_draws_nothing() {
     let samples = [25.0f32; 60];
@@ -379,6 +409,7 @@ fn malformed_graph_ring_metadata_draws_nothing() {
     }
 }
 
+/// An isolated spike at every logical history offset survives three ring rotations.
 #[test]
 fn every_graph_sample_can_show_an_isolated_spike_after_ring_wrap() {
     for start in [0, 17, 59] {
@@ -395,12 +426,14 @@ fn every_graph_sample_can_show_an_isolated_spike_after_ring_wrap() {
     }
 }
 
+/// A lone sample remains visible at the graph's newest right edge.
 #[test]
 fn single_graph_sample_is_visible_at_the_newest_edge() {
     let frame = graph_frame(&[100.0], 1, 0, 1);
     assert_eq!(frame.pixel(61, 2), Rgb565::WHITE.into_storage());
 }
 
+/// A constant range draws the horizontal history at the graph's center row.
 #[test]
 fn constant_graph_uses_the_middle_row() {
     let mut frame = AlignedFrame::boxed();
@@ -423,6 +456,7 @@ fn constant_graph_uses_the_middle_row() {
     }
 }
 
+/// Nonfinite/inverted/overflowing scales and unrepresentable coordinates/sizes draw nothing.
 #[test]
 fn graph_rejects_invalid_scales_and_unrepresentable_geometry() {
     for (x, y, w, h, min, max) in [
@@ -454,6 +488,7 @@ fn graph_rejects_invalid_scales_and_unrepresentable_geometry() {
     }
 }
 
+/// A NaN middle sample leaves a true gap between valid endpoints without interpolation or fabricated points.
 #[test]
 fn nonfinite_graph_sample_breaks_the_line_without_fabricating_a_point() {
     let frame = graph_frame(&[0.0, f32::NAN, 100.0], 3, 0, 3);
@@ -466,6 +501,7 @@ fn nonfinite_graph_sample_breaks_the_line_without_fabricating_a_point() {
     }
 }
 
+/// A narrow finite voltage range still maps its endpoints across the full available graph height.
 #[test]
 fn small_finite_graph_range_still_uses_the_full_height() {
     let mut frame = AlignedFrame::boxed();

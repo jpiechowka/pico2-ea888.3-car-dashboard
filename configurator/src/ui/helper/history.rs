@@ -3,6 +3,9 @@ use dashboard_helper_protocol::{FlashPhase, WriteOutcome};
 
 use super::*;
 
+/// Queue explicit local cleanup of history `id` through `ui` only while operations
+/// are available and the current history contains that valid attempt ID. Invalid
+/// or stale selection is ignored; no device programming/resume action is issued.
 fn remove(
     ui: Ui,
     id: &str,
@@ -24,7 +27,13 @@ fn remove(
 }
 
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+/// Returns persisted flash-attempt observations and per-record confirmation controls
+/// for `ui`. Historical verification is labelled as past evidence, never current
+/// device state; removal requires the separate confirmation click.
+pub fn Panel(
+    /// Connected Studio helper state containing validated recovery-history observations.
+    ui: Ui
+) -> impl IntoView {
     view! { {move ||ui.helper.view.with(|v|v.history.clone()).map(|history|view! {
         <details class="build-disclosure"><summary>{format!("Flash history · {} recorded attempts",history.attempts.len())}</summary>
             <p>"These records survive a helper restart. They never resume a write or reboot automatically. A past verification describes that attempt; it does not prove what is connected or running now."</p>

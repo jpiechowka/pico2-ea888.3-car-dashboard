@@ -1,3 +1,5 @@
+//! Orientation resolution and portrait raster contracts across widgets, diagnostics, overlays and startup artwork.
+
 use dashboard_config::{GaugeKind, Geometry, Orientation, Span, default_config, validate};
 use dashboard_core::acquisition::AcquisitionModel;
 use dashboard_core::configured_scene::{Layout, portrait_content_layout};
@@ -11,6 +13,8 @@ use dashboard_host_validation::{AlignedFrame, colors};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
+/// Returns a synthetic 10ms Demo scene borrowing `config` view 1 and `snapshot`, with config-fault header and extreme
+/// FPS text.
 fn scene<'a>(
     config: &'a dashboard_config::ValidatedConfig,
     snapshot: &'a dashboard_core::acquisition::DashboardSnapshot,
@@ -31,6 +35,7 @@ fn scene<'a>(
     }
 }
 
+/// Startup phase overrides win; Dashboard uses its view while diagnostics/invalid view IDs inherit device orientation.
 #[test]
 fn orientation_policy_includes_phase_override_and_invalid_view_fallback() {
     let mut config = default_config();
@@ -67,6 +72,8 @@ fn orientation_policy_includes_phase_override_and_invalid_view_fallback() {
     );
 }
 
+/// Compact portrait layout keeps primary digits and graph height while every nonempty text/history lane stays disjoint
+/// and bounded.
 #[test]
 fn compact_numeric_lanes_keep_primary_and_history_with_maximum_warning_content() {
     let bounds = Rectangle::new(Point::new(2, 248), Size::new(116, 70));
@@ -106,6 +113,8 @@ fn compact_numeric_lanes_keep_primary_and_history_with_maximum_warning_content()
     }
 }
 
+/// Portrait history retains visible curve variation independently of duration glyphs across spans, crowded metadata and
+/// latched warnings.
 #[test]
 fn portrait_numeric_history_keeps_curve_variation_separate_from_duration() {
     use dashboard_config::{Color, ControlAction, GraphRange};
@@ -215,6 +224,8 @@ fn portrait_numeric_history_keeps_curve_variation_separate_from_duration() {
     }
 }
 
+/// All portrait gauge/span/option combinations retain primary pixels in the last row and match full renders on both
+/// buffers.
 #[test]
 fn every_portrait_gauge_span_flags_draws_bottom_row_and_matches_retained() {
     for kind in GaugeKind::ALL {
@@ -290,6 +301,7 @@ fn every_portrait_gauge_span_flags_draws_bottom_row_and_matches_retained() {
     }
 }
 
+/// Each cooperative portrait Debug row paints only its own 7-pixel text band and remains visible.
 #[test]
 fn portrait_debug_keeps_every_cooperative_row_visible() {
     use dashboard_core::debug_view::{DebugData, DebugLine, DebugPage};
@@ -312,6 +324,7 @@ fn portrait_debug_keeps_every_cooperative_row_visible() {
     }
 }
 
+/// Actual nonblack popup bounds are centered on 240x320 for reset, view and critical feedback.
 #[test]
 fn portrait_popups_are_centered_on_actual_frame() {
     use dashboard_core::widgets::*;
@@ -340,12 +353,15 @@ fn portrait_popups_are_centered_on_actual_frame() {
         assert!((left + right - 239).abs() <= 1);
         assert!((top + bottom - 319).abs() <= 1);
     }
+    /// Draws a maximum-length view-name popup into portrait target `d`.
     fn draw_view_test(d: &mut St7789Renderer<'_>) { draw_view_popup(d, "12345678901234"); }
+    /// Draws the visible-phase oil critical popup into portrait target `d`.
     fn draw_critical_test(d: &mut St7789Renderer<'_>) {
         draw_critical_popup(d, dashboard_core::samples::SensorId::Oil, true);
     }
 }
 
+/// All procedural portrait themes animate by elapsed time, repeat at 2000ms and remain still under reduced motion.
 #[test]
 fn portrait_startup_themes_preserve_time_and_quiet_frames() {
     let facts = StartupFacts {
@@ -377,6 +393,7 @@ fn portrait_startup_themes_preserve_time_and_quiet_frames() {
     }
 }
 
+/// Legacy fallback with no samples retains a primary unavailable marker in every portrait cell.
 #[test]
 fn portrait_fallback_missing_samples_keep_primary_marker_in_every_cell() {
     let config = validate(default_config()).unwrap();
@@ -401,6 +418,8 @@ fn portrait_fallback_missing_samples_keep_primary_marker_in_every_cell() {
     }
 }
 
+/// Portrait Logs preserves twelve complete 40-character messages plus the latest fault against an independent glyph
+/// oracle.
 #[test]
 fn portrait_logs_preserve_twelve_complete_messages_and_fault() {
     use dashboard_core::logging::{Level, LogStore};
@@ -436,6 +455,8 @@ fn portrait_logs_preserve_twelve_complete_messages_and_fault() {
     }
 }
 
+/// Raw/RLE custom assets reject opposite geometry before touching pixels and decode exact red pixels when dimensions
+/// match.
 #[test]
 fn custom_asset_geometry_mismatch_leaves_frame_untouched() {
     use dashboard_config::startup_asset::*;
@@ -495,6 +516,7 @@ fn custom_asset_geometry_mismatch_leaves_frame_untouched() {
     }
 }
 
+/// Independent portrait cardinal-point pixels keep Turbo housing concentric with its blades and gold hub.
 #[test]
 fn portrait_turbo_ring_is_concentric_with_blades_and_hub() {
     let mut frame = AlignedFrame::boxed();
@@ -525,6 +547,7 @@ fn portrait_turbo_ring_is_concentric_with_blades_and_hub() {
     assert_eq!(pixel(120, 152), gold);
 }
 
+/// Portrait oil peak highlight appears in its configured color and vanishes exactly 750ms later without a new sample.
 #[test]
 fn portrait_peak_highlight_is_visible_and_expires() {
     let mut raw = default_config();
@@ -555,6 +578,8 @@ fn portrait_peak_highlight_is_visible_and_expires() {
     assert!(!frame.0.as_chunks::<2>().0.iter().copied().any(|p| p == [0xF8, 0x1F]));
 }
 
+/// When ORIENTATION_ART_EVIDENCE names an existing directory, writes status/original-five-theme portrait PPMs at 350ms.
+/// Otherwise returns without output; write failures panic and existing files may be partially replaced.
 #[test]
 fn startup_portrait_visual_evidence() {
     let Some(directory) = std::env::var_os("ORIENTATION_ART_EVIDENCE") else {

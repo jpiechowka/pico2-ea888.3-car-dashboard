@@ -1,5 +1,7 @@
+//! Instrumented work arithmetic uses actual clock Hz, including fractional-MHz profiles.
 use dashboard_host_validation::cpu_math::{sanity_cycles, utilization};
 
+/// Verifies tenths-percent at three actual clocks, saturation, zero metadata and overflow-safe legacy fallback.
 #[test]
 fn actual_low_and_legacy_clocks_control_utilization() {
     for (hz, cycles, wanted) in [

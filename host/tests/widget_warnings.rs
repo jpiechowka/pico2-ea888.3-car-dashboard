@@ -1,3 +1,4 @@
+//! Independent warning-badge pixel oracle across gauge styles, spans, orientations and retained buffers.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::alarms::{RuleIndex, Status};
 use dashboard_host_validation::configured_scene::Layout;
@@ -21,6 +22,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Text;
 
+/// Ingests canonical boost `value` in bar with fixed healthy companion channels into `model` at `now` ms.
+/// Advances quality/alarms to the same time; panics if the batch is rejected.
 fn sample(
     model: &mut AcquisitionModel<'_>,
     value: f32,
@@ -30,6 +33,8 @@ fn sample(
     model.tick(now);
 }
 
+/// Returns a validated boost widget with gauge `kind`, tile `span` and every display feature enabled.
+/// `advanced` enables latching, five-second snooze and reachable acknowledgment; invalid fixtures panic.
 fn fixture(
     kind: GaugeKind,
     span: Span,
@@ -66,6 +71,9 @@ fn fixture(
     validate(c).unwrap()
 }
 
+/// Presents and acknowledges the current warning in `model` using configuration `c` at `now` ms.
+/// `requests` supplies acknowledgment identity and observes acceptance. Returns controls showing accepted feedback.
+/// Panics without eligible attention or if one-rule acceptance changes raw sensors/rule status.
 fn acknowledge(
     c: &ValidatedConfig,
     model: &mut AcquisitionModel<'_>,
@@ -100,12 +108,17 @@ fn acknowledge(
     controls
 }
 
+/// Independent full-render oracle compared against both retained framebuffers.
 struct RasterCheck {
+    /// Retained scene identity for each physical buffer.
     cache: DashboardCache,
+    /// Two independently dirty RGB565 framebuffers reused through the scenario.
     buffers: [Box<AlignedFrame>; 2],
+    /// Prepared display values, separate from immutable acquisition evidence.
     presentation: PresentationState,
 }
 impl RasterCheck {
+    /// Returns empty cache/presentation state and two black aligned buffers.
     fn new() -> Self {
         Self {
             cache: DashboardCache::new(),
@@ -114,6 +127,10 @@ impl RasterCheck {
         }
     }
 
+    /// Checks `snapshot` under `c` at `now` ms against complete and retained render paths.
+    /// `marker` is the expected badge text; empty skips its glyph oracle. `stale` adds the quality line;
+    /// `steady` requires identical pixels in both blink phases. Mutates cache/presentation/buffers only.
+    /// Panics on raster/quality/raw-data drift or optional WIDGET_WARNING_EVIDENCE PPM output failure.
     fn check(
         &mut self,
         c: &ValidatedConfig,
@@ -265,6 +282,7 @@ impl RasterCheck {
     }
 }
 
+/// Every style/span/orientation preserves full acknowledgment, snooze and stale-latch badges in both buffers.
 #[test]
 fn acknowledged_snoozed_and_stale_latch_badges_fit_every_style_span_and_both_buffers() {
     for orientation in [
@@ -335,6 +353,7 @@ fn acknowledged_snoozed_and_stale_latch_badges_fit_every_style_span_and_both_buf
     }
 }
 
+/// Ordinary unacknowledged warnings blink while fresh and lose visible eligibility when stale.
 #[test]
 fn ordinary_unacknowledged_warning_keeps_blink_and_unavailability() {
     let c = fixture(GaugeKind::ALL[0], Span::OneByOne, false);

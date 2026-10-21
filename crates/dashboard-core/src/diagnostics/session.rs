@@ -10,10 +10,15 @@ use crate::acquisition::{AcquisitionModel, DashboardSnapshot};
 use crate::metrics::{Distribution, Histogram};
 use crate::samples::{Quality, Sample, SensorId, Source};
 
+/// Minimum milliseconds before the next request after successful completion.
 pub const QUERY_GAP_MS: u64 = 20;
+/// Whole-session quiet interval in milliseconds after any failed request.
 pub const FAILURE_QUIET_MS: u64 = 1_000;
+/// Fair scheduling order: three capability pages, coolant, intake, voltage and oil.
 pub const PIDS: [u8; 7] = [0, 0x20, 0x40, 5, 0x0F, 0x42, 0x5C];
+/// Unconfigured periods in milliseconds by PIDS index; zero means one-time discovery.
 const PERIODS_MS: [u64; 7] = [0, 0, 0, 1_000, 1_000, 500, 1_500];
+/// Reviewed Mode01 PID-to-canonical-channel mapping; no inferred manufacturer measurements.
 const CHANNELS: [(u8, SensorId); 4] = [
     (5, SensorId::Water),
     (0x0F, SensorId::Iat),
@@ -21,33 +26,58 @@ const CHANNELS: [(u8, SensorId); 4] = [
     (0x5C, SensorId::Oil),
 ];
 
+/// Transport/client admission failure requiring owner-level handling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionError {
-    Client(ClientError),
+    /// Client error, including invalid address, stale completion or invalidated transport.
+    Client(
+        /// Original client classification.
+        ClientError,
+    ),
 }
+/// Saturating lifetime counts; valid response timings include positive and negative replies only.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Counters {
+    /// Requests admitted and assigned a UART ticket.
     pub requested: u32,
+    /// Original request tickets accepted after UART completion; excludes FC.
     pub transmitted: u32,
+    /// Active timing records discarded on transport fault or epoch replacement.
     pub abandoned: u32,
+    /// Positive replies admitted by quantity/capability validation.
     pub completed: u32,
+    /// Matching terminal ECU negative replies.
     pub negative: u32,
+    /// TX, response, total or inter-frame timeouts.
     pub timeouts: u32,
+    /// Malformed transport/application data, pending-limit or oversize failures.
     pub malformed: u32,
+    /// Transport-fault occurrences; per-channel counts require an active request.
     pub transport_faults: u32,
+    /// Positive/negative outcomes with a valid original-request UART completion timestamp.
     pub replies: u32,
+    /// Latest measured UART-completion-to-reply milliseconds; None before a timed outcome.
     pub last_reply_ms: Option<u64>,
+    /// Minimum measured reply milliseconds over retained lifetime evidence.
     pub min_reply_ms: Option<u64>,
+    /// Maximum measured reply milliseconds over retained lifetime evidence.
     pub max_reply_ms: Option<u64>,
 }
+/// Terminal request classification used consistently by aggregate and per-PID metrics.
 #[derive(Clone, Copy)]
 enum Outcome {
+    /// Positive response passed quantity/capability admission.
     Positive,
+    /// Matching terminal negative response.
     Negative,
+    /// A bounded transport/request deadline expired.
     Timeout,
+    /// Non-timeout response or decode/admission failure.
     Malformed,
 }
 impl Counters {
+    /// Saturating-increments `outcome`; optional `reply_ms` records valid elapsed
+    /// milliseconds and updates last/min/max. None leaves timing evidence unchanged.
     fn finish(
         &mut self,
         outcome: Outcome,
@@ -68,52 +98,86 @@ impl Counters {
         }
     }
 }
+/// Correlates one scheduled PID with original UART completion, excluding FC timings.
 struct ActiveTiming {
+    /// Index into PIDS and parallel per-channel arrays.
     index: usize,
+    /// Original request's exact completion token.
     request_tx: TxToken,
+    /// Accepted original UART completion milliseconds, absent until sent.
     sent_ms: Option<u64>,
 }
+/// Lifetime request metrics for one scheduled PID, including capability pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelTelemetry {
+    /// Mode01 PID from PIDS.
     pub pid: u8,
+    /// Saturating request/outcome and exact min/max/last timing counters.
     pub counters: Counters,
+    /// Bounded histogram summary of positive/negative reply milliseconds.
     pub reply_ms: Distribution,
 }
+/// Coherent copy of session identity and all seven PID metrics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Telemetry {
+    /// Fixed eleven-bit OBD responder identifier.
     pub ecu: u16,
+    /// Current qualified transport generation; counters may include older epochs.
     pub epoch: u64,
+    /// Last admitted session time in monotonic milliseconds.
     pub at_ms: u64,
+    /// PIDS-order metrics, including discovery requests.
     pub channels: [ChannelTelemetry; 7],
 }
+/// Scheduling state reset at every newly qualified transport epoch.
 #[derive(Clone, Copy, Default)]
 struct Slot {
+    /// Earliest next admission time in monotonic milliseconds.
     due: u64,
+    /// Saturating consecutive failures; backoff exponent is separately capped at five.
     failures: u8,
+    /// Capability page has been successfully recorded in this epoch.
     discovered: bool,
 }
 
+/// One responder's bounded poll scheduler, capability evidence and canonical acquisition model.
+/// Only advertised reviewed PIDs are polled; this type performs no physical I/O.
 pub struct Session<'a> {
+    /// Sole active request and ISO-TP transaction state.
     client: Client,
+    /// Current-epoch capability bitmaps, never inferred from timeout.
     capabilities: Capabilities,
+    /// Shared last-good values, quality, histories and warning state bound to configuration.
     model: AcquisitionModel<'a>,
+    /// Due time/backoff/discovery state in PIDS order.
     slots: [Slot; 7],
+    /// First index for the next bounded round-robin scan.
     cursor: usize,
+    /// Earliest whole-session request time after completion/failure.
     next_query: u64,
+    /// Last accepted protocol timestamp in monotonic milliseconds.
     last_ms: u64,
+    /// Aggregate lifetime metrics, retained across epochs.
     counters: Counters,
+    /// Per-PID lifetime counters in PIDS order.
     channels: [Counters; 7],
+    /// Current request correlation; removed exactly once on outcome/abandonment.
     timing: Option<ActiveTiming>,
+    /// Fixed-size lifetime reply histograms in milliseconds.
     reply_ms: [Histogram<160>; 7],
 }
 
 /// Validate only the small transport fields before assembling a large owner.
 /// Kept inside diagnostics so callers cannot bypass Session validation.
 pub(super) struct PreparedSession {
+    /// Validated distinct eleven-bit request/response identifiers and nonzero epoch.
     client: Client,
+    /// Empty pages bound to the same responder and epoch.
     capabilities: Capabilities,
 }
 impl PreparedSession {
+    /// Returns validated small construction state for `ecu` in 0x7E8..=0x7EF and
+    /// nonzero `epoch`, or a mapped address/epoch error. Request address is ecu-8.
     pub(super) fn new(
         ecu: u16,
         epoch: u64,
@@ -123,6 +187,8 @@ impl PreparedSession {
         Ok(Self { client, capabilities })
     }
 
+    /// Consumes validated inputs and returns an initialized session bound to optional
+    /// immutable `config`; None selects legacy generic polling periods.
     pub(super) fn assemble(
         self,
         config: Option<&ValidatedConfig>,
@@ -134,6 +200,8 @@ impl PreparedSession {
         }
     }
 
+    /// Returns the fully initialized owner for optional `config`; CONFIGURED must
+    /// equal config presence or construction panics. Used only after branch dispatch.
     #[inline(always)]
     fn assemble_variant<const CONFIGURED: bool>(
         self,
@@ -144,8 +212,9 @@ impl PreparedSession {
         session
     }
 
-    // A valid construction value; the enclosing Session or Vehicle immediately
-    // finishes its already-bound model before returning a public ready owner.
+    /// Returns the bound owner storage for optional `config`, before measurement
+    /// initialization. CONFIGURED must equal config presence or construction panics.
+    /// The enclosing Session/Vehicle must call initialize_measurements before publication.
     #[inline(always)]
     pub(super) fn construction_base<const CONFIGURED: bool>(
         self,
@@ -167,8 +236,11 @@ impl PreparedSession {
     }
 }
 impl<'a> Session<'a> {
+    /// Completes source/quality initialization for this bound responder; construction calls exactly once.
     pub(super) fn initialize_measurements(&mut self) { self.model.initialize_for_session(self.client.response_id()); }
 
+    /// Returns an unconfigured session for `ecu` in 0x7E8..=0x7EF and nonzero `epoch`,
+    /// or address/epoch error. Capability discovery precedes reviewed measurement requests.
     pub fn new(
         ecu: u16,
         epoch: u64,
@@ -176,6 +248,9 @@ impl<'a> Session<'a> {
         Self::new_inner(ecu, epoch, None)
     }
 
+    /// Returns a session bound for its lifetime to `config`, responder `ecu` and nonzero
+    /// `epoch`; invalid responder/epoch returns an error. Only matching configured OBD
+    /// sources are eligible; unsupported/unqualified sources remain unavailable.
     pub fn configured(
         ecu: u16,
         epoch: u64,
@@ -184,8 +259,11 @@ impl<'a> Session<'a> {
         Self::new_inner(ecu, epoch, Some(config))
     }
 
+    /// Returns the immutable bound configuration, or None for legacy periods/source policy.
     pub fn configuration(&self) -> Option<&ValidatedConfig> { self.model.configuration() }
 
+    /// Returns initialized state for responder `ecu`, nonzero `epoch` and optional
+    /// immutable `config`; invalid addressing/epoch returns SessionError before assembly.
     fn new_inner(
         ecu: u16,
         epoch: u64,
@@ -194,9 +272,12 @@ impl<'a> Session<'a> {
         Ok(PreparedSession::new(ecu, epoch)?.assemble(config))
     }
 
+    /// Returns a coherent copy of acquisition values, quality, statistics and warning state.
     pub fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }
 
     /// Presentation advances even when transport is offline or parked.
+    /// `now` is monotonic milliseconds passed to shared expiry/history/warning logic;
+    /// no request is scheduled and no synthetic measurement is inserted.
     pub fn tick_measurements(
         &mut self,
         now: u64,
@@ -204,9 +285,11 @@ impl<'a> Session<'a> {
         self.model.tick(now);
     }
 
+    /// Returns aggregate lifetime counters, including previous transport epochs.
     pub const fn counters(&self) -> Counters { self.counters }
 
     /// Lifetime counters, including discovery pages, retained across epochs.
+    /// Returns the counters for scheduled `pid`, or None for a PID outside PIDS.
     pub fn channel(
         &self,
         pid: u8,
@@ -217,6 +300,7 @@ impl<'a> Session<'a> {
     }
 
     /// Call outside latency-sensitive receive work; percentile scans are bounded.
+    /// Returns current identity/time and all seven lifetime histogram/counter summaries.
     pub fn telemetry(&self) -> Telemetry {
         Telemetry {
             ecu: self.client.response_id(),
@@ -232,6 +316,8 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Discards current timing once and increments abandoned counts; `fault` also
+    /// increments that PID's transport-fault count. Aggregate fault counting is separate.
     fn abandon(
         &mut self,
         fault: bool,
@@ -244,8 +330,11 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Returns whether the client forbids requests until a newly qualified transport epoch.
     pub const fn requires_new_epoch(&self) -> bool { self.client.requires_new_epoch() }
 
+    /// Applies producer-side `command` at monotonic `now` in milliseconds. Returns the
+    /// shared warning engine's accepted/replayed/rejected result; does not schedule traffic.
     pub fn apply_warning_command(
         &mut self,
         command: crate::warning_state::WarningCommand,
@@ -254,6 +343,8 @@ impl<'a> Session<'a> {
         self.model.apply_warning_command(command, now)
     }
 
+    /// Applies strictly newer nonzero reset `generation`. Returns whether statistics
+    /// were reset; raw values/quality and transport/capability identity are preserved.
     pub fn reset_statistics(
         &mut self,
         generation: u64,
@@ -261,6 +352,8 @@ impl<'a> Session<'a> {
         self.model.reset_statistics(generation)
     }
 
+    /// Publishes `quality` for every sensor at monotonic `now` in milliseconds using
+    /// shared status admission; last-good numbers remain distinct from unavailable quality.
     fn fault_all(
         &mut self,
         quality: Quality,
@@ -271,6 +364,9 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Admits monotonic `now` in milliseconds. Returns success and advances protocol time;
+    /// reversal abandons active timing, invalidates transport and publishes TransportError
+    /// at the last accepted time before returning Clock.
     fn clock(
         &mut self,
         now: u64,
@@ -285,6 +381,9 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// Returns successful client `result` unchanged or maps its error. Clock/Exhausted/
+    /// WireFault additionally abandon work and invalidate all quality at max(last time,
+    /// `now`), in milliseconds; stale tokens and ordinary admission errors do not.
     fn client_result<T>(
         &mut self,
         result: Result<T, ClientError>,
@@ -304,6 +403,9 @@ impl<'a> Session<'a> {
         })
     }
 
+    /// Invalidates active work and all sample quality at monotonic `now` in milliseconds,
+    /// incrementing the aggregate transport count. Returns success or a clock error;
+    /// recovery requires change_epoch after an externally qualified new boundary.
     pub fn transport_fault(
         &mut self,
         now: u64,
@@ -318,6 +420,9 @@ impl<'a> Session<'a> {
 
     /// Call only after the adapter owner establishes a new qualified boundary.
     /// Last-good history and request generations survive; old capabilities do not.
+    /// `epoch` must strictly increase and `now` is monotonic milliseconds. Returns
+    /// success after clearing schedules/capabilities and marking quality Unknown;
+    /// stale epoch rejects before any clock/state effect, reversal invalidates transport.
     pub fn change_epoch(
         &mut self,
         epoch: u64,
@@ -338,6 +443,8 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// Returns whether PIDS `index` is configured and advertised (or a needed,
+    /// undiscovered capability page). Panics for an index outside the seven slots.
     fn eligible(
         &self,
         index: usize,
@@ -352,6 +459,9 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Returns milliseconds for PIDS `index`: zero for discovery, legacy default
+    /// without configuration, or the matching configured OBD period. None disables an
+    /// incompatible source. Panics for an index outside the seven-slot contract.
     fn period(
         &self,
         index: usize,
@@ -376,6 +486,8 @@ impl<'a> Session<'a> {
 
     /// Advance active transaction deadlines even when receive backlog prevents
     /// admitting a new request. This method never schedules a request.
+    /// `now` is monotonic milliseconds. Returns protocol status after measurement
+    /// expiry; terminal client faults invalidate quality and return an error.
     pub fn tick(
         &mut self,
         now: u64,
@@ -384,7 +496,9 @@ impl<'a> Session<'a> {
         self.tick_protocol(now)
     }
 
-    // Vehicle batches measurement expiry after received inputs and commands.
+    /// Advances protocol deadlines at monotonic `now` in milliseconds without ticking
+    /// measurements or scheduling a request. Returns an owner-handled error for clock/
+    /// terminal wire failures; ordinary transaction failures update counters/backoff.
     pub(crate) fn tick_protocol(
         &mut self,
         now: u64,
@@ -399,6 +513,9 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// Ticks measurements/protocol at monotonic `now` in milliseconds, then returns
+    /// at most one due eligible request, None while busy/backing off, or an owner-handled
+    /// error. A bounded seven-slot round-robin scan prevents unbounded catch-up.
     pub fn poll(
         &mut self,
         now: u64,
@@ -407,6 +524,9 @@ impl<'a> Session<'a> {
         self.poll_protocol(now)
     }
 
+    /// Returns at most one due eligible request at monotonic `now` in milliseconds
+    /// after protocol checks, without measurement expiry. None means no admission;
+    /// clock/terminal errors invalidate transport. Vehicle calls only with drained RX.
     pub(crate) fn poll_protocol(
         &mut self,
         now: u64,
@@ -434,6 +554,9 @@ impl<'a> Session<'a> {
         Ok(None)
     }
 
+    /// Processes known-DLC `frame` from qualified `epoch` at monotonic `now` in
+    /// milliseconds. Returns optional FC transmission or an owner-handled client error;
+    /// valid positive outcomes update capabilities/samples, failures update quality/backoff.
     pub fn receive(
         &mut self,
         frame: &CanFrame,
@@ -446,6 +569,9 @@ impl<'a> Session<'a> {
         Ok(self.event(event, now))
     }
 
+    /// Accepts exact UART-idle `token` at monotonic `now` in milliseconds. Returns
+    /// optional follow-up action or client/clock error; stale/duplicate tokens are rejected
+    /// before clock effects. Only the original request's first completion starts reply timing.
     pub fn tx_completed(
         &mut self,
         token: TxToken,
@@ -470,6 +596,10 @@ impl<'a> Session<'a> {
         Ok(self.event(event, now))
     }
 
+    /// Records terminal `outcome` for scheduled OBD `request` at `now` milliseconds;
+    /// optional `failure` quality selects capped exponential retry/backoff and channel fault.
+    /// Success resets failures and schedules its period; unknown/non-OBD requests are ignored.
+    /// Reply timing is measured only for positive/negative outcomes with a valid send timestamp.
     fn finish(
         &mut self,
         request: Request,
@@ -514,6 +644,9 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Applies client `event` at monotonic `now` in milliseconds. Returns only required
+    /// transmit work; terminal replies decode/admit canonical samples or bitmaps before
+    /// updating metrics, quality and schedules. No guessed PID/DID value is published.
     fn event(
         &mut self,
         event: Event,

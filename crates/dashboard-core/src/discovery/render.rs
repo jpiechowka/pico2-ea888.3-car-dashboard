@@ -11,12 +11,19 @@ use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
 
 use super::*;
+/// Full-screen dark background, in native RGB565 component ranges.
 const BG: Rgb565 = Rgb565::new(2, 3, 4);
+/// Highlighted selection/footer background.
 const PANEL: Rgb565 = Rgb565::new(4, 6, 7);
+/// Primary evidence/header text colour.
 const WHITE: Rgb565 = Rgb565::new(30, 61, 30);
+/// Secondary context and unavailable-value text colour.
 const MUTED: Rgb565 = Rgb565::new(20, 42, 22);
+/// Error, active selection and page-heading accent.
 const RED: Rgb565 = Rgb565::new(31, 8, 6);
+/// Evidence rows per page; 11-pixel spacing leaves the footer unobscured.
 const LINES: usize = 10;
+/// Returns empty-catalog status and recovery hint matching radio `phase`.
 fn empty_copy(phase: RadioPhase) -> (&'static str, &'static str) {
     match phase {
         RadioPhase::Scanning => {
@@ -39,6 +46,7 @@ fn empty_copy(phase: RadioPhase) -> (&'static str, &'static str) {
         RadioPhase::Disconnecting => ("Closing inspection connection...", "Y: back to discovery."),
     }
 }
+/// Returns the code-preserving status/recovery label for current `error`.
 fn error_copy(error: ProbeError) -> &'static str {
     match error {
         ProbeError::None => "Error:None",
@@ -53,16 +61,22 @@ fn error_copy(error: ProbeError) -> &'static str {
         ProbeError::InvalidPeer => "InvalidPeer: Y to rescan",
     }
 }
+/// Returns current `probe` error text first, otherwise its latched fault header.
 fn status_copy(probe: &Probe) -> &'static str {
     if probe.error != ProbeError::None {
         return error_copy(probe.error);
     }
     probe.fault_latch.header()
 }
+/// Returns whether `probe`'s active request explicitly inspects its selected
+/// address/type identity; retained records alone do not establish a request.
 fn gatt_requested(probe: &Probe) -> bool {
     matches!(probe.request.action, Action::Inspect(peer) if probe.selected_device().is_some_and(|d| d.peer == peer))
 }
 
+/// Returns two footer rows for `probe` at boot-relative milliseconds `now_ms`.
+/// Busy/fault/stale-advertisement states suppress unavailable Inspect actions;
+/// retained GATT evidence is independent of advertisement freshness.
 fn control_hints(
     probe: &Probe,
     now_ms: u64,
@@ -140,6 +154,8 @@ fn control_hints(
     };
     [first, second]
 }
+/// Returns all set GATT characteristic `properties` bit labels in wire-bit
+/// order, or `None` text for zero; all eight labels fit the 50-byte buffer.
 fn properties_text(properties: u8) -> String<50> {
     let mut out = String::new();
     for (bit, label) in [
@@ -164,11 +180,16 @@ fn properties_text(properties: u8) -> String<50> {
     }
     out
 }
+/// Returns the prefix successfully formatted from `args` into 50 bytes;
+/// formatting/capacity errors are ignored, so callers bound their row content.
 fn line(args: core::fmt::Arguments<'_>) -> String<50> {
     let mut s = String::new();
     let _ = s.write_fmt(args);
     s
 }
+/// Draws single-line sanitized ASCII `s` into `d` at top-left pixel (`x`, `y`)
+/// in `c` using 6x10 glyphs. Returns the first target error after possible
+/// partial writes, or `Ok(())`; clipping is the caller's responsibility.
 fn text<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     x: i32,
@@ -178,6 +199,8 @@ fn text<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     font_text(d, Point::new(x, y), s, c, &FONT_6X10)
 }
+/// Draws sanitized single-line ASCII `s` into `d` at top-left `position`, in
+/// `c` with `font`. Returns `Ok(())` or the first draw error; prior pixels remain.
 fn font_text<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     position: Point,
@@ -192,8 +215,12 @@ fn font_text<D: DrawTarget<Color = Rgb565>>(
         .map(|_| ())
 }
 
+/// Returns one-decimal completed-frame Hz for `value`, `--` for absent,
+/// negative or nonfinite values, and the shared overflow marker above range.
 fn rate(value: Option<f32>) -> String<8> { crate::diagnostic_values::rate_text(value) }
 
+/// Returns one-decimal percent for instrumented work `value` in tenths-percent
+/// `0..=1000`, otherwise `--%`; this is not whole-core utilization.
 fn work(value: Option<u16>) -> String<8> {
     let mut s = crate::diagnostic_values::work_text(value.map(u32::from));
     if s == "--" {
@@ -202,6 +229,8 @@ fn work(value: Option<u16>) -> String<8> {
     s
 }
 
+/// Returns used/total KiB for byte counts in `value` with shared upward rounding,
+/// or `--/--K` when absent or outside admitted memory bounds.
 fn memory(value: Option<MemoryUse>) -> String<12> {
     let mut s = String::new();
     if let Some((used, total)) = value.and_then(|v| crate::diagnostic_values::memory_kib(v.used, v.total)) {
@@ -212,6 +241,9 @@ fn memory(value: Option<MemoryUse>) -> String<12> {
     s
 }
 
+/// Paints current-Pico `values` in independent clipped header lanes on `d`.
+/// Returns `Ok(())` or the first target error after possible partial writes;
+/// stack values remain observed samples, not continuous high-water marks.
 fn telemetry<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     values: ProbeDiagnostics,
@@ -254,6 +286,8 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         MUTED,
     )
 }
+/// Fills pixel rectangle (`x`, `y`, `w`, `h`) in `c` on `d`. Returns `Ok(())`
+/// or the target error with any earlier writes retained; does not add clipping.
 fn rect<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     x: i32,
@@ -266,6 +300,8 @@ fn rect<D: DrawTarget<Color = Rgb565>>(
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d)
 }
+/// Returns a recognized standard label for `uuid`, including Bluetooth-base
+/// aliases, or empty text for an unrecognized UUID; conveys no compatibility.
 fn uuid_label(uuid: Uuid) -> &'static str {
     match uuid.short() {
         Some(0x1800) => "Generic Access",
@@ -282,12 +318,18 @@ fn uuid_label(uuid: Uuid) -> &'static str {
 // Count and draw share a concrete writer and one formatting buffer across the
 // traversal. Keep the callback inside the writer, not as a formatter parameter:
 // otherwise LLVM specializes the whole packet/record tree for each callback.
+/// Counts or streams bounded evidence without allocating a complete document.
 struct EvidenceLines<'a> {
+    /// Optional borrowed row consumer; absent mode avoids value formatting.
     output: Option<&'a mut dyn FnMut(&str)>,
+    /// Rows visited; bounded protocol inventories keep arithmetic below usize limits.
     count: usize,
+    /// Reused 50-byte ASCII row buffer, borrowed only during each callback.
     scratch: String<50>,
 }
 impl<'a> EvidenceLines<'a> {
+    /// Returns an empty traversal with `output` as its optional row sink;
+    /// `None` counts rows without invoking formatters.
     fn new(output: Option<&'a mut dyn FnMut(&str)>) -> Self {
         Self {
             output,
@@ -296,6 +338,8 @@ impl<'a> EvidenceLines<'a> {
         }
     }
 
+    /// Counts one row and sends `value` unchanged to the sink when present.
+    /// The caller provides bounded ASCII; this path does not truncate.
     fn text(
         &mut self,
         value: &str,
@@ -306,6 +350,8 @@ impl<'a> EvidenceLines<'a> {
         }
     }
 
+    /// Counts one row; formats `args` only with an active sink, retaining any
+    /// successfully written prefix on formatting/capacity failure.
     fn formatted(
         &mut self,
         args: core::fmt::Arguments<'_>,
@@ -318,6 +364,8 @@ impl<'a> EvidenceLines<'a> {
         }
     }
 
+    /// Emits/counts `uuid` as reversed wire bytes without separators; malformed
+    /// lengths are capped to its 16-byte storage, including zero-length rows.
     fn uuid(
         &mut self,
         uuid: Uuid,
@@ -327,6 +375,8 @@ impl<'a> EvidenceLines<'a> {
 
     // Raw rows contain at most 16 bytes. UUID rows reverse those bytes and omit
     // spaces. Fixed nibbles avoid per-byte fmt state and a second line buffer.
+    /// Counts/emits `bytes` in uppercase hex; `uuid_order` reverses bytes and
+    /// omits spaces. Callers use at most 16 bytes so the 50-byte row cannot fill.
     fn hex_line(
         &mut self,
         bytes: &[u8],
@@ -340,6 +390,7 @@ impl<'a> EvidenceLines<'a> {
                     let _ = self.scratch.push(' ');
                 }
                 let byte = bytes[if uuid_order { bytes.len() - index - 1 } else { index }];
+                /// Uppercase ASCII nibble lookup, indexed only by masked four-bit values.
                 const HEX: &[u8; 16] = b"0123456789ABCDEF";
                 let _ = self.scratch.push(char::from(HEX[usize::from(byte >> 4)]));
                 let _ = self.scratch.push(char::from(HEX[usize::from(byte & 15)]));
@@ -348,6 +399,8 @@ impl<'a> EvidenceLines<'a> {
         }
     }
 }
+/// Sends all `bytes` to `emit` in wire-order rows of at most 16 bytes; empty
+/// input emits no rows, and partial final rows retain every byte.
 fn hex(
     bytes: &[u8],
     emit: &mut EvidenceLines<'_>,
@@ -356,6 +409,8 @@ fn hex(
         emit.hex_line(chunk, false);
     }
 }
+/// Sends `title`, raw `payload` prefix and parsed AD fields to `emit`, retaining
+/// its truncation indicator; parsing never triggers radio operations.
 fn packet(
     title: &str,
     payload: &Payload<31>,
@@ -363,6 +418,9 @@ fn packet(
 ) {
     packet_bytes(title, payload.as_slice(), payload.truncated, emit);
 }
+/// Sends `title`, raw `bytes`, `truncated` status and decoded AD fields to
+/// `emit`. Bad AD lengths stop decoding after an explicit marker; raw bytes
+/// remain visible. Names are sanitized and incomplete UUID chunks are marked.
 fn packet_bytes(
     title: &str,
     bytes: &[u8],
@@ -435,6 +493,9 @@ fn packet_bytes(
         }
     }
 }
+/// Sends `title` and optional `observation` timestamp/RSSI to `emit`; `now` is
+/// the same boot's snapshot milliseconds. A future observation reports age
+/// unavailable, and absent evidence never becomes a zero measurement.
 fn packet_observation(
     title: &str,
     observation: Option<PacketObservation>,
@@ -456,6 +517,9 @@ fn packet_observation(
         emit.text("Not observed");
     }
 }
+/// Sends optional observed `link`, four inventory `stages`, acknowledged
+/// `cleanup` and optional HCI `disconnect` reason to `emit`. Stage completion
+/// is not compatibility; acknowledged cleanup can still have abnormal termination.
 fn link_details(
     link: Option<LinkInfo>,
     stages: [bool; 4],
@@ -505,6 +569,9 @@ fn link_details(
         emit.text("Termination not clean / inspect reason");
     }
 }
+/// Sends admitted `record` to `emit`, including handles, UUIDs and exact raw
+/// successful read bytes. Invalid standard lengths and truncated values stay
+/// explicit; readable text is sanitized and no CCCD/write is performed.
 fn record_details(
     record: capture::Record<'_>,
     emit: &mut EvidenceLines<'_>,
@@ -573,6 +640,7 @@ fn record_details(
         }
     }
 }
+/// Sends `title` and stable `reason` label plus any numeric code to `emit`.
 fn reason_line(
     title: &str,
     reason: FailureReason,
@@ -584,6 +652,9 @@ fn reason_line(
         emit.formatted(format_args!("{title}: {}", reason.label()));
     }
 }
+/// Sends selected-peer evidence from `probe` to `emit`, computing advertisement
+/// ages at boot-relative milliseconds `now`. GATT rows require an explicit
+/// matching inspect request; they remain retained when advertisements age.
 fn peer_details(
     probe: &Probe,
     now: u64,
@@ -666,6 +737,9 @@ fn peer_details(
         );
     }
 }
+/// Traverses current `probe` evidence into `emit` using snapshot milliseconds
+/// `now` for ages. Preserves peer failures separately from global scan/fault/boot
+/// evidence and makes no radio or storage requests.
 fn details(
     probe: &Probe,
     now: u64,
@@ -734,6 +808,8 @@ fn details(
         emit.text("One record needs 10 + data length bytes");
     }
 }
+/// Sends sanitized chunks of optional `name` and its exact provenance to
+/// `emit`; cached/shortened/truncated labels remain untrusted device input.
 fn name_details(
     name: Option<names::NameRef<'_>>,
     emit: &mut EvidenceLines<'_>,
@@ -760,6 +836,8 @@ fn name_details(
         emit.formatted(format_args!("Name observed at: {at} ms"));
     }
 }
+/// Sends optional `boot` reset metadata to `emit`, keeping retained stage/time
+/// distinct from a proven cause and distinguishing absent evidence.
 fn boot_details(
     boot: Option<crate::health::reset::BootEvidence>,
     emit: &mut EvidenceLines<'_>,
@@ -785,6 +863,8 @@ fn boot_details(
     }
     emit.text("Power removal may erase retained evidence");
 }
+/// Sends optional `latch` membership and first-recorded source to `emit`;
+/// `None` means legacy capture evidence was not recorded, not an empty latch.
 fn fault_details(
     latch: Option<FaultLatch>,
     emit: &mut EvidenceLines<'_>,
@@ -808,6 +888,8 @@ fn fault_details(
         emit.text("No faults recorded since recovery");
     }
 }
+/// Sends configured bus `hz` to `emit`, or an unavailable marker for `None`;
+/// this is retained configuration metadata, not a measured frequency.
 fn radio_clock_details(
     hz: Option<u32>,
     emit: &mut EvidenceLines<'_>,
@@ -817,6 +899,8 @@ fn radio_clock_details(
         None => emit.text("Radio GSPI: not recorded"),
     }
 }
+/// Sends optional `rejected` declaration to `emit`, labeling any decoded value
+/// handle unvalidated and distinguishing its 19-byte prefix from complete raw data.
 fn rejected_details(
     rejected: Option<RejectedDeclaration>,
     emit: &mut EvidenceLines<'_>,
@@ -835,12 +919,16 @@ fn rejected_details(
         hex(r.bytes(), emit);
     }
 }
-/// Detail page count, independent of the current screen and page index.
+/// Returns at least one ten-row detail page for `probe`, independent of current
+/// screen/page. Counts without formatting; age text changes do not change rows.
 pub fn page_count(probe: &Probe) -> usize {
     let mut lines = EvidenceLines::new(None);
     details(probe, 0, &mut lines);
     lines.count.div_ceil(LINES).max(1)
 }
+/// Traverses validated saved `view` into `emit` with frozen boot-relative
+/// timestamps, source identity and raw record bytes. Current live state never
+/// replaces capture evidence; no radio/storage operation is initiated.
 fn saved_details(
     view: &capture::CaptureView<'_>,
     emit: &mut EvidenceLines<'_>,
@@ -958,11 +1046,15 @@ fn saved_details(
     emit.text("Enumeration does not prove adapter compatibility");
     emit.text("USB serial export retains the exact capture bytes");
 }
+/// Returns at least one ten-row page for validated `view` without reconstructing
+/// a Probe or formatting dynamic row values.
 pub fn saved_page_count(view: &capture::CaptureView<'_>) -> usize {
     let mut lines = EvidenceLines::new(None);
     saved_details(view, &mut lines);
     lines.count.div_ceil(LINES).max(1)
 }
+/// Clears fixed 320x240 `d` and paints `title` with current-Pico `diagnostics`.
+/// Returns `Ok(())` or the first target error, leaving prior writes intact.
 fn capture_header<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     title: &str,
@@ -973,6 +1065,10 @@ fn capture_header<D: DrawTarget<Color = Rgb565>>(
     telemetry(d, diagnostics)
 }
 /// Borrows the validated capture; never reconstructs or copies a complete Probe.
+/// Paints `view` into the 320x240 clip of `target`. Zero-based `slot` is labelled
+/// 1..4 or unknown; `page` clamps to the final evidence page. `diagnostics` are
+/// current-Pico header values, distinct from the frozen body. Returns `Ok(())`
+/// or the first drawing error after partial writes; capture/selection stay unchanged.
 pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     view: &capture::CaptureView<'_>,
@@ -1020,6 +1116,8 @@ pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
     text(d, 8, 217, "Header: current Pico / body: saved evidence", MUTED)?;
     text(d, 8, 228, "Hold Y 2s: recover scan; saves retained", MUTED)
 }
+/// Returns the directory-state label for `slot`, preserving unknown, damaged
+/// and replacement-blocked states rather than treating them as empty.
 fn slot_label(slot: capture_ui::Slot) -> &'static str {
     use capture_ui::Slot;
     match slot {
@@ -1032,6 +1130,8 @@ fn slot_label(slot: capture_ui::Slot) -> &'static str {
         Slot::Unavailable => "Storage unavailable",
     }
 }
+/// Returns recovery guidance for `error`, including operations whose timeout
+/// does not release their storage owner.
 fn ui_error(error: capture_ui::UiError) -> &'static str {
     use capture_ui::UiError;
     match error {
@@ -1048,6 +1148,10 @@ fn ui_error(error: capture_ui::UiError) -> &'static str {
         UiError::Exhausted => "Request limit reached; restart required",
     }
 }
+/// Paints four-slot `ui` state and current-Pico `diagnostics` into the 320x240
+/// clip of `target`. Confirmation/pending status is presentation only; no slot
+/// is loaded, saved or erased. Returns `Ok(())` or the first draw error with
+/// prior pixels retained; `CaptureUi` guarantees its selected index is in range.
 pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     ui: &capture_ui::CaptureUi,
@@ -1149,6 +1253,10 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
     text(d, 8, 228, "Hold Y 2s: recover scan; saves retained", MUTED)
 }
 /// Draws the same RGB565 scene for host screenshots and the hardware framebuffer.
+/// Paints immutable `probe` into the 320x240 clip of `target`, using monotonic
+/// boot-relative `now_ms` for the 200ms spinner and evidence ages. Selection and
+/// page are defensively clamped. Returns `Ok(())` or the first drawing error
+/// after partial writes; rendering never advances state or initiates radio I/O.
 pub fn render<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     probe: &Probe,
@@ -1298,9 +1406,11 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
 }
 
 #[cfg(test)]
+/// Pixel parity, evidence preservation, pagination and truthful recovery-copy regressions.
 mod tests {
     use super::*;
     extern crate std;
+    /// Checks all printable ASCII glyphs in three fonts against Text's reference rasterizer.
     #[test]
     fn single_line_glyph_rendering_matches_text_layout_for_all_printable_ascii() {
         use embedded_graphics::mock_display::MockDisplay;
@@ -1319,10 +1429,17 @@ mod tests {
             }
         }
     }
+    /// Counting and drawing visit identical rows, but counting must not invoke Display.
     #[test]
     fn page_count_does_not_format_values_but_draw_emits_each_value() {
-        struct Observed<'a>(&'a core::cell::Cell<usize>);
+        /// Formatter side-effect witness for the no-format count traversal.
+        struct Observed<'a>(
+            /// Number of Display invocations observed by the test.
+            &'a core::cell::Cell<usize>,
+        );
         impl core::fmt::Display for Observed<'_> {
+            /// Increments the witness before writing to `f`. Returns the sink's
+            /// formatting result; an error does not undo the observed call.
             fn fmt(
                 &self,
                 f: &mut core::fmt::Formatter<'_>,
@@ -1347,6 +1464,7 @@ mod tests {
         assert_eq!(calls.get(), 1);
         assert_eq!(rows, ["heading", "observed"]);
     }
+    /// Covers all byte values, partial rows and malformed UUID lengths against independent hex formatting.
     #[test]
     fn raw_hex_and_uuid_rows_preserve_all_byte_values_and_wire_order() {
         let bytes: std::vec::Vec<u8> = (0..=255).collect();
@@ -1386,6 +1504,7 @@ mod tests {
             assert_eq!(rows, [expected]);
         }
     }
+    /// Checks rounding, invalid/nonfinite markers, memory bounds and worst-case telemetry lane widths.
     #[test]
     fn telemetry_values_are_bounded_and_invalid_is_not_zero() {
         for v in [None, Some(f32::NAN), Some(f32::INFINITY), Some(-1.0)] {
@@ -1429,6 +1548,7 @@ mod tests {
         }));
         assert!(line(format_args!("Static {max} SP0 {max} SP1 {max}")).len() * 6 <= 300);
     }
+    /// Expired advertisements suppress another Inspect without invalidating already retained GATT evidence.
     #[test]
     fn old_advertisement_does_not_label_retained_gatt_as_stale() {
         let mut p = probe();
@@ -1439,6 +1559,7 @@ mod tests {
         assert!(!hints[0].contains("GATT stale"));
         assert!(hints[1].contains("retained"));
     }
+    /// Checks observed MTU/stage/descriptor/read failure details survive formatting with exact identifiers.
     #[test]
     fn link_stages_descriptor_and_exact_read_evidence_are_retained_in_lines() {
         let mut p = probe();
@@ -1486,6 +1607,7 @@ mod tests {
             assert!(rows.iter().any(|row| row == expected), "missing {expected}");
         }
     }
+    /// Round-trips a capture with maximal counters and invalid-length raw data, then checks complete bounded rows.
     #[test]
     fn saved_lines_preserve_extreme_numbers_raw_values_and_capture_provenance() {
         let mut p = probe();
@@ -1567,6 +1689,7 @@ mod tests {
         assert!(rows.iter().all(|row| row.is_ascii() && row.len() * 6 <= 300));
         assert_eq!(saved_page_count(&view), rows.len().div_ceil(LINES));
     }
+    /// Only Scanning claims active listening; paused/fault states offer their distinct recovery paths.
     #[test]
     fn empty_catalog_copy_matches_radio_state() {
         assert!(empty_copy(RadioPhase::Scanning).0.starts_with("Listening"));
@@ -1584,6 +1707,7 @@ mod tests {
         assert!(empty_copy(RadioPhase::Paused).1.contains("Y"));
         assert!(empty_copy(RadioPhase::Fault).1.contains("Automatic restart"));
     }
+    /// Status labels retain error codes/recovery clues and leave enough space for bounded header counters.
     #[test]
     fn error_copy_preserves_code_and_explains_recovery() {
         for (error, code, clue) in [
@@ -1599,6 +1723,7 @@ mod tests {
             assert!(hint.len() + 18 <= 50);
         }
     }
+    /// Checks signed RSSI, every GATT property bit and immediate-back recovery labels.
     #[test]
     fn rssi_and_characteristic_flags_are_photo_readable() {
         let p = probe();
@@ -1630,12 +1755,14 @@ mod tests {
             assert!(!error_copy(error).contains("hold"));
         }
     }
+    /// Returns every live evidence row for `p` at time zero in owned test strings.
     fn lines(p: &Probe) -> std::vec::Vec<std::string::String> {
         let mut lines = std::vec::Vec::new();
         details(p, 0, &mut EvidenceLines::new(Some(&mut |s| lines.push(s.into()))));
         lines
     }
 
+    /// Rejected prefixes retain lengths/unvalidated handles, and current errors outrank latched headers.
     #[test]
     fn rejected_wire_evidence_is_bounded_explicit_and_paginated() {
         for length in [0, 1, 2, 3, 5, 19, 20, 253, 65535] {
@@ -1673,6 +1800,7 @@ mod tests {
         p.malformed_reports = u32::MAX;
         assert_eq!(status_copy(&p), "Error:None");
     }
+    /// Returns one public-address peer with flags, negative TX power, manufacturer and standard-service AD fields.
     fn probe() -> Probe {
         let mut p = Probe::new();
         p.catalog.observe(Advertisement::new(
@@ -1687,6 +1815,7 @@ mod tests {
         ));
         p
     }
+    /// Every fault remains visible, legacy absence stays unknown, and first-recorded scan cannot hide a later fault.
     #[test]
     fn fault_ledger_keeps_every_source_visible_and_legacy_unknown() {
         let mut p = probe();
@@ -1713,6 +1842,7 @@ mod tests {
         assert!(rows.iter().any(|r| r == "No selected device"));
     }
 
+    /// Cached-name provenance and retained reset observations remain bounded without claiming causation.
     #[test]
     fn name_and_reset_evidence_are_visible_bounded_and_honest() {
         use crate::health::reset::{BootEvidence, RecoveryCause, ResetRecord, ResetStage};
@@ -1740,6 +1870,7 @@ mod tests {
         assert!(!rows.iter().any(|r| r == "Previous stage: radio startup"));
     }
 
+    /// Checks signed and little-endian AD decoding beside the unchanged wire-order hexadecimal payload.
     #[test]
     fn parsed_fields_and_raw_wire_bytes_are_preserved() {
         let p = probe();
@@ -1751,6 +1882,7 @@ mod tests {
         assert!(l.iter().any(|l| l == "Device Information"));
         assert!(l.iter().any(|l| l == "02 01 06 02 0A F6 03 FF 34 12 03 03 0A 18"));
     }
+    /// Advertisement-only viewing makes no GATT completion claim; explicit inspection displays actual phases.
     #[test]
     fn advertisement_view_does_not_claim_a_failed_or_empty_gatt_inspection() {
         let mut p = probe();
@@ -1785,6 +1917,7 @@ mod tests {
             assert!(!l.iter().any(|l| l.contains("GATT not inspected")));
         }
     }
+    /// Cross-checks footer Inspect offers against actual input admission across screens, phases and freshness edges.
     #[test]
     fn footer_only_offers_inspection_when_the_input_path_accepts_it_and_fits_its_rows() {
         for screen in [Screen::List, Screen::Details] {
@@ -1818,6 +1951,7 @@ mod tests {
         assert!(!control_hints(&empty, 0)[0].contains("Click"));
         assert!(!control_hints(&empty, 0)[1].contains("X:"));
     }
+    /// Omitted or rejected records prevent the otherwise completed inspection from claiming enumeration ended.
     #[test]
     fn incomplete_or_malformed_inspection_never_claims_enumeration_ended() {
         let mut p = probe();
@@ -1833,6 +1967,7 @@ mod tests {
             assert!(l.iter().any(|l| l == "Partial / not completed"));
         }
     }
+    /// A full 64-byte read retains four raw rows while every evidence row stays within 50 characters.
     #[test]
     fn all_detail_lines_fit_without_losing_value_bytes() {
         let mut p = probe();
@@ -1854,6 +1989,7 @@ mod tests {
         assert_eq!(l.iter().filter(|l| l.starts_with("FE FE")).count(), 4);
     }
 
+    /// Exercises failure-stage/reason combinations, maximum fields and all byte codes without row truncation.
     #[test]
     fn every_failure_label_and_maximum_evidence_field_is_visible_and_fits() {
         let mut p = probe();
@@ -1935,6 +2071,7 @@ mod tests {
         }
     }
 
+    /// Maximum global scan counters remain complete and are explicitly not attributed to a peer.
     #[test]
     fn scan_evidence_keeps_maximum_counts_and_does_not_blame_a_peer() {
         let mut p = Probe::new();
@@ -1979,6 +2116,7 @@ mod tests {
         );
     }
 
+    /// Future observations report unavailable age while equal/later snapshots show zero/elapsed seconds.
     #[test]
     fn scan_observation_newer_than_ui_snapshot_has_unavailable_age() {
         let mut p = Probe::new();
@@ -2008,6 +2146,7 @@ mod tests {
         }
     }
 
+    /// All HCI reasons preserve cleanup acknowledgment independently of whether termination was normal.
     #[test]
     fn shared_live_and_saved_link_lines_separate_cleanup_ack_from_abnormal_termination() {
         let link = Some(LinkInfo {

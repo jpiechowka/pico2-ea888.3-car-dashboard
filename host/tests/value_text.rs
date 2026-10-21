@@ -1,3 +1,4 @@
+//! Independent scaled-glyph/outline oracle and panel-edge admission tests.
 use std::collections::BTreeMap;
 
 use dashboard_host_validation::display::St7789Renderer;
@@ -9,15 +10,25 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
 
+/// Unclipped sparse target retaining the final colour of every written coordinate.
 #[derive(Default)]
-struct Pixels(BTreeMap<(i32, i32), Rgb565>);
+struct Pixels(
+    /// Signed pixel coordinates preserve writes outside the panel for oracle comparison.
+    BTreeMap<(i32, i32), Rgb565>,
+);
 impl OriginDimensions for Pixels {
+    /// Returns the advertised landscape size; draw_iter deliberately does not clip to it.
     fn size(&self) -> Size { Size::new(320, 240) }
 }
 impl DrawTarget for Pixels {
+    /// Native RGB565 values, compared without conversion loss.
     type Color = Rgb565;
+    /// Sparse host writes have no recoverable target error.
     type Error = core::convert::Infallible;
 
+    /// Inserts all `pixels` including off-panel coordinates, replacing earlier
+    /// colours at the same point. Returns `Ok(())`; host allocation failure is
+    /// outside the target error type.
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
         pixels: I,
@@ -29,6 +40,7 @@ impl DrawTarget for Pixels {
     }
 }
 
+/// Compares enlarged bodies and physical one-pixel outlines against independent nearest-neighbor expansion.
 #[test]
 fn enlarged_glyphs_match_independent_expansion_and_one_pixel_outline() {
     for (text, size, cap) in [
@@ -98,6 +110,7 @@ fn enlarged_glyphs_match_independent_expansion_and_one_pixel_outline() {
     }
 }
 
+/// Exhausts lane/scale limits for formatted values and verifies invalid or unsupported text writes no pixels.
 #[test]
 fn all_formatted_widths_fit_with_outline_and_invalid_inputs_draw_nothing() {
     for text in [
@@ -141,6 +154,7 @@ fn all_formatted_widths_fit_with_outline_and_invalid_inputs_draw_nothing() {
     }
 }
 
+/// Shared framebuffer clipping matches a sparse unbounded pixel oracle for normal/enlarged values at every edge.
 #[test]
 fn framebuffer_clips_unscaled_and_enlarged_values_at_every_panel_edge() {
     for point in [
@@ -174,6 +188,7 @@ fn framebuffer_clips_unscaled_and_enlarged_values_at_every_panel_edge() {
     }
 }
 
+/// Extreme coordinates/dimensions fail before arithmetic or drawing, leaving the target empty.
 #[test]
 fn unrepresentable_or_nonpanel_lanes_cannot_overflow_coordinate_arithmetic() {
     for lane in [
@@ -187,6 +202,7 @@ fn unrepresentable_or_nonpanel_lanes_cannot_overflow_coordinate_arithmetic() {
     }
 }
 
+/// A compact negative value near the portrait bottom produces visible pixels using the 240-pixel stride.
 #[test]
 fn portrait_bottom_value_lane_is_visible() {
     let mut frame = AlignedFrame::boxed();

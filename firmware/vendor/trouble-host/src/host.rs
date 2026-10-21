@@ -1,28 +1,35 @@
-//! BleHost
-//!
-//! The host module contains the main entry point for the TrouBLE host.
+//! Single-executor HCI dispatch, controller initialization, cancellation and outbound fragmentation.
+//! RX, control and TX must all progress; callbacks borrow receive bytes only during dispatch.
+//! Runner failure/cancellation does not reset the controller or reconstruct already-published host state.
+//! Controller buffer credits are completion accounting, not application delivery acknowledgments.
 #[cfg(all(test, feature = "peripheral", feature = "default-packet-pool"))]
 #[path = "host_advertise_tests.rs"]
+/// Advertising serialization, admission and control-loop cleanup fixtures.
 mod advertise_tests;
 #[cfg(all(test, feature = "default-packet-pool"))]
 #[path = "host_channel_tests.rs"]
+/// Dynamic-channel and parameter-request state/transport regressions.
 mod channel_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_mtu_tests.rs"]
+/// ATT MTU/correlation and retained terminal-diagnostic regressions.
 mod mtu_tests;
 #[cfg(all(test, not(feature = "gatt"), feature = "default-packet-pool"))]
 #[path = "host_no_gatt_tests.rs"]
+/// ATT behavior with server/client GATT disabled.
 mod no_gatt_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_regression_tests.rs"]
+/// Ingress resource failure and canceled establishment regressions.
 mod regression_tests;
 #[cfg(all(test, feature = "central", feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_wire_tests.rs"]
+/// Raw HCI parsing through actual receive dispatch.
 mod wire_tests;
 #[cfg(feature = "security")]
 use core::cell::Cell;
 use core::cell::RefCell;
-use core::future::poll_fn;
+use core::future::{poll_fn, Future};
 use core::mem::MaybeUninit;
 use core::task::{Context, Poll};
 
@@ -108,20 +115,34 @@ use crate::{att, Address, BleHostError, Error, PacketPool};
 
 #[cfg(feature = "security")]
 #[derive(Clone, Copy)]
+/// Deferred controller privacy-list mutation; coalescing multiple updates requires a full bond-store snapshot.
 pub(crate) enum ResolvingListUpdate {
+    /// Clear and rebuild the resolving list from current local IRK and stored bonds.
     FullSync,
-    Add(crate::Identity),
-    Remove(crate::Identity),
+    /// Insert/update one peer with an IRK.
+    Add(
+        /// Peer address/key copied from the bond store.
+        crate::Identity,
+    ),
+    /// Remove one peer address from the controller list.
+    Remove(
+        /// Peer identity whose address selects the entry.
+        crate::Identity,
+    ),
 }
 
 #[cfg(feature = "security")]
+/// One coalescing update slot and one control-loop waiter; protected by the surrounding RefCell.
 pub(crate) struct ResolvingListSignal {
+    /// Pending update, or None after consumption/clear.
     state: Option<ResolvingListUpdate>,
+    /// Single control-loop notification waiter.
     waker: WakerRegistration,
 }
 
 #[cfg(feature = "security")]
 impl ResolvingListSignal {
+    /// Returns an empty update slot with no registered waiter.
     const fn new() -> Self {
         Self {
             state: None,
@@ -130,6 +151,7 @@ impl ResolvingListSignal {
     }
 
     /// Push an update and wake the control loop.
+    /// Queues `update`, promoting any existing pending update to FullSync, and wakes the control loop.
     pub(crate) fn push(&mut self, update: ResolvingListUpdate) {
         self.state = Some(match self.state {
             Some(_) => ResolvingListUpdate::FullSync,
@@ -139,11 +161,13 @@ impl ResolvingListSignal {
     }
 
     /// Discard any pending update.
+    /// Drops pending update without waking or changing controller state.
     pub(crate) fn clear(&mut self) {
         self.state = None;
     }
 
     /// Poll for a pending update. Takes the value on Ready.
+    /// Registers `cx` and returns/consumes one pending update, otherwise Pending; pending cancellation consumes nothing.
     fn poll_changed(&mut self, cx: &mut Context<'_>) -> Poll<ResolvingListUpdate> {
         self.waker.register(cx.waker());
         match self.state.take() {
@@ -153,29 +177,46 @@ impl ResolvingListSignal {
     }
 }
 
+/// Bounded borrowed connection/channel/advertiser state plus single-executor command admission and initialization publication.
+/// Field drop order releases connection queues and I/O retention before channel packets; borrowed owners cannot outlive the stack.
 pub(crate) struct HostState<'d, P: PacketPool> {
+    /// One-time controller ACL capacity publication; later controller reset does not replace it.
     initialized: OnceLock<InitialState>,
+    /// Wrapping host event/error counters under runtime borrow checking.
     metrics: RefCell<HostMetrics>,
+    /// Configured random/public identity override; None uses controller public address selection.
     pub(crate) address: Option<Address>,
+    /// Connection slots, security state and retained outbound queue.
     pub(crate) connections: ConnectionManager<'d, P>,
+    /// Dynamic channel slots and their bounded queues/credit state.
     pub(crate) channels: ChannelManager<'d, P>,
+    /// Per-set advertising/termination observations.
     pub(crate) advertise_state: AdvState<'d>,
+    /// Exclusive advertiser admission/cancellation; Boolean context selects extended commands.
     pub(crate) advertise_command_state: CommandState<bool>,
+    /// Exclusive initiator admission/cancellation; completion or terminal close settles canceled attempts.
     pub(crate) connect_command_state: CommandState<bool>,
+    /// Exclusive scan admission/cancellation; Boolean context selects extended commands.
     pub(crate) scan_command_state: CommandState<bool>,
     #[cfg(feature = "security")]
+    /// Single-executor async gate serializing operation admission against privacy mutations.
     pub(crate) command_request_gate: Mutex<NoopRawMutex, ()>,
     #[cfg(feature = "security")]
+    /// Configured private-address rotation duration; defaults to 900 seconds.
     pub(crate) rpa_timeout: Cell<embassy_time::Duration>,
     #[cfg(all(feature = "security", feature = "central"))]
+    /// Monotonic local RPA expiration; zero requests initial rotation when eligible.
     pub(crate) rpa_expires_at: Cell<Instant>,
     #[cfg(feature = "security")]
+    /// Coalescing bond-store privacy update signal.
     pub(crate) resolving_list_state: RefCell<ResolvingListSignal>,
     #[cfg(feature = "scan")]
+    /// Latched extended ScanTimeout event; independent of application timeout policy.
     pub(crate) scan_timeout: Signal<NoopRawMutex, ()>,
 }
 
 impl<'d, P: PacketPool> HostState<'d, P> {
+    /// Returns uninitialized host state borrowing `connections`, `channels`, `advertise_handles` and optional `bond_storage`; tables are not cleared, default privacy timeout is 900 seconds.
     pub(crate) fn new(
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
         channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
@@ -218,11 +259,14 @@ impl<'d, P: PacketPool> HostState<'d, P> {
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
 pub(crate) struct BleHost<'d, T, P: PacketPool> {
+    /// Borrowed HCI transport; runners share its interior-synchronized command/data interface.
     controller: &'d T,
+    /// Borrowed single-executor host state; copying a handle does not duplicate resources.
     state: &'d HostState<'d, P>,
 }
 
 impl<'d, T, P: PacketPool> Clone for BleHost<'d, T, P> {
+    /// Returns another borrowed handle to the same controller/state.
     fn clone(&self) -> Self {
         *self
     }
@@ -231,25 +275,42 @@ impl<'d, T, P: PacketPool> Clone for BleHost<'d, T, P> {
 impl<'d, T, P: PacketPool> Copy for BleHost<'d, T, P> {}
 
 #[derive(Clone, Copy)]
+/// Controller ACL capacity published once after control startup queries.
 pub(crate) struct InitialState {
+    /// Maximum ACL data bytes per HCI packet, excluding HCI header; zero denies sending.
     acl_max: usize,
+    /// Controller ACL packet count copied into each newly established link budget.
     acl_total: usize,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
+/// Host observation of an extended advertising set, separate from command cancellation acknowledgment.
 pub(crate) enum AdvHandleState {
+    /// Unused slot; counts as complete.
     None,
-    Advertising(AdvHandle),
-    Terminated(AdvHandle),
+    /// Controller set currently observed advertising.
+    Advertising(
+        /// Controller advertising-set identifier.
+        AdvHandle,
+    ),
+    /// Controller termination observed for this set.
+    Terminated(
+        /// Controller advertising-set identifier retained for diagnostics.
+        AdvHandle,
+    ),
 }
 
+/// Borrowed advertising-set slots and a single completion waiter.
 pub(crate) struct AdvState<'d> {
+    /// Fixed host set capacity; None slots count as complete.
     handles: &'d RefCell<[AdvHandleState]>,
+    /// Single waiter for all sets becoming terminated/unused.
     waker: RefCell<WakerRegistration>,
 }
 
 impl<'d> AdvState<'d> {
+    /// Returns a view of `handles` without clearing their states; starts with no waiter.
     pub(crate) fn new(handles: &'d RefCell<[AdvHandleState]>) -> Self {
         Self {
             handles,
@@ -257,6 +318,7 @@ impl<'d> AdvState<'d> {
         }
     }
 
+    /// Marks all sets unused and wakes completion; does not send controller disable commands.
     pub(crate) fn reset(&self) {
         for entry in self.handles.borrow_mut().iter_mut() {
             *entry = AdvHandleState::None;
@@ -265,6 +327,7 @@ impl<'d> AdvState<'d> {
     }
 
     // Terminate handle
+    /// Marks all matching active `handle` slots terminated and wakes completion, even when no slot matched.
     pub(crate) fn terminate(&self, handle: AdvHandle) {
         for entry in self.handles.borrow_mut().iter_mut() {
             match entry {
@@ -277,10 +340,12 @@ impl<'d> AdvState<'d> {
         self.waker.borrow_mut().wake();
     }
 
+    /// Returns fixed host advertising-set capacity.
     pub(crate) fn len(&self) -> usize {
         self.handles.as_ptr().len()
     }
 
+    /// Replaces all observations with active handles from `sets`; panics before mutation if sets exceed capacity. Does not issue controller commands.
     pub(crate) fn start(&self, sets: &[AdvSet]) {
         assert!(sets.len() <= self.handles.as_ptr().len());
         let mut handles = self.handles.borrow_mut();
@@ -293,6 +358,7 @@ impl<'d> AdvState<'d> {
         }
     }
 
+    /// Waits until every slot is unused/terminated; zero slots complete immediately. Pending cancellation consumes no state; one waiter is supported.
     pub async fn wait(&self) {
         poll_fn(|cx| {
             self.waker.borrow_mut().register(cx.waker());
@@ -338,49 +404,60 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
+    /// Returns a borrowed host view over `controller` and `state`; no initialization or I/O occurs.
     pub(crate) fn new(controller: &'d T, state: &'d HostState<'d, P>) -> Self {
         Self { controller, state }
     }
 
+    /// Returns the configured address override; None is distinct from the controller public-address query result.
     pub(crate) fn address(&self) -> Option<Address> {
         self.state.address
     }
 
+    /// Returns shared connection-procedure admission/cancellation state.
     pub(crate) fn connect_command_state(&self) -> &CommandState<bool> {
         &self.state.connect_command_state
     }
 
+    /// Returns shared advertising-procedure admission/cancellation state.
     pub(crate) fn advertise_command_state(&self) -> &CommandState<bool> {
         &self.state.advertise_command_state
     }
 
+    /// Returns shared scan-procedure admission/cancellation state.
     pub(crate) fn scan_command_state(&self) -> &'d CommandState<bool> {
         &self.state.scan_command_state
     }
 
+    /// Returns the originating connection manager and its fixed-slot ownership domain.
     pub(crate) fn connections(&self) -> &'d ConnectionManager<'d, P> {
         &self.state.connections
     }
 
+    /// Returns the originating dynamic-channel manager.
     pub(crate) fn channels(&self) -> &'d ChannelManager<'d, P> {
         &self.state.channels
     }
 
+    /// Returns host advertising-set completion observations.
     pub(crate) fn advertise_state(&self) -> &AdvState<'d> {
         &self.state.advertise_state
     }
 
     #[cfg(feature = "scan")]
+    /// Returns the extended scan timeout signal; caller controls consumption/reset.
     pub(crate) fn scan_timeout(&self) -> &'d Signal<NoopRawMutex, ()> {
         &self.state.scan_timeout
     }
 
     #[cfg(feature = "security")]
+    /// Returns the coalescing pending privacy-list update state.
     pub(crate) fn resolving_list_state(&self) -> &RefCell<ResolvingListSignal> {
         &self.state.resolving_list_state
     }
 
     #[cfg(feature = "security")]
+    /// Returns the configured local private-address rotation duration cell.
     pub(crate) fn rpa_timeout(&self) -> &Cell<Duration> {
         &self.state.rpa_timeout
     }
@@ -392,6 +469,7 @@ where
     P: PacketPool,
 {
     /// Poll whether any command should be cancelled or the resolving list should be synced.
+    /// Polls control work with `cx` in priority order: connect, advertise, scan cancellation; eligible RPA rotation; then idle-only list update. Returns one action or Pending; resolving updates are consumed on Ready.
     fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CancelledCommandState> {
         // Not every branch below survives every feature combination.
         let _ = cx;
@@ -429,11 +507,13 @@ where
 
     /// Check whether BLE address privacy is enabled.
     #[cfg(feature = "security")]
+    /// Returns whether a local IRK is configured; does not prove controller privacy setup succeeded.
     pub(crate) fn is_privacy_enabled(&self) -> bool {
         self.state.connections.security_manager.get_local_irk().is_some()
     }
 
     /// Get the appropriate own address kind based on the host address and privacy state.
+    /// Returns configured/default own-address kind, choosing RPA-with-random/public fallback when local privacy is enabled.
     pub(crate) fn own_addr_kind(&self) -> AddrKind {
         #[cfg(feature = "security")]
         if self.is_privacy_enabled() {
@@ -447,6 +527,7 @@ where
     }
 
     /// Atomically mark an address-using procedure active relative to RPA rotation.
+    /// Waits for exclusive `state` admission carrying `ctx`; security builds serialize admission against RPA/list mutation. Cancellation while waiting releases the gate and acquires no completed request.
     pub(crate) async fn request_operation<CTX: Clone + Copy>(&self, state: &CommandState<CTX>, ctx: CTX) {
         #[cfg(feature = "security")]
         let _guard = self.state.command_request_gate.lock().await;
@@ -454,6 +535,7 @@ where
     }
 
     #[cfg(all(feature = "security", feature = "central"))]
+    /// Returns true when local privacy is enabled, expiration passed, initiator/scanner idle and no active legacy advertiser; extended advertising does not block this global-address update.
     fn is_rpa_rotation_ready(&self) -> bool {
         self.is_privacy_enabled()
             && self.state.connect_command_state.is_idle()
@@ -463,6 +545,7 @@ where
     }
 
     #[cfg(all(feature = "security", feature = "central"))]
+    /// Waits for the sampled/current RPA deadline; if procedures still block rotation, remains pending and relies on the separate command-state polling branch to wake control.
     async fn wait_for_rpa_expiration(&self) {
         while Instant::now() < self.state.rpa_expires_at.get() {
             Timer::at(self.state.rpa_expires_at.get()).await
@@ -474,6 +557,7 @@ where
     }
 
     #[cfg(all(feature = "security", feature = "central"))]
+    /// Returns Ok after eligible private-address generation/controller update and deadline renewal, or no-op if ineligible. RNG/HCI failures propagate; cancellation can leave controller state changed before deadline publication.
     async fn rotate_rpa(&self) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetRandomAddr>,
@@ -495,6 +579,7 @@ where
 
     /// Sync the controller's resolving list based on a pending update.
     #[cfg(feature = "security")]
+    /// Applies `update` under operation gate only when all procedures are idle; otherwise returns Ok without replay. Disables resolution, applies best-effort entries, then attempts re-enable; command errors may leave partial state. Cancellation has no async restoration guard.
     pub(crate) async fn sync_resolving_list(&self, update: ResolvingListUpdate) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearResolvingList>
@@ -569,7 +654,7 @@ where
             }
         };
 
-        // Always re-enable address resolution
+        // The normal completion path attempts to re-enable address resolution; cancellation does not.
         if let Err(e) = LeSetAddrResolutionEnable::new(true).exec(self.controller).await {
             warn!("[host] failed to re-enable address resolution: {:?}", e);
             return res.and(Err(e.into()));
@@ -580,6 +665,7 @@ where
 
     /// Full clear-and-rebuild of the resolving list.
     #[cfg(feature = "security")]
+    /// Rebuilds the list after clear, using `local_irk` and current bonds. Returns clear failure; default/peer insertion and privacy-mode failures are logged, with peer insertion stopping the loop. No atomic rollback.
     async fn full_resolving_list_sync(
         &self,
         local_irk: Option<crate::security_manager::IdentityResolvingKey>,
@@ -651,11 +737,13 @@ where
         self.state.initialized.try_get().is_some()
     }
 
+    /// Waits for the one-time ACL-capacity publication; cancellation consumes no state and no timeout is imposed.
     pub(crate) async fn wait_initialized(&self) {
         let _ = self.state.initialized.get().await;
     }
 
     /// Run a HCI command and return the response.
+    /// Waits for initialization, executes `cmd` and returns its synchronous response or controller/HCI error. Cancellation semantics after submission are transport-specific.
     pub(crate) async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
@@ -667,6 +755,7 @@ where
     }
 
     /// Run an async HCI command where the response will generate an event later.
+    /// Waits for initialization, submits `cmd` and returns command-status success/error; the later procedure-completion event remains separate. Cancellation after submission does not undo the procedure.
     pub(crate) async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
     where
         C: AsyncCmd,
@@ -678,10 +767,12 @@ where
     }
 
     #[cfg(feature = "iso")]
+    /// Submits borrowed ISO `packet` directly without initialization wait; returns the controller transport result with its cancellation semantics.
     pub(crate) async fn write_iso_data(&self, packet: &bt_hci::data::IsoPacket<'_>) -> Result<(), T::Error> {
         self.controller.write_iso_data(packet).await
     }
 
+    /// Consumes `status`, `handle`, `peer_addr`, `role`, `params` and optional `resolvable_addrs`; returns false only when a successful link cannot get a slot. Canceled central successes are quarantined for disconnect; other successes increment wrapping connect metrics.
     fn handle_connection(
         &self,
         status: Status,
@@ -733,6 +824,7 @@ where
         true
     }
 
+    /// Routes `error`: advertising timeout clears set observations; other failures settle the pending initiator command with that status.
     fn handle_connection_error(&self, error: bt_hci::param::Error) {
         if error == bt_hci::param::Error::ADV_TIMEOUT {
             self.state.advertise_state.reset();
@@ -742,6 +834,7 @@ where
         }
     }
 
+    /// Validates `data` length against nonzero `expected_len`; returns true after handling failure status, false on success, or HciDecode. Failed trailing fields are deliberately not decoded; internal expected_len must be positive.
     fn handle_failed_connection_complete(&self, data: &[u8], expected_len: usize) -> Result<bool, Error> {
         if data.len() != expected_len {
             return Err(Error::HciDecode(bt_hci::FromHciBytesError::InvalidSize));
@@ -755,6 +848,7 @@ where
         Ok(false)
     }
 
+    /// Validates `event` success before terminating connection/channel state and incrementing wrapping metrics. Returns HCI failure unchanged; unknown successful handles still count as events.
     fn handle_disconnection_complete(&self, event: DisconnectionComplete) -> Result<(), Error> {
         // A failed event does not terminate the link and its reason is invalid.
         event.status.to_result().map_err(Error::Hci)?;
@@ -770,6 +864,7 @@ where
         Ok(())
     }
 
+    /// Processes borrowed `acl` through `event_handler`; returns ingress errors after recording first local cause and requesting close, except NotSupported. Already-closing slots do not gain a new cause.
     fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         let result = self.handle_acl_inner(acl, event_handler);
         if let Some(error) = result
@@ -789,6 +884,7 @@ where
         result
     }
 
+    /// Reassembles/routes borrowed `acl` using `event_handler` for security effects. Returns partial success while waiting, or decode/state/credit/capacity errors. ATT ingress validates correlation and queues confirmations; dynamic optimization shares one per-link assembly.
     fn handle_acl_inner(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         self.state.connections.received(acl.handle())?;
         let handle = acl.handle();
@@ -1130,6 +1226,7 @@ where
     }
 
     // Send l2cap signal payload
+    /// Encodes `signal` and `identifier` into caller scratch `p_buf` for current `conn`, then sends under exclusive ACL ownership. Returns encode/admission/controller errors; cancellation may leave a partially submitted PDU.
     pub(crate) async fn l2cap_signal<D: L2capSignal>(
         &self,
         conn: ConnHandle,
@@ -1168,15 +1265,24 @@ where
     // This function will acquire the connection ACL send lock and the returned sender will handle ACL fragmentation.
     //
     // This function cannot be used to send an SDU split among multiple k-frames.
+    /// Returns a sender for current live `handle`, capturing slot identity before any await. Waits for initialization/ACL ownership; NotFound, Disconnected and NoPermits propagate. Cancellation releases retained identity without controller rollback.
     pub(crate) async fn l2cap_pdu(&self, handle: ConnHandle) -> Result<L2capSender<'_, T, P>, BleHostError<T::Error>> {
-        // Take into account l2cap header.
+        let lease = self.state.connections.retain_handle(handle)?;
+        self.l2cap_pdu_for_lease(&lease).await
+    }
+
+    /// Returns an ACL sender retaining the exact slot in `lease`, waiting for initialization/serialization; closed slots return Disconnected, count/zero-buffer admission returns NoPermits. Cancellation releases only newly acquired ownership.
+    async fn l2cap_pdu_for_lease(
+        &self,
+        lease: &crate::connection_manager::IoLease<'d, P>,
+    ) -> Result<L2capSender<'d, T, P>, BleHostError<T::Error>> {
         let initial_state = self.state.initialized.get().await;
         let acl_max = initial_state.acl_max as u16;
         if acl_max == 0 {
             return Err(Error::NoPermits.into());
         }
-
-        let acl_send_lock = poll_fn(|cx| self.state.connections.poll_acquire_acl_send_lock(handle, Some(cx))).await?;
+        let acl_send_lock = poll_fn(|cx| lease.poll_acquire(Some(cx))).await?;
+        let handle = lease.handle();
         Ok(L2capSender {
             controller: self.controller,
             handle,
@@ -1189,6 +1295,7 @@ where
     // Request to send an L2CAP SDU of sdu_len to the HCI controller for a connection.
     //
     // This function will acquire the connection ACL send lock and the returned sender will handle ACL fragmentation.
+    /// Returns an immediate sender for live `handle` if `sdu_len` plus prefix at nonzero `mps` fits current ACL credits/capacity; returns NoPermits/Busy/link errors. Internal caller supplies validated MPS; zero would divide by zero.
     pub(crate) fn try_l2cap_sdu(
         &self,
         handle: ConnHandle,
@@ -1208,7 +1315,9 @@ where
             }
         };
 
+        /// Four-byte channel/length header repeated for each K-frame.
         const L2CAP_BASIC_HEADER_SIZE: usize = 4; // L2CAP Basic Header added to each k-frame
+        /// Two-byte SDU length prepended only to the first K-frame.
         const L2CAP_SDU_LEN_SIZE: usize = 2; // L2CAP SDU Length field added to first k-frame
 
         let mps = usize::from(mps);
@@ -1237,6 +1346,7 @@ where
         })
     }
 
+    /// Sends `param` for live `handle` through the channel signaling path; returns admission/encoding/controller errors and may partially submit before cancellation.
     pub(crate) async fn send_conn_param_update_req(
         &self,
         handle: ConnHandle,
@@ -1248,6 +1358,7 @@ where
             .await
     }
 
+    /// Sends `param` under peer `identifier` for live `handle`; returns admission/encoding/controller errors with ordinary partial-send cancellation semantics.
     pub(crate) async fn send_conn_param_update_res(
         &self,
         handle: ConnHandle,
@@ -1261,12 +1372,14 @@ where
     }
 
     /// Read current host metrics
+    /// Returns callback `f` result under a shared metrics borrow; reentrant metrics mutation panics.
     pub(crate) fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
         let m = self.state.metrics.borrow();
         f(&m)
     }
 
     /// Log status information of the host
+    /// Logs host counters and manager state; `verbose` includes per-link/per-channel diagnostics. Logging features control emission; borrow conflicts panic.
     pub(crate) fn log_status(&self, verbose: bool) {
         let m = self.state.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
@@ -1279,64 +1392,77 @@ where
 
 /// Runs the host with the given controller.
 pub struct Runner<'d, C, P: PacketPool> {
+    /// Receive dispatcher sharing this host state.
     rx: RxRunner<'d, C, P>,
+    /// Controller initialization/cancellation/security worker.
     control: ControlRunner<'d, C, P>,
+    /// Queued outbound PDU worker.
     tx: TxRunner<'d, C, P>,
 }
 
 /// The receiver part of the host runner.
 pub struct RxRunner<'d, C, P: PacketPool> {
+    /// Shared controller/state view; this worker owns no separate connection table.
     host: BleHost<'d, C, P>,
 }
 
 /// The control part of the host runner.
 pub struct ControlRunner<'d, C, P: PacketPool> {
+    /// Shared controller/state view; this worker owns no separate connection table.
     host: BleHost<'d, C, P>,
 }
 
 /// The transmit part of the host runner.
 pub struct TxRunner<'d, C, P: PacketPool> {
+    /// Shared controller/state view; this worker owns no separate connection table.
     host: BleHost<'d, C, P>,
 }
 
 /// Event handler.
+/// Synchronous receive-loop callbacks; borrowed packets/iterators expire after the callback. Default handlers discard events; blocking work stalls all receive dispatch.
 pub trait EventHandler {
     /// Handle vendor events
+    /// Receives borrowed `vendor` event; default drops it.
     fn on_vendor(&self, vendor: &Vendor) {}
     /// Handle advertising reports
     #[cfg(feature = "scan")]
+    /// Receives borrowed legacy `reports`; per-report decode errors remain in the iterator. Default discards it.
     fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter) {}
     /// Handle a complete legacy advertising-report batch, including its borrowed bytes.
     /// The default preserves handlers that only implement the iterator callback.
     #[cfg(feature = "scan")]
+    /// Receives complete borrowed legacy `reports`, preserving raw batch bytes; default delegates its iterator to on_adv_reports.
     fn on_adv_report_data(&self, reports: bt_hci::param::LeAdvReports<'_>) {
         self.on_adv_reports(reports.iter());
     }
     /// Handle extended advertising reports
     #[cfg(feature = "scan")]
+    /// Receives borrowed extended `reports`; default discards them and does not assemble chained advertising payloads.
     fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
-    /// Handle HCI NumberOfCompletedPackets event.
-    ///
-    /// Called for each connection handle entry when the controller confirms
-    /// ACL data packets have been transmitted over the air. Useful for
-    /// measuring actual air delivery rate and estimating connection event timing.
+    /// Reports `_num_completed` controller-completed ACL packets for one decoded handle entry; the handle itself is not passed. Default ignores it. Counts represent reclaimed HCI buffer credits, may include flushed packets, and do not establish peer/application receipt or exact connection-event timing.
+    /// See [HCI flow control and completion events](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host-controller-interface/host-controller-interface-functional-specification.html), sections4.1/4.3/7.7.19.
     fn on_packets_completed(&self, _num_completed: usize) {}
 
     /// Handle an LE CIS Request event
     #[cfg(feature = "iso")]
+    /// Receives borrowed `_event` requesting CIS establishment; default performs no acceptance/rejection.
     fn on_cis_request(&self, _event: &LeCisRequest) {}
     /// Handle an LE CIS Established event
     #[cfg(feature = "iso")]
+    /// Receives borrowed `_event` carrying CIS establishment status; default ignores it.
     fn on_cis_established(&self, _event: &LeCisEstablished) {}
     /// Handle an incoming HCI ISO data packet
     #[cfg(feature = "iso")]
+    /// Receives borrowed ISO `_packet`; default drops its payload.
     fn on_iso_data(&self, _packet: &IsoPacket<'_>) {}
 }
 
+/// Default callback implementation discarding optional events.
 struct DummyHandler;
 impl EventHandler for DummyHandler {}
 
 impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
+    /// Returns receive/control/transmit runners borrowing the same `host`; no tasks or controller operations start.
     pub(crate) fn new(host: BleHost<'d, C, P>) -> Self {
         Self {
             rx: RxRunner { host },
@@ -1346,11 +1472,13 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
     }
 
     /// Split the runner into separate independent async tasks
+    /// Returns independently pollable RX/control/TX workers. All must progress on the same executor; splitting does not add synchronization.
     pub fn split(self) -> (RxRunner<'d, C, P>, ControlRunner<'d, C, P>, TxRunner<'d, C, P>) {
         (self.rx, self.control, self.tx)
     }
 
     /// Run the host.
+    /// Runs RX/control/TX together with discarded optional events; returns the first worker error and cancels the others. Cancellation/failure does not reset controller state; rebuild/recovery belongs to the owner.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -1366,7 +1494,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeSetExtScanEnable>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
@@ -1382,6 +1510,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
     }
 
     /// Run the host with a vendor event handler for custom events.
+    /// Runs all three workers using borrowed `event_handler`; returns the first completed worker result and cancels siblings. Handler callbacks run synchronously in RX; cancellation requires owner-managed controller recovery.
     pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -1393,7 +1522,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
             + ControllerCmdSync<SetControllerToHostFlowControl>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeSetScanEnable>
@@ -1431,6 +1560,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
 
 impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     /// Run the receive loop that polls the controller for events.
+    /// Runs receive dispatch with discarded optional events; returns transport/allocation/envelope/hardware/security errors. ACL processing errors normally count and request close while the loop continues. Cancellation stops receiving without resetting links.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
@@ -1439,8 +1569,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         self.run_with_handler(&dummy).await
     }
 
-    /// Runs the receive loop that pools the controller for events, dispatching
-    /// vendor events to the provided closure.
+    /// Dispatches borrowed receive bytes to `event_handler`; returns terminal transport/decode/hardware/security errors, while ACL errors request close and increment metrics. Unknown events are ignored. Callback blocking/panic affects this loop; cancellation performs no controller cleanup.
     pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
@@ -1794,21 +1923,40 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     }
 }
 
+/// One prioritized control-loop action, consumed after the select branch wins.
 enum CancelledCommandState {
     #[cfg(feature = "central")]
-    Connect(bool),
+    /// Cancel the active initiator procedure.
+    Connect(
+        /// Stored extended-procedure flag; current cancellation command ignores it.
+        bool,
+    ),
     #[cfg(feature = "peripheral")]
-    Advertise(bool),
+    /// Disable active advertising.
+    Advertise(
+        /// True selects extended advertising disable; false selects legacy.
+        bool,
+    ),
     #[cfg(feature = "scan")]
-    Scan(bool),
+    /// Disable active scanning.
+    Scan(
+        /// True selects extended scan disable; false selects legacy.
+        bool,
+    ),
     #[cfg(feature = "security")]
-    SyncResolvingList(ResolvingListUpdate),
+    /// Apply an idle-only privacy-list update.
+    SyncResolvingList(
+        /// Consumed/coalesced pending list mutation.
+        ResolvingListUpdate,
+    ),
     #[cfg(all(feature = "security", feature = "central"))]
+    /// Generate/update an eligible expired private address.
     RotateRpa,
 }
 
 impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
     /// Run the control loop for the host
+    /// Resets/configures the controller, publishes ACL capacity, then services close/cancel/privacy/security work. Returns unhandled controller/host errors; optional unsupported capabilities are logged. RX must progress for command replies. Cancellation may leave partially applied controller state; rerunning does not reset the once-published host tables.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -1822,7 +1970,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeSetExtScanEnable>
@@ -1919,6 +2067,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         // create or accept a CIS.
         #[cfg(feature = "iso")]
         {
+            /// Host feature bit32 advertising connected isochronous stream support.
             const LE_FEATURE_CIS_HOST: u8 = 32;
             if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CIS_HOST, 1)
                 .exec(host.controller)
@@ -1937,6 +2086,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         // start the Connection Subrate Update procedure on us.
         #[cfg(feature = "subrating")]
         {
+            /// Host feature bit38 permitting connection subrating procedures.
             const LE_FEATURE_CONN_SUBRATING_HOST: u8 = 38;
             if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CONN_SUBRATING_HOST, 1)
                 .exec(host.controller)
@@ -1955,6 +2105,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         // start the Connection Rate Change procedure on us.
         #[cfg(feature = "shorter-connection-intervals")]
         {
+            /// Host feature bit73 permitting shorter connection intervals.
             const LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST: u16 = 73;
             if let Err(e) = LeSetHostFeatureV2::new(LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST, 1)
                 .exec(host.controller)
@@ -1988,7 +2139,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
         {
+            /// Advertised host receive ACL payload capacity, excluding HCI header; controller-to-host flow control remains disabled.
             const ACL_LEN: u16 = 255;
+            /// Advertised host ACL packet count; no completed-packet return loop is enabled here.
             const ACL_N: u16 = 1;
             info!(
                 "[host] configuring host buffers ({} packets of size {})",
@@ -2174,12 +2327,13 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 
 impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     /// Run the transmit loop for the host.
+    /// Waits for initialization, drains retained outbound PDUs and sends them under exact-slot ACL locks. Closed-link packets are discarded; returns other errors to terminate. Cancellation drops the current PDU/leases but cannot retract submitted fragments.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = &self.host;
-        let params = host.state.initialized.get().await;
+        host.state.initialized.get().await;
         loop {
-            let (conn, pdu) = host.state.connections.outbound().await;
-            match host.l2cap_pdu(conn).await {
+            let (lease, pdu) = host.state.connections.outbound().await;
+            match host.l2cap_pdu_for_lease(&lease).await {
                 Ok(mut sender) => match sender.send(pdu.as_ref()).await {
                     Ok(()) => {}
                     Err(BleHostError::BleHost(Error::NotFound)) | Err(BleHostError::BleHost(Error::Disconnected)) => {
@@ -2205,15 +2359,22 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     }
 }
 
+/// Exclusive ACL-fragment sender tied to a retained slot; dropping releases lock/credits but cannot retract submitted bytes.
 pub struct L2capSender<'a, T: Controller, P: PacketPool> {
+    /// Shared HCI transport used for outgoing ACL fragments.
     pub(crate) controller: &'a T,
+    /// Controller handle captured for the retained local connection.
     pub(crate) handle: ConnHandle,
+    /// Affine serialization/identity lease spanning every fragment of this send.
     pub(crate) acl_send_lock: AclSendLock<'a, P>,
+    /// Positive ACL data byte limit from controller initialization.
     pub(crate) fragment_size: u16,
+    /// Controller packet budget limiting immediate whole-SDU admission.
     pub(crate) max_fragments: usize,
 }
 
 impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
+    /// Fragments borrowed `pdu`, reserves all required ACL credits, and returns Ok after controller acceptance. NoPermits/Busy/link/transport errors can follow earlier submitted fragments; unused grants refund on drop. Empty input sends nothing; internal fragment_size must be positive.
     pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
@@ -2251,6 +2412,7 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
         Ok(())
     }
 
+    /// Fragments borrowed `pdu`, waiting for one credit per fragment, and returns after transport acceptance or link/transport failure. Checks retained-link liveness before every transport poll and wakes on close; cancellation refunds only unconfirmed credits. Generic transports may already have partial effects when Pending; accepted/queued bytes cannot be retracted and peer delivery is not guaranteed. Selected CYW transport publishes nothing before its capacity wait completes. Empty input sends nothing.
     pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
         // info!(
         //    "[host] fragmenting PDU of size {} into {} sized fragments",
@@ -2261,10 +2423,12 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let mut grant = poll_fn(|cx| self.acl_send_lock.poll_request_to_send(1, Some(cx))).await?;
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
-            self.controller
-                .write_acl_data(&acl)
-                .await
-                .map_err(BleHostError::Controller)?;
+            let mut write = core::pin::pin!(self.controller.write_acl_data(&acl));
+            poll_fn(|cx| {
+                self.acl_send_lock.check_live(cx)?;
+                write.as_mut().poll(cx).map_err(BleHostError::Controller)
+            })
+            .await?;
             grant.confirm(1);
             pbf = AclPacketBoundary::Continuing;
             trace!("[host] sent acl packet len = {}", chunk.len());
@@ -2276,23 +2440,29 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
 /// A type to delay the drop handler invocation.
 #[must_use = "to delay the drop handler invocation to the end of the scope"]
 pub struct OnDrop<F: FnOnce()> {
+    /// Initialized one-shot cleanup closure; defuse forgets the entire guard and its captures.
     f: MaybeUninit<F>,
 }
 
 impl<F: FnOnce()> OnDrop<F> {
     /// Create a new instance.
+    /// Returns an armed guard owning `f`; Drop invokes it once unless defused.
     pub fn new(f: F) -> Self {
         Self { f: MaybeUninit::new(f) }
     }
 
     /// Prevent drop handler from running.
+    /// Consumes/forgets the guard so cleanup and captured-value destructors do not run.
     pub fn defuse(self) {
         core::mem::forget(self)
     }
 }
 
 impl<F: FnOnce()> Drop for OnDrop<F> {
+    /// Moves the initialized closure out and invokes it exactly once; a panic propagates and can abort if already unwinding.
     fn drop(&mut self) {
+        // SAFETY: new initializes f; Drop runs once, while defuse forgets the
+        // entire guard. MaybeUninit does not separately drop the moved closure.
         unsafe { self.f.as_ptr().read()() }
     }
 }

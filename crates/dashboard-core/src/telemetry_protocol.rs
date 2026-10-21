@@ -1,10 +1,14 @@
-//! Versioned nonblocking RTT records. Every row carries its snapshot identity.
+//! Versioned records for nonblocking RTT adapters. Every row carries its snapshot identity.
 //! A collector must reject incomplete groups and report sequence gaps.
+//! Callbacks own transport/delimiters; these formatters neither detect drops nor enforce nonblocking I/O.
 use core::fmt::{self, Write};
 
 use crate::metrics::Distribution;
 
 // Even fourteen maximum-width u64 decimal fields fit in this fixed buffer.
+/// Formats `arguments` into at most 320 stack bytes, then borrows the completed
+/// line to `emit` without a newline. Returns formatting failure before emitting
+/// this line; callback failure/drop cannot be reported through its unit result.
 fn emit_line(
     emit: &mut impl FnMut(&str),
     arguments: fmt::Arguments<'_>,
@@ -15,6 +19,11 @@ fn emit_line(
     Ok(())
 }
 
+/// Emits the coherent frame window `value` through `emit`: FRAME2, INPUT1,
+/// nine indexed METRIC1 rows and END1. Times/distributions are microseconds;
+/// active CPU cycles remain `na` when unavailable. `emit` must consume/copy each
+/// borrowed line and supply framing. Returns formatting success or an error
+/// after any previously emitted rows; group delivery is not atomic or acknowledged.
 pub fn frames(
     value: crate::display::window::WindowReport,
     mut emit: impl FnMut(&str),
@@ -54,8 +63,13 @@ pub fn frames(
     emit_line(&mut emit, format_args!("END1,0,{}", value.sequence))
 }
 
-struct OptionalCycles(Option<u64>);
+/// Decimal cycle count preserving unavailable observations as the literal `na`.
+struct OptionalCycles(
+    /// Observed active cycles, including valid zero, or unavailable clock evidence.
+    Option<u64>,
+);
 impl fmt::Display for OptionalCycles {
+    /// Writes decimal cycles or `na` to `f`; returns the formatter's write result.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -67,6 +81,11 @@ impl fmt::Display for OptionalCycles {
     }
 }
 
+/// Emits `value` as one METRIC1 row via `emit`, using caller-issued `sequence`,
+/// group `kind` (0 frame, 1 diagnostic) and `metric` (frame index or PID).
+/// Units belong to that metric. Missing extrema/bounds encode zero and require
+/// the sample count to distinguish empty state. Returns formatting success/error;
+/// the borrowed callback line has no newline or delivery acknowledgment.
 fn distribution(
     sequence: u64,
     kind: u8,
@@ -98,6 +117,12 @@ fn distribution(
     )
 }
 
+/// Emits diagnostic snapshot `value` under caller-issued `sequence` through
+/// `emit`: DIAG1, each PID1/METRIC1 pair, then END1. `published_ms` is the
+/// consumer publication clock in milliseconds; no ordering against the snapshot
+/// clock is checked. Reply distributions use milliseconds. Returns formatting
+/// success/error, retaining already emitted rows on error; callback transport
+/// drops are unobservable and each borrowed line requires caller framing.
 pub fn diagnostics(
     sequence: u64,
     published_ms: u64,

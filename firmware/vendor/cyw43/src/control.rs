@@ -1,3 +1,6 @@
+//! Serialized Wi-Fi control over the permanent Runner's IOCTL/event channels.
+//! Control cancellation clears borrowed response pointers and subscriptions, but does not undo firmware-side effects.
+//! The selected dashboard/probe uses Bluetooth and leaves these Wi-Fi association/AP operations unused.
 use core::cmp::{max, min};
 use core::iter::zip;
 use core::sync::atomic::AtomicBool;
@@ -20,8 +23,10 @@ use crate::{PowerManagementMode, countries, events};
 pub enum JoinError {
     /// Network not found.
     NetworkNotFound,
-    /// Failure to join network. Contains the status code from the SET_SSID event.
-    JoinFailure(u8),
+    /// SET_SSID failure, using the recognized status code or Unknown=255 for unrecognized/wide values.
+    JoinFailure(
+        #[doc = "Decoded firmware status; 255 preserves failure without truncating wide status to success."] u8,
+    ),
     /// Authentication failure for a secure network.
     AuthenticationFailure,
 }
@@ -35,11 +40,16 @@ pub enum AddMulticastAddressError {
     NoFreeSlots,
 }
 
-/// Control driver.
+/// Exclusive Wi-Fi control handle; the paired Runner must remain polled to complete IOCTLs.
+/// Firmware errors can panic in Runner, waits have no local timeout, and canceled operations may leave partial configuration.
 pub struct Control<'a> {
+    /// Publishes hardware address into the network channel after initialization.
     state_ch: ch::StateRunner<'a>,
+    /// Shared host subscriptions and bounded event stream.
     events: &'a Events,
+    /// Single outstanding command/response state, serialized by mutable Control access.
     ioctl_state: &'a IoctlState,
+    /// Link policy consumed by Runner when join/authentication events arrive.
     secure_network: &'a AtomicBool,
 }
 
@@ -48,10 +58,10 @@ pub struct Control<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ScanType {
     /// Active scan: the station actively transmits probes that make APs respond.
-    /// Faster, but uses more power.
+    /// Firmware actively uses the configured probe count and active dwell.
     Active,
     /// Passive scan: the station doesn't transmit any probes, just listens for beacons.
-    /// Slower, but uses less power.
+    /// Uses the configured passive dwell; elapsed time depends on available channels and firmware scheduling.
     Passive,
 }
 
@@ -60,22 +70,24 @@ pub enum ScanType {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub struct ScanOptions {
-    /// SSID to scan for.
+    /// UTF-8 SSID filter, at most 32 bytes; None requests any SSID.
     pub ssid: Option<heapless::String<32>>,
     /// If set to `None`, all APs will be returned. If set to `Some`, only APs
     /// with the specified BSSID will be returned.
     pub bssid: Option<[u8; 6]>,
-    /// Number of probes to send on each channel.
+    /// Active probes per channel; None requests firmware default, zero is passed through.
     pub nprobes: Option<u16>,
-    /// Time to spend waiting on the home channel.
+    /// Home-channel dwell, truncated to integer milliseconds then u32; None encodes u32::MAX default.
     pub home_time: Option<Duration>,
     /// Scan type: active or passive.
     pub scan_type: ScanType,
-    /// Period of time to wait on each channel when passive scanning.
+    /// Active or passive per-channel dwell according to scan_type; None requests default.
+    /// Integer milliseconds truncate to u32; u32::MAX is reduced by one to avoid the default sentinel.
     pub dwell_time: Option<Duration>,
 }
 
 impl Default for ScanOptions {
+    /// Returns passive all-SSID/all-BSSID scanning with firmware-default probes and dwell periods.
     fn default() -> Self {
         Self {
             ssid: None,
@@ -115,19 +127,20 @@ pub struct JoinOptions<'a> {
     pub cipher_tkip: bool,
     /// Enable AES encryption. Default true.
     pub cipher_aes: bool,
-    /// Passphrase. Default empty.
+    /// Credential bytes, default empty; join accepts at most 64 for WPA/WPA2 and 128 for WPA3 paths.
+    /// Borrowed bytes are not erased, and derived Debug/defmt formatting of this options value includes them.
     pub passphrase: &'a [u8],
     /// If false, `passphrase` is the human-readable passphrase string.
     /// If true, `passphrase` is the result of applying the PBKDF2 hash to the
     /// passphrase string. This makes it possible to avoid storing unhashed passwords.
     ///
-    /// This is not compatible with WPA3.
+    /// This is not compatible with WPA3; the caller must choose a compatible auth mode (not validated here).
     /// Default false.
     pub passphrase_is_prehashed: bool,
 }
 
 impl<'a> JoinOptions<'a> {
-    /// Create a new `JoinOptions` for joining open networks.
+    /// Returns open-network options with no ciphers or credential bytes.
     pub fn new_open() -> Self {
         Self {
             auth: JoinAuth::Open,
@@ -138,10 +151,8 @@ impl<'a> JoinOptions<'a> {
         }
     }
 
-    /// Create a new `JoinOptions` for joining encrypted networks.
-    ///
-    /// Defaults to supporting WPA2+WPA3 with AES only, you may edit
-    /// the returned options to change this.
+    /// Returns WPA2/WPA3 options borrowing `passphrase`, with AES enabled and TKIP disabled.
+    /// Does not validate credential length or prehash/auth compatibility.
     pub fn new(passphrase: &'a [u8]) -> Self {
         let mut this = Self::default();
         this.passphrase = passphrase;
@@ -150,6 +161,7 @@ impl<'a> JoinOptions<'a> {
 }
 
 impl<'a> Default for JoinOptions<'a> {
+    /// Returns WPA2/WPA3 AES options with an empty passphrase; this is not a validated join configuration.
     fn default() -> Self {
         Self {
             auth: JoinAuth::Wpa2Wpa3,
@@ -162,6 +174,7 @@ impl<'a> Default for JoinOptions<'a> {
 }
 
 impl<'a> Control<'a> {
+    /// Returns a software handle over `state_ch`, `event_sub`, `ioctl_state` and `secure_network`; performs no IOCTL.
     pub(crate) fn new(
         state_ch: ch::StateRunner<'a>,
         event_sub: &'a Events,
@@ -176,7 +189,10 @@ impl<'a> Control<'a> {
         }
     }
 
+    /// Uploads `clm` in chunks of at most 1024 bytes with begin/end flags, then requires zero firmware load status.
+    /// Empty input sends no chunk but still checks status. Cancellation retains any already-uploaded prefix.
     async fn load_clm(&mut self, clm: &[u8]) {
+        /// Maximum regulatory blob bytes per IOCTL chunk, excluding name/header.
         const CHUNK_SIZE: usize = 1024;
 
         debug!("Downloading CLM...");
@@ -210,7 +226,8 @@ impl<'a> Control<'a> {
         assert_eq!(self.get_iovar_u32("clmload_status").await, 0);
     }
 
-    /// Initialize WiFi controller.
+    /// Loads regulatory `clm`, selects world-wide XX country, configures firmware events/Wi-Fi and publishes the MAC address.
+    /// Requires a running paired Runner. Firmware rejection or unexpected reply lengths panic; cancellation leaves partial setup.
     pub async fn init(&mut self, clm: &[u8]) {
         self.load_clm(&clm).await;
 
@@ -296,7 +313,8 @@ impl<'a> Control<'a> {
         self.ioctl(IoctlType::Set, Ioctl::Down, 0, &mut []).await;
     }
 
-    /// Set power management mode.
+    /// Applies firmware power-management `mode`; mode 2 updates four timing variables before the final mode command.
+    /// Other modes retain those variables. Cancellation can leave only a prefix of settings applied.
     pub async fn set_power_management(&mut self, mode: PowerManagementMode) {
         // power save mode
         let mode_num = mode.mode();
@@ -309,7 +327,9 @@ impl<'a> Control<'a> {
         self.ioctl_set_u32(Ioctl::SetPm, 0, mode_num).await;
     }
 
-    /// Join a network with the provided SSID using the specified options.
+    /// Configures and joins UTF-8 `ssid` with `options`; returns event-qualified success or network/authentication failure.
+    /// SSID above 32 bytes or credentials above selected buffer capacity panic, possibly after partial firmware changes.
+    /// No local deadline; event queue loss can prolong the wait. Cancellation removes subscriptions without disassociating.
     pub async fn join(&mut self, ssid: &str, options: JoinOptions<'_>) -> Result<(), JoinError> {
         self.set_iovar_u32("ampdu_ba_wsize", 8).await;
 
@@ -386,15 +406,9 @@ impl<'a> Control<'a> {
         self.wait_for_join(i, secure_network).await
     }
 
+    /// Sends SSID payload `i`, then returns the terminal event result; `secure_network` selects supplicant versus SET_SSID success.
+    /// Wide statuses become Unknown, never success. No timeout; subscriber exhaustion panics. All exits clear the host event mask.
     async fn wait_for_join(&mut self, i: SsidInfo, secure_network: bool) -> Result<(), JoinError> {
-        struct UnsubscribeOnDrop<'a>(&'a Events);
-
-        impl Drop for UnsubscribeOnDrop<'_> {
-            fn drop(&mut self) {
-                self.0.mask.disable_all();
-            }
-        }
-
         let _uod = UnsubscribeOnDrop(&self.events);
 
         self.events.mask.enable(&[Event::SET_SSID, Event::AUTH, Event::PSK_SUP]);
@@ -409,7 +423,9 @@ impl<'a> Control<'a> {
         let result = loop {
             let msg = subscriber.next_message_pure().await;
 
-            let status = EStatus::from(msg.header.status as u8);
+            let status = u8::try_from(msg.header.status)
+                .map(EStatus::from)
+                .unwrap_or(EStatus::Unknown);
             match (msg.header.event_type, status, secure_network) {
                 // Join operation ends with SET_SSID event for open networks
                 (Event::SET_SSID, EStatus::SUCCESS, false) => break Ok(()),
@@ -439,23 +455,28 @@ impl<'a> Control<'a> {
         result
     }
 
-    /// Set GPIO pin on WiFi chip.
+    /// Sets radio GPIO `gpio_n` to high when `gpio_en`, otherwise low; panics unless index is 0..3.
+    /// On Pico 2 W these are radio-side GPIOs, not RP2350 GP numbers.
     pub async fn gpio_set(&mut self, gpio_n: u8, gpio_en: bool) {
         assert!(gpio_n < 3);
         self.set_iovar_u32x2("gpioout", 1 << gpio_n, if gpio_en { 1 << gpio_n } else { 0 })
             .await
     }
 
-    /// Start open access point.
+    /// Starts an open AP named `ssid` on firmware `channel`; SSID must fit 32 bytes or copying panics.
+    /// Channel/regulatory admission is delegated to firmware; cancellation leaves partial configuration.
     pub async fn start_ap_open(&mut self, ssid: &str, channel: u8) {
         self.start_ap(ssid, "", Security::OPEN, channel).await;
     }
 
-    /// Start WPA2 protected access point.
+    /// Starts a protected AP using `ssid`, `passphrase` and firmware `channel`.
+    /// Passphrase must contain 8..=64 bytes and SSID at most 32, otherwise panics. Firmware auth mask permits WPA/WPA2 PSK.
     pub async fn start_ap_wpa2(&mut self, ssid: &str, passphrase: &str, channel: u8) {
         self.start_ap(ssid, passphrase, Security::WPA2_AES_PSK, channel).await;
     }
 
+    /// Reconfigures Wi-Fi as an AP using `ssid`, `passphrase`, `security` and `channel`; no rollback on cancellation.
+    /// Protected passphrases outside 8..=64 bytes panic before writes; oversized SSIDs panic after interface changes.
     async fn start_ap(&mut self, ssid: &str, passphrase: &str, security: Security, channel: u8) {
         if security != Security::OPEN
             && (passphrase.as_bytes().len() < MIN_PSK_LEN || passphrase.as_bytes().len() > MAX_PSK_LEN)
@@ -518,7 +539,7 @@ impl<'a> Control<'a> {
         self.set_iovar_u32x2("bss", 0, 1).await; // bss = BSS_UP
     }
 
-    /// Closes access point.
+    /// Stops BSS/AP operation and re-enables APSTA mode through down/up commands; cancellation may stop between these states.
     pub async fn close_ap(&mut self) {
         // Stop AP
         self.set_iovar_u32x2("bss", 0, 0).await; // bss = BSS_DOWN
@@ -536,10 +557,8 @@ impl<'a> Control<'a> {
         self.up().await;
     }
 
-    /// Add specified address to the list of hardware addresses the device
-    /// listens on. The address must be a Group address (I/G bit set). Up
-    /// to 10 addresses are supported by the firmware. Returns the number of
-    /// address slots filled after adding, or an error.
+    /// Adds multicast `address` (I/G bit set), returning the occupied slot count; duplicates return the existing count.
+    /// Returns NotMulticast or NoFreeSlots at ten entries. Trusts firmware count/response layout; malformed counts can panic.
     pub async fn add_multicast_address(&mut self, address: [u8; 6]) -> Result<usize, AddMulticastAddressError> {
         // The firmware seems to ignore non-multicast addresses, so let's
         // prevent the user from adding them and wasting space.
@@ -569,7 +588,8 @@ impl<'a> Control<'a> {
         Ok(n)
     }
 
-    /// Retrieve the list of configured multicast hardware addresses.
+    /// Copies configured addresses into the prefix of `result`, returning the reported count and leaving its tail unchanged.
+    /// Trusts firmware count at most ten; malformed/truncated replies are not explicitly validated and can panic.
     pub async fn list_multicast_addresses(&mut self, result: &mut [[u8; 6]; 10]) -> usize {
         let mut buf = [0; 64];
         self.get_iovar("mcast_list", &mut buf).await;
@@ -584,7 +604,8 @@ impl<'a> Control<'a> {
         n
     }
 
-    /// Retrieve the latest RSSI value
+    /// Returns firmware RSSI in dBm as a signed native-endian i32; panics unless the reply is exactly four bytes.
+    /// No freshness or disconnected-value validation is applied.
     pub async fn get_rssi(&mut self) -> i32 {
         let mut rssi_buf = [0u8; 4];
         let n = self.ioctl(IoctlType::Get, Ioctl::GetRssi, 0, &mut rssi_buf).await;
@@ -592,6 +613,7 @@ impl<'a> Control<'a> {
         i32::from_ne_bytes(rssi_buf)
     }
 
+    /// Sends `val1` then `val2` in little-endian order under NUL-terminated iovar `name`; shared 196-byte capacity applies.
     async fn set_iovar_u32x2(&mut self, name: &str, val1: u32, val2: u32) {
         let mut buf = [0; 8];
         buf[0..4].copy_from_slice(&val1.to_le_bytes());
@@ -599,10 +621,12 @@ impl<'a> Control<'a> {
         self.set_iovar(name, &buf).await
     }
 
+    /// Sends little-endian `val` under NUL-terminated iovar `name`; errors follow the shared IOCTL path.
     async fn set_iovar_u32(&mut self, name: &str, val: u32) {
         self.set_iovar(name, &val.to_le_bytes()).await
     }
 
+    /// Returns a little-endian word for iovar `name`; panics unless exactly four bytes are returned.
     async fn get_iovar_u32(&mut self, name: &str) -> u32 {
         let mut buf = [0; 4];
         let len = self.get_iovar(name, &mut buf).await;
@@ -610,12 +634,15 @@ impl<'a> Control<'a> {
         u32::from_le_bytes(buf)
     }
 
+    /// Sends raw `val` under NUL-terminated `name`; combined name+terminator+value must fit 196 bytes or panics.
     async fn set_iovar(&mut self, name: &str, val: &[u8]) {
         self.set_iovar_v::<196>(name, val).await
     }
 
+    /// Sends raw `val` under NUL-terminated `name` using BUFSIZE stack/future bytes; insufficient capacity panics.
+    /// Logs name and length only, since values can contain credentials. Cancellation clears host ownership, not device effects.
     async fn set_iovar_v<const BUFSIZE: usize>(&mut self, name: &str, val: &[u8]) {
-        debug!("iovar set {} = {:02x}", name, Bytes(val));
+        debug!("iovar set {} ({} bytes)", name, val.len());
 
         let mut buf = [0; BUFSIZE];
         buf[..name.len()].copy_from_slice(name.as_bytes());
@@ -627,7 +654,8 @@ impl<'a> Control<'a> {
             .await;
     }
 
-    // TODO this is not really working, it always returns all zeros.
+    /// Fetches iovar `name` into the prefix of `res`, returning copied count capped to res capacity; tail remains unchanged.
+    /// NUL-terminated name and requested response must each fit 64 bytes or slicing panics. Firmware rejection is not returned as Result.
     async fn get_iovar(&mut self, name: &str, res: &mut [u8]) -> usize {
         debug!("iovar get {}", name);
 
@@ -645,29 +673,39 @@ impl<'a> Control<'a> {
         out_len
     }
 
+    /// Sends little-endian `val` with Set `cmd` on `iface`, discarding the response count.
     async fn ioctl_set_u32(&mut self, cmd: Ioctl, iface: u32, val: u32) {
         let mut buf = val.to_le_bytes();
         self.ioctl(IoctlType::Set, cmd, iface, &mut buf).await;
     }
 
+    /// Sends `kind`/`cmd`/`iface` using in-place request/response `buf`; returns received byte count.
+    /// Logs command metadata only. Requires the paired runner and inherits its panic/partial-effect/no-timeout behavior.
     async fn ioctl(&mut self, kind: IoctlType, cmd: Ioctl, iface: u32, buf: &mut [u8]) -> usize {
         if kind == IoctlType::Set {
-            debug!("ioctl set {:?} iface {} = {:02x}", cmd, iface, Bytes(buf));
+            debug!("ioctl set {:?} iface {} ({} bytes)", cmd, iface, buf.len());
         }
         let n = self.ioctl_inner(kind, cmd, iface, buf).await;
         n
     }
 
+    /// Publishes `kind`/`cmd`/`iface` with borrowed `buf`, returning response count after runner completion.
+    /// Cancellation clears the stored raw pointer before buf expires, but sends no controller cancellation and wakes no waiter.
     async fn ioctl_inner(&mut self, kind: IoctlType, cmd: Ioctl, iface: u32, buf: &mut [u8]) -> usize {
-        struct CancelOnDrop<'a>(&'a IoctlState);
+        /// Owns cleanup of the currently published borrowed IOCTL buffer.
+        struct CancelOnDrop<'a>(
+            #[doc = "Shared request slot to clear if the caller future is dropped."] &'a IoctlState,
+        );
 
         impl CancelOnDrop<'_> {
+            /// Consumes the guard after normal completion without clearing the completed response count.
             fn defuse(self) {
                 core::mem::forget(self);
             }
         }
 
         impl Drop for CancelOnDrop<'_> {
+            /// Clears host raw-buffer state; firmware commands already sent remain in effect.
             fn drop(&mut self) {
                 self.0.cancel_ioctl();
             }
@@ -680,15 +718,13 @@ impl<'a> Control<'a> {
         resp_len
     }
 
-    /// Start a wifi scan
-    ///
-    /// Returns a `Stream` of networks found by the device
-    ///
-    /// # Note
-    /// Device events are currently implemented using a bounded queue.
-    /// To not miss any events, you should make sure to always await the stream.
+    /// Starts scanning with `scan_opts`, returning a Scanner over the bounded host event queue.
+    /// Poll promptly: overwritten events are lost. No scan deadline/abort is supplied; dropping Scanner only disables host subscriptions.
+    /// Subscriber exhaustion panics. Cancellation clears the host mask and subscriber but may leave firmware scanning.
     pub async fn scan(&mut self, scan_opts: ScanOptions) -> Scanner<'_> {
+        /// Firmware scan encoding that transmits probe requests.
         const SCANTYPE_ACTIVE: u8 = 0;
+        /// Firmware scan encoding that only listens for beacons.
         const SCANTYPE_PASSIVE: u8 = 1;
 
         let dwell_time = match scan_opts.dwell_time {
@@ -737,24 +773,27 @@ impl<'a> Control<'a> {
             home_time: scan_opts.home_time.map(|e| e.as_millis() as u32).unwrap_or(!0),
             channel_num: 0,
             channel_list: [0; 1],
+            reserved: [0; 2],
         };
 
+        let subscription = UnsubscribeOnDrop(&self.events);
         self.events.mask.enable(&[Event::ESCAN_RESULT]);
         let subscriber = self.events.queue.subscriber().unwrap();
         self.set_iovar_v::<256>("escan", &scan_params.to_bytes()).await;
+        subscription.defuse();
 
         Scanner {
             subscriber,
             events: &self.events,
         }
     }
-    /// Leave the wifi, with which we are currently associated.
+    /// Sends Disassoc for interface zero; completion is the command response, not a separately observed link-down event.
     pub async fn leave(&mut self) {
         self.ioctl(IoctlType::Set, Ioctl::Disassoc, 0, &mut []).await;
         info!("Disassociated")
     }
 
-    /// Gets the MAC address of the device
+    /// Returns six MAC-address bytes from firmware; panics if the response length differs from six.
     pub async fn address(&mut self) -> [u8; 6] {
         let mut mac_addr = [0; 6];
         assert_eq!(self.get_iovar("cur_etheraddr", &mut mac_addr).await, 6);
@@ -762,14 +801,34 @@ impl<'a> Control<'a> {
     }
 }
 
+/// Clears subscriptions on completion/cancel without issuing a radio disconnect.
+struct UnsubscribeOnDrop<'a>(#[doc = "Shared event mask owned by the current control operation."] &'a Events);
+
+impl UnsubscribeOnDrop<'_> {
+    /// Transfers mask cleanup to the returned Scanner after successful startup.
+    fn defuse(self) {
+        core::mem::forget(self);
+    }
+}
+
+impl Drop for UnsubscribeOnDrop<'_> {
+    /// Clears every host subscription, not just the join-specific events.
+    fn drop(&mut self) {
+        self.0.mask.disable_all();
+    }
+}
+
 /// WiFi network scanner.
 pub struct Scanner<'a> {
+    /// Sole bounded event subscriber, released on drop.
     subscriber: EventSubscriber<'a>,
+    /// Shared host mask cleared at terminal event or drop; does not own radio scan cancellation.
     events: &'a Events,
 }
 
 impl Scanner<'_> {
-    /// Wait for the next found network.
+    /// Returns the next fixed BSS record for a PARTIAL event; None for terminal status or missing typed payload.
+    /// Terminal status clears all host subscriptions. Cancellation while waiting consumes no event; no local deadline exists.
     pub async fn next(&mut self) -> Option<BssInfo> {
         let event = self.subscriber.next_message_pure().await;
         if event.header.status != EStatus::PARTIAL {
@@ -786,7 +845,161 @@ impl Scanner<'_> {
 }
 
 impl Drop for Scanner<'_> {
+    /// Clears all host event subscriptions; does not issue a device scan-abort command.
     fn drop(&mut self) {
         self.events.mask.disable_all();
+    }
+}
+
+#[cfg(test)]
+/// Control-state regressions driven by the real IOCTL/event handoff without a radio.
+mod tests {
+    extern crate std;
+    use super::*;
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    use embassy_futures::block_on;
+
+    #[cfg(feature = "log")]
+    /// Captures actual logging calls to verify credential-bearing commands retain metadata only.
+    struct CaptureLog(
+        #[doc = "Mutex-protected formatted records captured by this test process."]
+        std::sync::Mutex<std::vec::Vec<std::string::String>>,
+    );
+
+    #[cfg(feature = "log")]
+    impl log::Log for CaptureLog {
+        /// Returns true for every `metadata` level so payload leaks cannot hide behind filtering.
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            let _ = metadata;
+            true
+        }
+        /// Stores formatted `record` text for the regression; poisoned capture state panics.
+        fn log(&self, record: &log::Record<'_>) {
+            self.0.lock().unwrap().push(std::format!("{}", record.args()));
+        }
+        /// No buffered external sink exists.
+        fn flush(&self) {}
+    }
+
+    #[cfg(feature = "log")]
+    /// Process-wide test logger; only this regression installs it.
+    static CAPTURE: CaptureLog = CaptureLog(std::sync::Mutex::new(std::vec::Vec::new()));
+
+    #[cfg(feature = "log")]
+    /// Real iovar and IOCTL logging never formats the supplied secret bytes.
+    #[test]
+    fn credential_commands_log_metadata_without_payload() {
+        log::set_logger(&CAPTURE).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+        let mut state = crate::State::new();
+        let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+        let mut control = Control::new(
+            runner.state_runner(),
+            &state.net.events,
+            &state.ioctl_state,
+            &state.net.secure_network,
+        );
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut secret = [0xda, 0x7a, 0x91, 0xee];
+        {
+            let mut request = pin!(control.set_iovar("sae_password", &secret));
+            assert!(request.as_mut().poll(&mut cx).is_pending());
+        }
+        {
+            let mut request = pin!(control.ioctl(IoctlType::Set, Ioctl::SetWsecPmk, 0, &mut secret));
+            assert!(request.as_mut().poll(&mut cx).is_pending());
+        }
+        let records = CAPTURE.0.lock().unwrap();
+        assert!(records.iter().any(|record| record.contains("sae_password")));
+        assert!(records.iter().any(|record| record.contains("SetWsecPmk")));
+        assert!(
+            records
+                .iter()
+                .all(|record| !record.contains("0xda") && !record.contains("0xee")),
+            "credential bytes appeared in logs"
+        );
+    }
+
+    /// Canceling scan startup releases its IOCTL buffer, subscriber and enabled host mask.
+    #[test]
+    fn scan_start_cancellation_releases_host_state() {
+        let mut state = crate::State::new();
+        let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+        let mut control = Control::new(
+            runner.state_runner(),
+            &state.net.events,
+            &state.ioctl_state,
+            &state.net.secure_network,
+        );
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut start = pin!(control.scan(ScanOptions::default()));
+            assert!(start.as_mut().poll(&mut cx).is_pending());
+            assert!(state.net.events.mask.is_enabled(Event::ESCAN_RESULT));
+            assert!(state.net.events.queue.subscriber().is_err());
+        }
+        assert!(!state.net.events.mask.is_enabled(Event::ESCAN_RESULT));
+        assert!(state.net.events.queue.subscriber().is_ok());
+        assert!(
+            pin!(state.ioctl_state.wait_pending())
+                .as_mut()
+                .poll(&mut cx)
+                .is_pending()
+        );
+
+        let mut start = pin!(control.scan(ScanOptions::default()));
+        assert!(start.as_mut().poll(&mut cx).is_pending());
+        let _request = block_on(state.ioctl_state.wait_pending());
+        state.ioctl_state.ioctl_done(&[]);
+        let Poll::Ready(scanner) = start.as_mut().poll(&mut cx) else {
+            panic!("scan did not start")
+        };
+        assert!(state.net.events.mask.is_enabled(Event::ESCAN_RESULT));
+        drop(scanner);
+        assert!(!state.net.events.mask.is_enabled(Event::ESCAN_RESULT));
+        assert!(state.net.events.queue.subscriber().is_ok());
+    }
+
+    /// Wide statuses cannot alias open-network success or secure supplicant success through byte truncation.
+    #[test]
+    fn join_rejects_wide_status_aliases() {
+        for (event_type, status, secure, succeeds) in [
+            (Event::SET_SSID, 0, false, true),
+            (Event::SET_SSID, 256, false, false),
+            (Event::SET_SSID, u32::MAX, false, false),
+            (Event::PSK_SUP, 6, true, true),
+            (Event::PSK_SUP, 262, true, false),
+        ] {
+            let mut state = crate::State::new();
+            let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+            let mut control = Control::new(
+                runner.state_runner(),
+                &state.net.events,
+                &state.ioctl_state,
+                &state.net.secure_network,
+            );
+            let mut join = pin!(control.wait_for_join(SsidInfo { len: 0, ssid: [0; 32] }, secure));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(join.as_mut().poll(&mut cx).is_pending());
+            let _request = block_on(state.ioctl_state.wait_pending());
+            state.ioctl_state.ioctl_done(&[]);
+            state
+                .net
+                .events
+                .queue
+                .immediate_publisher()
+                .publish_immediate(events::Message::new(
+                    events::Status { event_type, status },
+                    events::Payload::None,
+                ));
+            let Poll::Ready(result) = join.as_mut().poll(&mut cx) else {
+                panic!("terminal join event was not consumed")
+            };
+            assert_eq!(result.is_ok(), succeeds, "event={event_type:?}, status={status}");
+        }
     }
 }

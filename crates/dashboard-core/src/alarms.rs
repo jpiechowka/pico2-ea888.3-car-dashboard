@@ -3,66 +3,109 @@
 use crate::acquisition::DashboardSnapshot;
 use crate::samples::{DataMode, SampleMeta, SensorId, Source};
 
+/// Per-widget immutable policy binding, episode memory and acknowledgment fencing.
 mod configured;
 pub(crate) use configured::RuleEngineState;
 pub use configured::{RuleAlerts, RuleEngine, RuleIndex};
 
 /// Compact, already source/quality/time-checked view; no history copy for policy evaluation.
 pub(crate) struct Inputs<'a> {
+    /// Source/sequence/capture metadata corresponding to each qualified value.
     pub metadata: &'a [SampleMeta; 8],
+    /// Already freshness/source/mode/timestamp-qualified canonical channel values.
     pub values: [Option<f32>; 8],
+    /// Immutable per-channel freshness milliseconds, capped again for contextual rules.
     pub freshness: &'a [u16; 8],
 }
 
+/// Canonical-unit hysteresis conditions, independently qualified by source/context.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Limit {
+    /// Activate at/above on, clear at/below off; not permitted for raw lambda.
     High {
+        /// Inclusive activation threshold; greater than off.
         on: f32,
+        /// Inclusive clear threshold; less than on.
         off: f32,
     },
+    /// Activate at/below on, clear at/above off; not permitted for raw lambda.
     Low {
+        /// Inclusive activation threshold; less than off.
         on: f32,
+        /// Inclusive clear threshold; greater than on.
         off: f32,
     },
+    /// Activate outside inclusive outer bounds, clear inside inclusive inner bounds.
     OutsideWindow {
+        /// Low activation edge, below low_off.
         low_on: f32,
+        /// Low clear edge, no greater than high_off.
         low_off: f32,
+        /// High activation edge, above high_off.
         high_on: f32,
+        /// High clear edge, no less than low_off.
         high_off: f32,
     },
+    /// Activate inside inclusive inner bounds, clear outside inclusive outer bounds.
     InsideWindow {
+        /// Low activation edge, above low_off and no greater than high_on.
         low_on: f32,
+        /// Low clear edge, below low_on.
         low_off: f32,
+        /// High activation edge, below high_off and no less than low_on.
         high_on: f32,
+        /// High clear edge, above high_on.
         high_off: f32,
     },
+    /// Absolute lambda deviation from a qualified explicit target under load.
     LambdaDeviation {
+        /// Inclusive deviation activation threshold, greater than off.
         on: f32,
+        /// Inclusive nonnegative deviation clear threshold.
         off: f32,
+        /// Inclusive required operating load percentage in 0..=100.
         min_load: f32,
     },
 }
+/// Invalid rule construction/admission; no partially constructed engine is returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicyError {
+    /// Nonfinite, inverted or channel-inappropriate hysteresis parameters.
     Threshold,
+    /// Provenance cannot supply the rule's canonical channel/mode.
     Source,
+    /// On/off dwell is zero or greater than 30,000 milliseconds.
     Dwell,
+    /// Human-supplied evidence/reference text is empty after trimming.
     Evidence,
+    /// A per-channel rule was inserted into another channel's array slot.
     Slot,
 }
 
+/// Validated source-scoped rule; a reference string does not itself prove ECU qualification.
 #[derive(Clone, Copy, Debug)]
 pub struct Rule {
+    /// Canonical channel evaluated by this rule.
     sensor: SensorId,
+    /// Exact provenance required for every admitted measurement.
     source: Source,
+    /// Canonical-unit activation/clear hysteresis.
     limit: Limit,
+    /// Consecutive qualified-measurement activation dwell in milliseconds.
     on_ms: u64,
+    /// Consecutive qualified-measurement clear dwell in milliseconds.
     off_ms: u64,
+    /// Nonempty source/user-policy reference retained for inspection, not authenticated.
     reference: &'static str,
 }
 impl Rule {
+    /// Returns whether lambda/ECU-voltage/EGT needs independently verified operating context.
     const fn contextual(self) -> bool { matches!(self.sensor, SensorId::Lambda | SensorId::Battery | SensorId::Egt) }
 
+    /// Returns a rule for `sensor` from exact `source`, with `limit` hysteresis,
+    /// `on_ms`/`off_ms` dwell in 1..=30000, and nonblank `reference` evidence text.
+    /// Rejects mismatched source, nonfinite/misordered thresholds, wrong lambda
+    /// mode, invalid dwell or empty reference; does not qualify a vehicle threshold.
     pub fn new(
         sensor: SensorId,
         source: Source,
@@ -135,14 +178,20 @@ impl Rule {
         })
     }
 
+    /// Returns the original untrimmed reference text supplied when constructing the rule.
     pub const fn reference(&self) -> &'static str { self.reference }
 }
 
+/// EGT measurement semantics; only measured manifold context admits a legacy EGT rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EgtLocation {
+    /// No qualified location/model information.
     Unknown,
+    /// Qualified physical measurement at the exhaust manifold.
     MeasuredManifold,
+    /// Catalyst-associated temperature, not interchangeable with manifold measurement.
     Catalyst,
+    /// Computed temperature rather than the required physical manifold sensor.
     Modeled,
 }
 
@@ -150,33 +199,53 @@ pub enum EgtLocation {
 /// acquisition owner must establish the operating inputs from verified signals.
 #[derive(Clone, Copy, Debug)]
 pub struct Context {
+    /// Exact provenance of the associated canonical sample.
     pub source: Source,
+    /// Associated sample's per-channel producer sequence.
     pub sequence: u64,
+    /// Context observation time in monotonic milliseconds; source sample skew <=250 ms.
     pub received_at_ms: u64,
+    /// Verified engine-running signal, absent when unknown.
     pub running: Option<bool>,
+    /// Verified warm operating state required for lambda deviation policy.
     pub warm: Option<bool>,
+    /// Verified finite operating load in 0..=100 percent, if known.
     pub load_percent: Option<f32>,
+    /// Verified fuel-cut state; lambda rules require explicit false.
     pub fuel_cut: Option<bool>,
+    /// Qualified dimensionless target lambda; admission requires 0.01..=2.0.
     pub target_lambda: Option<f32>,
+    /// Physical/model semantics of an EGT sample.
     pub egt_location: EgtLocation,
 }
 
+/// Raw decision state; remembered latch/acknowledgment/snooze is tracked separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
+    /// No enabled rule in this slot/mode.
     Disabled,
+    /// Enabled rule lacks current qualified measurement/context continuity.
     Unavailable,
+    /// Qualified condition is not active and is not in activation dwell.
     Normal,
+    /// Qualified activation dwell is accumulating from distinct measurements.
     Pending,
+    /// Qualified active condition, including clear dwell until it completes.
     Active,
 }
 
+/// Copyable legacy per-channel policy publication with independent expiry guards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Alerts {
+    /// Raw engine status in canonical channel order.
     states: [Status; 8],
+    /// Inclusive freshness/context deadlines in monotonic milliseconds.
     expires: [u64; 8],
+    /// Last non-reversed engine evaluation time; readers reject earlier times.
     evaluated_at: u64,
 }
 impl Alerts {
+    /// All slots disabled with no measurements or timing evidence required.
     pub const DISABLED: Self = Self {
         states: [Status::Disabled; 8],
         expires: [0; 8],
@@ -184,6 +253,8 @@ impl Alerts {
     };
 
     /// Rendering may suppress expired alarms but must never advance dwell.
+    /// Returns a copy qualified against coherent `samples` at monotonic `now`
+    /// milliseconds; does not modify the acquisition engine or sample metadata.
     pub fn at(
         mut self,
         samples: &DashboardSnapshot,
@@ -196,6 +267,9 @@ impl Alerts {
         self
     }
 
+    /// Returns status for `id` using current `samples` at `now` milliseconds;
+    /// a reversed clock, expired deadline or absent value makes enabled rules
+    /// Unavailable. Disabled slots remain Disabled regardless of data.
     pub(crate) fn status_at(
         &self,
         samples: &DashboardSnapshot,
@@ -212,6 +286,7 @@ impl Alerts {
         }
     }
 
+    /// Returns whether stored channel `id` status is Active; does not refresh expiry.
     pub const fn active(
         self,
         id: SensorId,
@@ -219,6 +294,7 @@ impl Alerts {
         matches!(self.states[id as usize], Status::Active)
     }
 
+    /// Returns stored raw status for `id`, without present-time qualification.
     pub const fn status(
         self,
         id: SensorId,
@@ -226,6 +302,8 @@ impl Alerts {
         self.states[id as usize]
     }
 
+    /// Returns the first stored Active channel in fixed legacy display priority,
+    /// or `None`; caller qualifies expiry first. This is not calibrated severity.
     pub fn priority(self) -> Option<SensorId> {
         [
             SensorId::Water,
@@ -244,28 +322,45 @@ impl Alerts {
 
 // A compact state per rule: four timestamps/counters plus flag bits. No
 // sentinel timestamp is reserved, so u64::MAX remains representable.
+/// Compact dwell/episode substrate shared by legacy and configured policies.
 #[derive(Clone, Copy)]
 struct State {
+    /// Last consumed channel sequence, meaningful when SEEN is set.
     sequence: u64,
+    /// Last consumed sample timestamp in milliseconds, meaningful when SEEN is set.
     at: u64,
+    /// Last qualified context timestamp, meaningful when CONTEXT is set.
     context_at: u64,
+    /// Beginning of current activation/clear dwell in milliseconds, when PENDING.
     since: u64,
+    /// Validity/dwell/raw and remembered episode flags; no timestamp sentinel required.
     flags: u16,
 }
 impl Default for State {
+    /// Returns unseen, invalid and inactive state with no remembered episode.
     fn default() -> Self { Self::EMPTY }
 }
+/// A sample identity has been consumed, including rejected-context samples.
 const SEEN: u16 = 1;
+/// Prior qualified contextual timestamp is available for continuity checks.
 const CONTEXT: u16 = 2;
+/// Current raw decision has completed activation dwell.
 const ACTIVE: u16 = 4;
+/// A qualifying activation/clear dwell is in progress.
 const PENDING: u16 = 8;
+/// Raw decision currently has qualified measurement/context inputs.
 const VALID: u16 = 16;
+/// Configured episode remains remembered until qualified clear plus acknowledgment.
 const LATCHED: u16 = 32;
+/// Current episode has received a qualified acknowledgment.
 const ACKNOWLEDGED: u16 = 64;
+/// Current/remembered episode completed qualified clear dwell.
 const CLEARED: u16 = 128;
+/// Pending dwell is clearing rather than activating.
 const PENDING_CLEAR: u16 = 256;
 
 impl State {
+    /// Unseen state; all raw and remembered flags clear.
     const EMPTY: Self = Self {
         sequence: 0,
         at: 0,
@@ -274,8 +369,11 @@ impl State {
         flags: 0,
     };
 
+    /// Returns last consumed `(sequence, timestamp_ms)`, or `None` before consumption.
     fn seen(&self) -> Option<(u64, u64)> { (self.flags & SEEN != 0).then_some((self.sequence, self.at)) }
 
+    /// Records consumed `sequence` at monotonic sample `at` milliseconds; callers
+    /// establish ordering before invoking this unchecked identity assignment.
     fn record(
         &mut self,
         sequence: u64,
@@ -286,6 +384,9 @@ impl State {
         self.at = at;
     }
 
+    /// Consumes a newer source-matching value from `samples` for `rule` so rejected
+    /// context cannot later backdate dwell. `_now` is intentionally unused because
+    /// value qualification already happened upstream; no raw status is promoted.
     fn consume(
         &mut self,
         rule: Rule,
@@ -302,8 +403,11 @@ impl State {
         }
     }
 
+    /// Clears raw validity/activation/dwell while retaining consumed identity and
+    /// configured remembered episode flags for explicit acknowledgment/clear.
     fn invalidate(&mut self) { self.flags &= !(ACTIVE | PENDING | VALID | PENDING_CLEAR); }
 
+    /// Returns Unavailable, Active, Pending or Normal in precedence order from flags.
     fn status(&self) -> Status {
         if self.flags & VALID == 0 {
             Status::Unavailable
@@ -316,6 +420,12 @@ impl State {
         }
     }
 
+    /// Evaluates `rule` with qualified `samples`, optional verified `context`, and
+    /// monotonic `now` milliseconds; returns updated raw status and writes `expires`
+    /// only on a newly qualified measurement. Replays never advance dwell; source/
+    /// context failure and time/gap violations invalidate raw state. Joint dwell
+    /// spans later first timestamp through earlier latest timestamp; remembered
+    /// latch clear may qualify after raw freshness was lost.
     fn advance(
         &mut self,
         rule: Rule,
@@ -441,13 +551,19 @@ impl State {
 /// The acquisition owner must submit every accepted sample and fault before
 /// latest-value publication; sequence gaps cannot identify omitted observations.
 pub struct AlarmEngine {
+    /// Immutable optional rules in matching channel slots.
     rules: [Option<Rule>; 8],
+    /// Single-owner per-rule consumption and dwell state.
     states: [State; 8],
+    /// Last published raw statuses and expiry deadlines.
     alerts: Alerts,
+    /// Greatest admitted evaluation clock in milliseconds.
     last_ms: u64,
+    /// Whether at least one rule exists; permits cheap no-policy acquisition path.
     enabled: bool,
 }
 impl AlarmEngine {
+    /// Empty constant state used by the construction-only legacy Vehicle base.
     pub(crate) const DISABLED: Self = Self {
         rules: [None; 8],
         states: [State::EMPTY; 8],
@@ -456,6 +572,8 @@ impl AlarmEngine {
         enabled: false,
     };
 
+    /// Returns an engine for validated `rules` in canonical channel order, with
+    /// present rules initially Unavailable; returns Slot if any rule is misplaced.
     pub fn new(rules: [Option<Rule>; 8]) -> Result<Self, PolicyError> {
         for (i, rule) in rules.iter().enumerate() {
             if rule.is_some_and(|r| r.sensor as usize != i) {
@@ -480,10 +598,17 @@ impl AlarmEngine {
         })
     }
 
+    /// Returns raw published alerts; readers must qualify their expiry at display time.
     pub const fn snapshot(&self) -> Alerts { self.alerts }
 
+    /// Returns whether any rule exists, not whether current measurements qualify it.
     pub(crate) const fn enabled(&self) -> bool { self.enabled }
 
+    /// Returns the canonical policy value for `rule` from qualified `samples` at
+    /// `now` milliseconds and optional `context`, or `None` on admission failure.
+    /// Context must match source/sequence, age <=min(freshness,500 ms), skew <=250 ms.
+    /// Lambda returns absolute target deviation after load/warm/running/fuel-cut
+    /// checks; voltage requires running and EGT requires measured-manifold semantics.
     fn value(
         rule: Rule,
         samples: &Inputs<'_>,
@@ -533,6 +658,9 @@ impl AlarmEngine {
         }
     }
 
+    /// Evaluates coherent `samples` with per-channel verified `contexts` at `now`
+    /// milliseconds and returns updated alerts. Every admitted sample/fault must
+    /// reach the owner before coalescing; repeated snapshots cannot advance dwell.
     pub fn update(
         &mut self,
         samples: &DashboardSnapshot,
@@ -547,6 +675,10 @@ impl AlarmEngine {
         self.update_inputs(&input, contexts, now)
     }
 
+    /// Evaluates already-qualified `samples` and verified `contexts` at monotonic
+    /// `now` milliseconds, returning alerts. Clock reversal consumes qualifying
+    /// identities and invalidates raw states while retaining the greatest clock;
+    /// otherwise distinct measurements drive hysteresis/dwell and expiry.
     pub(crate) fn update_inputs(
         &mut self,
         samples: &Inputs<'_>,
@@ -586,6 +718,8 @@ impl AlarmEngine {
 
 /// Synthetic UI exercise only. These values are not vehicle recommendations.
 /// Engine oil and transmission oil deliberately have separate policy entries.
+/// Returns source-Demo rules with 1000 ms on/500 ms off dwell; boost is disabled.
+/// Panics if these fixed fixtures cease satisfying rule construction invariants.
 pub fn demo_rules() -> [Option<Rule>; 8] {
     use SensorId::*;
     let mut rules = [None; 8];
@@ -617,10 +751,14 @@ pub fn demo_rules() -> [Option<Rule>; 8] {
     rules
 }
 
+/// Returns synthetic running/warm/load80/target1 context bound to `samples` only
+/// for Demo source/mode entries with receive times; other channels return `None`.
 pub fn demo_contexts(samples: &DashboardSnapshot) -> [Option<Context>; 8] {
     demo_contexts_for(samples.mode, &samples.metadata)
 }
 
+/// Returns per-channel synthetic context from explicit `mode` and `metadata`,
+/// preserving each sample's sequence/time; requires Demo mode/source and a timestamp.
 pub(crate) fn demo_contexts_for(
     mode: DataMode,
     metadata: &[SampleMeta; 8],
@@ -645,8 +783,11 @@ pub(crate) fn demo_contexts_for(
 }
 
 #[cfg(test)]
+/// Regression for constant construction state matching the original constructors.
 mod construction_tests {
     use super::*;
+    /// Returns unit after comparing constant/default empty state and disabled
+    /// engine fields; panics if construction optimization changes runtime initialization.
     #[test]
     fn constant_state_and_disabled_engine_match_original_default_fields() {
         let original = State::default();

@@ -24,47 +24,83 @@ use wasm_bindgen_futures::spawn_local;
 use web_sys::{AbortController, Request};
 
 use super::*;
+/// Admitted firmware downloads and explicit flash controls.
 mod artifacts;
+/// Session-bound device selection and inspection acknowledgments.
 mod devices;
+/// Retained flash outcomes and explicit local-record cleanup.
 mod history;
+/// Read-only rendering of bounded installed-tool reports.
 mod prerequisites;
+/// Build-attempt storage inventory and explicit cleanup selection.
 mod storage;
+/// Bounded Fetch streams and cancellation-aware request options.
 mod transport;
 use transport::{fetch_bounded, request_init};
 
+/// Fixed loopback helper API; capability authentication is held only in memory.
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
+/// Last admitted helper observations; reconnecting to a new session clears them.
 #[derive(Clone, Default)]
 struct ViewState {
+    /// Whether the current request chain has an admitted helper connection.
     connected: bool,
+    /// User-facing operation status or bounded failure description.
     message: String,
+    /// Validated selected-job sequence and bounded retained events.
     feed: JobFeed,
+    /// Schema-checked prerequisite JSON, with at most 64 checks.
     report: Option<serde_json::Value>,
+    /// Most recent device scan from the current helper session.
     devices: Option<DeviceScanReport>,
+    /// At most two validated artifacts available in the current session.
     artifacts: Vec<ArtifactSummary>,
+    /// Bounded retained flash records; not evidence of a currently connected device.
     history: Option<dashboard_helper_protocol::FlashHistory>,
+    /// Decoded build-attempt inventory, including malformed/unavailable status.
     storage: Option<BuildStorageView>,
 }
+/// Browser-owned helper request chain, immutable build snapshot and explicit device authority.
 #[derive(Clone, Copy)]
 pub struct State {
+    /// Reactive observations rendered by helper panels.
     view: RwSignal<ViewState>,
+    /// Ephemeral capability and helper session identity.
     connection: StoredValue<Option<Connection>>,
+    /// One foreground HTTP request is in flight.
     busy: RwSignal<bool>,
+    /// A job-cancel request queued behind the current HTTP request.
     cancel: RwSignal<bool>,
+    /// Checked reconnect generation; stale async results cannot publish.
     epoch: StoredValue<u64>,
+    /// At most one scheduled next-step/poll callback.
     timer: StoredValue<Option<TimeoutHandle>>,
+    /// AbortController for the current foreground request.
     abort: StoredValue<Option<AbortController>, LocalStorage>,
+    /// Frozen upload/build sequence owns the build controls.
     building: RwSignal<bool>,
+    /// Checked build-option generation; None permanently disables new builds.
     options_revision: RwSignal<Option<u64>>,
+    /// Immutable project/options snapshot retained through upload authorization.
     prepared: StoredValue<Option<PreparedBuild>>,
+    /// Validated upload identity used to authorize its matching build.
     uploaded: StoredValue<Option<ProjectUploadResponse>>,
+    /// Artifact selected for bounded size/hash-checked download.
     download: StoredValue<Option<ArtifactSummary>>,
+    /// Artifact selected for explicit reauthorized flash submission.
     flashing: StoredValue<Option<ArtifactSummary>>,
+    /// Selected device, inspection identity and genuine-board acknowledgment.
     device: RwSignal<DeviceSelection>,
+    /// Whether terminal job handling must fetch an inspection report.
     inspecting: StoredValue<bool>,
+    /// Selected flash-attempt record for explicit cleanup.
     removing: StoredValue<Option<dashboard_helper_protocol::AttemptId>>,
+    /// Selected build-attempt record for explicit cleanup.
     removing_build: StoredValue<Option<dashboard_helper_protocol::AttemptId>>,
 }
 impl State {
+    /// Returns disconnected helper state with no capability, device acknowledgment or
+    /// selected operation; creating state performs no network request.
     pub fn new() -> Self {
         Self {
             view: RwSignal::new(ViewState {
@@ -90,6 +126,8 @@ impl State {
         }
     }
 
+    /// Registers owner cleanup to stop the poll timer, abort browser transport and
+    /// retire pending capabilities/selections; native jobs continue until explicitly cancelled.
     pub fn install(self) {
         on_cleanup(move || {
             if let Some(Some(timer)) = self.timer.try_get_value() {
@@ -109,39 +147,67 @@ impl State {
         });
     }
 }
+/// One foreground protocol step; successful responses choose the next step.
 #[derive(Clone, Copy)]
 enum Action {
+    /// Create an explicit capability session, then recover job status.
     Connect,
+    /// Fetch up to 16 jobs and resume the first open event stream.
     Jobs,
+    /// Request a native installed-tool check job.
     Check,
+    /// Request a native BOOTSEL discovery job after clearing old selection.
     Scan,
+    /// Read at most 128 events after the current feed cursor.
     Poll,
+    /// Request cooperative cancellation of the selected native job.
     Cancel,
+    /// Read the stored prerequisite report.
     Report,
+    /// Read stored device scan results for this session.
     Devices,
+    /// Upload the immutable converted project snapshot.
     Upload,
+    /// Authorize a build against the exact accepted upload/options/project.
     Build,
+    /// Read the current session artifact catalogue.
     Artifacts,
+    /// Fetch and verify the selected artifact before browser download.
     Download,
+    /// Request explicit inspection of the selected device.
     Inspect,
+    /// Read the completed inspection into device authorization state.
     Inspection,
+    /// Reauthorize and submit the selected artifact/device flash request.
     Flash,
+    /// Read retained flash outcomes.
     History,
+    /// Request removal of explicitly selected local flash records.
     Cleanup,
+    /// Read build-attempt storage status.
     Storage,
+    /// Request removal of explicitly selected build-attempt records.
     CleanupBuild,
 }
+/// Request-lifetime deadline owner; disposal cancels browser transport, not native jobs.
 struct ReadGuard {
+    /// Foreground Fetch cancellation signal.
     abort: AbortController,
+    /// Fifteen-second transport deadline cleared at request disposal.
     timer: TimeoutHandle,
 }
 impl Drop for ReadGuard {
+    /// Clears the deadline and aborts the browser request on every exit path.
     fn drop(&mut self) {
         self.timer.clear();
         self.abort.abort();
     }
 }
 
+/// Returns bounded response bytes for `action` using `ui`'s current capability and
+/// selected identities. Reauthorizes build/flash immediately before encoding; a 15-second
+/// deadline or disposal aborts Fetch. Missing authority, encoding, HTTP and stream
+/// errors return static messages; native work may already have started on failure.
 async fn request(
     ui: Ui,
     action: Action,
@@ -311,11 +377,16 @@ async fn request(
     .await
 }
 
+/// Returns `bytes` decoded as `T` only after its wire validation; malformed JSON or
+/// invalid bounds/identities return a static error. Input size must already be bounded.
 fn parse<T: serde::de::DeserializeOwned + Wire>(bytes: &[u8]) -> Result<T, &'static str> {
     let value: T = serde_json::from_slice(bytes).map_err(|_| "Malformed helper response")?;
     value.validate().map_err(|_| "Helper response failed validation")?;
     Ok(value)
 }
+/// Admits `bytes` for `action` into `ui`, returning the next request or None when
+/// the chain stops. Validates protocol/session/job/artifact identities before publication;
+/// stale build snapshots stop before build submission. Errors require caller cleanup.
 fn apply(
     ui: Ui,
     action: Action,
@@ -539,6 +610,8 @@ fn apply(
         }
     }
 }
+/// Replaces `ui`'s next foreground step with `action`, delayed 800 ms for polling
+/// or zero otherwise; timer failure stops automatic progress with a reconnect notice.
 fn schedule(
     ui: Ui,
     action: Action,
@@ -562,6 +635,9 @@ fn schedule(
             .update(|v| v.message = "Browser polling timer unavailable. Reconnect to resume.".into());
     }
 }
+/// Starts `action` in `ui` unless a foreground request is busy. Reconnect advances
+/// the checked epoch; disposed/stale responses are ignored. Success continues one
+/// timer chain, prioritizing queued cancellation; failure clears pending authority.
 fn send(
     ui: Ui,
     action: Action,
@@ -633,16 +709,21 @@ fn send(
     });
 }
 
+/// Advances `ui`'s checked build-options revision; exhaustion becomes None and
+/// disables further builds until state is recreated.
 pub fn options_changed(ui: Ui) {
     ui.helper
         .options_revision
         .update(|value| *value = value.and_then(|v| v.checked_add(1)));
 }
-/// Eligibility shared by ordinary helper operations; Connect and Cancel have separate admission.
+/// Returns whether ordinary operations in `ui` are blocked by a request, build
+/// sequence, disconnected state or active native job; Connect/Cancel admit separately.
 fn operation_unavailable(ui: Ui) -> bool {
     let state = ui.helper;
     state.busy.get() || state.building.get() || state.view.with(|v| !v.connected || v.feed.active())
 }
+/// Returns whether `ui` lacks idle helper authority, available option identity,
+/// admitted editor state or normalized build options.
 pub fn build_disabled(ui: Ui) -> bool {
     let state = ui.helper;
     operation_unavailable(ui)
@@ -650,6 +731,9 @@ pub fn build_disabled(ui: Ui) -> bool {
         || ui.editor.with(|e| e.action_readiness().block.is_some())
         || ui.build.with(|s| s.normalized().is_err())
 }
+/// Captures `ui`'s accepted project/options and starts its upload only when enabled;
+/// capture errors preserve the project and report a message. Later steps reauthorize
+/// that frozen snapshot before submitting a native build.
 pub fn start_build(ui: Ui) {
     if build_disabled(ui) {
         return;
@@ -677,6 +761,8 @@ pub fn start_build(ui: Ui) {
         Err(message) => state.view.update(|v| v.message = message.into()),
     }
 }
+/// Returns the user-facing label for `stage`, retaining a debug fallback for
+/// protocol stages without a specialized label.
 fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
     use dashboard_helper_protocol::{FirmwareStage, ProbeStage, StageId};
     match stage {
@@ -699,8 +785,13 @@ fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
         _ => format!("{stage:?}"),
     }
 }
+/// Returns connection, explicit operation, stage/outcome and retained-log controls
+/// for `ui`; reconnect restores observation without restarting an interrupted write.
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+pub fn Panel(
+    /// Shared helper connection, request-chain and explicit build/flash action state.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.helper;
     view! {
         <section class="build-card helper-panel" aria-labelledby="helper-title"><div class="build-section-title"><span>"LOCAL"</span><h2 id="helper-title">"Computer & devices"</h2></div>
@@ -729,7 +820,8 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     }
 }
 
-/// The relay owns its queue and cancellation lease; authority stays in this module.
+/// Returns `ui`'s live connected generation, or None when disconnected/disposed;
+/// the relay owns its queue and cancellation lease without acquiring helper authority.
 pub fn relay_epoch(ui: Ui) -> Option<u64> {
     if ui.helper.view.try_with(|v| v.connected).unwrap_or(false) {
         ui.helper.epoch.try_get_value()
@@ -737,6 +829,9 @@ pub fn relay_epoch(ui: Ui) -> Option<u64> {
         None
     }
 }
+/// Returns the bounded diagnostic reply after posting `body` through `ui` at
+/// `epoch`, using caller-owned `abort`. Rejects bodies over 16 KiB, changed connections,
+/// request/header failures and transport errors; caller owns deadline and reply parsing.
 pub async fn relay_post(
     ui: Ui,
     epoch: u64,
@@ -776,6 +871,8 @@ pub async fn relay_post(
 }
 
 #[cfg(feature = "browser-tests")]
+/// Returns success when disconnected, truncated and aborted streams are rejected
+/// using isolated test-origin endpoints; setup or assertion failures return JS errors.
 pub(super) async fn browser_cases() -> Result<(), wasm_bindgen::JsValue> {
     let abort = web_sys::AbortController::new()?;
     let init = transport::request_init("GET", &abort);

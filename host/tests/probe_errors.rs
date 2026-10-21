@@ -1,3 +1,5 @@
+//! Probe failure taxonomy against the locked host dependency, preserving codes without private payload bytes.
+/// Actual probe classification adapter, compiled on the host without radio operations.
 #[path = "../../firmware/ble-probe/src/errors.rs"]
 mod errors;
 
@@ -9,8 +11,11 @@ use trouble_host::att::{Att, AttErrorCode};
 use trouble_host::l2cap::LeCreditConnResultCode;
 use trouble_host::{BleHostError, Error};
 
+/// Returns production bounded classification for host-stack `error`; controller
+/// I/O errors are exercised separately because they use the outer error variant.
 fn classify(error: Error) -> FailureReason { errors::failure_reason(BleHostError::<()>::BleHost(error)) }
 
+/// Every ATT error byte remains the exact remote code rather than a generic local failure.
 #[test]
 fn all_att_bytes_preserve_the_remote_code() {
     for code in u8::MIN..=u8::MAX {
@@ -18,6 +23,8 @@ fn all_att_bytes_preserve_the_remote_code() {
     }
 }
 
+/// Only the four ATT security-related codes classify standard values as protected, without initiating security
+/// escalation.
 #[test]
 fn only_authentication_authorization_and_encryption_errors_mark_values_protected() {
     for code in u8::MIN..=u8::MAX {
@@ -33,6 +40,7 @@ fn only_authentication_authorization_and_encryption_errors_mark_values_protected
     }
 }
 
+/// HCI success remains success and all nonzero controller statuses retain their exact error code.
 #[test]
 fn all_nonzero_hci_statuses_preserve_the_controller_code() {
     assert!(Status::SUCCESS.to_result().is_ok());
@@ -42,6 +50,15 @@ fn all_nonzero_hci_statuses_preserve_the_controller_code() {
     }
 }
 
+/// Hardware Error event bytes retain their distinct family and complete vendor code, including zero.
+#[test]
+fn all_hardware_error_bytes_preserve_the_vendor_code() {
+    for code in u8::MIN..=u8::MAX {
+        assert_eq!(classify(Error::HardwareError(code)), FailureReason::Hardware(code));
+    }
+}
+
+/// Controller I/O, HCI byte decoding and ATT codec failures keep separate actionable classifications.
 #[test]
 fn controller_io_and_decode_failures_remain_distinct() {
     assert_eq!(
@@ -58,6 +75,7 @@ fn controller_io_and_decode_failures_remain_distinct() {
     }
 }
 
+/// Lifecycle/resource/availability errors preserve stable action families across the locked host-stack variants.
 #[test]
 fn host_lifecycle_capacity_and_availability_families_remain_actionable() {
     for (error, expected) in [
@@ -84,6 +102,7 @@ fn host_lifecycle_capacity_and_availability_families_remain_actionable() {
     }
 }
 
+/// Malformed payload variants retain only InvalidValue classification, deliberately excluding embedded/private bytes.
 #[test]
 fn invalid_payload_variants_discard_private_bytes_but_retain_failure_family() {
     for error in [
@@ -106,6 +125,7 @@ fn invalid_payload_variants_discard_private_bytes_but_retain_failure_family() {
     }
 }
 
+/// L2CAP connection refusals remain host errors and cannot be misrepresented as protected ATT read values.
 #[test]
 fn l2cap_refusals_remain_host_errors_without_becoming_protected_att_values() {
     for code in [

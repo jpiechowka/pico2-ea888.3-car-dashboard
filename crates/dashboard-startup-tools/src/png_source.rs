@@ -1,5 +1,11 @@
+//! Static PNG decoding, RGBA normalization and row-major sprite extraction.
 use crate::encode::Output;
 use crate::{ConvertError as E, *};
+/// Decode bounded `source` after PNG preflight using already validated `o`; return native asset facts.
+/// Expand palette/low-bit samples and strip 16-bit channels to eight bits; ignore text/ICC data.
+/// The decoder has an 8 MiB allocation budget in addition to caller-owned RGBA/output buffers.
+/// A static PNG lasts 1000 ms; sprites require exact grid division and bounded count/duration.
+/// Errors discard every temporary/output buffer. Caller must enforce source bytes/options first.
 pub fn convert(
     source: &[u8],
     o: &Options,

@@ -1,9 +1,12 @@
+//! Revision-bound context actions, overlap repair and menu positioning regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::geometry::{PanelPoint, validate_draft_drop};
 use dashboard_configurator::widget_actions::{Direction, WidgetMenu, menu_position};
 
 #[test]
+/// Duplicated widgets copy advanced settings but retain distinct IDs and independent warning rules after edits.
 fn duplicate_widget_copies_advanced_settings_with_independent_identity_and_warning_state() {
     use dashboard_configurator::simulator::ControlSimulator;
     use dashboard_core::alarms::RuleIndex;
@@ -54,6 +57,7 @@ fn duplicate_widget_copies_advanced_settings_with_independent_identity_and_warni
     );
 }
 
+/// Returns a validated two-widget landscape editor with adjacent compact cells; fixture admission failure panics.
 fn pair() -> Editor {
     let mut config = default_config();
     config.widgets.truncate(2);
@@ -71,6 +75,7 @@ fn pair() -> Editor {
 }
 
 #[test]
+/// Each direction preserves span and requires the entire original/new footprint in bounds, including u8 extremes.
 fn nudge_respects_the_whole_widget_at_every_cell_and_size() {
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
         for column in 0..=u8::MAX {
@@ -101,6 +106,7 @@ fn nudge_respects_the_whole_widget_at_every_cell_and_size() {
 }
 
 #[test]
+/// Overlap hit ordering exposes covered widgets; a menu nudge repairs the retained resize as one undoable edit.
 fn menu_can_pick_a_fully_covered_widget_then_repair_the_rejected_layout() {
     let mut editor = pair();
     let before = editor.export_binary().unwrap();
@@ -141,6 +147,7 @@ fn menu_can_pick_a_fully_covered_widget_then_repair_the_rejected_layout() {
 }
 
 #[test]
+/// Menus cannot acquire authority over another editor/revision or unlisted widget; boundary no-op preserves revision.
 fn menu_commands_reject_replaced_editors_old_revisions_and_unlisted_targets() {
     let mut editor = pair();
     let mut menu = WidgetMenu::open(&mut editor, 1, None).unwrap();
@@ -167,6 +174,8 @@ fn menu_commands_reject_replaced_editors_old_revisions_and_unlisted_targets() {
 }
 
 #[test]
+/// Hit candidates follow half-open panel bounds and current view; nonfinite/header points retain only the explicit
+/// target.
 fn hit_list_is_half_open_view_scoped_and_ignores_nonfinite_points() {
     let mut editor = pair();
     for point in [
@@ -202,6 +211,7 @@ fn hit_list_is_half_open_view_scoped_and_ignores_nonfinite_points() {
 }
 
 #[test]
+/// Deleting a newly rejected overlapping widget restores accepted bytes and retires the menu.
 fn menu_delete_repairs_overlap_and_can_delete_rejected_new_widgets() {
     let mut editor = pair();
     let before = editor.export_binary().unwrap();
@@ -227,6 +237,7 @@ fn menu_delete_repairs_overlap_and_can_delete_rejected_new_widgets() {
 }
 
 #[test]
+/// Menu placement clamps to viewport margins including oversize menus and rejects nonfinite/degenerate measurements.
 fn viewport_fit_handles_edges_oversized_menus_and_bad_measurements() {
     assert_eq!(
         menu_position((990.0, 790.0), (250.0, 300.0), (1000.0, 800.0)),

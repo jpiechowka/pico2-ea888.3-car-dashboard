@@ -1,8 +1,10 @@
+//! Bounded timing-window admission, independent quantile checks and telemetry capacity.
 use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
 use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};
 use dashboard_host_validation::display::window::{FrameWindow, WINDOW_US};
 use dashboard_host_validation::input_trace::{InputCounters, InputTrace};
 
+/// Missing cycle data taints only its current window; transfer distributions and later zero survive.
 #[test]
 fn unavailable_cycle_observation_preserves_transfer_distributions_and_expires_with_window() {
     let mut window = FrameWindow::new(0);
@@ -38,6 +40,9 @@ fn unavailable_cycle_observation_preserves_transfer_distributions_and_expires_wi
     );
 }
 
+/// Returns a full-frame trace with sequence `id`, render `start`/`end`, transfer `tx` and `done`.
+/// All times are microseconds; queueing ends two microseconds after `end`, with ten active cycles.
+/// Panics if ordering is invalid or `end + 2` overflows in a checked build.
 fn trace(
     id: u64,
     start: u64,
@@ -66,6 +71,7 @@ fn trace(
     .unwrap()
 }
 
+/// Thirty-second reports reject backdated frames and retain inter-completion intervals across idle windows.
 #[test]
 fn thirty_second_windows_preserve_boundary_intervals_and_report_idle() {
     let mut window = FrameWindow::new(0);
@@ -101,6 +107,7 @@ fn thirty_second_windows_preserve_boundary_intervals_and_report_idle() {
     assert_eq!(next.metrics[8].max, Some(0));
 }
 
+/// Alternating overlapping/serial renders match sorted latency samples and bounded histogram quantiles.
 #[test]
 fn overlapping_and_serial_render_intervals_match_an_independent_sorted_reference() {
     let mut window = FrameWindow::new(0);
@@ -143,6 +150,7 @@ fn overlapping_and_serial_render_intervals_match_an_independent_sorted_reference
     }
 }
 
+/// Replayed frame/input identities and reversed clocks reject atomically across reporting boundaries.
 #[test]
 fn invalid_frame_or_replayed_input_is_rejected_atomically_across_reports() {
     let mut window = FrameWindow::new(0);
@@ -195,6 +203,7 @@ fn invalid_frame_or_replayed_input_is_rejected_atomically_across_reports() {
     );
 }
 
+/// Maximum clock and zero-duration frames remain defined within the 29,000-byte window-storage bound.
 #[test]
 fn maximum_clock_and_zero_duration_have_defined_results() {
     let mut window = FrameWindow::new(u64::MAX - WINDOW_US);
@@ -220,6 +229,7 @@ fn maximum_clock_and_zero_duration_have_defined_results() {
     assert!(bytes <= 29000);
 }
 
+/// Dropping pending or unpolled receives preserves queued ownership until a successful receive poll.
 #[test]
 fn dropping_an_idle_receive_never_consumes_or_releases_a_queued_frame() {
     use std::future::Future;
@@ -242,6 +252,7 @@ fn dropping_an_idle_receive_never_consumes_or_releases_a_queued_frame() {
     assert!(channel.try_receive().is_err());
 }
 
+/// Maximum-width values encode all twelve telemetry lines within each fixed 320-byte buffer.
 #[test]
 fn fixed_encoder_capacity_covers_all_maximum_width_fields() {
     use dashboard_host_validation::display::window::WindowReport;

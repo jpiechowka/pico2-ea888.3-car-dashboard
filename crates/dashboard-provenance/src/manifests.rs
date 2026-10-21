@@ -1,101 +1,185 @@
+//! Repository-pinned HAL/radio identities and reviewed overlay admission.
+//! Trust anchors live in source; manifest metadata cannot select a different release.
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
 
 use crate::{Hashes, Result, parse, read_manifest, tree, verify_archive};
+/// Exact crates.io embassy-rp release admitted by this verifier.
 const HAL_VERSION: &str = "0.10.0";
+/// SHA256 of the immutable upstream HAL crate archive, independent of local overlays.
 const HAL_HASH: &str = "5d98f472894c1ecffac5596c657af5305c57282d29e8746d7fec033951931bc8";
+/// Embassy source revision associated with the pinned HAL and original radio firmware inventory.
 const COMMIT: &str = "84444a19eb57d978e3c09fcdc8e60cdd7278eb03";
-const HAL_PATCHES: [&str; 34] = [
+/// Exact reviewed HAL replacement/addition paths; update coherently with overlay provenance.
+const HAL_PATCHES: [&str; 74] = [
     "Cargo.lock",
     "Cargo.toml",
     "Cargo.toml.orig",
     "LOCAL_PATCHES.md",
+    "build.rs",
+    "src/adc.rs",
     "src/aon_timer/mod.rs",
     "src/block.rs",
+    "src/bootsel.rs",
     "src/clocks.rs",
+    "src/critical_section_impl.rs",
     "src/datetime/datetime_chrono.rs",
     "src/datetime/datetime_no_deps.rs",
     "src/datetime/epoch.rs",
+    "src/datetime/mod.rs",
+    "src/dma.rs",
+    "src/executor.rs",
+    "src/executor_start.rs",
     "src/flash.rs",
     "src/flash_probe.rs",
+    "src/flash_read.rs",
+    "src/float/add_sub.rs",
+    "src/float/cmp.rs",
+    "src/float/conv.rs",
+    "src/float/div.rs",
+    "src/float/functions.rs",
+    "src/float/mod.rs",
+    "src/float/mul.rs",
+    "src/fmt.rs",
     "src/gpio.rs",
+    "src/i2c.rs",
     "src/i2c_slave.rs",
+    "src/intrinsics.rs",
     "src/lib.rs",
     "src/multicore.rs",
+    "src/multicore_stack.rs",
+    "src/otp.rs",
+    "src/pio/batch.rs",
+    "src/pio/instr.rs",
     "src/pio/mod.rs",
     "src/pio_programs/clk.rs",
     "src/pio_programs/clock_divider.rs",
+    "src/pio_programs/hd44780.rs",
     "src/pio_programs/i2s.rs",
     "src/pio_programs/mod.rs",
     "src/pio_programs/onewire.rs",
     "src/pio_programs/pwm.rs",
+    "src/pio_programs/rotary_encoder.rs",
     "src/pio_programs/spi.rs",
     "src/pio_programs/stepper.rs",
     "src/pio_programs/uart.rs",
     "src/pio_programs/ws2812.rs",
     "src/psram.rs",
     "src/pwm.rs",
+    "src/qmi_cs1.rs",
+    "src/relocate.rs",
+    "src/reset.rs",
+    "src/rom_data/mod.rs",
+    "src/rom_data/rp2040.rs",
     "src/rom_data/rp235x.rs",
+    "src/rtc/conversions.rs",
+    "src/rtc/filter.rs",
+    "src/rtc/mod.rs",
+    "src/spi.rs",
+    "src/spi_divider.rs",
+    "src/spinlock.rs",
+    "src/spinlock_mutex.rs",
+    "src/time_driver.rs",
     "src/trng.rs",
     "src/uart/buffered.rs",
     "src/uart/buffered_io.rs",
     "src/uart/mod.rs",
+    "src/usb.rs",
+    "src/watchdog.rs",
 ];
+/// Traceable compatibility-backport description; syntax is checked, upstream content is not fetched.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Backport {
+    /// Forty lowercase hexadecimal commit characters.
     upstream_commit: String,
+    /// Embassy commit URL that must match upstream_commit exactly.
     upstream_url: String,
+    /// Required nonempty description of the copied/backported behavior.
     scope: String,
+    /// Optional lowercase SHA256 of a documented fragment; validated syntactically here.
     fragment_sha256: Option<String>,
 }
+/// HAL-specific strict JSON manifest with immutable release facts and reviewed source overlays.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Hal {
+    /// Must equal embassy-rp; JSON key is crate.
     #[serde(rename = "crate")]
     name: String,
+    /// Must equal HAL_VERSION.
     version: String,
+    /// Exact static.crates.io archive URL for the pinned name/version.
     url: String,
+    /// Must equal the compiled-in immutable HAL archive digest.
     archive_sha256: String,
+    /// Must equal the pinned Embassy revision.
     upstream_commit: String,
+    /// Complete original upstream regular-file inventory, never rewritten by overlays.
     original_files_sha256: Hashes,
+    /// Reviewed replacement/addition hashes with keys constrained by HAL_PATCHES.
     patched_files_sha256: Hashes,
+    /// Named backport explanations; each value's commit URL/hash syntax is checked.
     compatibility_backports: BTreeMap<String, Backport>,
 }
+/// Strict manifest for one pinned Rust radio crate and its current local overlay.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Radio {
+    /// cyw43 or trouble-host according to the current check iteration; JSON key is crate.
     #[serde(rename = "crate")]
     name: String,
+    /// Exact version compiled into check_radio.
     version: String,
+    /// Exact static.crates.io archive URL for that name/version.
     source: String,
+    /// Expected pinned compressed archive digest; local-tree checks do not download the archive.
     archive_sha256: String,
+    /// Complete original regular-file map.
     original: Hashes,
+    /// Reviewed replacement/addition map overriding the original only for local-tree hashing.
     modified: Hashes,
 }
+/// Strict radio binary/NVRAM/license provenance and a separately pinned Bluetooth replacement.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Firmware {
+    /// Exact upstream Embassy GitHub repository URL.
     repository: String,
+    /// Original Embassy commit, pinned by COMMIT.
     revision: String,
+    /// Must identify the cyw43-firmware directory.
     directory: String,
+    /// Exact original five-file firmware/NVRAM/readme/license inventory.
     files: Hashes,
+    /// Only the Bluetooth binary and README may replace original entries.
     modified: Hashes,
+    /// Exact upstream array extraction identity for the current Bluetooth binary.
     bluetooth_update: BluetoothUpdate,
 }
+/// Source header/array and extracted-byte identities for the reviewed Bluetooth firmware update.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BluetoothUpdate {
+    /// Pinned georgerobotics/cyw43-driver repository URL.
     repository: String,
+    /// Exact reviewed upstream commit; not a floating branch/tag.
     revision: String,
+    /// Repository-relative source header path.
     path: String,
+    /// C array identifier extracted into the binary.
     array: String,
+    /// SHA256 of the reviewed upstream header.
     source_sha256: String,
+    /// SHA256 of the extracted Bluetooth binary, also required in the overlay map.
     blob_sha256: String,
+    /// Exact expected binary length, 6970 bytes; origin metadata is checked here.
     bytes: u32,
 }
+/// Return success only when `firmware` matches pinned origins, extraction metadata and exact inventories.
+/// This validates the manifest, not file bytes; check_radio subsequently hashes the actual tree.
 fn validate_firmware_manifest(firmware: &Firmware) -> Result<()> {
     let update = &firmware.bluetooth_update;
     if firmware.repository != "https://github.com/embassy-rs/embassy"
@@ -131,12 +215,19 @@ fn validate_firmware_manifest(firmware: &Firmware) -> Result<()> {
     }
     Ok(())
 }
+/// Return the static.crates.io archive URL for trusted package `name` and `version` literals.
+/// Values are interpolated unchanged; this is not a general URL encoder or network operation.
 fn source_url(
     name: &str,
     version: &str,
 ) -> String {
     format!("https://static.crates.io/crates/{name}/{name}-{version}.crate")
 }
+/// Verify the HAL manifest/tree below vendor `root`; optionally verify original crate `archive` too.
+/// Return inventory counts and whether the archive was supplied. Reject drift in pinned release,
+/// overlay paths, metadata syntax, source bytes or filesystem/resource contracts. Backport prose
+/// is not fetched or mechanically proven; original and patched bytes remain distinct evidence.
+/// No network, extraction or writes occur; input files must remain unchanged during verification.
 pub fn check_hal(
     root: &Path,
     archive: Option<&Path>,
@@ -202,6 +293,9 @@ pub fn check_hal(
         if archive.is_some() { "checked" } else { "not supplied" }
     ))
 }
+/// Verify pinned cyw43/trouble-host and firmware/NVRAM/license trees under vendor `root`.
+/// Return a combined success summary only after all checks pass; errors discard partial summaries.
+/// Archive digests are manifest trust anchors, not downloads; tree hashes prove current bytes only.
 pub fn check_radio(root: &Path) -> Result<String> {
     let mut output = String::new();
     for (name, version, hash) in [
@@ -237,10 +331,12 @@ pub fn check_radio(root: &Path) -> Result<String> {
 }
 
 #[cfg(test)]
+/// Pinning regressions for source-header extraction identity and permitted firmware overlays.
 mod tests {
     use super::*;
 
     #[test]
+    /// Exact baseline metadata passes; altered origins, digest/length or inventory entries fail.
     fn firmware_update_binds_exact_origin_extraction_and_overlay() {
         let baseline: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

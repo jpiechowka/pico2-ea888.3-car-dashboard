@@ -1,7 +1,17 @@
+//! Dedicated browser worker for bounded source-artwork conversion.
+//! Messages carry an ArrayBuffer source and JSON options; replies transfer converted
+//! asset bytes or a diagnostic. The owning browser adapter handles timeout, worker
+//! termination and revision admission; this worker never publishes editor state.
 #[cfg(not(target_arch = "wasm32"))]
+/// Native placeholder; conversion tests call the shared conversion crate directly.
 fn main() {}
 
 #[cfg(target_arch = "wasm32")]
+/// Install a worker-lifetime message listener, then announce readiness.
+/// Source buffers are limited by `MAX_SOURCE_BYTES` and options by 1024 UTF-16 code
+/// units before JSON parsing. Conversion errors become error replies; post failures
+/// are best-effort and must be detected by the owner's timeout. A synchronous
+/// conversion cannot observe cancellation; its owner terminates the whole worker.
 fn main() {
     use dashboard_startup_tools::{MAX_SOURCE_BYTES, Options, convert};
     use wasm_bindgen::closure::Closure;

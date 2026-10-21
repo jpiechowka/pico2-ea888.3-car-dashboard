@@ -1,5 +1,7 @@
+//! Raw TE edge retention and gap handling, without inferring physical refresh from missing observations.
 use dashboard_host_validation::display::te::{TE_CAPACITY, TeObservations};
 
+/// At least two accepted observations are needed for an interval; long gaps remain raw elapsed time.
 #[test]
 fn startup_and_missing_edges_never_invent_a_period() {
     let mut edges = TeObservations::new();
@@ -18,6 +20,7 @@ fn startup_and_missing_edges_never_invent_a_period() {
     assert_eq!(edges.age_us(999_999), None);
 }
 
+/// The fixed ring retains newest chronological edges and explicitly counts overwritten observations.
 #[test]
 fn bounded_ring_keeps_order_and_counts_overwritten_observations() {
     let mut edges = TeObservations::new();
@@ -36,6 +39,7 @@ fn bounded_ring_keeps_order_and_counts_overwritten_observations() {
     assert_eq!(edges.latest_interval_us(), Some(16_667));
 }
 
+/// Duplicate/backward timestamps increment rejection counters without changing accepted history, even at u64::MAX.
 #[test]
 fn duplicate_and_regressed_observations_are_rejected_without_corrupting_history() {
     let mut edges = TeObservations::new();
@@ -51,6 +55,7 @@ fn duplicate_and_regressed_observations_are_rejected_without_corrupting_history(
     assert_eq!(edges.latest(), Some(u64::MAX));
 }
 
+/// Maintenance discards one possibly stale pending IRQ, then needs two fresh edges while retaining older raw history.
 #[test]
 fn maintenance_gap_discards_pending_edge_and_requires_two_new_observations() {
     let mut edges = TeObservations::new();

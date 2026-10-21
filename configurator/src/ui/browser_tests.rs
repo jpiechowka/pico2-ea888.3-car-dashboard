@@ -5,6 +5,8 @@ use wasm_bindgen_futures::JsFuture;
 
 use super::*;
 
+/// Yields through a browser timer requesting a 10-ms delay; panics if timer setup or promise completion fails. Browser
+/// scheduling may take longer.
 pub(super) async fn tick() {
     let promise = js_sys::Promise::new(&mut |resolve, _| {
         web_sys::window()
@@ -14,6 +16,8 @@ pub(super) async fn tick() {
     });
     JsFuture::from(promise).await.unwrap();
 }
+/// Polls `ready` at most 500 times with timer yields; panics on exhaustion. The nominal five-second budget excludes
+/// browser scheduling delays.
 pub(super) async fn until(mut ready: impl FnMut() -> bool) {
     for _ in 0..500 {
         if ready() {
@@ -23,12 +27,15 @@ pub(super) async fn until(mut ready: impl FnMut() -> bool) {
     }
     panic!("browser condition exceeded five seconds");
 }
+/// Returns success when `value` is true, otherwise a JavaScript error containing `label`.
 fn check(
     value: bool,
     label: &str,
 ) -> Result<(), JsValue> {
     if value { Ok(()) } else { Err(label.into()) }
 }
+/// Starts the asynchronous suite against mounted `ui` only with the exact test query and isolated-server handshake.
+/// Installs a panic hook and posts results; handshake failure leaves the suite inert.
 pub(super) fn launch(ui: Ui) {
     // A test-feature build accidentally served on the user's origin must remain inert.
     if web_sys::window().unwrap().location().search().ok().as_deref() != Some("?browser-tests=1") {
@@ -68,12 +75,16 @@ pub(super) fn launch(ui: Ui) {
         let _ = JsFuture::from(web_sys::window().unwrap().fetch_with_str_and_init("/__result", &init)).await;
     });
 }
+/// Posts `label` to the isolated server progress endpoint; ignores fetch failures and returns after the request
+/// settles. Panics without a browser window.
 pub(super) async fn progress(label: &str) {
     let init = web_sys::RequestInit::new();
     init.set_method("POST");
     init.set_body(&label.into());
     let _ = JsFuture::from(web_sys::window().unwrap().fetch_with_str_and_init("/__progress", &init)).await;
 }
+/// Runs storage, worker, helper fixture, canvas-failure and real DOM regressions against `ui`; returns the first
+/// JavaScript/assertion failure. Mutates isolated test storage and editor state, with no physical device operations.
 async fn run(ui: Ui) -> Result<(), JsValue> {
     progress("RUN IDB blocked upgrade and retry").await;
     idb::browser_cases().await?;
@@ -137,6 +148,8 @@ async fn run(ui: Ui) -> Result<(), JsValue> {
     occupancy_cases(ui).await?;
     Ok(())
 }
+/// Exercises actual input/change wiring on `ui`, preserving accepted state during invalid text and repairing export
+/// admission; returns DOM/assertion errors. Panics when expected startup fixtures are missing.
 async fn dom_cases(ui: Ui) -> Result<(), JsValue> {
     let doc = web_sys::window().unwrap().document().unwrap();
     let input = doc
@@ -187,6 +200,8 @@ async fn dom_cases(ui: Ui) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Changes `ui` orientation and checks the rendered occupancy grid after each edit; returns rejected-edit,
+/// missing-table or DOM/assertion errors.
 async fn occupancy_cases(ui: Ui) -> Result<(), JsValue> {
     let doc = web_sys::window().unwrap().document().unwrap();
     for (orientation, grid) in [(Orientation::Portrait, "2 × 4"), (Orientation::Landscape, "4 × 2")] {

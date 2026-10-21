@@ -8,20 +8,27 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
 use heapless::{String, Vec};
 
+/// Maximum retained chronological records; the next accepted record evicts the oldest.
 pub const LOG_ENTRIES: usize = 128;
+/// Maximum UTF-8 message bytes, excluding timestamp/severity stored separately.
 pub const LOG_MSG_LEN: usize = 40;
+/// Maximum copied history rows in one display snapshot, excluding the protected fault row.
 pub const VISIBLE_LINES: usize = 12;
 
 /// A tiny observer of the already-owned snapshot, never another acquisition owner.
 /// Baseline capture is quiet. Effective freshness includes elapsed-time staleness.
 pub struct QualityTransitions {
+    /// Last observed effective quality in SensorId order, including elapsed-time expiry.
     previous: [crate::samples::Quality; 8],
+    /// Whether the quiet initial baseline has been captured.
     initialized: bool,
 }
 impl Default for QualityTransitions {
+    /// Returns a quiet, uninitialized quality observer.
     fn default() -> Self { Self::new() }
 }
 impl QualityTransitions {
+    /// Returns an observer whose first snapshot establishes a baseline without logs.
     pub const fn new() -> Self {
         Self {
             previous: [crate::samples::Quality::Unknown; 8],
@@ -29,6 +36,10 @@ impl QualityTransitions {
         }
     }
 
+    /// Compares `snapshot` effective qualities at `now_ms` milliseconds with the
+    /// previous observation and attempts Info entries in `store` for changes.
+    /// Advances the baseline even when logging loses a record; never replaces
+    /// explicit fault storage. Caller supplies its already accepted coherent source.
     pub fn log<M: RawMutex>(
         &mut self,
         store: &LogStore<M>,
@@ -54,6 +65,8 @@ impl QualityTransitions {
 }
 
 /// Caller invokes once when its existing request owner consumes a result.
+/// Returns `true` only when `feedback` is Rejected and an Info append was attempted
+/// in `store` at `now_ms` milliseconds; contention/exhaustion may still drop history.
 pub fn log_warning_rejection<M: RawMutex>(
     store: &LogStore<M>,
     feedback: crate::warning_state::WarningFeedback,
@@ -67,11 +80,15 @@ pub fn log_warning_rejection<M: RawMutex>(
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Bounded UTF-8 prefix with sticky formatting/truncation failure evidence.
 pub struct Message {
+    /// Valid UTF-8 prefix of at most 40 bytes; no ellipsis is appended.
     text: String<LOG_MSG_LEN>,
+    /// A write exceeded capacity or entry formatting otherwise failed.
     truncated: bool,
 }
 impl Message {
+    /// Returns empty text with no truncation evidence.
     pub const fn new() -> Self {
         Self {
             text: String::new(),
@@ -79,11 +96,15 @@ impl Message {
         }
     }
 
+    /// Returns the retained UTF-8 prefix, including any control characters before display sanitization.
     pub fn as_str(&self) -> &str { &self.text }
 
+    /// Returns whether any formatting/write attempt failed or exceeded capacity.
     pub const fn truncated(&self) -> bool { self.truncated }
 }
 impl fmt::Write for Message {
+    /// Appends the largest UTF-8-aligned prefix of `s` that fits. Returns an error
+    /// after a partial write on truncation; subsequent writes return an error without mutation.
     fn write_str(
         &mut self,
         s: &str,
@@ -103,12 +124,16 @@ impl fmt::Write for Message {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Whether an event may replace the separately protected latest explicit fault.
 pub enum Level {
     #[default]
+    /// Informational history only, including derived quality/acknowledgment events.
     Info,
+    /// Explicit failure retained independently of history eviction/contention.
     Fault,
 }
 impl Level {
+    /// Returns the single-character display prefix `I` or `F`.
     pub const fn prefix(self) -> char {
         match self {
             Self::Info => 'I',
@@ -118,18 +143,26 @@ impl Level {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Formatted log event before a history sequence is assigned.
 pub struct Entry {
+    /// Severity controlling the protected fault copy.
     pub level: Level,
+    /// Caller-supplied boot-relative milliseconds; not validated for ordering.
     pub timestamp_ms: u64,
+    /// Bounded UTF-8 text and explicit truncation evidence.
     pub message: Message,
 }
 impl Entry {
+    /// Empty informational placeholder used only for unused ring slots.
     pub const EMPTY: Self = Self {
         level: Level::Info,
         timestamp_ms: 0,
         message: Message::new(),
     };
 
+    /// Returns an entry with `level`, caller clock `timestamp_ms` in milliseconds
+    /// and formatted `args`. Keeps a valid prefix on formatting failure and marks
+    /// truncation; user-provided formatting runs here before storage locks.
     pub fn new(
         level: Level,
         timestamp_ms: u64,
@@ -148,27 +181,41 @@ impl Entry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Accepted history event paired with a never-reused chronological sequence.
 pub struct Record {
+    /// One-based append identity, independent of potentially unordered event timestamps.
     pub sequence: u64,
+    /// Original bounded event, including severity and full millisecond timestamp.
     pub entry: Entry,
 }
 
+/// Owned history snapshot; no storage lock survives its construction.
 pub struct Window {
+    /// At most 12 records in oldest-to-newest order within the selected window.
     pub entries: Vec<Record, VISIBLE_LINES>,
+    /// Latest retained sequence anywhere in the ring, or `None` when empty.
     pub newest: Option<u64>,
+    /// Total accepted records evicted from the ring, excluding rejected append attempts.
     pub overwritten: u64,
 }
 
+/// Fixed 128-record ring with sequence anchors stable until their records are evicted.
 pub struct LogBuffer {
+    /// Physical ring slots; only the `count` entries preceding `head` are live.
     entries: [Record; LOG_ENTRIES],
+    /// Next overwrite position modulo capacity.
     head: usize,
+    /// Retained record count in `0..=128`.
     count: usize,
+    /// Last assigned sequence, zero while empty; exhaustion permanently stops admission.
     sequence: u64,
 }
 impl Default for LogBuffer {
+    /// Returns an empty ring with no issued sequences.
     fn default() -> Self { Self::new() }
 }
 impl LogBuffer {
+    /// Returns empty fixed storage whose first accepted record has sequence one.
     pub const fn new() -> Self {
         Self {
             entries: [const {
@@ -184,6 +231,8 @@ impl LogBuffer {
     }
 
     /// Exhaustion is terminal: never alias an earlier sequence or anchor.
+    /// Appends `entry`, evicting the oldest when full. Returns `false` without
+    /// mutation at sequence exhaustion, or `true` after assignment and insertion.
     pub fn push(
         &mut self,
         entry: Entry,
@@ -198,10 +247,13 @@ impl LogBuffer {
         true
     }
 
+    /// Returns inclusive oldest/newest retained sequence bounds, or `None` when empty.
     fn bounds(&self) -> Option<(u64, u64)> {
         (self.count != 0).then(|| (self.sequence - (self.count as u64 - 1), self.sequence))
     }
 
+    /// Returns the ending sequence for `anchor` (`None` follows newest), clamped
+    /// to retain a full available window; empty history returns `None`.
     fn end(
         &self,
         anchor: Option<u64>,
@@ -212,6 +264,8 @@ impl LogBuffer {
     }
 
     /// None follows the newest entry. Negative rotation moves into history.
+    /// Returns the adjusted `anchor` after signed row `delta`, saturating/clamping
+    /// to retained history. Returns `None` at newest or on an empty ring; does not mutate storage.
     pub fn scroll(
         &self,
         anchor: Option<u64>,
@@ -227,6 +281,8 @@ impl LogBuffer {
         (end != self.sequence).then_some(end)
     }
 
+    /// Returns an owned chronological window ending at `anchor`; `None` follows
+    /// newest, expired/out-of-range anchors clamp, and an empty ring yields no entries.
     pub fn window(
         &self,
         anchor: Option<u64>,
@@ -254,32 +310,49 @@ impl LogBuffer {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Independently sampled saturating loss counters; not atomic with a history window.
 pub struct Counters {
+    /// Push attempts dropped because the history lock was busy.
     pub contention: u32,
+    /// Entries whose formatter failed or exceeded the message byte capacity.
     pub truncated: u32,
+    /// Push attempts rejected after sequence exhaustion.
     pub exhausted: u32,
+    /// Explicit faults replacing an already occupied protected fault slot.
     pub fault_replacements: u32,
 }
+/// Saturating-increments `counter` with relaxed atomic ordering; supplies statistics, not synchronization.
 fn count(counter: &AtomicU32) {
     let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         Some(value.saturating_add(1))
     });
 }
 
+/// Concurrent bounded history plus an independently protected latest explicit fault.
+/// `M` must support the caller's IRQ/core context. Formatting occurs outside locks;
+/// history uses try-lock only, and fault/history locks are never nested.
 pub struct LogStore<M: RawMutex> {
+    /// Async-mutex storage accessed only with nonawaiting try-lock operations here.
     history: Mutex<M, LogBuffer>,
     // Separate bounded copy; informational history contention/eviction cannot
     // discard the latest explicit fault. Never nest this with the history lock.
+    /// Latest explicit fault, copied under a separate short raw-mutex critical section.
     fault: BlockingMutex<M, RefCell<Option<Entry>>>,
+    /// Saturating history-contention append loss count.
     contention: AtomicU32,
+    /// Saturating message formatting/truncation count.
     truncated: AtomicU32,
+    /// Saturating history sequence-exhaustion loss count.
     exhausted: AtomicU32,
+    /// Saturating count of overwrites of the independent fault copy.
     fault_replacements: AtomicU32,
 }
 impl<M: RawMutex> Default for LogStore<M> {
+    /// Returns an empty store with no fault or recorded losses.
     fn default() -> Self { Self::new() }
 }
 impl<M: RawMutex> LogStore<M> {
+    /// Returns empty bounded history, an empty protected fault slot and zero counters.
     pub const fn new() -> Self {
         Self {
             history: Mutex::new(LogBuffer::new()),
@@ -291,6 +364,10 @@ impl<M: RawMutex> LogStore<M> {
         }
     }
 
+    /// Formats `args` at `timestamp_ms` boot-relative milliseconds and severity
+    /// `level`, then attempts history insertion without awaiting its lock.
+    /// Fault entries update the independent protected copy even if history is busy
+    /// or exhausted. Loss/truncation is counted; timestamps are accepted without ordering checks.
     pub fn push(
         &self,
         level: Level,
@@ -320,6 +397,8 @@ impl<M: RawMutex> LogStore<M> {
         }
     }
 
+    /// Returns an owned window for ending sequence `anchor` (`None` follows latest),
+    /// or `None` when history is busy. Read contention does not increment append-loss counters.
     pub fn window(
         &self,
         anchor: Option<u64>,
@@ -327,6 +406,8 @@ impl<M: RawMutex> LogStore<M> {
         self.history.try_lock().ok().map(|history| history.window(anchor))
     }
 
+    /// Adjusts `anchor` by signed row `delta` under a history try-lock. Returns
+    /// `false` without changing it when busy, or `true` after clamping/follow-latest resolution.
     pub fn scroll(
         &self,
         anchor: &mut Option<u64>,
@@ -339,9 +420,11 @@ impl<M: RawMutex> LogStore<M> {
         true
     }
 
+    /// Returns a short-lock copy of the latest explicit fault, or `None` before one is recorded.
     pub fn fault(&self) -> Option<Entry> { self.fault.lock(|slot| slot.borrow().clone()) }
 
     /// Independent saturating counters; not a transaction with a history snapshot.
+    /// Returns relaxed atomic observations of the four statistics.
     pub fn counters(&self) -> Counters {
         Counters {
             contention: self.contention.load(Ordering::Relaxed),
@@ -353,11 +436,13 @@ impl<M: RawMutex> LogStore<M> {
 }
 
 #[cfg(all(test, not(target_os = "none")))]
+/// Host regressions for separate fault ownership, saturation and terminal sequence exhaustion.
 mod tests {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     use super::*;
     #[test]
+    /// Holds history busy while checking retained fault, unchanged scroll and saturating loss counters.
     fn fault_survives_a_busy_history_and_counters_saturate() {
         let store = LogStore::<CriticalSectionRawMutex>::new();
         let guard = store.history.try_lock().unwrap();
@@ -375,6 +460,7 @@ mod tests {
         assert_eq!(store.counters().contention, u32::MAX);
     }
     #[test]
+    /// Confirms exhausted history freezes its last record while protected fault storage still advances.
     fn sequence_exhaustion_keeps_last_record_and_never_wraps() {
         let store = LogStore::<CriticalSectionRawMutex>::new();
         store.history.try_lock().unwrap().sequence = u64::MAX - 1;

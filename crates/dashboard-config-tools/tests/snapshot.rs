@@ -1,3 +1,5 @@
+//! Snapshot identity, format migration, read bounds and CLI publication regressions.
+
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -5,8 +7,30 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use dashboard_config::*;
 use dashboard_config_tools::*;
 
-struct Temp(PathBuf);
+/// Exact read limits include empty/zero and maximal `usize` without sentinel overflow.
+#[test]
+fn bounded_read_handles_zero_exact_over_limit_and_maximum_limit() {
+    let temp = Temp::new();
+    let file = temp.0.join("bounded.bin");
+    std::fs::write(&file, []).unwrap();
+    assert!(read_bounded(&file, 0).unwrap().is_empty());
+    assert!(read_bounded(&file, usize::MAX).unwrap().is_empty());
+    std::fs::write(&file, b"a").unwrap();
+    assert!(matches!(read_bounded(&file, 0), Err(Error::TooLarge)));
+    assert_eq!(read_bounded(&file, 1).unwrap(), b"a");
+    assert_eq!(read_bounded(&file, usize::MAX).unwrap(), b"a");
+    std::fs::write(&file, b"ab").unwrap();
+    assert!(matches!(read_bounded(&file, 1), Err(Error::TooLarge)));
+    assert!(matches!(read_bounded(&temp.0, 1), Err(Error::Path)));
+}
 
+/// Owned temporary test directory; drop removes only its checked test-prefixed tree.
+struct Temp(
+    /// Absolute directory path reserved for this process/test sequence.
+    PathBuf,
+);
+
+/// Unicode output replacement and compile-in-place preserve valid bytes and leave no sibling.
 #[test]
 fn cli_replaces_unicode_output_and_compiles_in_place() {
     let temp = Temp::new();
@@ -45,6 +69,7 @@ fn cli_replaces_unicode_output_and_compiles_in_place() {
     assert_eq!(std::fs::read(&output).unwrap(), original);
 }
 
+/// Preparing a v1 snapshot emits the current schema while preserving default semantics.
 #[test]
 fn old_binary_input_is_compiled_to_current_firmware_schema() {
     let temp = Temp::new();
@@ -59,7 +84,9 @@ fn old_binary_input_is_compiled_to_current_firmware_schema() {
     assert_eq!(decode(prepared.bytes()).unwrap().config(), &default_config());
 }
 impl Temp {
+    /// Return an exclusively created process/sequence directory; panic on fixture I/O failure.
     fn new() -> Self {
+        /// Per-process uniqueness for concurrently running test fixtures.
         static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
             "dashboard-config-{}-{}",
@@ -71,6 +98,7 @@ impl Temp {
     }
 }
 impl Drop for Temp {
+    /// Remove the owned tree after checking its temp-root/prefix; panic if cleanup fails.
     fn drop(&mut self) {
         assert!(self.0.starts_with(std::env::temp_dir()));
         assert!(
@@ -85,6 +113,7 @@ impl Drop for Temp {
     }
 }
 
+/// Absence selects defaults; explicit invalid paths/bytes or Cargo line injection never do.
 #[test]
 fn absent_selection_is_default_but_explicit_empty_missing_and_invalid_fail() {
     let temp = Temp::new();
@@ -101,6 +130,7 @@ fn absent_selection_is_default_but_explicit_empty_missing_and_invalid_fail() {
     assert!(prepare(Some(OsStr::new("bad\ncargo:rustc-env=X=1")), &temp.0).is_err());
 }
 
+/// Publication uses frozen validated bytes; changing the input later changes only a new preparation.
 #[test]
 fn build_copies_the_validated_snapshot_even_if_source_changes_after_read() {
     let temp = Temp::new();
@@ -125,6 +155,7 @@ fn build_copies_the_validated_snapshot_even_if_source_changes_after_read() {
     assert_eq!(decode(changed.bytes()).unwrap().config().views[0].name, "Track");
 }
 
+/// Empty and ASCII abc SHA-256 fixtures catch fingerprint algorithm/hex drift.
 #[test]
 fn sha256_snapshot_fingerprint_matches_independent_known_answer() {
     assert_eq!(
@@ -137,6 +168,7 @@ fn sha256_snapshot_fingerprint_matches_independent_known_answer() {
     );
 }
 
+/// CLI migrates supported legacy JSON/binaries and preserves output on invalid/missing input.
 #[test]
 fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     use std::process::Command;
@@ -219,6 +251,7 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     cli_failure(run(&["unexpected"]));
 }
 
+/// Legacy migration and nondefault advanced globals survive the ordinary binary snapshot path.
 #[test]
 fn v3_input_and_complete_v4_globals_use_ordinary_prepare_and_compile() {
     let temp = Temp::new();
@@ -244,6 +277,7 @@ fn v3_input_and_complete_v4_globals_use_ordinary_prepare_and_compile() {
     assert_eq!(decode(prepared.bytes()).unwrap(), expected);
 }
 
+/// Hex encoding covers all byte values, zero padding and the empty-input boundary.
 #[test]
 fn byte_encoding_is_lowercase_zero_padded_and_roundtrips_every_byte() {
     let bytes = (0..=255u8).collect::<Vec<_>>();
@@ -261,6 +295,7 @@ fn byte_encoding_is_lowercase_zero_padded_and_roundtrips_every_byte() {
     assert_eq!(hex_bytes(&[]), "");
 }
 
+/// Return successful CLI `output`; panic with `operation` and stderr on a rejected command.
 fn cli_success(
     output: std::process::Output,
     operation: &str,
@@ -274,6 +309,7 @@ fn cli_success(
     output
 }
 
+/// Require `output` to carry ordinary exit code 1 and a nonempty rejection diagnostic.
 fn cli_failure(output: std::process::Output) {
     assert_eq!(
         output.status.code(),
@@ -285,6 +321,7 @@ fn cli_failure(output: std::process::Output) {
     assert!(!output.stderr.is_empty(), "CLI rejection lacked diagnostics");
 }
 
+/// Maximum views/widgets survive inspect/compile; invalid peers, CRC and excess bytes fail safely.
 #[test]
 fn cli_inspects_maximum_capacity_and_rejects_invalid_input_without_aborting() {
     let temp = Temp::new();

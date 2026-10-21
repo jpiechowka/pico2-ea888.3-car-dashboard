@@ -1,3 +1,6 @@
+//! Hidden Windows children assigned to a kill-on-close Job at process creation, with bounded pipe capture.
+//! Ownership follows [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+//! and the [Rust attribute-list API](https://doc.rust-lang.org/std/os/windows/process/struct.ProcThreadAttributeList.html).
 use std::io::{self, Read};
 use std::mem::{size_of, zeroed};
 use std::os::windows::io::AsRawHandle;
@@ -14,23 +17,33 @@ use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, PROC_THREAD_ATTRIB
 
 use super::{Failure, FailureKind, Output};
 use crate::jobs::logs::StreamFramer;
-struct Job(HANDLE);
+/// Owned non-inheritable kill-on-close Job handle; default child inheritance keeps ordinary descendants inside it.
+struct Job(
+    /// Valid handle returned by CreateJobObjectW, closed exactly once.
+    HANDLE,
+);
 impl Drop for Job {
+    /// Closes the Job handle, requesting termination of remaining associated processes; explicit join is separate.
     fn drop(&mut self) {
+        // SAFETY: Job exclusively owns a non-null handle created by CreateJobObjectW.
         unsafe {
             CloseHandle(self.0);
         }
     }
 }
 impl Job {
+    /// Returns a new kill-on-close Job, or creation/configuration error after releasing partial ownership.
     fn new() -> io::Result<Self> {
+        // SAFETY: null security/name pointers request the documented defaults and an unnamed Job.
         let handle = unsafe { CreateJobObjectW(null(), null()) };
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
         let job = Self(handle);
+        // SAFETY: the Win32 numeric/pointer structure accepts a zero initialization before flags are set.
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: live owned handle; info and its matching size remain valid for this synchronous call.
         if unsafe {
             SetInformationJobObject(
                 handle,
@@ -45,8 +58,11 @@ impl Job {
         Ok(job)
     }
 
+    /// Returns the current associated active-process count, or the Win32 accounting-query error.
     fn active(&self) -> io::Result<u32> {
+        // SAFETY: this output structure has integer fields and permits zero initialization.
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        // SAFETY: owned handle and writable output structure/size match the requested accounting class.
         if unsafe {
             QueryInformationJobObject(
                 self.0,
@@ -62,7 +78,11 @@ impl Job {
         Ok(info.ActiveProcesses)
     }
 
+    /// Terminates all associated processes and polls accounting for at most five seconds.
+    /// Returns success only after zero active processes; termination/query/deadline errors become fatal cleanup
+    /// failures.
     fn terminate_and_join(&self) -> Result<(), Failure> {
+        // SAFETY: the live Job handle is exclusively owned; exit code 1 is an ordinary termination status.
         if unsafe { TerminateJobObject(self.0, 1) } == 0 {
             return Err(Failure::new(
                 FailureKind::Cleanup,
@@ -88,15 +108,23 @@ impl Job {
         }
     }
 }
+/// One pipe's raw quota, sanitized framing, closure and known-loss accounting.
 struct Pipe {
+    /// Incremental UTF-8/control-sequence sanitizer with no secret patterns in this supervisor layer.
     frame: StreamFramer,
+    /// Complete sanitized chunks, each followed by a newline.
     text: String,
+    /// Exact accepted raw bytes up to the caller's per-stream quota.
     raw: Vec<u8>,
+    /// Raw bytes read, including any discarded quota excess.
     bytes: usize,
+    /// Broken-pipe EOF or explicit finish already flushed decoder state.
     closed: bool,
+    /// Raw bytes read but omitted after quota exhaustion.
     discarded: u64,
 }
 impl Pipe {
+    /// Returns an open empty stream; the fixed empty-secret framer construction is infallible by its contract.
     fn new() -> Self {
         Self {
             frame: StreamFramer::new(&[]).unwrap(),
@@ -108,6 +136,10 @@ impl Pipe {
         }
     }
 
+    /// Reads at most one available 4096-byte chunk from owned `pipe` without waiting for absent data.
+    /// Retains at most `limit` raw bytes, counting discarded excess; returns pipe/quota failure after retaining
+    /// the permitted prefix. Broken-pipe EOF flushes framing once. Callers use small limits and must not share readers.
+    /// Internal framer unwraps rely on chunk size <=4096 and no pushes after closure.
     fn drain(
         &mut self,
         pipe: &mut (impl Read + AsRawHandle),
@@ -117,6 +149,7 @@ impl Pipe {
             return Ok(());
         }
         let mut available = 0;
+        // SAFETY: pipe supplies a live readable pipe handle; available is writable and other optional outputs are null.
         if unsafe {
             PeekNamedPipe(
                 pipe.as_raw_handle(),
@@ -160,6 +193,8 @@ impl Pipe {
         Ok(())
     }
 
+    /// Flushes incomplete UTF-8/line state once and marks closed; repeated calls do nothing.
+    /// Incomplete escape strings are discarded by StreamFramer, not exposed as console controls.
     fn finish(&mut self) {
         if !self.closed {
             self.frame
@@ -172,6 +207,9 @@ impl Pipe {
         }
     }
 
+    /// Drains owned `pipe` under raw byte `limit`, emitting newly sanitized lines to `sink` tagged by `stderr`.
+    /// Returns drain failure after delivering its retained prefix; sink must not panic or block cleanup/deadline
+    /// checks.
     fn drain_to(
         &mut self,
         pipe: &mut (impl Read + AsRawHandle),
@@ -187,6 +225,8 @@ impl Pipe {
         result
     }
 }
+/// Returns supervised output for fixed executable `path`, `args`, `cwd`, `timeout` and per-stream raw-byte `limit`.
+/// Uses run_stream with no live sink; process/pipe/deadline/quota/cancellation/cleanup failures retain bounded tails.
 pub(super) fn run(
     path: &Path,
     args: &[&str],
@@ -196,6 +236,13 @@ pub(super) fn run(
 ) -> Result<Output, Failure> {
     run_stream(path, args, cwd, timeout, limit, &mut |_, _| {})
 }
+/// Launches fixed `path`/`args` in `cwd` hidden, with null stdin and owned piped output under `timeout` and raw `limit`
+/// per stream. `sink` receives sanitized `(stderr, line)` chunks and must not panic/block; callers authorize the
+/// command. Returns output (including nonzero exit) only after direct-child exit, closed pipes and zero associated
+/// processes. Cancellation outside transfer, scratch, timeout, quota or I/O failures terminate/join the Job; cleanup
+/// failure supersedes the cause. Error recovery drains at most 64 rounds, flags incomplete output and retains 2048-byte
+/// tails. Panicking callbacks unwind through kill-on-close but bypass explicit join/accounting; normal callers never
+/// panic.
 pub(super) fn run_stream(
     path: &Path,
     args: &[&str],
@@ -314,7 +361,9 @@ pub(super) fn run_stream(
 }
 #[cfg(test)]
 mod tests {
+    //! Harmless Python subprocess fixtures for stream delivery, limits, cancellation and descendant ownership.
     use super::*;
+    /// Returns the first existing python.exe on PATH; panics if the test prerequisite is unavailable.
     fn cmd() -> std::path::PathBuf {
         std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|p| p.join("python.exe"))
@@ -322,6 +371,7 @@ mod tests {
             .unwrap()
     }
     #[test]
+    /// Live stdout reaches the sink before the child can proceed past its acknowledgment barrier.
     fn sanitized_output_is_delivered_before_child_exit() {
         let flag = std::env::temp_dir().join(format!(
             "studio-stream-{}-{}",
@@ -362,6 +412,7 @@ mod tests {
         std::fs::remove_file(flag).unwrap();
     }
     #[test]
+    /// Nonzero child exit is retained as Output rather than being confused with supervisor failure.
     fn successful_and_failed_exit() {
         let cwd = std::env::current_dir().unwrap();
         let o = run(
@@ -381,6 +432,7 @@ mod tests {
         assert!(o.stderr.contains("error"));
     }
     #[test]
+    /// A nonexistent executable is rejected without producing a successful child result.
     fn missing_executable() {
         assert!(
             run(
@@ -394,6 +446,7 @@ mod tests {
         );
     }
     #[test]
+    /// Deadline cleanup flushes a sanitized incomplete UTF-8 line and keeps loss evidence scoped to its operation.
     fn deadline_retains_sanitized_partial_line() {
         let mut lines = Vec::new();
         let result = run_stream(
@@ -422,9 +475,12 @@ mod tests {
         assert!(!super::super::ProcessContext::default().closure(0, 0).output_incomplete);
     }
     #[test]
+    /// Cancellation flushes both stream tails and distinguishes incomplete output from known discarded bytes.
     fn cancellation_finishes_both_streams_and_accounts_loss() {
+        /// Restores thread-local injected cancellation even when an assertion panics.
         struct Reset;
         impl Drop for Reset {
+            /// Clears only this test thread's cancellation injection.
             fn drop(&mut self) { super::super::TEST_CANCEL.set(false); }
         }
         let _reset = Reset;
@@ -455,6 +511,7 @@ mod tests {
         assert_eq!(lines, [(true, "ready".into()), (false, "partial".into())]);
     }
     #[test]
+    /// Machine-stdout failure tails stay private while stderr remains available in the operation diagnostic.
     fn failed_machine_report_retains_only_public_stderr_tail() {
         let result = run_stream(
             &cmd(),
@@ -477,6 +534,7 @@ mod tests {
         assert!(operation.closure(0, 0).output_incomplete);
     }
     #[test]
+    /// Deadline termination covers a spawned descendant as well as its direct parent.
     fn deadline_closes_descendant_tree() {
         let e = run(
             &cmd(),
@@ -494,14 +552,20 @@ mod tests {
         assert_eq!(e.kind, FailureKind::Deadline);
     }
     #[test]
+    /// A descendant observed alive before output overflow is no longer active when the runner returns.
     fn descendant_is_observed_and_joined() {
         use windows_sys::Win32::System::Threading::{
             GetExitCodeProcess,
             OpenProcess,
             PROCESS_QUERY_LIMITED_INFORMATION,
         };
-        struct Handle(HANDLE);
+        /// Optional owned process-query handle retained across forced tree termination.
+        struct Handle(
+            /// Null before observation, otherwise the process handle to close.
+            HANDLE,
+        );
         impl Drop for Handle {
+            /// Closes an observed non-null process handle once.
             fn drop(&mut self) {
                 if !self.0.is_null() {
                     unsafe {
@@ -518,8 +582,13 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        struct Marker(std::path::PathBuf);
+        /// Test-owned acknowledgment marker removed on every scope exit.
+        struct Marker(
+            /// Exact temporary marker pathname; never a recursive cleanup target.
+            std::path::PathBuf,
+        );
         impl Drop for Marker {
+            /// Best-effort removes only this test's marker file.
             fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
         }
         let _marker = Marker(marker.clone());
@@ -565,6 +634,7 @@ mod tests {
         assert_ne!(code, 259, "descendant remains active after runner returned");
     }
     #[test]
+    /// Output exceeding the per-stream quota terminates the owned job and marks capture incomplete.
     fn excessive_output_is_rejected() {
         let e = run(
             &cmd(),

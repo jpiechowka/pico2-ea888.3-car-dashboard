@@ -1,61 +1,88 @@
+//! Optional RTC match fields; absent fields are wildcards, not disabled alarms.
 use super::DayOfWeek;
 use crate::pac::rtc::regs::{IrqSetup0, IrqSetup1};
 
-/// A filter used for [`RealTimeClock::schedule_alarm`].
-///
-/// [`RealTimeClock::schedule_alarm`]: struct.RealTimeClock.html#method.schedule_alarm
+/// Conjunctive field filter for [`super::Rtc::schedule_alarm`]; None fields are ignored.
+/// Setters do not validate ranges. All-None matches without any calendar/time restriction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DateTimeFilter {
-    /// The year that this alarm should trigger on, `None` if the RTC alarm should not trigger on a year value.
+    /// Required year (0..=4095); None ignores this field.
     pub year: Option<u16>,
-    /// The month that this alarm should trigger on, `None` if the RTC alarm should not trigger on a month value.
+    /// Required month (1..=12); None ignores this field.
     pub month: Option<u8>,
-    /// The day that this alarm should trigger on, `None` if the RTC alarm should not trigger on a day value.
+    /// Required day (1..=31); None ignores this field.
     pub day: Option<u8>,
-    /// The day of week that this alarm should trigger on, `None` if the RTC alarm should not trigger on a day of week value.
+    /// Required weekday; None ignores this field.
     pub day_of_week: Option<DayOfWeek>,
-    /// The hour that this alarm should trigger on, `None` if the RTC alarm should not trigger on a hour value.
+    /// Required hour (0..=23); None ignores this field.
     pub hour: Option<u8>,
-    /// The minute that this alarm should trigger on, `None` if the RTC alarm should not trigger on a minute value.
+    /// Required minute (0..=59); None ignores this field.
     pub minute: Option<u8>,
-    /// The second that this alarm should trigger on, `None` if the RTC alarm should not trigger on a second value.
+    /// Required second (0..=59); None ignores this field.
     pub second: Option<u8>,
 }
 
 impl DateTimeFilter {
-    /// Set a filter on the given year
-    pub fn year(mut self, year: u16) -> Self {
+    /// Returns this filter with `year` selected; expected range 0..=4095 is not checked.
+    pub fn year(
+        mut self,
+        year: u16,
+    ) -> Self {
         self.year = Some(year);
         self
     }
-    /// Set a filter on the given month
-    pub fn month(mut self, month: u8) -> Self {
+
+    /// Returns this filter with `month` selected; expected range 1..=12 is not checked.
+    pub fn month(
+        mut self,
+        month: u8,
+    ) -> Self {
         self.month = Some(month);
         self
     }
-    /// Set a filter on the given day
-    pub fn day(mut self, day: u8) -> Self {
+
+    /// Returns this filter with `day` selected; expected range 1..=31 is not checked.
+    pub fn day(
+        mut self,
+        day: u8,
+    ) -> Self {
         self.day = Some(day);
         self
     }
-    /// Set a filter on the given day of the week
-    pub fn day_of_week(mut self, day_of_week: DayOfWeek) -> Self {
+
+    /// Returns this filter with `day_of_week` selected, preserving other fields.
+    pub fn day_of_week(
+        mut self,
+        day_of_week: DayOfWeek,
+    ) -> Self {
         self.day_of_week = Some(day_of_week);
         self
     }
-    /// Set a filter on the given hour
-    pub fn hour(mut self, hour: u8) -> Self {
+
+    /// Returns this filter with `hour` selected; expected range 0..=23 is not checked.
+    pub fn hour(
+        mut self,
+        hour: u8,
+    ) -> Self {
         self.hour = Some(hour);
         self
     }
-    /// Set a filter on the given minute
-    pub fn minute(mut self, minute: u8) -> Self {
+
+    /// Returns this filter with `minute` selected; expected range 0..=59 is not checked.
+    pub fn minute(
+        mut self,
+        minute: u8,
+    ) -> Self {
         self.minute = Some(minute);
         self
     }
-    /// Set a filter on the given second
-    pub fn second(mut self, second: u8) -> Self {
+
+    /// Returns this filter with `second` selected; expected range 0..=59 is not checked.
+    pub fn second(
+        mut self,
+        second: u8,
+    ) -> Self {
         self.second = Some(second);
         self
     }
@@ -63,7 +90,11 @@ impl DateTimeFilter {
 
 // register helper functions
 impl DateTimeFilter {
-    pub(super) fn write_setup_0(&self, w: &mut IrqSetup0) {
+    /// Enables/writes selected calendar fields in `w`; absent fields leave existing bits unchanged.
+    pub(super) fn write_setup_0(
+        &self,
+        w: &mut IrqSetup0,
+    ) {
         if let Some(year) = self.year {
             w.set_year_ena(true);
 
@@ -78,7 +109,12 @@ impl DateTimeFilter {
             w.set_day(day);
         }
     }
-    pub(super) fn write_setup_1(&self, w: &mut IrqSetup1) {
+
+    /// Enables/writes selected weekday/time fields in `w`; absent fields leave existing bits unchanged.
+    pub(super) fn write_setup_1(
+        &self,
+        w: &mut IrqSetup1,
+    ) {
         if let Some(day_of_week) = self.day_of_week {
             w.set_dotw_ena(true);
             let bits = super::conversions::day_of_week_to_u8(day_of_week);

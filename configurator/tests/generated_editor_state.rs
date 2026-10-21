@@ -1,10 +1,16 @@
+//! Deterministic mixed editor state-transition corpus with seed/case failure context.
+
 #[path = "../../test-support/generated.rs"]
+/// Shared deterministic case reporter; includes seed/step in assertion failure context.
 mod generated;
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+/// 256 seeded orientation/raw/JSON/import/reduced-motion transactions preserve accepted
+/// codec bytes, exact undo/redo, bounded history and rejection of retired async tokens.
 fn seeded_editor_transactions_preserve_snapshots_and_retire_async_callbacks() {
+    /// Frozen xorshift seed reproducing this editor operation sequence.
     const SEED: u32 = 0x17ED_1702;
     let mut rng = SEED;
     let mut editor = Editor::default();

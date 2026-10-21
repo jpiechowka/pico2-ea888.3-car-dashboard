@@ -1,3 +1,10 @@
+//! Ignored physical two-adapter integration scenario; compilation alone does not validate radio behavior.
+//! External gatt_service generates typed handles, entry/CCCD counts, new(table) and exclusive-end handle_range().
+//! External gatt_server generates server/service fields, new(table), new_default(name), new_with_config(gap),
+//! get/set delegation, per-connection ATT-table get/set and Deref to AttributeServer. Name builders return
+//! a length error; table exhaustion and reusing one-shot storage for values larger than MAX_SMALL_DATA_SIZE can panic.
+//! The locked 0.6.0 generators discard struct/server-field docs and omit generated-member contracts;
+//! this fixture documents their use without claiming the external expansions are fully documented.
 #![allow(dead_code)]
 use std::time::Duration;
 
@@ -5,51 +12,64 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use tokio::select;
 use trouble_host::prelude::*;
 
+/// Shared serial-adapter discovery/setup and supervision checks.
 mod common;
 
+/// One concurrent logical link per test-side host.
 const CONNECTIONS_MAX: usize = 1;
+/// Three dynamic-channel slots per test-side host.
 const L2CAP_CHANNELS_MAX: usize = 3;
 
+/// Test-specific 128-bit service identity, supplied in Bluetooth little-endian byte order.
 const SERVICE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x00, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
+/// Test-specific byte characteristic identity used for discovery and read/write assertions.
 const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
 #[gatt_server(connections_max = CONNECTIONS_MAX, mutex_type = NoopRawMutex)]
+/// Derived server combining the custom read/write service and battery-level service.
 struct Server {
+    /// Five generated custom characteristics and their descriptors.
     service: CustomService,
+    /// Battery service with read/notify value and descriptive metadata.
     bas: BatteryService,
 }
 
+/// Expression-valued UUID fixture matching the custom service UUID; tests non-string macro input.
 const UUID_U128: u128 = 0x408813df_5dd4_1f87_ec11_cdb000100000;
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
+/// Macro fixture with scalar, fixed-array and bounded-vector characteristic storage.
 struct CustomService {
     #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read)]
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify)]
     #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
+    /// Read/write/notify byte initialized to 42, with text and three-byte read-only descriptors.
     pub value: u8,
     #[characteristic(uuid = UUID_U128, value = 123.321, read, write, notify)]
-    /// Order doesn't matter
+    /// Read/write/notify float initialized to 123.321; doc/descriptor attribute ordering is intentional.
     #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes())] // empty descriptor
     pub second: f32,
-    /// Multi
+    /// Two-byte read/write/notify value initialized to [0, 1].
     ///
-    /// Line
-    /// Comment
+    /// A separate paragraph verifies that multi-line docs survive characteristic generation.
     #[characteristic(uuid = "408815df-5dd4-1f87-ec11-cdb001100000", value = [0,1], read, write, notify)]
     pub third: [u8; 2],
     #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    /// Empty bounded vector allowing at most three value bytes.
     pub fourth: heapless::Vec<u8, 3>,
     #[characteristic(uuid = "408817df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    /// Empty bounded vector allowing at most 33 value bytes.
     pub fifth: heapless::Vec<u8, 33>,
 }
 
 #[gatt_service(uuid = service::BATTERY)]
+/// Battery-service macro fixture with standard UUID constants and two read-only descriptors.
 struct BatteryService {
-    /// Battery Level
+    /// Read/notify battery percentage initialized to 10; descriptor advertises 0..=100, without a value validator.
     #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
     #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = "Battery Level")]
     #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
@@ -58,6 +78,8 @@ struct BatteryService {
 
 #[tokio::test]
 #[ignore = "requires two physical Zephyr HCI UART adapters"]
+/// Verifies a rejected first write preserves value, then an accepted second write stores the expected increment.
+/// Requires two physical adapters and a DEVICE_NAME of at most 22 UTF-8 bytes; 30-second timeout/task errors fail.
 async fn gatt_client_server() {
     let _ = env_logger::try_init();
     let adapters = common::find_controllers();

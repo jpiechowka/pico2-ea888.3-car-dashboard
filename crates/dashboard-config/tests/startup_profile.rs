@@ -1,11 +1,14 @@
+//! Independent EASP bytes, stable theme tags and exhaustive mounting/flag admission.
 use dashboard_config::startup::{StartupProfile, StartupStatus, StartupTheme};
 
 #[test]
+/// An independent v2 byte sequence admits portrait status and inverted-portrait splash overrides.
 fn version_two_profile_with_portrait_overrides_is_accepted() {
     assert!(StartupProfile::decode(b"EASP\x02\x00\x01\x03\x58\x02\xc4\x09\x02\x04\x00\x00").is_some());
 }
 
 #[test]
+/// All 25 override pairs roundtrip and inherit independently; every reserved/orientation byte is checked.
 fn every_override_pair_roundtrips_and_inheritance_resolves_independently() {
     use dashboard_config::Orientation;
     let modes = [
@@ -57,6 +60,7 @@ fn every_override_pair_roundtrips_and_inheritance_resolves_independently() {
 }
 
 #[test]
+/// All theme/status/flag combinations match independent bytes and nominal duration arithmetic.
 fn profile_wire_values_and_flags_match_independent_bytes() {
     assert_eq!(
         StartupProfile::decode(b"EASP\x01\x00\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00"),
@@ -128,6 +132,7 @@ fn profile_wire_values_and_flags_match_independent_bytes() {
 }
 
 #[test]
+/// Unknown tags/flags/reservations, wrong lengths and timing values beyond inclusive endpoints reject.
 fn profile_rejects_unknown_fields_lengths_and_out_of_range_durations() {
     let valid = StartupProfile::DEFAULT.encode().unwrap();
     for length in 0..16 {
@@ -177,6 +182,7 @@ fn profile_rejects_unknown_fields_lengths_and_out_of_range_durations() {
 }
 
 #[test]
+/// Custom retains tag five; added tags six through ten are accepted only in v2.
 fn additive_themes_preserve_custom_and_reject_new_tags_in_legacy_v1() {
     let custom_v1 = *b"EASP\x01\x05\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
     let custom = StartupProfile::decode(&custom_v1).unwrap();
@@ -195,6 +201,7 @@ fn additive_themes_preserve_custom_and_reject_new_tags_in_legacy_v1() {
 }
 
 #[test]
+/// All 256 tag bytes match the frozen version vocabularies; picker order excludes Custom without renumbering.
 fn every_wire_tag_is_explicit_and_picker_order_never_aliases_custom() {
     let expected = [
         StartupTheme::Aezakmi,
@@ -229,6 +236,7 @@ fn every_wire_tag_is_explicit_and_picker_order_never_aliases_custom() {
 }
 
 #[test]
+/// Tag nine roundtrips in v2 and cannot extend the frozen v1 vocabulary.
 fn padawan_tag_nine_is_additive_and_legacy_rejects_it() {
     let mut bytes = *b"EASP\x02\x09\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
     let profile = StartupProfile::decode(&bytes).expect("v2 tag9");
@@ -238,6 +246,7 @@ fn padawan_tag_nine_is_additive_and_legacy_rejects_it() {
 }
 
 #[test]
+/// Tag ten roundtrips in v2 and cannot extend the frozen v1 vocabulary.
 fn brainlet_tag_ten_is_additive_and_legacy_rejects_it() {
     let mut bytes = *b"EASP\x02\x0a\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
     let profile = StartupProfile::decode(&bytes).expect("v2 tag10");

@@ -1,6 +1,9 @@
+//! Pixel-exact conversion, timing, disposal and malformed-input regression cases.
 use dashboard_config::Geometry;
 use dashboard_config::startup_asset::Asset;
 use dashboard_startup_tools::*;
+/// Return a valid eight-bit RGBA PNG of `width` × `height` from exact row-major `pixels`.
+/// Fixture encoding errors panic so tests cannot silently substitute malformed source data.
 fn png_image(
     width: u32,
     height: u32,
@@ -16,6 +19,7 @@ fn png_image(
     }
     bytes
 }
+/// Return a two-pixel GIF alternating opaque red/green images, each lasting 100 ms.
 fn gif_image() -> Vec<u8> {
     let mut bytes = Vec::new();
     {
@@ -34,6 +38,7 @@ fn gif_image() -> Vec<u8> {
     bytes
 }
 #[test]
+/// Half-alpha red over blue produces exact rounded RGB565 bytes and deterministic output.
 fn png_alpha_matte_and_determinism() {
     let source = png_image(1, 1, &[255, 0, 0, 128]);
     let options = Options {
@@ -50,6 +55,7 @@ fn png_alpha_matte_and_determinism() {
     assert_eq!(&row[..2], &[0x80, 0x0F]);
 }
 #[test]
+/// Converter output advertises the shared current native-asset version.
 fn conversion_emits_current_native_asset_format() {
     let converted = convert(&png_image(1, 1, &[255, 0, 0, 255]), &Options::default()).unwrap();
     assert_eq!(
@@ -58,6 +64,7 @@ fn conversion_emits_current_native_asset_format() {
     );
 }
 #[test]
+/// Source boundaries, cycle wrapping and nonlooping u64::MAX seeks select the correct GIF frame.
 fn gif_resampling_and_loop_seeks() {
     let converted = convert(
         &gif_image(),
@@ -85,6 +92,7 @@ fn gif_resampling_and_loop_seeks() {
     );
 }
 #[test]
+/// Two exact sprite cells produce two frames; an indivisible grid is rejected.
 fn sheet_grid_and_clip() {
     let source = png_image(2, 1, &[255, 0, 0, 255, 0, 255, 0, 255]);
     let options = Options {
@@ -111,6 +119,7 @@ fn sheet_grid_and_clip() {
     assert!(convert(&source, &bad).is_err());
 }
 #[test]
+/// Every source prefix/trailing byte, invalid rate, empty clamped clip and oversized input fails.
 fn truncation_trailing_crc_and_limits() {
     for (source, kind) in [
         (png_image(1, 1, &[0, 0, 0, 255]), SourceKind::Png),
@@ -155,6 +164,7 @@ fn truncation_trailing_crc_and_limits() {
 }
 
 #[test]
+/// Previous/Background disposal restore exact pixels; reserved disposal and user-input flags fail.
 fn gif_disposal_previous_background_and_reserved_controls() {
     let mut source = Vec::new();
     {
@@ -214,6 +224,7 @@ fn gif_disposal_previous_background_and_reserved_controls() {
 }
 
 #[test]
+/// Four noisy full-frame sprites exceed the asset budget in either geometry and return no asset.
 fn incompressible_output_does_not_expand_asset_budget() {
     let mut pixels = vec![0; 640 * 480 * 4];
     let mut seed = 1234567_u32;
@@ -244,6 +255,8 @@ fn incompressible_output_does_not_expand_asset_budget() {
     }
 }
 
+/// Return all native RGB565 pixels in `asset`'s nonlooping frame at elapsed `at` milliseconds.
+/// Decode failures or incomplete frame rows panic; row stride follows the stored geometry.
 fn decoded_pixels(
     asset: &Asset<'_>,
     at: u64,
@@ -259,6 +272,7 @@ fn decoded_pixels(
 }
 
 #[test]
+/// Exhaustively compare every output pixel for center contain/crop/stretch in both geometries.
 fn fit_modes_center_letterboxing_crop_and_preserve_every_pixel() {
     // Four square source stripes make all three fit policies distinguishable.
     let source = png_image(
@@ -305,6 +319,7 @@ fn fit_modes_center_letterboxing_crop_and_preserve_every_pixel() {
 }
 
 #[test]
+/// GIF and row-major sprites retain exact colors and 100 ms boundaries in both native strides.
 fn gif_and_sheet_keep_timing_and_exact_rows_in_both_geometries() {
     let sheet = png_image(2, 1, &[255, 0, 0, 255, 0, 255, 0, 255]);
     for geometry in Geometry::ALL {
@@ -335,6 +350,7 @@ fn gif_and_sheet_keep_timing_and_exact_rows_in_both_geometries() {
 }
 
 #[test]
+/// Incompressible portrait checkerboard uses raw encoding without row/column transposition.
 fn raw_fallback_preserves_native_portrait_stride() {
     let mut pixels = Vec::with_capacity(240 * 320 * 4);
     let mut expected = Vec::with_capacity(240 * 320);
@@ -364,6 +380,7 @@ fn raw_fallback_preserves_native_portrait_stride() {
 }
 
 #[test]
+/// Trim uses absolute row-major source time; a one-ms terminal clip pads to one 34 ms frame.
 fn sheet_trim_samples_row_major_cells_and_extends_short_clips_explicitly() {
     let source = png_image(
         2,
@@ -409,4 +426,101 @@ fn sheet_trim_samples_row_major_cells_and_extends_short_clips_explicitly() {
     let asset = Asset::parse(&converted.asset).unwrap();
     assert_eq!((asset.frame_count(), asset.cycle_ms()), (1, 34));
     assert!(decoded_pixels(&asset, 0).iter().all(|pixel| *pixel == 0xFFFF));
+}
+
+/// Options admit inclusive rate/timeline endpoints; source-specific grid validation still runs later.
+#[test]
+fn options_boundaries_and_source_specific_grid_admission() {
+    for rate in [1, 20] {
+        assert!(
+            Options {
+                sample_fps: rate,
+                ..Options::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+    for rate in [0, 21, u8::MAX] {
+        assert_eq!(
+            Options {
+                sample_fps: rate,
+                ..Options::default()
+            }
+            .validate(),
+            Err(ConvertError::Options)
+        );
+    }
+    let valid = Options {
+        trim_start_ms: 50_000,
+        trim_end_ms: 60_000,
+        ..Options::default()
+    };
+    assert!(valid.validate().is_ok());
+    for (start, end) in [(0, 0), (2, 1), (0, 10_001), (50_001, 60_001), (0, u32::MAX)] {
+        assert_eq!(
+            Options {
+                trim_start_ms: start,
+                trim_end_ms: end,
+                ..valid.clone()
+            }
+            .validate(),
+            Err(ConvertError::Options)
+        );
+    }
+    let source = png_image(1, 1, &[255, 0, 0, 255]);
+    let options = Options {
+        sheet: Some(Sheet {
+            columns: 1,
+            rows: 1,
+            frame_ms: 100,
+        }),
+        ..Options::default()
+    };
+    assert!(options.validate().is_ok());
+    assert_eq!(convert(&source, &options).err(), Some(ConvertError::Options));
+    assert!(
+        convert(
+            &source,
+            &Options {
+                kind: SourceKind::SpriteSheet,
+                ..options
+            }
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        convert(
+            &source,
+            &Options {
+                kind: SourceKind::SpriteSheet,
+                ..Options::default()
+            }
+        )
+        .err(),
+        Some(ConvertError::Options)
+    );
+}
+
+/// Explicit zero delays and absent graphic controls both last 100 ms, but only zero delays count.
+#[test]
+fn gif_zero_delay_and_missing_control_are_distinct_metadata() {
+    let options = Options {
+        kind: SourceKind::Gif,
+        fit: Fit::Stretch,
+        ..Options::default()
+    };
+    let original = gif_image();
+    let control = original.windows(3).position(|b| b == [0x21, 0xF9, 4]).unwrap();
+    let expected = convert(&original, &options).unwrap();
+    let mut zero = original.clone();
+    zero[control + 4..control + 6].fill(0);
+    let zero = convert(&zero, &options).unwrap();
+    assert_eq!(zero.asset, expected.asset);
+    assert_eq!((zero.source_duration_ms, zero.zero_delay_frames), (200, 1));
+    let mut absent = original;
+    absent.drain(control..control + 8);
+    let absent = convert(&absent, &options).unwrap();
+    assert_eq!(absent.asset, expected.asset);
+    assert_eq!((absent.source_duration_ms, absent.zero_delay_frames), (200, 0));
 }

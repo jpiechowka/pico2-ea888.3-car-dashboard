@@ -1,3 +1,4 @@
+//! Canvas-current context-menu adapter with snapshot authority and deferred focus restoration.
 use dashboard_configurator::geometry::{ContentRect, panel_point_in};
 use dashboard_configurator::widget_actions::{Direction, WidgetMenu, menu_position};
 use leptos::leptos_dom::helpers::request_animation_frame;
@@ -5,11 +6,15 @@ use leptos::leptos_dom::helpers::request_animation_frame;
 use super::*;
 
 #[derive(Clone)]
+/// Open browser popup with reducer-owned actions and viewport-relative anchor.
 pub struct Menu {
+    /// Revision/selection-bound move/delete/overlap-selection authority.
     pub actions: WidgetMenu,
+    /// Client CSS-pixel origin, measured from pointer or widget centre.
     anchor: (f64, f64),
 }
 
+/// Returns the mounted HTML widget node for `id`, or None without window/document/matching HTML element.
 fn widget_element(id: u16) -> Option<web_sys::HtmlElement> {
     web_sys::window()?
         .document()?
@@ -18,6 +23,8 @@ fn widget_element(id: u16) -> Option<web_sys::HtmlElement> {
         .ok()
 }
 
+/// Clears `ui`'s menu; when `restore_focus` is true, best-effort focuses its former target if still mounted.
+/// Missing nodes/focus failures are ignored; does nothing when no menu is open.
 pub fn close(
     ui: Ui,
     restore_focus: bool,
@@ -31,6 +38,9 @@ pub fn close(
     }
 }
 
+/// Opens `ui`'s menu for widget `id` at client CSS-pixel `anchor` only while canvas identity is current.
+/// Cancels pointer state/old menu, maps overlap point through displayed geometry, then selects through the reducer.
+/// Selection errors use normal UI reporting and leave the menu closed; coordinate failure retains target-only actions.
 fn open(
     ui: Ui,
     id: u16,
@@ -68,6 +78,8 @@ fn open(
     }
 }
 
+/// Consumes context-menu `event` defaults/propagation and opens `ui` widget `id` at its client coordinates if
+/// canvas-current.
 pub fn open_pointer(
     ui: Ui,
     id: u16,
@@ -78,6 +90,7 @@ pub fn open_pointer(
     open(ui, id, (f64::from(event.client_x()), f64::from(event.client_y())));
 }
 
+/// Opens `ui` widget `id`'s menu at its mounted element centre; missing elements or stale canvas leave it closed.
 pub fn open_keyboard(
     ui: Ui,
     id: u16,
@@ -88,6 +101,8 @@ pub fn open_keyboard(
     }
 }
 
+/// Installs `ui` menu invalidation on stale editor/canvas, resize, scroll and blur, with owner-cleanup listener
+/// removal. Requires an active reactive owner; invalidation closes without stealing focus.
 pub fn install(ui: Ui) {
     // A menu is a snapshot of one editor revision. File import, undo, a field
     // edit or another selection must never redirect an old menu action.
@@ -110,6 +125,8 @@ pub fn install(ui: Ui) {
     });
 }
 
+/// Schedules best-effort focus in `ui` for optional widget `id`, falling back to the grid after reactive DOM updates.
+/// Callback checks original field token, closed-menu state and signal lifetime; stale/disposed requests do nothing.
 fn focus_target(
     ui: Ui,
     id: Option<u16>,
@@ -135,6 +152,9 @@ fn focus_target(
     });
 }
 
+/// Executes `menu`'s `direction` move through `ui` only if canvas-current and reducer movement remains admissible.
+/// Closes the menu, reports reducer results and schedules guarded target focus, including retained invalid repair
+/// outcomes.
 fn move_widget(
     ui: Ui,
     menu: &WidgetMenu,
@@ -148,6 +168,9 @@ fn move_widget(
     focus_target(ui, Some(menu.target()));
 }
 
+/// Handles menu `event` for `ui` and mounted root `element`: Escape/Tab close, arrows/Home/End move menu-item focus.
+/// Arrow navigation wraps and includes aria-disabled items; query/focus failures are ignored. Tab's native default
+/// remains enabled.
 fn keyboard(
     ui: Ui,
     element: web_sys::HtmlElement,
@@ -204,13 +227,22 @@ fn keyboard(
 }
 
 #[component]
-pub fn Popup(ui: Ui) -> impl IntoView {
+/// Returns the reactive popup for `ui`'s current menu, or no menu content when closed.
+pub fn Popup(
+    /// Shared popup identity, pointer state and guarded widget-action reducer.
+    ui: Ui
+) -> impl IntoView {
     view! { {move || ui.menu.get().map(|menu| view! { <MenuContents ui menu/> })} }
 }
 
 #[component]
+/// Returns measured popup content for captured `menu` in `ui`, with guarded deferred positioning/focus and reducer
+/// actions. Invalid viewport/menu measurements close it; disposed/stale callbacks do not restore focus into a
+/// replacement menu.
 fn MenuContents(
+    /// Shared popup identity, pointer state and guarded widget-action reducer.
     ui: Ui,
+    /// Captured menu identity, target/action authority and viewport anchor.
     menu: Menu,
 ) -> impl IntoView {
     let node = NodeRef::<leptos::html::Div>::new();

@@ -18,78 +18,141 @@ use crate::ui::{BLACK, GREEN, LABEL_FONT, WHITE, YELLOW};
 /// from configuration/register-derived metadata, not physical measurements.
 #[derive(Clone, Copy, Default)]
 pub struct DebugData<'a> {
+    /// Captured reset classification label, not a proven root cause.
     pub reset_cause: Option<&'a str>,
+    /// Already derived acquisition/adapter status label.
     pub source_status: Option<&'a str>,
+    /// Configuration fallback/fault flag; absent shows unknown, false clears the row.
     pub config_fault: Option<bool>,
+    /// Optional specific label used only when `config_fault` is true.
     pub config_fault_label: Option<&'a str>,
+    /// Latest completed-transfer rate per second; invalid/negative values display unavailable.
     pub current_fps: Option<f32>,
+    /// Window-average completed-transfer rate per second; not physical scanout FPS.
     pub average_fps: Option<f32>,
+    /// Completed software frame count from the adapter's instrumentation.
     pub frame_count: Option<u32>,
+    /// Coherent completed frame timing/cycle/source-age observation.
     pub trace: Option<FrameTrace>,
+    /// Current requested brightness state, separate from measured panel luminance.
     pub brightness: Option<Brightness>,
+    /// Captured persistence state label, such as saved/default/pending.
     pub settings_status: Option<&'a str>,
+    /// Instrumented render/flush ownership swaps.
     pub buffer_swaps: Option<u32>,
+    /// Instrumented waits for an in-flight transfer, not necessarily faults.
     pub buffer_waits: Option<u32>,
+    /// Current render slot0/1; other values display unavailable.
     pub render_buffer_idx: Option<usize>,
+    /// Current flush slot0/1; other values display unavailable.
     pub flush_buffer_idx: Option<usize>,
+    /// Core0 current stack-pointer usage sample in KiB, not continuous high-water.
     pub core0_stack_used_kb: Option<u32>,
+    /// Core0 configured stack capacity in KiB; displayed only in `1..=512`.
     pub core0_stack_total_kb: Option<u32>,
+    /// Core1 retained observed stack-pointer usage in KiB, not continuous high-water.
     pub core1_stack_used_kb: Option<u32>,
+    /// Core1 configured stack capacity in KiB; displayed only in `1..=512`.
     pub core1_stack_total_kb: Option<u32>,
+    /// Linked/static RAM accounting in KiB, not dynamic allocation high-water.
     pub static_ram_kb: Option<u32>,
+    /// RAM capacity in KiB; invalid/zero/>512 capacity becomes unavailable.
     pub ram_total_kb: Option<u32>,
     /// Tenths of percent, retaining the existing firmware producer units.
     pub cpu0_util_percent: Option<u32>,
+    /// Instrumented acquisition work in tenths of percent `0..=1000`, not whole-core utilization.
     pub cpu1_util_percent: Option<u32>,
+    /// Observed frame-work cycles, displayed as truncated decimal thousands.
     pub frame_cycles: Option<u32>,
+    /// Requested CPU clock in Hz, displayed after the configured value.
     pub requested_cpu_hz: Option<u32>,
+    /// Configuration/register-derived CPU clock in Hz, preserving all fractional MHz digits.
     pub configured_cpu_hz: Option<u32>,
+    /// Requested SPI clock in Hz, displayed rounded to tenths of MHz.
     pub requested_spi_hz: Option<u32>,
+    /// Divider-derived SPI clock in Hz; missing divider evidence remains unavailable.
     pub configured_spi_hz: Option<u32>,
+    /// Requested core regulator voltage in millivolts.
     pub requested_voltage_mv: Option<u32>,
+    /// Register-derived regulator setting in millivolts, not a measured voltage.
     pub vreg_setting_mv: Option<u32>,
+    /// Caller-reported number of allocated framebuffers.
     pub framebuffer_count: Option<u32>,
+    /// Bytes per framebuffer, displayed as truncated KiB.
     pub framebuffer_bytes: Option<u32>,
 }
 
 /// One synchronous row operation. Firmware yields after each member of ALL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugLine {
+    /// Software timing section heading.
     TimingHeader,
+    /// Current completed-transfer FPS.
     DoneFps,
+    /// Averaged completed-transfer FPS.
     AverageFps,
+    /// Completed frame count.
     CompletedFrames,
+    /// Completed trace's render interval in microseconds.
     RenderTime,
+    /// Observed flush interval through HAL return in microseconds.
     TransferTime,
+    /// Trace's end-to-end frame interval in microseconds.
     FrameTime,
+    /// Sample age at completion, truncated to milliseconds when available.
     SampleAge,
+    /// Buffer ownership section heading.
     BuffersHeader,
+    /// Instrumented buffer swaps.
     Swaps,
+    /// Pipeline wait count without treating ordinary backpressure as failure.
     Waits,
+    /// Current render slot0/1 or unavailable.
     RenderBuffer,
+    /// Current flush slot0/1 or unavailable.
     FlushBuffer,
+    /// UI core section heading.
     Core0Header,
+    /// Instrumented UI work percentage, not whole-core utilization.
     Core0Utilization,
+    /// Observed frame CPU cycles in decimal thousands.
     FrameCycles,
+    /// Current core0 stack-pointer sample/capacity in KiB.
     Core0Stack,
+    /// Acquisition core section heading.
     Core1Header,
+    /// Instrumented acquisition work percentage.
     Core1Utilization,
+    /// Retained core1 stack-pointer sample/capacity in KiB.
     Core1Stack,
+    /// Configuration and memory section heading.
     SystemHeader,
+    /// Configured/requested CPU MHz with exact fractional digits.
     CpuClock,
+    /// Register-setting/requested regulator millivolts.
     VregSetting,
+    /// Divider-derived/requested SPI MHz rounded to tenths.
     SpiClock,
+    /// Static RAM accounting/capacity in KiB.
     Ram,
+    /// Framebuffer count and per-buffer KiB.
     Framebuffers,
+    /// Brightness and preference persistence status.
     BrightnessSettings,
+    /// Captured reset classification label.
     ResetCause,
+    /// Captured source status label.
     SourceStatus,
+    /// Configuration fault/fallback label or blank when healthy admission is known.
     ConfigFault,
+    /// Explicit HAL-return versus physical-scanout qualification.
     TransferNote,
+    /// Current Debug-to-Logs navigation route and protected recovery hint.
     ControlsHint,
 }
 
 impl DebugLine {
+    /// Fixed32-operation order; portrait lays these vertically and firmware can yield between operations.
     pub const ALL: [Self; 32] = [
         Self::TimingHeader,
         Self::DoneFps,
@@ -125,6 +188,7 @@ impl DebugLine {
         Self::ControlsHint,
     ];
 
+    /// Returns landscape x/baseline-y/row-width pixels, with two full-width footer rows.
     fn position(self) -> (i32, i32, u32) {
         use DebugLine::*;
         let (x, y) = match self {
@@ -173,12 +237,16 @@ impl DebugLine {
     }
 }
 
+/// Borrowed immutable capture and controls for synchronous/resumable diagnostic drawing.
 pub struct DebugPage<'a> {
+    /// Already captured values; rendering acquires no producer/measurement locks.
     data: &'a DebugData<'a>,
+    /// Accepted controls used to derive navigation hints at draw time.
     map: &'a ControlMap,
 }
 
 impl<'a> DebugPage<'a> {
+    /// Returns a page borrowing captured `data` and accepted control `map`; neither is copied or mutated.
     pub const fn new(
         data: &'a DebugData<'a>,
         map: &'a ControlMap,
@@ -187,6 +255,8 @@ impl<'a> DebugPage<'a> {
     }
 
     /// Host/browser convenience; firmware uses draw_line and cooperative yields.
+    /// Clears native geometry on `display` then draws all32 rows. Target errors are
+    /// discarded; no measurement acquisition or physical transfer occurs here.
     pub fn draw<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -204,6 +274,10 @@ impl<'a> DebugPage<'a> {
         }
     }
 
+    /// Clears and draws one `line` on `display`, clipping to its reserved row.
+    /// Exact240x320 uses compact portrait rows; other geometry uses landscape lanes.
+    /// Invalid work/rate/buffer/memory observations remain unavailable; long labels
+    /// are bounded UTF-8 prefixes with controls replaced by `?`. Target errors are discarded.
     pub fn draw_line<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -356,6 +430,9 @@ impl<'a> DebugPage<'a> {
 }
 
 /// Also used for the separate Logs hint row; coordinates remain absolute.
+/// Clears a10-pixel row on `display` and draws `text` in `color` at bounded panel
+/// `x`, baseline `y`, clipped to `width` pixels. Caller supplies sanitized/fitting
+/// text and representable coordinates; target errors are discarded.
 pub(crate) fn draw_row<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     x: i32,
@@ -374,10 +451,13 @@ pub(crate) fn draw_row<D: DrawTarget<Color = Rgb565>>(
 
 /// Formats a bounded sanitized prefix without scanning the rest of a long label.
 struct LineText {
+    /// Retained valid UTF-8 prefix, at most64bytes.
     value: String<64>,
+    /// Remaining Unicode scalar/glyph budget; byte capacity can stop writing earlier.
     remaining: usize,
 }
 impl LineText {
+    /// Returns an empty bounded formatter allowing at most `glyphs` Unicode scalars and64bytes.
     fn new(glyphs: usize) -> Self {
         Self {
             value: String::new(),
@@ -386,6 +466,9 @@ impl LineText {
     }
 }
 impl Write for LineText {
+    /// Appends a bounded prefix of `text`, replacing controls with `?` and stopping
+    /// at glyph/UTF-8-byte capacity. Returns success even when clipped; does not scan
+    /// the suffix beyond the remaining glyph budget.
     fn write_str(
         &mut self,
         text: &str,
@@ -402,8 +485,13 @@ impl Write for LineText {
     }
 }
 
-struct Available<T>(Option<T>);
+/// Display wrapper preserving absence as `--`, independent of valid numeric zero.
+struct Available<T>(
+    /// Optional already admitted observation to format.
+    Option<T>,
+);
 impl<T: fmt::Display> fmt::Display for Available<T> {
+    /// Writes the present value or `--` to `f`; returns the formatter's result.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -416,8 +504,12 @@ impl<T: fmt::Display> fmt::Display for Available<T> {
 }
 
 /// Integer arithmetic retains every meaningful fractional MHz digit.
-struct Mhz(u32);
+struct Mhz(
+    /// Exact integer Hz, rendered as decimal MHz without insignificant trailing zeros.
+    u32,
+);
 impl fmt::Display for Mhz {
+    /// Writes exact decimal MHz to `f`; returns its write result without floating-point rounding.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -435,8 +527,13 @@ impl fmt::Display for Mhz {
         Ok(())
     }
 }
-struct SpiMhz(u32);
+/// Compact SPI display wrapper intentionally rounded to one decimal MHz.
+struct SpiMhz(
+    /// Configured/requested integer Hz, converted to f32 only for compact display.
+    u32,
+);
 impl fmt::Display for SpiMhz {
+    /// Writes rounded tenths of MHz to `f`; returns its formatting result.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -444,6 +541,8 @@ impl fmt::Display for SpiMhz {
         write!(f, "{:.1}", self.0 as f32 / 1_000_000.)
     }
 }
+/// Appends `label` and optional transfers/second `value` to `text`, using shared
+/// invalid/negative-rate admission and bounded destination clipping.
 fn fps(
     text: &mut LineText,
     label: &str,
@@ -451,6 +550,8 @@ fn fps(
 ) {
     let _ = write!(text, "{label}: {}", crate::diagnostic_values::rate_text(value));
 }
+/// Appends `label`, optional nonnegative `value` and caller unit suffix `unit`
+/// to `text`; missing observations show `--` without a fabricated duration.
 fn duration(
     text: &mut LineText,
     label: &str,
@@ -462,6 +563,7 @@ fn duration(
         None => write!(text, "{label}: --"),
     };
 }
+/// Appends `label` and slot `value` to `text`, rendering only indices0/1 as buffers and all others as unavailable.
 fn buffer(
     text: &mut LineText,
     label: &str,
@@ -473,6 +575,8 @@ fn buffer(
     };
 }
 
+/// Returns admitted `(used, total)` KiB observations: `total` must be1..=512,
+/// and `used` must not exceed it. Invalid capacity suppresses both; valid zero usage remains zero.
 fn memory_pair(
     used: Option<u32>,
     total: Option<u32>,
@@ -483,6 +587,8 @@ fn memory_pair(
         total,
     )
 }
+/// Appends `label` and instrumented work `value` in tenths of percent to `text`;
+/// missing or >1000 observations use the shared unavailable representation.
 fn util(
     text: &mut LineText,
     label: &str,
@@ -491,6 +597,9 @@ fn util(
     let _ = write!(text, "{label}: {}", crate::diagnostic_values::work_text(value));
 }
 
+/// Clears a seven-pixel row on `display`, then draws `text` in `color` with4x6
+/// glyphs at bounded panel `x`, baseline `y`, clipped to `width` pixels. Caller
+/// supplies sanitized text/representable coordinates; target errors are discarded.
 pub(crate) fn draw_compact_row<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     x: i32,

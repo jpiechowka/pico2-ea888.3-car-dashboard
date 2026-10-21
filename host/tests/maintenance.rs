@@ -1,6 +1,9 @@
+//! Generation-bound owner parking/resume and finite flash-write permission across cancellation/fault paths.
 use dashboard_host_validation::health::{Progress, ProgressMonitor};
 use dashboard_host_validation::maintenance::{Command, Error, Gate, Owner};
 
+/// Returns idle-display progress with acquisition/render/input generation `n`
+/// and no submitted/completed transfers, suitable for maintenance admission.
 fn progress(n: u32) -> Progress {
     Progress {
         acquisition: n,
@@ -12,6 +15,7 @@ fn progress(n: u32) -> Progress {
     }
 }
 
+/// Optional-radio gates require radio park/resume acknowledgments exactly when that owner was configured.
 #[test]
 fn radio_is_a_required_owner_only_in_the_radio_gate() {
     for radio in [false, true] {
@@ -38,6 +42,8 @@ fn radio_is_a_required_owner_only_in_the_radio_gate() {
     }
 }
 
+/// Other owners cannot hide failed/missing radio parking; explicit resume cleanup remains possible after rejected
+/// preparation.
 #[test]
 fn radio_failure_or_missing_ack_cannot_be_masked_by_other_owners() {
     for success in [None, Some(false)] {
@@ -61,6 +67,8 @@ fn radio_failure_or_missing_ack_cannot_be_masked_by_other_owners() {
     }
 }
 
+/// Both owners must acknowledge each phase once for the current generation; health exits only after matching resume
+/// completion.
 #[test]
 fn both_owners_must_park_and_resume_for_the_same_generation() {
     for owners in [[Owner::Acquisition, Owner::Input], [Owner::Input, Owner::Acquisition]] {
@@ -91,6 +99,8 @@ fn both_owners_must_park_and_resume_for_the_same_generation() {
     }
 }
 
+/// Failed, duplicate, old and timed-out acknowledgments never authorize writes, and expiry remains sticky across clock
+/// rollback.
 #[test]
 fn late_duplicate_failed_and_old_acknowledgements_cannot_authorize_a_write() {
     let mut health = ProgressMonitor::new(0, progress(0));
@@ -124,6 +134,7 @@ fn late_duplicate_failed_and_old_acknowledgements_cannot_authorize_a_write() {
     assert_eq!(gate.resumed(1102), Err(Error::Timeout));
 }
 
+/// Cancellation still requires resume acknowledgments; clock or resume-owner failure prevents a clean finish.
 #[test]
 fn cancelled_preparation_and_clock_failure_still_require_resume_acknowledgements() {
     let mut health = ProgressMonitor::new(100, progress(0));
@@ -149,6 +160,7 @@ fn cancelled_preparation_and_clock_failure_still_require_resume_acknowledgements
     assert!(gate.finish(request, 101).is_err());
 }
 
+/// The write phase starts only once after all park acknowledgments and cannot extend its absolute maintenance deadline.
 #[test]
 fn write_window_starts_once_after_both_acks_and_retains_absolute_limit() {
     let mut health = ProgressMonitor::new(0, progress(0));
@@ -173,6 +185,7 @@ fn write_window_starts_once_after_both_acks_and_retains_absolute_limit() {
     assert_eq!(gate.finish(request, 999), Err(Error::Timeout));
 }
 
+/// Clock reversal in park/write/resume permanently poisons completion even after releasing owners.
 #[test]
 fn regression_inside_each_window_is_fatal_even_after_release() {
     for phase in 0..3 {

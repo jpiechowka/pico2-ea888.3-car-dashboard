@@ -1,7 +1,10 @@
+//! Versioned capture codec integrity, bounded evidence, semantic relationships and reusable decoder isolation.
+
 use dashboard_core::discovery::capture::*;
 use dashboard_core::discovery::*;
 use dashboard_core::health::reset::{BootEvidence, RecoveryCause, ResetRecord, ResetStage};
 
+/// Returns synthetic Expert280 build metadata with a known test digest and 280/70MHz CPU/display clocks.
 fn build() -> BuildIdentity {
     BuildIdentity {
         source_digest: [0xA5; 32],
@@ -11,6 +14,8 @@ fn build() -> BuildIdentity {
         source_identity_available: true,
     }
 }
+/// Returns selected-peer evidence with separate advertisement/response times and one row of each GATT kind.
+/// Inspection is marked complete/cleaned at 50ms with synthetic link/radio metadata; fixture admission failures panic.
 fn probe() -> Probe {
     let mut p = Probe::new();
     p.radio_bus_hz = Some(2_500_000);
@@ -71,6 +76,8 @@ fn probe() -> Probe {
     p
 }
 
+/// Rejected declaration prefixes preserve original lengths through 65535 bytes; every truncation fails and legacy reuse
+/// clears new evidence.
 #[test]
 fn rejected_evidence_round_trips_and_legacy_decode_clears_it() {
     let legacy = hex(include_str!("fixtures/ble-capture-v1-failure.hex").trim());
@@ -110,6 +117,8 @@ fn rejected_evidence_round_trips_and_legacy_decode_clears_it() {
     }
 }
 
+/// Export retains actual schema/raw rejected bytes; encoding rejects rejected evidence without
+/// characteristic-stage/range context.
 #[test]
 fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
     use dashboard_host_validation::probe_captures::{decode_json, text_report};
@@ -142,6 +151,8 @@ fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
     assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidState));
 }
 
+/// Selected-peer capture retains exact packet timestamps, raw read bytes, build identity, link MTU and operation
+/// duration.
 #[test]
 fn selected_peer_capture_retains_raw_records_build_and_separate_packet_times() {
     let p = probe();
@@ -162,6 +173,8 @@ fn selected_peer_capture_retains_raw_records_build_and_separate_packet_times() {
     assert_eq!(v.elapsed_ms, 12);
 }
 
+/// Every truncated prefix/one-byte corruption and trailing data fails; live out-of-service value handles fail
+/// relationship admission.
 #[test]
 fn rejects_every_truncated_prefix_integrity_damage_trailing_and_invalid_live_relations() {
     let mut p = probe();
@@ -180,6 +193,7 @@ fn rejects_every_truncated_prefix_integrity_damage_trailing_and_invalid_live_rel
     assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::Relationships));
 }
 
+/// Returns bytes from adjacent hexadecimal pairs in `text`; invalid pairs panic and a trailing odd byte is ignored.
 fn hex(text: &str) -> Vec<u8> {
     text.as_bytes()
         .as_chunks::<2>()
@@ -189,6 +203,7 @@ fn hex(text: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Repairs capture body then header CRC in `bytes` for semantic-corruption tests; fewer than 24 bytes panic.
 fn fix_crc(bytes: &mut [u8]) {
     let crc = capture_store::crc32(&bytes[24..]);
     bytes[16..20].copy_from_slice(&crc.to_le_bytes());
@@ -196,6 +211,7 @@ fn fix_crc(bytes: &mut [u8]) {
     bytes[20..24].copy_from_slice(&crc.to_le_bytes());
 }
 
+/// An independently packed Python/zlib passive schema 1 fixture decodes without invented inspection or source identity.
 #[test]
 fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
     let bytes=hex("424c4543415030310100ac00000094006d1fdee578aae4cd000000000000000000000000000000000000000000000000000000000000000080d1f008c06878040000630000000000000001000000000200010203040506000a000000000000000a0000000000000001000000000000010a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
@@ -210,6 +226,7 @@ fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
     assert_eq!(view.counts(), [0; 4]);
 }
 
+/// Recomputed CRCs cannot admit invalid schema/enums/flags/record tags or invalid service relationships.
 #[test]
 fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     let mut output = [0; 8192];
@@ -236,6 +253,8 @@ fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     assert!(decode(&bytes).is_err());
 }
 
+/// Wrong-width standard values retain raw evidence with invalid-length status; protected reads require their exact
+/// failure code.
 #[test]
 fn standard_failed_reads_and_invalid_raw_length_remain_explicit() {
     let mut p = probe();
@@ -264,6 +283,8 @@ fn standard_failed_reads_and_invalid_raw_length_remain_explicit() {
     assert!(encode(&p, build(), 60, &mut output).is_err());
 }
 
+/// Missing peers, short output buffers, orphan/duplicate GATT rows and contradictory passive state fail without
+/// silently dropping evidence.
 #[test]
 fn invalid_live_relationships_and_small_buffers_never_silently_drop_evidence() {
     let mut output = [0; 8192];
@@ -290,6 +311,8 @@ fn invalid_live_relationships_and_small_buffers_never_silently_drop_evidence() {
     assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::InvalidState));
 }
 
+/// Maximum service/characteristic/descriptor/read/name/failure/reset evidence fits 8192 bytes; a 129th descriptor is
+/// rejected after CRC repair.
 #[test]
 fn all_model_capacities_fit_with_full_width_uuids_and_values() {
     let mut p = probe();
@@ -411,6 +434,8 @@ fn all_model_capacities_fit_with_full_width_uuids_and_values() {
     assert_eq!(view.metadata().cached_name.unwrap().data.as_slice(), &[b'N'; 64]);
     assert_eq!(view.metadata().boot, p.boot);
 }
+/// Ending the decoded view releases its input borrow; failed/reused decoding cannot retain the previous peer, response
+/// or GATT rows.
 #[test]
 fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {
     let mut decoder = Decoder::new();
@@ -448,6 +473,7 @@ fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {
     assert_eq!(view.records().count(), 0);
 }
 
+/// Alternating current and frozen v1/v2 loads keeps newer latch/radio evidence absent in legacy captures and JSON.
 #[test]
 fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
     let old2 = hex(include_str!("fixtures/ble-capture-v2-failure.hex").trim());
@@ -479,6 +505,7 @@ fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
     assert!(legacy["build"]["radio_gspi_hz"].is_null());
 }
 
+/// CRC-valid unknown latch bits, inconsistent first-fault markers and out-of-range radio clocks are rejected.
 #[test]
 fn crc_valid_fault_metadata_rejects_unknown_bits_bad_first_and_invalid_bus() {
     let bytes = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
@@ -502,6 +529,7 @@ fn crc_valid_fault_metadata_rejects_unknown_bits_bad_first_and_invalid_bus() {
     }
 }
 
+/// Missing configured radio clock round-trips as unavailable; an explicit zero clock is invalid data.
 #[test]
 fn radio_configuration_unknown_is_distinct_from_invalid_zero() {
     let mut p = probe();
@@ -513,6 +541,8 @@ fn radio_configuration_unknown_is_distinct_from_invalid_zero() {
     assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidData));
 }
 
+/// Schema4 names/previous-reset evidence round-trip while schema 3 reuse clears them and preserves its own latch/radio
+/// metadata.
 #[test]
 fn v4_cached_name_and_reset_record_roundtrip_and_legacy_reuse() {
     let mut p = probe();
@@ -548,6 +578,8 @@ fn v4_cached_name_and_reset_record_roundtrip_and_legacy_reuse() {
     assert!(old["cached_name"].is_null() && old["boot"].is_null());
 }
 
+/// CRC-repaired bad name/boot flags, time bounds and reset-stage relationships fail without leaking partially decoded
+/// metadata on reuse.
 #[test]
 fn v4_metadata_rejects_corrupt_names_timestamps_flags_and_reset_stages_with_valid_crc() {
     let mut p = probe();

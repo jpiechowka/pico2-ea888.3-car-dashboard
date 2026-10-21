@@ -1,57 +1,98 @@
 //! Completion-based cadence without replaying missed polling ticks.
 
+/// Maximum independently scheduled channels; bounds each admission scan.
 pub const MAX_CHANNELS: usize = 8;
+/// Completion-relative per-channel timing in monotonic milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cadence {
+    /// Positive delay from actual completion to this channel's next due time.
     pub period_ms: u64,
+    /// Positive transaction timeout, no greater than session MAX_DEADLINE_MS.
     pub deadline_ms: u64,
 }
+/// Admission/scheduling failures; most temporal failures permanently stop this scheduler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// Invalid channel count, zero period/deadline/epoch or excessive deadline.
     Configuration,
+    /// Monotonic observer time moved backwards; scheduler is stopped.
     Clock,
+    /// Active transaction reached or passed its absolute deadline; scheduler is stopped.
     Timeout,
+    /// Completion ticket does not exactly match the active epoch/generation/channel/timing.
     Token,
+    /// Checked identity, time or latency arithmetic overflowed; active scheduler is stopped.
     Exhausted,
+    /// Scheduler was explicitly stopped or failed earlier.
     Stopped,
 }
+/// Immutable single-flight admission token, bound to a fresh session epoch and exact timing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ticket {
+    /// Nonzero session epoch; prevents old owners completing newly created schedules.
     epoch: u64,
+    /// Zero-based channel index within the scheduler's fixed array.
     index: usize,
+    /// Checked monotonically increasing transaction identity within this epoch.
     generation: u64,
+    /// Admission time in boot-relative milliseconds.
     started_ms: u64,
+    /// Exclusive completion deadline in boot-relative milliseconds.
     deadline_ms: u64,
 }
 impl Ticket {
+    /// Returns `self`'s zero-based channel index.
     pub const fn index(self) -> usize { self.index }
 
+    /// Returns `self`'s actual admission time in boot-relative milliseconds.
     pub const fn started_ms(self) -> u64 { self.started_ms }
 
+    /// Returns `self`'s exclusive absolute completion deadline in boot-relative milliseconds.
     pub const fn deadline_ms(self) -> u64 { self.deadline_ms }
 }
+/// Aggregate latency of all accepted completions, including unsuccessful replies.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Latency {
+    /// Number of accepted completions; overflow stops the scheduler instead of wrapping.
     pub count: u64,
+    /// Sum of admission-to-completion durations in milliseconds, checked for overflow.
     pub total_ms: u64,
+    /// Maximum accepted admission-to-completion duration in milliseconds.
     pub max_ms: u64,
 }
 
+/// Fixed-capacity round-robin due-channel scheduler with at most one active transaction.
 pub struct Scheduler<const N: usize> {
+    /// Nonzero session identity shared by all tickets this instance issues.
     epoch: u64,
+    /// Validated period/deadline pairs for 1..=8 channels.
     cadences: [Cadence; N],
+    /// Next absolute due time per channel in milliseconds, rebased on actual completion.
     due_ms: [u64; N],
+    /// Last successful actual receipt time per channel; failures do not advance it.
     successes: [Option<u64>; N],
+    /// Required global quiet interval after every accepted completion, in milliseconds.
     gap_ms: u64,
+    /// Earliest next admission time after the intertransaction gap, in milliseconds.
     ready_ms: u64,
+    /// Latest observed monotonic milliseconds for reversal detection.
     last_ms: u64,
+    /// Last allocated transaction generation; checked increments never wrap.
     generation: u64,
+    /// Next channel from which the bounded round-robin due scan begins.
     cursor: usize,
+    /// Outstanding transaction ticket, absent when idle or stopped.
     active: Option<Ticket>,
+    /// Terminal latch requiring creation under a fresh session epoch before reuse.
     stopped: bool,
+    /// Checked aggregate accepted completion latency.
     latency: Latency,
 }
 impl<const N: usize> Scheduler<N> {
+    /// Returns a scheduler for nonzero `epoch` and validated `cadences`, with all channels
+    /// initially due at boot-relative `now_ms`. `gap_ms` is the post-completion global gap.
+    /// Invalid channel count/period/deadline or epoch returns Configuration; future
+    /// time arithmetic involving the unrestricted gap is checked when a completion occurs.
     pub fn new(
         epoch: u64,
         cadences: [Cadence; N],
@@ -79,6 +120,10 @@ impl<const N: usize> Scheduler<N> {
     }
 
     /// At most N slots are inspected and one transaction is admitted per call.
+    /// Advances `self` at boot-relative `now_ms`, returning the next due ticket, or
+    /// `Ok(None)` while active, inside the global gap, or with no due channel.
+    /// Reversed time, expired active work or identity/deadline overflow stops the
+    /// scheduler and returns its error. Missed periods never create catch-up bursts.
     pub fn next(
         &mut self,
         now_ms: u64,
@@ -115,6 +160,10 @@ impl<const N: usize> Scheduler<N> {
 
     /// Record the actual prompt completion, not a later publication/display time.
     /// Failure changes scheduling but never the last successful receipt stamp.
+    /// Completes exact `ticket` in `self` at boot-relative `completed_ms`; `successful`
+    /// controls only the last-success stamp. Returns unit after rebasing due/gap times,
+    /// aggregating latency and clearing active work. Wrong ticket returns Token without
+    /// mutation; deadline equality, reversal or arithmetic exhaustion stops the scheduler.
     pub fn complete(
         &mut self,
         ticket: Ticket,
@@ -152,6 +201,9 @@ impl<const N: usize> Scheduler<N> {
         Ok(())
     }
 
+    /// Observes boot-relative `now_ms` in `self`, returning unit while live and before
+    /// an active deadline. Reversal or deadline equality stops and clears active work;
+    /// an already stopped instance returns Stopped. Idle elapsed time creates no tickets.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -169,6 +221,8 @@ impl<const N: usize> Scheduler<N> {
         Ok(())
     }
 
+    /// Returns `self`'s last successful completion time for channel `index`, in
+    /// boot-relative milliseconds; absent/out-of-range indices return `None`.
     pub fn last_success_ms(
         &self,
         index: usize,
@@ -176,14 +230,19 @@ impl<const N: usize> Scheduler<N> {
         self.successes.get(index).copied().flatten()
     }
 
+    /// Returns `self`'s aggregate latency snapshot, including unsuccessful accepted completions.
     pub const fn latency(&self) -> Latency { self.latency }
 
     /// Stop on disconnect or flash park. Recreate only for a fresh Session epoch.
+    /// Clears `self`'s active ticket and permanently stops admission, returning unit;
+    /// previously collected success/latency evidence is retained for diagnostics.
     pub fn stop(&mut self) {
         self.active = None;
         self.stopped = true;
     }
 
+    /// Stops `self` and returns the supplied `error` for any required output type, retaining
+    /// prior diagnostic history but discarding active work.
     fn fail<T>(
         &mut self,
         error: Error,
@@ -195,6 +254,9 @@ impl<const N: usize> Scheduler<N> {
 
 /// Estimated serialized link occupancy. Above 1000 means the selected periods
 /// cannot all be met at this observed round-trip cost; this is not ECU timing.
+/// Returns the sum of per-channel rounded-up permille costs for validated `cadences`,
+/// observed `round_trip_ms` and post-completion `gap_ms`. Invalid cadence returns
+/// Configuration; checked add/multiply/sum overflow returns Exhausted without mutation.
 pub fn utilization_permille(
     cadences: &[Cadence],
     round_trip_ms: u64,
@@ -212,6 +274,8 @@ pub fn utilization_permille(
     })
 }
 
+/// Returns unit if `cadences` has 1..=8 channels, positive periods/deadlines and deadlines
+/// no greater than session MAX_DEADLINE_MS; otherwise Configuration. No mutation occurs.
 fn validate(cadences: &[Cadence]) -> Result<(), Error> {
     if cadences.is_empty()
         || cadences.len() > MAX_CHANNELS
@@ -225,10 +289,13 @@ fn validate(cadences: &[Cadence]) -> Result<(), Error> {
 }
 
 #[cfg(test)]
+/// Cadence, fairness, identity and temporal-failure regressions.
 mod tests {
     use super::*;
 
     #[test]
+    /// Returns unit after checking completion-relative scheduling, no stall catch-up and
+    /// unsuccessful-completion latency without success-stamp advancement; panics on drift.
     fn completion_time_drives_cadence_and_stalls_do_not_replay_ticks() {
         let mut scheduler = Scheduler::new(
             1,
@@ -261,6 +328,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking due slow channels receive round-robin turns despite
+    /// an always-due fast channel; panics on starvation/order drift.
     fn fair_due_channels_include_slow_values_under_fast_channel_load() {
         let mut scheduler = Scheduler::new(
             1,
@@ -290,6 +359,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking deadline equality, time reversal and explicit stop
+    /// reject completion without publishing success; panics if admission resumes.
     fn late_completion_clock_regression_and_stop_do_not_publish() {
         for kind in 0..3 {
             let mut scheduler = Scheduler::new(
@@ -317,6 +388,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking modeled occupancy, empty/zero-period rejection and
+    /// arithmetic overflow; panics if invalid timing is silently admitted.
     fn latency_budget_exposes_unsustainable_fast_channel_load() {
         let channels = [Cadence {
             period_ms: 100,
@@ -341,6 +414,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking an old owner's ticket cannot complete a fresh-epoch
+    /// scheduler even with equal channel/timing; panics if epoch identity is ignored.
     fn recreated_owner_must_reject_previous_epoch_ticket() {
         let cadences = [Cadence {
             period_ms: 100,

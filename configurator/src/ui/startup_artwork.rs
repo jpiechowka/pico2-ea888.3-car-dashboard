@@ -1,4 +1,7 @@
-//! One replaceable, deadline-bounded Rust Worker. Acceptance belongs to Editor.
+//! One replaceable Rust Worker; editor identity controls acceptance. The ten-second
+//! deadline starts after the first file read, covering worker startup/conversion and
+//! the subsequent original read until handoff. File reads themselves are not cancelled.
+//! See [worker termination](https://html.spec.whatwg.org/multipage/workers.html#dom-worker-terminate).
 use std::sync::Arc;
 
 use dashboard_configurator::artwork_draft::{Number, Numbers};
@@ -9,30 +12,52 @@ use wasm_bindgen::closure::Closure;
 use super::*;
 
 #[derive(Clone)]
+/// Original artwork owner and recorded conversion recipe available for reopening.
 pub struct RetainedSource {
+    /// Immutable artwork handle retaining embedded bytes or an external browser pin.
     pub source: Arc<dashboard_config_tools::project::Artwork>,
+    /// Display/file label restored from the accepted recipe.
     pub label: String,
+    /// Recorded fit, matte and timing; target geometry is recomputed at conversion.
     pub options: Options,
 }
+/// Source width/height pixels, frame count, duration ms, zero-delay count,
+/// resampling flag and effective trim end ms, decoded from bounded worker JSON.
 type WorkerSummary = (u32, u32, u16, u32, u16, bool, u32);
+/// Converted animation bytes and source metadata; asset parser validates bytes separately.
 type WorkerResult = (Vec<u8>, WorkerSummary);
 
+/// Validated worker output and original bytes awaiting transactional project admission.
 pub struct ArtworkImport {
+    /// Original source bytes, bounded to 8 MiB, shared for project admission.
     pub source: Arc<[u8]>,
+    /// Parsed target-sized animation plus worker source/timing summary.
     pub converted: Converted,
+    /// Actual conversion recipe including captured effective splash geometry.
     pub options: Options,
+    /// Filename sanitized of controls/path separators and truncated to 32 characters.
     pub label: String,
+    /// Editor import authority rechecked by the acceptance callback.
     pub token: ImportToken,
+    /// Exclusive source-materialization ownership transferred through persistence.
     pub lease: originals::Materialization,
+    /// Caller must report acceptance; generation checks suppress obsolete feedback.
     pub finished: Callback<bool>,
 }
+/// One worker and its callback/deadline ownership; dropping terminates worker execution.
 struct Job {
+    /// Dedicated browser worker, terminated before original materialization.
     worker: web_sys::Worker,
+    /// Owned ready/result handler detached before release.
     _message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    /// Owned runtime-error handler detached before release.
     _error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
+    /// Ten-second deadline cleared on disposal.
     timeout: TimeoutHandle,
 }
 impl Drop for Job {
+    /// Detaches callbacks, terminates worker execution and clears its deadline;
+    /// transferred buffers are not restored to the sender.
     fn drop(&mut self) {
         self.worker.set_onmessage(None);
         self.worker.set_onerror(None);
@@ -41,17 +66,28 @@ impl Drop for Job {
     }
 }
 #[derive(Clone, Copy)]
+/// Replaceable conversion lifecycle bound to editor stamp, generation and import token.
 struct Importer {
+    /// Current worker resource owner; None during reads or post-worker admission.
     job: StoredValue<Option<Job>, LocalStorage>,
+    /// Saturating invalidation epoch; maximum forbids new conversions.
     generation: RwSignal<u64>,
+    /// Conversion/read/admission pipeline is active.
     busy: RwSignal<bool>,
+    /// Feedback scoped to the accepted project identity.
     message: startup::ProjectMessage,
+    /// Editor stamp captured before asynchronous source work.
     stamp: RwSignal<Option<EditorStamp>>,
+    /// Current reducer import token cancelled on replacement/disposal.
     token: RwSignal<Option<ImportToken>>,
+    /// Materialization lease retained until ownership passes to ArtworkImport.
     lease: StoredValue<Option<originals::Materialization>, LocalStorage>,
+    /// Editor used to invalidate the import token during cancellation.
     editor: RwSignal<Editor>,
 }
 impl Importer {
+    /// Invalidates this generation, cancels its editor import, drops source/worker
+    /// owners and clears busy state; late noncancellable file reads cannot publish.
     fn cancel(self) {
         if self.busy.try_get_untracked() == Some(true) {
             self.message
@@ -69,6 +105,8 @@ impl Importer {
         let _ = self.busy.try_set(false);
     }
 
+    /// Returns whether `generation` or `ui`'s editor `stamp` has changed or disposed;
+    /// a stamp mismatch also cancels resources and reports project-change failure.
     fn stale(
         self,
         ui: Ui,
@@ -85,6 +123,8 @@ impl Importer {
         false
     }
 
+    /// Cancels the active conversion and publishes `message` with retained-project
+    /// feedback; no accepted artwork is changed.
     fn fail(
         self,
         message: &str,
@@ -94,6 +134,11 @@ impl Importer {
             .try_set(format!("{message} Previous accepted artwork retained."));
     }
 }
+/// Replaces `state`'s conversion of `file` using `options` and `ui`'s effective
+/// splash geometry; admitted output transfers its lease/token to `on_accept`. Rejects
+/// source metadata over 8 MiB, pending inspection, exhausted identity or lease conflict.
+/// Every async result checks generation/stamp; malformed output, worker/read/deadline
+/// failures preserve accepted artwork. Panics only if fixed Options serialization fails.
 fn start(
     ui: Ui,
     state: Importer,
@@ -333,6 +378,9 @@ fn start(
     });
 }
 
+/// Reopens `source` under `state` after verifying its retained bytes, then converts
+/// with `options` and `on_accept` against `ui`'s current splash geometry. Stale stamp/token,
+/// verification and File creation failures cannot replace accepted artwork.
 fn start_retained(
     ui: Ui,
     state: Importer,
@@ -378,10 +426,15 @@ fn start_retained(
     });
 }
 
+/// Returns a raw numeric input for `field` in `numbers`; editing cancels `state`
+/// and retains at most 32 input bytes or an explicit invalid marker for later admission.
 #[component]
 fn NumericOption(
+    /// Conversion owner whose current job is cancelled before changing numeric input.
     state: Importer,
+    /// Retained raw numeric text, including invalid input awaiting admission.
     numbers: RwSignal<Numbers>,
+    /// Conversion option whose label and raw text are displayed.
     field: Number,
 ) -> impl IntoView {
     view! {<label>{field.label()}<input type="text" inputmode="numeric" maxlength="32" aria-label=field.label()
@@ -393,11 +446,19 @@ fn NumericOption(
     }/></label>}
 }
 
+/// Returns conversion controls for `ui`, passing admitted results to `on_accept`
+/// and exposing optional `retained` originals. Disposal/project changes cancel active
+/// work; conversion settings are validated separately from accepted project state.
 #[component]
 pub fn Panel(
+    /// Shared project revision and startup geometry used to admit conversion results.
     ui: Ui,
+    /// Callback receiving an admitted conversion plus revision-bound import authority.
     on_accept: Callback<ArtworkImport>,
-    #[prop(optional)] retained: Option<Signal<Option<RetainedSource>>>,
+    /// Optional reactive retained original; absent input omits re-editing, and an inner None means no current
+    /// original.
+    #[prop(optional)]
+    retained: Option<Signal<Option<RetainedSource>>>,
 ) -> impl IntoView {
     let options = RwSignal::new(Options::default());
     let numbers = RwSignal::new(Numbers::new(&Options::default()));
@@ -449,6 +510,8 @@ pub fn Panel(
     </div></details>}
 }
 
+/// Returns the relative generated worker loader, or the silent isolated endpoint
+/// while the browser failure fixture explicitly enables it.
 fn worker_url() -> &'static str {
     #[cfg(feature = "browser-tests")]
     if SILENT_WORKER.with(std::cell::Cell::get) {
@@ -457,9 +520,14 @@ fn worker_url() -> &'static str {
     "./startup-worker_loader.js"
 }
 #[cfg(feature = "browser-tests")]
-thread_local! { static SILENT_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! {
+/// Isolated fixture override; production always uses the generated Rust worker loader.
+static SILENT_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 #[cfg(feature = "browser-tests")]
+/// Returns success after exercising malformed/current/cancelled/stale replies and
+/// the actual ten-second deadline through `ui`; failures return JS errors, fixture
+/// assumptions may panic, and the test edits the isolated editor state.
 pub(super) async fn browser_cases(ui: Ui) -> Result<(), wasm_bindgen::JsValue> {
     use super::browser_tests::{tick, until};
     let state = Importer {

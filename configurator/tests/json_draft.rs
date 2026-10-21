@@ -1,8 +1,11 @@
+//! JSON draft authority, parser admission and read-only inspection regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::json_draft::JsonState;
 
 #[test]
+/// Equal-text input and parse completion advance draft projection without changing accepted identity or history.
 fn draft_projection_tracks_equal_text_and_parse_phase_without_accepted_mutation() {
     use dashboard_configurator::json_draft::JsonPhase;
     let mut editor = Editor::default();
@@ -41,6 +44,8 @@ fn draft_projection_tracks_equal_text_and_parse_phase_without_accepted_mutation(
 }
 
 #[test]
+/// Candidate preview falls back to the boot view only when that view is uniquely resolvable; accepted selection stays
+/// unchanged.
 fn json_view_fallback_is_guarded_and_does_not_select_another_firmware_view() {
     use dashboard_configurator::json_draft::inspection_view;
     let mut candidate = default_config();
@@ -61,6 +66,8 @@ fn json_view_fallback_is_guarded_and_does_not_select_another_firmware_view() {
     assert_eq!(inspection_view(&candidate, 4), None);
 }
 
+/// Replaces the open draft in `editor` with `text` and synchronously completes its current parse; panics on fixture
+/// setup failure.
 fn parse_text(
     editor: &mut Editor,
     text: String,
@@ -71,6 +78,7 @@ fn parse_text(
 }
 
 #[test]
+/// Opening JSON preserves export authority; even identical typed text requires apply or discard before export.
 fn opening_is_clean_but_the_first_identical_keystroke_blocks_export_until_discard() {
     let mut editor = Editor::default();
     let before = editor.stamp();
@@ -93,6 +101,7 @@ fn opening_is_clean_but_the_first_identical_keystroke_blocks_export_until_discar
 }
 
 #[test]
+/// Semantic and syntax errors retain inspectable draft diagnostics while preserving accepted configuration and history.
 fn semantic_invalid_and_syntax_invalid_candidates_do_not_replace_accepted_state() {
     let mut editor = Editor::default();
     let bytes = editor.export_binary().unwrap();
@@ -118,6 +127,7 @@ fn semantic_invalid_and_syntax_invalid_candidates_do_not_replace_accepted_state(
 }
 
 #[test]
+/// Parse completion rejects handles from earlier text, discarded transactions, and another editor owner.
 fn parse_tokens_track_each_keystroke_transaction_and_editor_owner() {
     let mut editor = Editor::default();
     let text = editor.export_json().unwrap();
@@ -136,6 +146,7 @@ fn parse_tokens_track_each_keystroke_transaction_and_editor_owner() {
 }
 
 #[test]
+/// Discarding typed JSON does not revive import or prepared-save authority captured before typing.
 fn typing_retires_existing_import_and_prepared_save_even_after_discard() {
     let mut editor = Editor::default();
     let bytes = editor.export_binary().unwrap();
@@ -160,6 +171,7 @@ fn typing_retires_existing_import_and_prepared_save_even_after_discard() {
 }
 
 #[test]
+/// An accepted import invalidates the old clean JSON handle and its delayed parser completion.
 fn accepted_import_retires_clean_json_handles_and_parse_callbacks() {
     let mut editor = Editor::default();
     let text = editor.export_json().unwrap();
@@ -172,6 +184,7 @@ fn accepted_import_retires_clean_json_handles_and_parse_callbacks() {
 }
 
 #[test]
+/// The exact byte limit is accepted; multibyte overflow preserves current text and parser authority.
 fn utf8_limit_rejects_overflow_without_accepting_text_or_retiring_the_current_parse() {
     let mut editor = Editor::default();
     let text = editor.export_json().unwrap();
@@ -191,6 +204,8 @@ fn utf8_limit_rejects_overflow_without_accepting_text_or_retiring_the_current_pa
 }
 
 #[test]
+/// Apply creates one undo entry, distinguishes accepted revision from content identity, and reparses current text
+/// before admission.
 fn apply_is_one_atomic_undo_entry_and_reparses_the_current_text() {
     let mut editor = Editor::default();
     let before = editor.export_binary().unwrap();
@@ -224,6 +239,8 @@ fn apply_is_one_atomic_undo_entry_and_reparses_the_current_text() {
 }
 
 #[test]
+/// Pending JSON blocks visual edits, selection, history, imports, pointer sessions, save and export without advancing
+/// accepted state.
 fn all_public_visual_and_persistence_actions_recheck_pending_json() {
     let mut editor = Editor::default();
     let text = editor.export_json().unwrap();
@@ -261,6 +278,7 @@ fn all_public_visual_and_persistence_actions_recheck_pending_json() {
 }
 
 #[test]
+/// Inspection checks candidate indices, reports duplicate parent identity, and expires when the draft is discarded.
 fn semantic_inspection_checks_exact_candidate_indices_and_duplicate_parent_view_ids() {
     let mut large = default_config();
     large.widgets[7].display.decimals = 255;
@@ -290,6 +308,7 @@ fn semantic_inspection_checks_exact_candidate_indices_and_duplicate_parent_view_
 }
 
 #[test]
+/// JSON inspection of an invalid raw draft cannot edit text and its handle stays stale after raw repair.
 fn visual_raw_inspection_is_read_only_and_needs_a_fresh_transaction_after_repair() {
     let mut editor = Editor::default();
     editor
@@ -315,6 +334,8 @@ fn visual_raw_inspection_is_read_only_and_needs_a_fresh_transaction_after_repair
 }
 
 #[test]
+/// Duplicate widget IDs remain inspectable by candidate position without selection changes; new text retires the
+/// target.
 fn indexed_inspection_of_duplicate_ids_is_read_only_and_stales_on_new_text() {
     let mut editor = Editor::default();
     let mut config = default_config();
@@ -343,6 +364,7 @@ fn indexed_inspection_of_duplicate_ids_is_read_only_and_stales_on_new_text() {
 }
 
 #[test]
+/// Raw-field inspection preserves invalid text, accepted revision, selection and history, then expires on discard.
 fn raw_inspection_resolves_another_invalid_field_without_selecting_or_accepting_it() {
     let mut editor = Editor::default();
     editor
@@ -370,6 +392,8 @@ fn raw_inspection_resolves_another_invalid_field_without_selecting_or_accepting_
 }
 
 #[test]
+/// Current-schema parsing rejects duplicate or unknown fields, wrong versions, trailing values, oversize bytes and
+/// nested invalid documents.
 fn strict_current_parser_preserves_duplicate_unknown_version_and_size_checks() {
     let text = Editor::default().export_json().unwrap();
     assert_eq!(parse_current_json_candidate(text.as_bytes()).unwrap(), default_config());

@@ -1,48 +1,83 @@
 //! Shared bounded transport status. Ready never asserts vehicle qualification.
 use super::session;
 
+/// Current BLE owner phase; ready states qualify only their respective adapter/test protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LinkState {
+    /// BLE configuration is disabled; default before startup.
     #[default]
     Disabled,
+    /// Radio/host initialization is in progress.
     Starting,
+    /// Connecting to the configured exact peer identity.
     Connecting,
+    /// Establishing required link security.
     Securing,
+    /// Discovering the selected profile's GATT endpoints.
     Discovering,
+    /// Adapter initialization/identity transaction is in progress.
     Identifying,
+    /// Adapter identified; live ECU requests remain unqualified.
     AdapterReady,
+    /// Separate synthetic test-peer protocol is ready; no vehicle data is published.
     SyntheticReady,
+    /// Waiting before a policy-authorized reconnect attempt.
     Backoff,
+    /// Radio work is parked for coordinated flash maintenance.
     Maintenance,
+    /// Owner cannot proceed without recovery/restart policy.
     Fault,
 }
 
+/// Bounded reason for an owner failure, separate from raw terminal-link evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkFault {
+    /// Configuration failed admission.
     Configuration,
+    /// Required encryption/authentication was unavailable or failed.
     Security,
+    /// Required GATT endpoints/properties could not be admitted.
     Discovery,
+    /// Controller/link I/O or abnormal termination failed.
     Transport,
+    /// Receive path lost at least one required notification.
     NotificationLoss,
+    /// Owner operation deadline expired.
     Timeout,
+    /// Monotonic timing regressed.
     Clock,
+    /// Nonreused identity or bounded monotonic counter exhausted.
     Exhausted,
-    Protocol(session::Error),
+    /// Session parser/transaction contract failed.
+    Protocol(
+        /// Exact bounded session error.
+        session::Error,
+    ),
 }
 
+/// Copyable diagnostic snapshot; not a qualification result for ECU measurement channels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LinkSnapshot {
+    /// Current owner lifecycle phase.
     pub state: LinkState,
+    /// Current session epoch; zero before a connected session is issued.
     pub epoch: u64,
+    /// Number of owner-reported completed protocol transactions.
     pub completed_transactions: u64,
+    /// Cumulative notification-loss count reported by the receive boundary.
     pub lost_notifications: u64,
+    /// Latest completed transaction latency in milliseconds, or unavailable.
     pub last_latency_ms: Option<u32>,
+    /// Current bounded owner fault, absent when no failure is reported.
     pub fault: Option<LinkFault>,
 }
 
 /// Decide the outcome after controller-confirmed disconnection. Intentional
 /// maintenance cancellation may surface as Transport from admission; suppress it
 /// only with normal termination and no ingress fault. Specific errors survive.
+/// Returns the final fault from `operation`, maintenance `parked`, optional HCI `reason`
+/// and `local_error` ingress flag. Only parked, normal, ingress-clean teardown suppresses
+/// a generic Transport fault; otherwise an absent operation fault becomes Transport.
 pub fn closed_fault(
     parked: bool,
     operation: Option<LinkFault>,
@@ -58,6 +93,9 @@ pub fn closed_fault(
 
 /// One bounded terminal record per connection. RX1 means retained local ingress
 /// failure; ?? means the controller reason is unavailable, never success/zero.
+/// Appends one bounded record to `store` at boot-relative `now_ms` milliseconds for
+/// `epoch`, optional HCI `reason` and `local_error`. Returns unit; level is Info only
+/// for a normal reason with no local error, otherwise Fault. Caller supplies locking context.
 pub fn log_disconnect<M: embassy_sync::blocking_mutex::raw::RawMutex>(
     store: &crate::logging::LogStore<M>,
     now_ms: u64,
@@ -80,6 +118,9 @@ pub fn log_disconnect<M: embassy_sync::blocking_mutex::raw::RawMutex>(
 
 /// Record a changed BLE state outside the status lock. Codes retain every
 /// state/reason in at most 39 ASCII bytes, including a full u64 epoch.
+/// Appends `state`, optional `fault` and `epoch` to `store` at boot-relative `now_ms`
+/// milliseconds, returning unit. Fault state or any fault uses Fault severity; other
+/// states use Info. Call only on transitions to avoid per-frame logging.
 pub fn log_transition<M: embassy_sync::blocking_mutex::raw::RawMutex>(
     store: &crate::logging::LogStore<M>,
     now_ms: u64,
@@ -121,6 +162,7 @@ pub fn log_transition<M: embassy_sync::blocking_mutex::raw::RawMutex>(
     store.push(level, now_ms, format_args!("BLE {epoch} {state} {reason}"));
 }
 
+/// Returns a bounded ASCII code preserving the exact session/parser category of `error`.
 fn protocol_code(error: session::Error) -> &'static str {
     use session::Error;
 

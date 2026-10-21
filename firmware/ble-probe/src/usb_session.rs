@@ -11,17 +11,28 @@ use core::task::Poll;
 use embassy_sync::waitqueue::AtomicWaker;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Epoch(u32);
+/// Non-wrapping USB configuration generation, usable only while its session matches.
+pub struct Epoch(
+    /// Checked-increment generation; zero is the unconfigured initial state.
+    u32,
+);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Guard rejection after reset, reconfiguration, disconnect, or generation exhaustion.
 pub struct Changed;
 
+/// Core0 cooperative USB session fence with one registered capture-task waiter.
 pub struct Session {
+    /// Monotonically incremented generation; never wraps after u32::MAX.
     epoch: AtomicU32,
+    /// Whether the current bus configuration admits application endpoint I/O.
     configured: AtomicBool,
+    /// Permanent fail-closed latch when the generation can no longer increment.
     exhausted: AtomicBool,
+    /// Single waiter notified after every reset/configuration transition.
     waker: AtomicWaker,
 }
 impl Session {
+    /// Returns an unconfigured generation-zero session with no exhaustion latch.
     pub const fn new() -> Self {
         Self {
             epoch: AtomicU32::new(0),
@@ -33,6 +44,8 @@ impl Session {
 
     /// Call on every bus reset/configuration change, including configured=false.
     /// Exhaustion fails closed until reboot; an old token can never become valid.
+    /// `configured` becomes the new availability only after a successful increment;
+    /// transitions always wake the waiter, including failed/exhausted transitions.
     pub fn change(
         &self,
         configured: bool,
@@ -51,6 +64,8 @@ impl Session {
         self.waker.wake();
     }
 
+    /// Returns the current generation only while configured and unexhausted;
+    /// otherwise returns None. Endpoint poll callers run cooperatively on core0.
     pub fn current(&self) -> Option<Epoch> {
         if self.configured.load(Ordering::SeqCst) && !self.exhausted.load(Ordering::SeqCst) {
             Some(Epoch(self.epoch.load(Ordering::SeqCst)))
@@ -59,6 +74,7 @@ impl Session {
         }
     }
 
+    /// Returns whether `epoch` is the currently configured, unexhausted generation.
     pub fn matches(
         &self,
         epoch: Epoch,
@@ -66,6 +82,8 @@ impl Session {
         self.current() == Some(epoch)
     }
 
+    /// Waits until `epoch` is invalid, registering before checking to avoid lost
+    /// wakeups. Only one task may own this session's waiter at a time.
     pub async fn changed(
         &self,
         epoch: Epoch,
@@ -81,6 +99,10 @@ impl Session {
         .await
     }
 
+    /// Polls `future` only while `epoch` matches, checking again after Ready.
+    /// Returns its output or Changed; mismatch drops the future without another
+    /// poll, so its caller must provide a cancellation-safe operation. With core0
+    /// cooperative endpoint copies this prevents I/O from crossing USB sessions.
     pub async fn guard<F: Future>(
         &self,
         epoch: Epoch,
@@ -105,9 +127,12 @@ impl Session {
 }
 
 #[cfg(test)]
+/// Regression for the permanent generation-exhaustion fence.
 mod tests {
     use super::*;
     #[test]
+    /// Verifies the final generation remains distinct and later transitions never
+    /// wrap or reenable a session, even if configuration becomes true again.
     fn exhausted_generation_never_wraps_or_reenables() {
         let session = Session::new();
         session.epoch.store(u32::MAX - 1, Ordering::SeqCst);

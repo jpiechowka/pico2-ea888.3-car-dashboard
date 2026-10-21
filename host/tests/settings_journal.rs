@@ -1,18 +1,29 @@
+//! Two-sector settings journal fault injection, commit integrity and unknown-format preservation.
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::settings::{self, Error, PAGE_SIZE, SECTOR_SIZE, STORAGE_SIZE, Settings, Storage};
 
+/// Byte-addressable NOR model; partial-prefix/bit tests are software fault models, not electrical guarantees.
 #[derive(Clone)]
 struct Flash {
+    /// Reserved journal bytes, initially erased to 0xFF.
     bytes: [u8; STORAGE_SIZE],
+    /// Zero-based next program/erase operation number; reads are counted separately.
     operations: usize,
+    /// Optional failing operation and number of leading bytes changed before error.
     cut: Option<(usize, usize)>,
+    /// Fail every read before modifying its destination.
     read_error: bool,
+    /// Report program success without changing storage, exercising readback verification.
     silent_write: bool,
+    /// Report erase success without changing storage, exercising erase verification.
     silent_erase: bool,
+    /// Zero-based next read attempt number, including failed reads.
     reads: usize,
+    /// Fail exactly this numbered read in addition to the global read-error flag.
     fail_read: Option<usize>,
 }
 impl Flash {
+    /// Returns an erased journal with empty counters and all fault injection disabled.
     fn blank() -> Self {
         Self {
             bytes: [255; STORAGE_SIZE],
@@ -27,8 +38,12 @@ impl Flash {
     }
 }
 impl Storage for Flash {
+    /// Injected storage failure; the selected operation identifies its cause.
     type Error = ();
 
+    /// Copies bytes at journal-relative `offset` into `out`, counting the attempt.
+    /// Returns `Err(())` before copying on injected failure, otherwise `Ok(())`;
+    /// panics if the production caller supplies an escaping range.
     fn read(
         &mut self,
         offset: u32,
@@ -43,6 +58,10 @@ impl Storage for Flash {
         Ok(())
     }
 
+    /// Programs page `data` at journal-relative `offset` using NOR bitwise AND.
+    /// Returns an injected error after the configured prefix, or `Ok(())`, which
+    /// may deliberately hide a silent write. Counts every attempt; panics for
+    /// unaligned/out-of-range or previously programmed pages.
     fn program(
         &mut self,
         offset: u32,
@@ -67,6 +86,9 @@ impl Storage for Flash {
         if cut.is_some() { Err(()) } else { Ok(()) }
     }
 
+    /// Erases one sector at journal-relative `offset`; counts the attempt.
+    /// Returns an injected error after its prefix, otherwise `Ok(())` even when
+    /// silent erase is enabled. Panics for unaligned or escaping ranges.
     fn erase(
         &mut self,
         offset: u32,
@@ -80,8 +102,11 @@ impl Storage for Flash {
         if cut.is_some() { Err(()) } else { Ok(()) }
     }
 }
+/// Returns deterministic valid settings from `n`: brightness modulo 101, restore 75%,
+/// odd values select PSI and FPS is Combined; every u8 input is admitted.
 fn choice(n: u8) -> Settings { Settings::new(n % 101, 75, !n.is_multiple_of(2), FpsMode::Combined).unwrap() }
 
+/// Checks standard CRC vectors, every byte-valued brightness boundary and durable default preferences.
 #[test]
 fn settings_ranges_default_and_crc_check_vector() {
     assert_eq!(settings::crc32(b"123456789"), 0xCBF43926);
@@ -99,6 +124,7 @@ fn settings_ranges_default_and_crc_check_vector() {
     assert_eq!(Settings::default().fps(), FpsMode::Off);
 }
 
+/// Blank load, repeated unchanged saves and multiple sector rollovers preserve monotonic committed generation.
 #[test]
 fn blank_roundtrip_unchanged_and_multi_sector_rollovers() {
     let mut flash = Flash::blank();
@@ -113,6 +139,7 @@ fn blank_roundtrip_unchanged_and_multi_sector_rollovers() {
     }
 }
 
+/// Every data/commit-page cut leaves either the prior record or a fully committed successor and allows later recovery.
 #[test]
 fn every_page_cut_preserves_previous_or_fully_committed_new_record() {
     let mut base = Flash::blank();
@@ -133,6 +160,7 @@ fn every_page_cut_preserves_previous_or_fully_committed_new_record() {
     }
 }
 
+/// Every erase-prefix failure during rollover preserves the newest record in the other sector.
 #[test]
 fn every_rollover_erase_cut_preserves_the_latest_other_sector() {
     let mut base = Flash::blank();
@@ -150,6 +178,7 @@ fn every_rollover_erase_cut_preserves_the_latest_other_sector() {
     }
 }
 
+/// Flipping any bit of a newer data/commit pair rejects it and falls back to the prior valid record.
 #[test]
 fn every_single_corrupt_bit_in_a_record_pair_is_rejected() {
     let mut base = Flash::blank();
@@ -167,6 +196,8 @@ fn every_single_corrupt_bit_in_a_record_pair_is_rejected() {
     }
 }
 
+/// Read failure prevents mutation; silent program/erase must fail verification instead of reporting successful
+/// persistence.
 #[test]
 fn read_errors_and_silent_program_or_erase_failures_never_report_saved() {
     let mut flash = Flash::blank();
@@ -187,6 +218,7 @@ fn read_errors_and_silent_program_or_erase_failures_never_report_saved() {
     assert_eq!(settings::load(&mut flash).unwrap().latest, previous);
 }
 
+/// Duplicate committed generations block writes as ambiguous; a wholly corrupt journal can start a new generation 1.
 #[test]
 fn duplicated_generation_blocks_mutation_and_all_corrupt_records_fall_back() {
     let mut flash = Flash::blank();
@@ -203,8 +235,9 @@ fn duplicated_generation_blocks_mutation_and_all_corrupt_records_fall_back() {
     assert_eq!(settings::save(&mut flash, choice(3)).unwrap().generation, 1);
 }
 
-// Forge structurally intact envelopes to exercise schema/range guards beyond
-// the CRC failure path. The CRC implementation has a separate standard vector.
+/// Repairs the first data/commit envelope in `flash` after deliberate mutation,
+/// recomputing CRCs and copying generation/digest bindings so semantic guards
+/// are tested independently of accidental CRC failure.
 fn repair_envelope(flash: &mut Flash) {
     let crc = settings::crc32(&flash.bytes[..252]);
     flash.bytes[252..256].copy_from_slice(&crc.to_le_bytes());
@@ -214,6 +247,7 @@ fn repair_envelope(flash: &mut Flash) {
     flash.bytes[272..276].copy_from_slice(&crc.to_le_bytes());
 }
 
+/// Structurally intact future schema/length records block writes; maximum generation cannot wrap and zero is invalid.
 #[test]
 fn unsupported_schema_and_length_block_saves_and_generation_never_wraps() {
     let mut base = Flash::blank();
@@ -243,6 +277,7 @@ fn unsupported_schema_and_length_block_saves_and_generation_never_wraps() {
     assert_eq!(settings::load(&mut flash).unwrap().latest, None);
 }
 
+/// Repaired CRCs do not admit invalid setting bytes or a commit page copied from another record.
 #[test]
 fn intact_crc_cannot_authorize_invalid_values_or_a_foreign_commit() {
     let mut base = Flash::blank();
@@ -263,6 +298,8 @@ fn intact_crc_cannot_authorize_invalid_values_or_a_foreign_commit() {
     assert_eq!(settings::load(&mut base).unwrap().latest.unwrap().generation, 1);
 }
 
+/// Every save-path read failure and deterministic torn NOR bit pattern yields only the old or fully committed new
+/// record.
 #[test]
 fn arbitrary_torn_bit_patterns_and_every_read_failure_remain_recoverable() {
     let mut base = Flash::blank();

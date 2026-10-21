@@ -30,9 +30,13 @@ use crate::{bt_hci_duration, Address, BleHostError, Error, PacketPool};
 /// High-level advertisers own all controller advertising sets. Do not mix raw
 /// advertising HCI commands with these operations; cleanup disables all sets.
 pub struct Peripheral<'d, C, P: PacketPool> {
+    /// Shared controller/state handle; runner must keep processing events and cleanup commands.
     host: BleHost<'d, C, P>,
 }
 
+/// Returns raw `data` after validating property combinations and complete-command payload lengths.
+/// `extended` permits extended PDUs; legacy payloads cap at31 bytes, extended at251.
+/// Returns InvalidValue for invalid contents, ExtendedAdvertisingNotSupported for extended PDUs in legacy mode.
 fn validate_data(data: Advertisement<'_>, extended: bool) -> Result<RawAdvertisement<'_>, Error> {
     if !data.is_valid() {
         return Err(Error::InvalidValue);
@@ -50,13 +54,15 @@ fn validate_data(data: Advertisement<'_>, extended: bool) -> Result<RawAdvertise
 }
 
 impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
+    /// Returns the peripheral role borrowing `host`; does not start advertising.
     pub(crate) fn new(host: BleHost<'d, C, P>) -> Self {
         Self { host }
     }
 
     /// Set the filter accept list for advertising.
     ///
-    /// This clears the existing filter accept list on the controller and adds the provided entries.
+    /// Clears the shared controller list, then adds `filter_accept_list` in order.
+    /// Returns Ok after all commands, or the first controller/host error; errors and cancellation leave partial updates.
     /// Must be called before starting advertising (not while advertising is active).
     pub async fn set_filter_accept_list(&mut self, filter_accept_list: &[Address]) -> Result<(), BleHostError<C::Error>>
     where
@@ -71,17 +77,22 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         Ok(())
     }
 
-    /// Start advertising with the provided parameters and return a handle to accept connections.
+    /// Starts legacy advertising using `params` and validated `data`; returns the active advertiser or command error.
+    /// Waits for prior advertiser cleanup before changing controller state. Once admitted, failure/cancellation
+    /// queues a disable for the runner; dropping a pending admission cannot cancel another operation.
+    /// Legacy commands do not enforce `params.timeout`/max_events; PHY, TX power and fragmentation are extended-only.
+    /// Interval/timeout conversion panics when its HCI tick count overflows; values floor to the HCI unit.
+    /// Host advertising-state capacity must include one set or initialization panics.
     pub async fn advertise<'k>(
         &mut self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
     ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
-        C: for<'t> ControllerCmdSync<LeSetAdvData>
+        C: ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+            + ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetScanResponseData>,
     {
         let host = &self.host;
 
@@ -141,7 +152,8 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Replace both advertising and scan-response data; empty slices clear old data.
+    /// Replaces both fields from `data`; empty slices clear old data. Returns Ok after both commands or first error.
+    /// Cancellation/error after the first command leaves a partial update and does not stop advertising.
     /// Payloads above 31 bytes are rejected before either controller update.
     /// Does not change other advertising parameters. If no advertising is active, this will not
     /// produce any observable effect. This is typically useful when
@@ -149,11 +161,13 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     /// does not accept any connections.
     pub async fn update_adv_data<'k>(&mut self, data: Advertisement<'k>) -> Result<(), BleHostError<C::Error>>
     where
-        C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+        C: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetScanResponseData>,
     {
         self.write_legacy_data(validate_data(data, false)?).await
     }
 
+    /// Sends validated `data` in two zero-padded31-byte HCI commands; returns first error or Ok.
+    /// Oversized fields panic before sending. Cancellation after advertising-data write can leave old scan data.
     async fn write_legacy_data(&self, data: RawAdvertisement<'_>) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetScanResponseData>,
@@ -171,19 +185,13 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         Ok(())
     }
 
-    /// Starts sending BLE advertisements according to the provided config.
-    ///
-    /// The handles are required to provide the storage while advertising, and
-    /// can be created by calling AdvertisementSet::handles(sets).
-    ///
-    /// When a connection is accepted, its handle is returned and the control
-    /// runner stops any remaining sets before admitting another advertiser.
-    ///
-    /// Returns a handle to accept connections.
-    ///
-    /// This operation replaces all controller advertising sets after the prior
-    /// advertiser has completed cleanup. Raw advertising HCI commands must not
-    /// be mixed with this API.
+    /// Replaces all controller sets with `sets`, assigning sequential IDs into `handles`; returns an advertiser.
+    /// Requires 1..=63 equally many sets/handles and sufficient controller/host capacity; otherwise returns
+    /// InvalidValue/InsufficientSpace before admission. Each field is limited to31 legacy or251 extended bytes.
+    /// Prior cleanup completes before set clearing. Controller failure or cancellation after admission queues
+    /// runner cleanup; `handles` may be partially updated. Caller data is copied by completed HCI commands.
+    /// Interval/timeout conversion panics when its HCI tick count overflows.
+    /// Accepted connections trigger remaining-set cleanup; raw HCI advertising must not be mixed with this API.
     #[cfg(feature = "extended-advertising")]
     pub async fn advertise_ext<'k>(
         &mut self,
@@ -283,7 +291,9 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Replace supported advertising data and scan-response data for multiple sets.
+    /// Updates payloads from `sets` for matching existing `handles`; returns Ok or the first validation/command error.
+    /// Requires equal lengths<=63, distinct handle IDs<=0xEF and valid payloads; an empty batch succeeds.
+    /// `handles` IDs are read, not reassigned; cancellation may leave some fields/sets updated.
     /// Empty slices request deletion; a controller may reject deletion of scan
     /// data while a scannable extended set is enabled. Each field is limited to
     /// 251 bytes (31 for legacy sets); fragmented HCI uploads are not implemented.
@@ -324,6 +334,9 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     }
 
     #[cfg(feature = "extended-advertising")]
+    /// Writes complete validated `data` for `handle`, using `fragment` as the controller fragmentation preference.
+    /// Skips unsupported advertising fields but always sends scan data; returns Ok or first command error.
+    /// Cancellation/error between commands leaves partial state; no rollback is attempted.
     async fn write_extended_data(
         &self,
         handle: AdvHandle,
@@ -361,9 +374,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         Ok(())
     }
 
-    /// Accept any pending available connection.
-    ///
-    /// Accepts the next pending connection if there are any.
+    /// Returns the next unaccepted peripheral connection, or None without waiting; no peer filter is applied.
     pub fn try_accept(&mut self) -> Option<Connection<'d, P>> {
         if let Poll::Ready(conn) = self.host.connections().poll_accept(LeConnRole::Peripheral, &[], None) {
             Some(conn)
@@ -373,17 +384,20 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     }
 }
 
-/// Handle to an active advertiser which can accept connections.
+/// Active advertiser lease. Drop requests asynchronous disable; it does not wait for controller acknowledgment.
 pub struct Advertiser<'d, C, P: PacketPool> {
+    /// Shared controller/state handle; runner must keep processing events and cleanup commands.
     host: BleHost<'d, C, P>,
+    /// Selects extended-all-sets disable versus legacy disable during cleanup.
     extended: bool,
+    /// accept completed; legacy termination can release admission without another disable.
     done: bool,
 }
 
 impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
-    /// Accept the next peripheral connection for this advertiser.
-    ///
-    /// Returns Error::Timeout if advertiser stopped.
+    /// Consumes the lease and returns the next peripheral connection or Timeout when all sets have terminated.
+    /// This does not itself run a timeout timer. Cancellation drops the lease and requests runner cleanup.
+    /// For extended sets, successful acceptance also queues disable of any remaining sets.
     pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
         let result = match select(
             self.host.connections().accept(LeConnRole::Peripheral, &[]),
@@ -400,6 +414,7 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
 }
 
 impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
+    /// Requests mode-appropriate cleanup, or releases an already-completed legacy operation; never waits.
     fn drop(&mut self) {
         // One connection terminates only its own extended set. The control
         // runner must disable the remaining sets before releasing admission.

@@ -49,6 +49,7 @@ pub use config::sensors as thresholds;
 pub use dashboard_config as view_config;
 pub use widgets::primitives;
 
+/// Instrumented CPU work/cycles and observed stack diagnostic models.
 mod profiling {
     pub mod cpu_math;
     pub mod cycle_segments;
@@ -57,6 +58,7 @@ mod profiling {
     pub mod task_work;
 }
 
+/// Fixed state containers shared by acquisition and presentation.
 mod state {
     pub mod extrema;
     pub mod history;
@@ -65,6 +67,7 @@ mod state {
     pub mod sensor_state;
 }
 
+/// Shared font/color tokens and elapsed-time decorative animation.
 pub mod ui {
     pub mod animations;
     pub mod colors;

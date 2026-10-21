@@ -1,3 +1,7 @@
+//! Secure Connections initiator: feature/key exchange,20-round passkey or OOB/comparison,
+//! DHKey authentication, controller encryption completion and negotiated identity distribution.
+//! Manager entry validates fixed payload lengths; direct test/helper calls must maintain that invariant.
+
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
@@ -17,13 +21,21 @@ use crate::{Error, IoCapabilities, LongTermKey, PacketPool};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct LescPhaseData {
+    /// Local initiator public X coordinate, retained across nonce rounds.
     local_public_key_x: PublicKeyX,
+    /// Validated responder public X coordinate.
     peer_public_key_x: PublicKeyX,
+    /// Validated ECDH shared secret for f5.
     dh_key: DHKey,
+    /// Responder commitment for the current comparison/passkey round.
     confirm: Confirm,
+    /// Initiator Na, refreshed per passkey round; final round feeds f5/f6.
     local_nonce: Nonce,
+    /// Responder Nb, retained after commitment verification.
     peer_nonce: Nonce,
+    /// Initiator OOB random or passkey; zero for Just Works/numeric comparison.
     local_secret_ra: u128,
+    /// Responder OOB random or matching passkey; zero without that material.
     peer_secret_rb: u128,
 }
 
@@ -31,60 +43,118 @@ struct LescPhaseData {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct DhKeyCheckData {
+    /// f5 authentication key retained to verify responder Eb.
     mac_key: MacKey,
+    /// f5 encryption key, admitted only after successful Eb verification.
     ltk: LongTermKey,
+    /// Initiator final authentication nonce Na.
     local_nonce: Nonce,
+    /// Responder final authentication nonce Nb.
     peer_nonce: Nonce,
+    /// Initiator OOB random/passkey required for expected Eb.
     local_secret_ra: u128,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Owned phase data; a transition error replaces the phase with a terminal Error.
 enum Step {
+    /// No initiation yet; accepts peer Security Request.
     Idle,
+    /// Pairing Request sent; redundant Security Requests are ignored.
     WaitingPairingResponse,
+    /// Local public key sent; peer's public key is next.
     WaitingPublicKey {
+        /// Snapshot of the persistent private scalar corresponding to the sent key.
         private_key: SecretKey,
+        /// Sent public point used for equal-X rejection.
         local_public_key: PublicKey,
     },
     // Numeric comparison
-    WaitingNumericComparisonConfirm(LescPhaseData),
-    WaitingNumericComparisonRandom(LescPhaseData),
-    WaitingNumericComparisonResult(LescPhaseData),
+    /// Await responder Cb before sending Na.
+    WaitingNumericComparisonConfirm(
+        /// Agreed key and uninitialized comparison nonces.
+        LescPhaseData,
+    ),
+    /// Await Nb to verify the retained Cb.
+    WaitingNumericComparisonRandom(
+        /// Cb and locally generated/sent Na.
+        LescPhaseData,
+    ),
+    /// Await user acceptance before emitting Ea.
+    WaitingNumericComparisonResult(
+        /// Verified nonces and displayed comparison inputs.
+        LescPhaseData,
+    ),
     // Pass key entry
+    /// User entry is pending; one early responder commitment can be retained.
     WaitingPassKeyInput {
+        /// ECDH state awaiting the user's passkey.
         phase_data: LescPhaseData,
+        /// Latest early 16-byte little-endian peer confirm, if received.
         confirm_bytes: Option<[u8; size_of::<u128>()]>,
     },
+    /// Local round commitment sent; await responder commitment.
     WaitingPassKeyEntryConfirm {
+        /// Nonce/secret/commitment data for this round.
         phase_data: LescPhaseData,
+        /// Zero-based passkey bit round, 0 through 19.
         round: i32,
     },
+    /// Local nonce sent; await and verify responder nonce.
     WaitingPassKeyEntryRandom {
+        /// Local nonce and stored responder commitment for this round.
         phase_data: LescPhaseData,
+        /// Zero-based passkey bit round, 0 through 19.
         round: i32,
     },
     // OOB
-    WaitingOobData(LescPhaseData),
-    WaitingOobRandom(LescPhaseData),
-    WaitingDHKeyEb(DhKeyCheckData),
+    /// Await application-delivered external authentication material.
+    WaitingOobData(
+        /// Validated ECDH keys awaiting OOB secrets.
+        LescPhaseData,
+    ),
+    /// Na sent after OOB admission; await responder Nb.
+    WaitingOobRandom(
+        /// OOB secrets and local Na.
+        LescPhaseData,
+    ),
+    /// Ea sent; await responder Eb before enabling encryption.
+    WaitingDHKeyEb(
+        /// Expected-check inputs and derived LTK.
+        DhKeyCheckData,
+    ),
+    /// New key queued; await controller encryption outcome.
     WaitingLinkEncrypted,
+    /// Retained key queued; failure may restart fresh pairing for user initiation.
     WaitingBondedLinkEncryption,
+    /// Link encrypted; await negotiated responder IRK.
     WaitingIdentitityInformation,
+    /// Responder IRK accepted; await identity address before sending initiator keys.
     WaitingIdentitityAddressInformation,
+    /// Automatic retained-key resumption failed; terminal KeyRejected result.
     BondLost,
+    /// Encryption and negotiated key distribution finished.
     Success,
-    Error(Error),
+    /// Terminal transition/timeout failure.
+    Error(
+        /// Retained error returned to the manager.
+        Error,
+    ),
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Initiator phase plus retry policy for retained-bond rejection.
 pub(super) struct Pairing {
+    /// Current phase or retained terminal outcome.
     current_step: Step,
+    /// Permit fresh pairing when a retained key fails; false produces terminal BondLost.
     user_initiated: bool,
 }
 
 impl Pairing {
+    /// Returns None while unfinished, Ok on Success, KeyRejected on BondLost, or the terminal error.
     pub fn result(&self) -> Option<Result<(), Error>> {
         match &self.current_step {
             Step::Success => Some(Ok(())),
@@ -94,6 +164,7 @@ impl Pairing {
         }
     }
 
+    /// Converts an active phase to Timeout; leaves idle/terminal outcomes unchanged and emits no event.
     pub(crate) fn mark_timeout(&mut self) {
         if matches!(
             &self.current_step,
@@ -104,6 +175,7 @@ impl Pairing {
         self.current_step = Step::Error(Error::Timeout);
     }
 
+    /// Returns an idle initiator with automatic (no fresh-retry) policy and no side effects.
     pub(crate) fn new_idle() -> Pairing {
         Self {
             current_step: Step::Idle,
@@ -111,6 +183,8 @@ impl Pairing {
         }
     }
 
+    /// Encodes local features from `pairing_data` and queues Pairing Request through `ops`.
+    /// Returns allocation, feature-encode or queue errors; no successful transmission is implied.
     fn send_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
         pairing_data: &PairingData,
         ops: &mut OPS,
@@ -124,6 +198,9 @@ impl Pairing {
         Ok(())
     }
 
+    /// Updates `pairing_data` from `ops` policy, requests retained encryption or sends Pairing Request.
+    /// Returns a waiting machine carrying `user_initiated` retry policy, or allocation/queue errors.
+    /// Feature updates and earlier side effects are retained on error.
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
         pairing_data: &mut PairingData,
         ops: &mut OPS,
@@ -168,10 +245,12 @@ impl Pairing {
         })
     }
 
+    /// Returns whether a retained-key HCI encryption result is pending.
     pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
         matches!(self.current_step, Step::WaitingBondedLinkEncryption)
     }
 
+    /// Returns true after HCI encryption success while distributing identities or in Success.
     pub(crate) fn is_encrypted(&self) -> bool {
         if matches!(&self.current_step, Step::Success) {
             return true;
@@ -187,6 +266,9 @@ impl Pairing {
 
     // --- FSM core ---
 
+    /// Applies `input` with shared `pairing_data`, bounded `ops` and cryptographic `rng`.
+    /// Returns terminal errors, otherwise Ok; failed transitions become Error after any earlier effects.
+    /// Command bodies must have validated lengths; malformed direct calls can panic before recovery.
     pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         input: Input<'_>,
@@ -202,6 +284,9 @@ impl Pairing {
         self.result().unwrap_or(Ok(()))
     }
 
+    /// Consumes `current` and `input`, updates `pairing_data` and performs `ops`/`rng` work.
+    /// Returns the next phase or state/validation/crypto/queue error; unrelated comparison decisions
+    /// and keypress notices are ignored. No rollback occurs when an action fails.
     fn transition<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &self,
         current: Step,
@@ -321,6 +406,8 @@ impl Pairing {
         }
     }
 
+    /// Installs `next`; uses `pairing_data` and `ops` to report terminal outcomes/update agreed bonds.
+    /// Notification/storage failures are logged and do not replace the selected terminal state.
     fn enter<P: PacketPool, OPS: PairingOps<P>>(&mut self, next: Step, pairing_data: &PairingData, ops: &mut OPS) {
         match &next {
             Step::Error(e) => {
@@ -355,6 +442,9 @@ impl Pairing {
 
     // --- Transition helpers ---
 
+    /// Reads peer AuthReq from validated one-byte `payload`, updates local `pairing_data` via `ops`.
+    /// Returns retained-encryption waiting state only for a sufficient accepted bond, otherwise sends
+    /// a fresh Pairing Request. Queue errors propagate; an empty direct payload panics.
     fn handle_security_request<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         pairing_data: &mut PairingData,
@@ -399,15 +489,18 @@ impl Pairing {
             .as_ref()
             .is_some_and(|b| !peer_requests_mitm || b.security_level == SecurityLevel::EncryptedAuthenticated);
         if bond_sufficient {
-            let bond = ops.try_enable_bonded_encryption()?.unwrap();
-            pairing_data.bond_information = Some(bond);
-            Ok(Step::WaitingBondedLinkEncryption)
-        } else {
-            Self::send_pairing_request(pairing_data, ops)?;
-            Ok(Step::WaitingPairingResponse)
+            if let Some(bond) = ops.try_enable_bonded_encryption()? {
+                pairing_data.bond_information = Some(bond);
+                return Ok(Step::WaitingBondedLinkEncryption);
+            }
         }
+        // A retained key may have been rejected on this connection; restart pairing.
+        Self::send_pairing_request(pairing_data, ops)?;
+        Ok(Step::WaitingPairingResponse)
     }
 
+    /// Admits feature `payload` into `pairing_data`, snapshots `ops`' persistent keypair and sends its
+    /// public point; `_rng` is unused because keys persist. Returns key-wait state or admission/send error.
     fn handle_pairing_response_and_send_key<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         pairing_data: &mut PairingData,
@@ -425,6 +518,9 @@ impl Pairing {
     }
 
     #[inline]
+    /// Validates 64-byte peer key `payload` against `private_key`/`local_public_key`, then selects the
+    /// next phase from `pairing_data`. Uses `ops` for user prompts and `rng` for display passkeys/nonces.
+    /// Returns DHKeyCheckFailed or queue errors; malformed direct key lengths panic.
     fn handle_public_key_and_choose_method<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         private_key: SecretKey,
@@ -476,6 +572,8 @@ impl Pairing {
     }
 
     #[inline]
+    /// Stores 16-byte Cb `payload` in owned `phase_data`, draws Na from `rng` and sends it via `ops`.
+    /// Returns nonce-wait state or InvalidValue/send error; commitment storage precedes random/send work.
     fn handle_confirm_and_send_nonce<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
@@ -488,6 +586,8 @@ impl Pairing {
     }
 
     #[inline]
+    /// Returns input-wait state retaining `phase_data` and copied early 16-byte `payload` commitment.
+    /// Wrong length returns InvalidValue; a later early commitment replaces the previous one.
     fn store_pass_key_confirm_bytes(payload: &[u8], phase_data: LescPhaseData) -> Result<Step, Error> {
         let confirm_bytes: [u8; size_of::<u128>()] = payload.try_into().map_err(|_| Error::InvalidValue)?;
         Ok(Step::WaitingPassKeyInput {
@@ -497,6 +597,8 @@ impl Pairing {
     }
 
     #[inline]
+    /// Stores peer confirm `payload` in `phase_data` and sends the local nonce through `ops`.
+    /// Returns random-wait state for unchanged `round` (0 through 19), or length/send error.
     fn handle_pass_key_entry_confirm<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
@@ -509,6 +611,9 @@ impl Pairing {
     }
 
     #[inline]
+    /// Verifies random `payload` for `round` using `phase_data`; `ops` sends next confirm/Ea and `rng`
+    /// supplies the next nonce. `pairing_data` binds final keys/addresses. Returns the next round or
+    /// DHKey-check state after round 19, or validation/queue error; round must be 0 through 19.
     fn handle_pass_key_entry_random<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
@@ -530,6 +635,8 @@ impl Pairing {
     }
 
     #[inline]
+    /// Verifies Eb `payload` against `check_data` and `pairing_data`, requesting encryption via `ops`.
+    /// Returns HCI-wait state or check/storage/queue errors; storage may precede a queue failure.
     fn handle_dhkey_eb_command<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         check_data: &DhKeyCheckData,
@@ -540,6 +647,8 @@ impl Pairing {
         Ok(Step::WaitingLinkEncrypted)
     }
 
+    /// Reports BondLost via `ops`; when `user_initiated`, sends a fresh request using `pairing_data`.
+    /// Returns response-wait state or terminal BondLost; only fresh-request errors propagate.
     fn handle_bonded_encryption_failed<P: PacketPool, OPS: PairingOps<P>>(
         user_initiated: bool,
         pairing_data: &PairingData,
@@ -559,6 +668,9 @@ impl Pairing {
     }
 
     #[inline]
+    /// Stores decimal `input` in `phase_data`, sends round 0 confirm via `ops` using `rng`, then consumes
+    /// optional early `confirm_bytes`. Returns confirm/random wait state or send/length error.
+    /// Caller must enforce 0 through 999999; this helper does not range-check the supplied value.
     fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         input: u32,
         mut phase_data: LescPhaseData,
@@ -579,6 +691,11 @@ impl Pairing {
         }
     }
 
+    /// Admits `local`/`peer` OOB bytes against `phase_data` keys and `pairing_data` peer flags.
+    /// Nonzero peer material must match f4; absent peer material is allowed only if local OOB was not
+    /// advertised. Local confirm is unused; local random becomes zero if the peer lacks it.
+    /// Draws/sends Na with `rng`/`ops`. Returns OOB-random wait state or OobNotAvailable,
+    /// ConfirmValueFailed/send error. Application owns external-channel trust.
     fn handle_oob_data_received<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         local: super::OobData,
         peer: super::OobData,
@@ -588,9 +705,12 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<Step, Error> {
         // Verify peer's confirm value if peer OOB data was received.
-        // Per spec 2.3.5.6.3: if a device has not received the peer's OOB data,
+        // Per spec 2.3.5.6.4: if a device has not received the peer's OOB data,
         // the peer's random is set to zero and the confirm check is skipped.
         let peer_has_oob = peer.random != [0; 16] || peer.confirm != [0; 16];
+        if !peer_has_oob && matches!(pairing_data.local_features.use_oob, UseOutOfBand::Present) {
+            return Err(Error::Security(Reason::OobNotAvailable));
+        }
         if peer_has_oob {
             let peer_r = Nonce(u128::from_le_bytes(peer.random));
             let expected_c = peer_r.f4(&phase_data.peer_public_key_x, &phase_data.peer_public_key_x, 0);
@@ -615,6 +735,8 @@ impl Pairing {
         Ok(Step::WaitingOobRandom(phase_data))
     }
 
+    /// Stores 16-byte Nb `payload` in `phase_data`, then sends Ea using `pairing_data` through `ops`.
+    /// Returns Eb-wait state or length/key-packet/send error.
     fn handle_oob_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
@@ -629,6 +751,9 @@ impl Pairing {
 
     // --- Protocol helpers ---
 
+    /// Decodes feature `payload`, enforces 16-byte SC keys and updates `pairing_data`/association model.
+    /// `ops` is currently unused. Returns InvalidParameters, EncryptionKeySize or missing-SC rejection;
+    /// the manager handles legacy downgrade before this helper when compiled/enabled.
     fn handle_pairing_response<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
@@ -653,6 +778,7 @@ impl Pairing {
         Ok(())
     }
 
+    /// Queues `public_key` through `ops`; Returns packet errors as InvalidParameters, or queue errors.
     fn send_public_key<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, public_key: &PublicKey) -> Result<(), Error> {
         let packet = make_public_key_packet::<P>(public_key).map_err(|_| Error::Security(Reason::InvalidParameters))?;
 
@@ -667,6 +793,8 @@ impl Pairing {
         Ok(())
     }
 
+    /// Decodes 16-byte little-endian Cb `payload` into `phase_data`, then draws local Na from `rng`.
+    /// Returns InvalidValue on wrong length; nonce generation can panic on allzero output.
     fn handle_numeric_compare_confirm<RNG: CryptoRng + RngCore>(
         payload: &[u8],
         phase_data: &mut LescPhaseData,
@@ -679,6 +807,7 @@ impl Pairing {
         Ok(())
     }
 
+    /// Queues little-endian `nonce` through `ops`; Returns packet errors as InvalidParameters or queue errors.
     fn send_nonce<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, nonce: &Nonce) -> Result<(), Error> {
         let packet = make_pairing_random::<P>(nonce).map_err(|_| Error::Security(Reason::InvalidParameters))?;
 
@@ -694,6 +823,9 @@ impl Pairing {
     }
 
     #[inline]
+    /// Verifies responder random `payload` against `phase_data`'s Cb. Uses `pairing_data` to select
+    /// immediate Just Works Ea or a numeric prompt via `ops`; Returns next state or length/check/send
+    /// error. Commitment mismatch currently maps to NumericComparisonFailed in either model.
     fn handle_numeric_compare_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
@@ -724,7 +856,8 @@ impl Pairing {
         }
     }
 
-    /// Compute f5/f6, send DHKey check Ea, and transition to WaitingDHKeyEb.
+    /// Derives keys from `phase_data` and link/features in `pairing_data`, sends Ea via `ops`.
+    /// Returns Eb-wait state retaining only required check inputs, or allocation/send error.
     fn send_dhkey_ea_and_transition<P: PacketPool, OPS: PairingOps<P>>(
         ops: &mut OPS,
         pairing_data: &PairingData,
@@ -758,6 +891,9 @@ impl Pairing {
         }))
     }
 
+    /// Compares Eb `payload` with `check_data` and `pairing_data`'s peer features/addresses.
+    /// On match requests encryption through `ops` and stores the returned bond; Returns DHKeyCheckFailed
+    /// or storage/queue errors. No bond mutation occurs before the check succeeds.
     fn handle_dhkey_eb<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
@@ -795,7 +931,9 @@ impl Pairing {
         Ok(())
     }
 
-    /// Send a passkey entry confirm for the given round.
+    /// Draws a fresh nonce from `rng` into `phase_data` and queues f4 for passkey bit `round` via `ops`.
+    /// Returns allocation/send errors after nonce mutation. Caller keeps `round` in 0 through 19;
+    /// invalid shift counts can panic. Nonce generation can panic on allzero output.
     fn send_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         round: i32,
         phase_data: &mut LescPhaseData,
@@ -812,6 +950,7 @@ impl Pairing {
         Ok(())
     }
 
+    /// Replaces `phase_data`'s commitment from little-endian `payload`; Returns InvalidValue unless 16 bytes.
     fn store_pass_key_confirm(payload: &[u8], phase_data: &mut LescPhaseData) -> Result<(), Error> {
         phase_data.confirm = Confirm(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
@@ -819,6 +958,8 @@ impl Pairing {
         Ok(())
     }
 
+    /// Verifies 16-byte nonce `payload` for passkey bit `round` against `phase_data`, storing it only on
+    /// match; `ops` is unused. Returns InvalidValue/ConfirmValueFailed. Caller keeps `round` in 0 through 19.
     fn handle_pass_key_random<P: PacketPool, OPS: PairingOps<P>>(
         round: i32,
         payload: &[u8],
@@ -837,6 +978,8 @@ impl Pairing {
         Ok(())
     }
 
+    /// Decodes 16-byte IRK `payload` into any pending bond in `pairing_data` (zero means None).
+    /// Returns identity-address wait state, or InvalidValue on wrong length; absent bond is tolerated.
     fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
         let irk = crate::IdentityResolvingKey::new(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
@@ -844,10 +987,13 @@ impl Pairing {
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
             bond.identity.irk = irk;
         }
-        trace!("Identity information: IRK: {:?}", irk);
+        trace!("Identity information received");
         Ok(Step::WaitingIdentitityAddressInformation)
     }
 
+    /// Reads validated seven-byte identity `payload`, updating `pairing_data`'s peer/bond address,
+    /// then sends negotiated initiator keys via `ops`. Returns Success or invalid-kind/send error;
+    /// short direct payloads panic, and random-address subtype bits are not checked here.
     fn handle_identity_address_information<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         pairing_data: &mut PairingData,
@@ -879,7 +1025,8 @@ impl Pairing {
         Self::send_initiator_keys(pairing_data, ops)
     }
 
-    /// Send initiator's identity keys if negotiated.
+    /// Uses accepted responder features in `pairing_data` to send local identity keys through `ops`.
+    /// Returns Success after queue admission, or send error; no-IRK sends zero IRK plus identity address.
     fn send_initiator_keys<P: PacketPool, OPS: PairingOps<P>>(
         pairing_data: &PairingData,
         ops: &mut OPS,
@@ -896,7 +1043,8 @@ impl Pairing {
         Ok(Step::Success)
     }
 
-    /// Send local IRK and identity address to the peer.
+    /// Queues little-endian `irk`, then `ops`' identity address; Returns allocation/address/queue errors.
+    /// Failure of the second packet leaves the first queued; this helper performs no rollback.
     fn send_irk_distribution<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, irk: &[u8; 16]) -> Result<(), Error> {
         use crate::security_manager::pairing::util::{
             make_identity_address_information_packet, make_identity_information_packet,

@@ -1,5 +1,8 @@
+//! Independent progress deadlines, latched failures and finite flash-maintenance watchdog exemptions.
 use dashboard_host_validation::health::{Fault, Progress, ProgressMonitor};
 
+/// Returns synthetic active-display progress with all observed counters set
+/// to `sequence`, unchanged submission count and a pending transfer.
 fn progress(sequence: u32) -> Progress {
     Progress {
         acquisition: sequence,
@@ -11,6 +14,7 @@ fn progress(sequence: u32) -> Progress {
     }
 }
 
+/// Regular progress remains healthy across wrapping u32 counters; counters are change tokens, not ordered timestamps.
 #[test]
 fn healthy_progress_and_counter_wrap_keep_watchdog_eligible() {
     let mut monitor = ProgressMonitor::new(0, progress(u32::MAX));
@@ -19,6 +23,7 @@ fn healthy_progress_and_counter_wrap_keep_watchdog_eligible() {
     }
 }
 
+/// Each stalled owner produces its own deadline fault and recovery of other counters cannot clear that latch.
 #[test]
 fn stopped_acquisition_display_and_rendering_are_independent_faults() {
     for expected in [Fault::Acquisition, Fault::Display, Fault::Rendering, Fault::Input] {
@@ -47,6 +52,7 @@ fn stopped_acquisition_display_and_rendering_are_independent_faults() {
     }
 }
 
+/// An idle display needs no completions, while newly pending work gets its own finite completion deadline.
 #[test]
 fn idle_display_still_requires_render_and_acquisition_progress() {
     let mut initial = progress(0);
@@ -70,6 +76,7 @@ fn idle_display_still_requires_render_and_acquisition_progress() {
     assert_eq!(monitor.observe(5300, resumed), Err(Fault::Display));
 }
 
+/// Clock reversal, exact display timeout and a missed supervisor interval fail distinctly even near u64::MAX.
 #[test]
 fn clock_regression_and_deadline_edges_are_checked() {
     let mut monitor = ProgressMonitor::new(100, progress(0));
@@ -83,6 +90,7 @@ fn clock_regression_and_deadline_edges_are_checked() {
     assert_eq!(monitor.observe(251, progress(1)), Err(Fault::Supervisor));
 }
 
+/// A changed submission generation, including wrap, starts a new completion deadline even when idle was never sampled.
 #[test]
 fn a_new_queue_generation_starts_its_deadline_even_if_idle_was_not_sampled() {
     let mut initial = progress(0);
@@ -108,6 +116,7 @@ fn a_new_queue_generation_starts_its_deadline_even_if_idle_was_not_sampled() {
     assert_eq!(monitor.observe(550, current), Err(Fault::Display));
 }
 
+/// Returns owner progress `sequence` with no display work pending or completed.
 fn idle(sequence: u32) -> Progress {
     Progress {
         display_pending: false,
@@ -116,6 +125,7 @@ fn idle(sequence: u32) -> Progress {
     }
 }
 
+/// Maintenance suspends feed eligibility for one bounded window, then rebases normal owner progress deadlines.
 #[test]
 fn maintenance_is_one_finite_window_without_watchdog_feeds() {
     let mut monitor = ProgressMonitor::new(0, idle(0));
@@ -130,6 +140,7 @@ fn maintenance_is_one_finite_window_without_watchdog_feeds() {
     assert_eq!(monitor.observe(1550, idle(1)), Err(Fault::Acquisition));
 }
 
+/// Expired/nested maintenance permanently faults its monitor; late completion or another begin cannot renew permission.
 #[test]
 fn expired_or_nested_maintenance_latches_and_cannot_be_renewed() {
     let mut monitor = ProgressMonitor::new(0, idle(0));
@@ -148,6 +159,7 @@ fn expired_or_nested_maintenance_latches_and_cannot_be_renewed() {
     assert_eq!(monitor.end_maintenance(ticket, 2, idle(2)), Err(Fault::Maintenance));
 }
 
+/// Entry requires healthy idle owners and new acquisition/render/input progress between separate one-shot permits.
 #[test]
 fn maintenance_requires_healthy_idle_owners_and_fresh_progress_between_windows() {
     let mut monitor = ProgressMonitor::new(0, idle(0));
@@ -178,6 +190,7 @@ fn maintenance_requires_healthy_idle_owners_and_fresh_progress_between_windows()
     monitor.end_maintenance(second, 1051, idle(2)).unwrap();
 }
 
+/// Any display activity during maintenance or backward exit time faults; the exact maximum duration remains valid.
 #[test]
 fn maintenance_detects_clock_and_unexpected_display_activity() {
     for mutation in 0..3 {

@@ -1,3 +1,5 @@
+//! Capacity-one ownership handoff between renderer and the sole SPI/DMA owner.
+//! Receive deadlines quarantine lifecycle state; they never cancel bus work.
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle, FrameRequest, FrameToken};
@@ -10,20 +12,30 @@ use embassy_time::{Duration, Instant, with_timeout};
 
 use crate::drivers::St7789Flusher;
 
+/// Affine frame requests; a queued request owns its framebuffer until completion.
 pub static FLUSH_REQUESTS: Channel<CriticalSectionRawMutex, FrameRequest<'static>, 1> = Channel::new();
+/// Single unconsumed payload-start acknowledgement for the submitted frame token.
 static FLUSH_STARTED: Channel<CriticalSectionRawMutex, Started, 1> = Channel::new();
+/// Completed request plus optional success trace; failure still retains its lease.
 static FLUSH_COMPLETED: Channel<CriticalSectionRawMutex, Completion, 1> = Channel::new();
 
+/// Wrapping count of submissions, updated by the renderer rather than DMA.
 pub static BUFFER_SWAPS: AtomicU32 = AtomicU32::new(0);
+/// Wrapping count of completion waits that were not immediately ready.
 pub static BUFFER_WAITS: AtomicU32 = AtomicU32::new(0);
 // No active transfer until a request is received. Failed transfers retain ownership.
+/// Active buffer index; `usize::MAX` means no transfer, and failure retains the index.
 pub static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// Wrapping count of successful HAL transfer completions, not panel refreshes.
 pub static COMPLETED_FRAMES: AtomicU32 = AtomicU32::new(0);
+/// Coherent input-counter snapshot read under a short cross-core critical section.
 pub static INPUT_COUNTS: embassy_sync::blocking_mutex::Mutex<
     CriticalSectionRawMutex,
     core::cell::Cell<dashboard_pico2::input_trace::InputCounters>,
 > = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(dashboard_pico2::input_trace::InputCounters::ZERO));
 
+/// Publishes `counts` after replacing encoder drop/discard fields with queue totals.
+/// The whole snapshot is replaced atomically under the counter mutex.
 pub fn publish_input_counts(mut counts: dashboard_pico2::input_trace::InputCounters) {
     let (dropped, discarded) = crate::peripherals::ENCODER_EVENTS.counters();
     counts.encoder_dropped = u64::from(dropped);
@@ -32,6 +44,7 @@ pub fn publish_input_counts(mut counts: dashboard_pico2::input_trace::InputCount
 }
 
 #[cfg(feature = "frame-trace")]
+/// Bounded history of successful frame timings, protected against cross-core reads.
 pub static FRAME_TRACES: embassy_sync::blocking_mutex::Mutex<
     CriticalSectionRawMutex,
     core::cell::RefCell<dashboard_pico2::display::telemetry::TraceRing<64>>,
@@ -40,33 +53,48 @@ pub static FRAME_TRACES: embassy_sync::blocking_mutex::Mutex<
 ));
 
 #[cfg(feature = "frame-trace")]
+/// One-time storage for the flusher's boot-relative aggregate window accumulator.
 static FRAME_WINDOW: static_cell::ConstStaticCell<dashboard_pico2::display::window::FrameWindow> =
     static_cell::ConstStaticCell::new(dashboard_pico2::display::window::FrameWindow::new(0));
 #[cfg(feature = "frame-trace")]
+/// Latest completed telemetry window; the single UI receiver may skip older reports.
 pub static FRAME_WINDOWS: embassy_sync::watch::Watch<
     CriticalSectionRawMutex,
     dashboard_pico2::display::window::WindowReport,
     1,
 > = embassy_sync::watch::Watch::new();
 
+/// Acknowledgement emitted only after polling the real payload future.
 struct Started {
+    /// Exact buffer/frame identity to match against the outstanding submission.
     token: FrameToken,
+    /// False if panel preparation failed before payload polling.
     armed: bool,
 }
+/// Return envelope; even failed transfer results retain ownership of `request`.
 struct Completion {
+    /// Submitted pixels, plan, orientation and affine lease.
     request: FrameRequest<'static>,
+    /// Success timing only; `None` prevents recycling the failed request.
     trace: Option<FrameTrace>,
 }
 
+/// Successfully completed transfer whose lease may safely return to rendering.
 pub struct CompletedFrame {
+    /// Unique framebuffer ownership recovered after the HAL returned successfully.
     pub lease: FrameLease<'static>,
+    /// Matching token, monotonic timestamps and payload byte count.
     pub trace: FrameTrace,
 }
 
 // Timeout cancels only a channel receive. The flusher retains the actual buffer
 // until the HAL write completes; no timeout/drop path returns DMA-owned memory.
+/// Maximum channel-acknowledgement delay; does not bound synchronous HAL waits.
 const PROGRESS_DEADLINE: Duration = Duration::from_millis(250);
 
+/// Waits for an armed start matching `expected` and moves `lifecycle` to InFlight.
+/// On timeout, wrong token or failed start, quarantines the expected lease and
+/// panics; no buffer is returned and the separately spawned bus task is retained.
 pub async fn wait_started(
     lifecycle: &mut FrameLifecycle,
     expected: FrameToken,
@@ -83,6 +111,9 @@ pub async fn wait_started(
     }
 }
 
+/// Returns a recycled lease and trace only for matching successful `expected`.
+/// Updates `lifecycle` to complete; a wrong/missing/error result quarantines it
+/// and panics. A receive timeout cancels no SPI/DMA future.
 pub async fn wait_completed(
     lifecycle: &mut FrameLifecycle,
     expected: FrameToken,
@@ -114,6 +145,10 @@ pub async fn wait_completed(
 }
 
 #[embassy_executor::task]
+/// Runs the sole initialized `flusher` indefinitely, consuming affine requests.
+/// Acknowledges the first payload poll and publishes success only after HAL idle.
+/// Panics on full acknowledgement channels, invalid timing or stale trace data;
+/// callers must never cancel this task while it owns a request or bus operation.
 pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
     // init() has completed before this sole bus owner starts. Successful HAL
     // writes include SPI idle, so no extra delay or DMA cancellation is needed.

@@ -404,6 +404,9 @@ pub const CPSDVSR: u8 = 2;
 pub const SCR: u8 = 1;
 pub const LEGACY_ROUNDING: bool = false;
 """
+            # The Rust generator now documents every emitted constant. Keep the
+            # frozen numeric fixture independent of the parser's implementation.
+            source = source.replace(b"pub const ", b"/// Generated constant.\npub const ")
             clock = dict(
                 requested_cpu_hz=150000000,
                 actual_cpu_hz=150000000,
@@ -450,6 +453,31 @@ pub const LEGACY_ROUNDING: bool = false;
             line = json.dumps(record)
             evidence = capture.generated_clock(line, build, "firmware-id", options)
             self.assertEqual(evidence["source"], source)
+            capture.verify_clock_literals(
+                source.replace(b"/// Generated constant.\n", b""), options
+            )
+            capture.verify_clock_literals(
+                source.replace(b"/// Generated constant.\n", b"/// pub const FAKE: u32 = 0;\n", 1),
+                options,
+            )
+            for fault, changed in {
+                "duplicate": source + b"pub const SCR: u8 = 1;\n",
+                "unknown": source + b"pub const EXTRA: u32 = 0;\n",
+                "missing": source.replace(b"pub const SCR: u8 = 1;\n", b""),
+                "commented_out": source.replace(b"pub const SCR:", b"/// pub const SCR:"),
+                "changed_value": source.replace(b"SCR: u8 = 1", b"SCR: u8 = 0"),
+                "hidden_statement": source + b"fn extra() {}\n",
+                "inline_comment": source.replace(b"SCR: u8 = 1;", b"SCR: u8 = 1; // comment"),
+                "ordinary_comment": source.replace(b"/// Generated", b"// Generated", 1),
+                "inner_doc": source.replace(b"/// Generated", b"//! Generated", 1),
+                "block_comment": source + b"/* comment */\n",
+                "attribute": source + b"#[allow(dead_code)]\n",
+                "crlf_body": source.replace(b"/// Generated constant.\n", b"/// text\r\n", 1),
+                "unterminated_doc": source + b"/// trailing",
+                "invalid_utf8": source + b"\xff",
+            }.items():
+                with self.subTest(clock_source=fault), self.assertRaises(ValueError):
+                    capture.verify_clock_literals(changed, options)
             wrong_metadata = encoded.replace(b'"legacy_rounding": false', b'"legacy_rounding": 0')
             (out / "clock_profile.json").write_bytes(wrong_metadata)
             wrong_record = dict(

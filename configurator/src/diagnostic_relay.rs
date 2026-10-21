@@ -4,27 +4,46 @@ use std::collections::VecDeque;
 use dashboard_helper_protocol::{BoundedVec, Text, diagnostics as wire, encode};
 
 use crate::{events, workspace};
+/// Maximum unsent warning/error events retained separately from the local diagnostic store.
 pub const QUEUE_EVENTS: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Sole outstanding relay batch identity; retained until its dispatched future settles.
 pub struct Lease {
+    /// Checked, nonwrapping dispatch issuance number.
     pub id: u64,
+    /// Helper connection epoch at dispatch.
     pub epoch: u64,
+    /// Number of removed queued events whose outcome must be accounted for.
     pub count: u8,
+    /// Enable/connection generation distinguishing reconnects with reused epochs.
     generation: u64,
 }
 #[derive(Default)]
+/// Bounded optional relay with one outstanding dispatch and no uncertain-delivery retries.
 pub struct Queue {
+    /// Current helper connection epoch, or `None` while disconnected.
     epoch: Option<u64>,
+    /// Effective opt-in, disabled permanently when generation saturates.
     enabled: bool,
+    /// Unsent allowlisted metadata only; never private event message/subject text.
     events: VecDeque<wire::Event>,
+    /// Shared monotonic admission rate gate, retained across enable/connection changes.
     gate: wire::RateGate,
+    /// Current dispatched batch, including after disconnect until settlement.
     inflight: Option<Lease>,
+    /// Last issued dispatch ID; exhaustion prevents future batches.
     next: u64,
+    /// Saturating connection/enable generation; maximum disables relay admission.
     generation: u64,
+    /// Saturating count of queued discards and reported/uncertain dispatched losses.
     pub dropped: u64,
+    /// Saturating count explicitly admitted by validated helper responses.
     pub admitted: u64,
 }
 impl Queue {
+    /// Synchronizes helper `epoch` and requested `enabled` opt-in; returns whether either requested state changed.
+    /// Changes discard queued events and advance generation, retaining any outstanding lease until settlement.
+    /// Generation exhaustion disables admission even when enable was requested.
     pub fn synchronize(
         &mut self,
         epoch: Option<u64>,
@@ -42,10 +61,15 @@ impl Queue {
         changed
     }
 
+    /// Returns unsent event count, excluding any dispatched batch.
     pub fn queued(&self) -> usize { self.events.len() }
 
+    /// Returns whether a dispatched batch still owns settlement, including across disconnects.
     pub fn busy(&self) -> bool { self.inflight.is_some() }
 
+    /// Offers local `event` with accepted `revision`, active `workspace` and monotonic `now` milliseconds.
+    /// Only enabled/connected Warn/Error allowlisted codes are queued; size/rate/code failures count as drops.
+    /// Other severities and disabled/disconnected offers are ignored. Message and subject are never transmitted.
     pub fn offer(
         &mut self,
         event: &events::Event,
@@ -98,6 +122,9 @@ impl Queue {
         });
     }
 
+    /// Returns a new lease and encoded bounded batch, removing its events from the queue exactly once.
+    /// Returns `None` while disabled/disconnected/busy/empty or if issuance/encoding fails; no automatic retry occurs
+    /// after dispatch. Caller must eventually settle every returned lease, including cancellation/failure.
     pub fn begin(&mut self) -> Option<(Lease, Vec<u8>)> {
         if !self.enabled || self.inflight.is_some() || self.events.is_empty() {
             return None;
@@ -122,6 +149,9 @@ impl Queue {
         Some((lease, bytes))
     }
 
+    /// Accounts for current `lease` using optional helper `result`; absent/malformed totals count the entire batch
+    /// dropped. Returns true only if the settled lease still belongs to the enabled current connection/generation.
+    /// Stale leases return false without touching another dispatch; current old-generation leases still update totals.
     pub fn settle(
         &mut self,
         lease: Lease,

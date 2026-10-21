@@ -1,9 +1,13 @@
+//! Procedural splash pixel invariants across geometry, arbitrary time seeks and reduced motion.
+
 use dashboard_config::Geometry;
 use dashboard_core::display::St7789Renderer;
 use dashboard_core::startup::*;
 use dashboard_core::vehicle_status::VehicleStatus;
 use dashboard_host_validation::AlignedFrame;
 
+/// Returns shared-renderer splash pixels for `theme`/`geometry` at elapsed `time` milliseconds.
+/// `looping` selects repetition and `reduced` selects still output; facts are synthetic successful Demo startup.
 fn render(
     theme: StartupTheme,
     geometry: Geometry,
@@ -32,6 +36,8 @@ fn render(
     frame
 }
 
+/// Every procedural theme keeps white side margins, majority paper background and a stable footer at sampled phases in
+/// both geometries.
 #[test]
 fn light_splashes_preserve_quiet_edges_and_footer_at_sampled_animation_phases() {
     for geometry in [Geometry::Landscape, Geometry::Portrait] {
@@ -64,6 +70,8 @@ fn light_splashes_preserve_quiet_edges_and_footer_at_sampled_animation_phases() 
     }
 }
 
+/// Arbitrary seeks repeat after two seconds; nonlooping/reduced-motion output stays stable through maximum elapsed
+/// time.
 #[test]
 fn arbitrary_seek_loop_final_and_reduced_frames_are_time_based() {
     for geometry in [Geometry::Landscape, Geometry::Portrait] {

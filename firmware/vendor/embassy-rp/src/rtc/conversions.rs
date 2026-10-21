@@ -1,7 +1,9 @@
+//! RP2040 RTC field conversions; Gregorian validation differs between chrono and the plain date struct.
 use crate::datetime::{DateTime, DayOfWeek, Error};
 use crate::pac::rtc::regs::{Rtc0, Rtc1, Setup0, Setup1};
 
 #[cfg(not(feature = "chrono"))]
+/// Returns Sunday-based weekday `v` in0..=6, or the backend-specific invalid-weekday error.
 pub(super) fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, Error> {
     Ok(match v {
         0 => DayOfWeek::Sunday,
@@ -16,6 +18,7 @@ pub(super) fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, Error> {
 }
 
 #[cfg(feature = "chrono")]
+/// Returns Sunday-based weekday `v` in0..=6, or the backend-specific invalid-weekday error.
 pub(super) fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, ()> {
     Ok(match v {
         0 => DayOfWeek::Sun,
@@ -29,6 +32,7 @@ pub(super) fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, ()> {
     })
 }
 
+/// Returns the RTC Sunday=0 through Saturday=6 representation of `dotw`.
 pub(super) fn day_of_week_to_u8(dotw: DayOfWeek) -> u8 {
     #[cfg(feature = "chrono")]
     {
@@ -40,6 +44,8 @@ pub(super) fn day_of_week_to_u8(dotw: DayOfWeek) -> u8 {
     }
 }
 
+/// Returns Ok when `dt` fits RTC fields, otherwise the first invalid-field error.
+/// Chrono already validates calendar dates; the plain backend checks field ranges but admits impossible dates.
 pub(super) fn validate_datetime(dt: &DateTime) -> Result<(), Error> {
     #[cfg(feature = "chrono")]
     {
@@ -70,7 +76,11 @@ pub(super) fn validate_datetime(dt: &DateTime) -> Result<(), Error> {
     }
 }
 
-pub(super) fn write_setup_0(dt: &DateTime, w: &mut Setup0) {
+/// Writes prevalidated year/month/day from `dt` into setup register `w`; values are not revalidated.
+pub(super) fn write_setup_0(
+    dt: &DateTime,
+    w: &mut Setup0,
+) {
     #[cfg(feature = "chrono")]
     {
         use chrono::Datelike;
@@ -86,7 +96,11 @@ pub(super) fn write_setup_0(dt: &DateTime, w: &mut Setup0) {
     }
 }
 
-pub(super) fn write_setup_1(dt: &DateTime, w: &mut Setup1) {
+/// Writes prevalidated weekday/hour/minute/second from `dt` into `w`, dropping subsecond precision.
+pub(super) fn write_setup_1(
+    dt: &DateTime,
+    w: &mut Setup1,
+) {
     #[cfg(feature = "chrono")]
     {
         use chrono::{Datelike, Timelike};
@@ -104,7 +118,12 @@ pub(super) fn write_setup_1(dt: &DateTime, w: &mut Setup1) {
     }
 }
 
-pub(super) fn datetime_from_registers(rtc_0: Rtc0, rtc_1: Rtc1) -> Result<DateTime, Error> {
+/// Returns a date from ordered snapshot `rtc_0` (time) and `rtc_1` (date).
+/// Chrono rejects impossible date/time fields; the plain backend validates only the weekday and retains other fields.
+pub(super) fn datetime_from_registers(
+    rtc_0: Rtc0,
+    rtc_1: Rtc1,
+) -> Result<DateTime, Error> {
     #[cfg(feature = "chrono")]
     {
         let year = rtc_1.year() as i32;

@@ -9,14 +9,20 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::idb::{CURRENT, PROJECTS as STORE, database, request, settled};
 use super::*;
+/// Per-UI restore/save serialization and optimistic stored-record conflict state.
 #[derive(Clone, Copy)]
 pub struct State {
+    /// Initial restore finished, including unavailable/corrupt outcomes; saves may now start.
     pub ready: RwSignal<bool>,
+    /// This UI currently owns one restore/save operation.
     busy: RwSignal<bool>,
+    /// Coalesced request to retry saving after readiness/current work completes.
     pending: RwSignal<bool>,
+    /// Last observed or successfully written envelope; absent means no known prior record.
     base: RwSignal<Option<String>>,
 }
 impl State {
+    /// Returns unready, idle storage state with no queued save or expected stored envelope.
     pub fn new() -> Self {
         Self {
             ready: RwSignal::new(false),
@@ -26,6 +32,9 @@ impl State {
         }
     }
 }
+/// Returns `record`'s bounded envelope string, or `None` only for an undefined record.
+/// Reflection, wrong types, conversion and byte-bound failures return JS errors; checks
+/// JS code-unit length before allocating Rust text, then enforces MAX_SAVED_BYTES UTF-8.
 fn envelope(record: &JsValue) -> Result<Option<String>, JsValue> {
     if record.is_undefined() {
         return Ok(None);
@@ -44,6 +53,11 @@ fn envelope(record: &JsValue) -> Result<Option<String>, JsValue> {
     }
     Ok(Some(text))
 }
+/// Starts initial complete-project restore for `ui` under the origin lock and one
+/// materialization lease. Publishes only if the captured editor stamp is unchanged
+/// and ready; corrupt/late records retain current edits and expose a replacement conflict.
+/// Storage failure reports unavailability, marks initialization ready and may service a
+/// queued save. Disposed UI suppresses completion; persistent bytes are never repaired here.
 pub fn restore(ui: Ui) {
     let stamp = ui.editor.with_untracked(Editor::stamp);
     ui.project_store.busy.set(true);
@@ -140,13 +154,23 @@ pub fn restore(ui: Ui) {
         }
     });
 }
+/// Classified optimistic write result; only Written acknowledges native transaction completion.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WriteOutcome {
+    /// Record put was queued and transaction completion acknowledged.
     Written,
+    /// Captured editor save authority was stale when the prior record arrived.
     Stale,
+    /// Prior stored envelope differed from the expected base without replacement authority.
     Conflict,
+    /// Put/settlement failed or no successful callback outcome was observed.
     Failed,
 }
+/// Writes `record` through `db` for current `ui` save `token`. Within one readwrite
+/// transaction, compares the prior envelope to `base` unless `replace` is explicit.
+/// Returns classified stale/conflict/failed outcomes; transaction/store/request creation
+/// errors return JS errors. Only complete upgrades queued put to acknowledged Written.
+/// Cancellation attempts abort through settlement ownership; failure need not prove rollback.
 async fn write(
     db: &web_sys::IdbDatabase,
     ui: Ui,
@@ -189,6 +213,12 @@ async fn write(
     }
     Ok(outcome.get())
 }
+/// Captures and asynchronously saves `ui`'s admitted project; `replace` explicitly
+/// bypasses the stored-envelope conflict check. Busy/unready calls coalesce into a
+/// later ordinary save, without retaining replacement authority. Keeps immutable source
+/// references pinned through transaction completion and acknowledges only the captured token.
+/// Failure retains current/stored work as observed and requests export/reload; completion
+/// may queue the newest save unless a cross-tab conflict blocks it.
 pub fn save(
     ui: Ui,
     replace: bool,
@@ -282,6 +312,11 @@ pub fn save(
     });
 }
 
+/// Captures `ui`'s accepted project and requests a download using `mode`. Complete
+/// mode materializes/verifies retained originals under a single materialization lease;
+/// converted-only mode excludes originals without removing them from Studio. Later edits
+/// do not change the captured export. Admission, source and download failures show notices;
+/// a started browser download is not proof the user saved the file.
 pub fn export(
     ui: Ui,
     mode: ExportMode,
@@ -361,6 +396,9 @@ pub fn export(
 }
 
 #[cfg(feature = "browser-tests")]
+/// Returns success after real-IDB stale-token/conflict/quota/late-restore regressions
+/// against `ui`; JS failures return errors and fixture assumptions may panic. Mutates
+/// the current project record and temporarily replaces native put; isolated test origin only.
 pub(super) async fn browser_cases(ui: Ui) -> Result<(), JsValue> {
     use super::browser_tests::until;
     let db = database().await?;

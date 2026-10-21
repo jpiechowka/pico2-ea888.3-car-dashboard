@@ -3,6 +3,11 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// Publish `bytes` at selected `path`; return write/sync/rename/cleanup errors.
+///
+/// Writes an exclusively created sibling and renames only after successful sync;
+/// failures before rename retain the old destination. This is not crash-durable
+/// directory metadata synchronization or a sandbox for attacker-controlled parents.
 pub(crate) fn publish(
     path: &Path,
     bytes: &[u8],
@@ -10,11 +15,18 @@ pub(crate) fn publish(
     publish_with(path, |file| file.write_all(bytes))
 }
 
+/// Invoke `write` on an owned sibling then replace `path`; return the first failure.
+///
+/// Reject existing symlinks/non-files/read-only outputs; try at most 32 exclusive
+/// sibling names. Preserve destination permissions when present. A cleanup failure
+/// reports the retained sibling path alongside the original error. No automatic retry
+/// follows a write/rename failure; callbacks must not panic if cleanup is required.
 fn publish_with(
     path: &Path,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
+    /// Best-effort unique suffix; exclusive creation, not this wrapping counter, prevents clobbering.
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let permissions = match std::fs::symlink_metadata(path) {
         Ok(meta) => {
@@ -81,7 +93,10 @@ fn publish_with(
 
 #[cfg(test)]
 mod tests {
+    //! Inject partial-write and Windows sharing failures at the publication boundary.
+
     use super::*;
+    /// A failed callback may write a sibling prefix but cannot replace the old destination.
     #[test]
     fn failed_write_preserves_existing_configuration() {
         let dir = std::env::temp_dir().join(format!(
@@ -105,6 +120,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(actual, b"previous configuration");
     }
+    /// Windows sharing denial retains old output and cleans the sibling; explicit retry succeeds.
     #[cfg(windows)]
     #[test]
     fn denied_replace_keeps_original_then_explicit_retry_succeeds() {

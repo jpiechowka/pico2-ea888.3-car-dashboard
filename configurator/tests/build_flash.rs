@@ -1,3 +1,5 @@
+//! Build-option normalization, frozen recipes and Windows script boundary regressions.
+
 use dashboard_build_profiles::{ClockSelection, CustomClock, ProfileId, Voltage, catalogue, resolve};
 use dashboard_configurator::build_flash::*;
 use dashboard_configurator::editor::{ActionBlock, Editor, PointerTarget};
@@ -5,6 +7,7 @@ use dashboard_configurator::editor::{ActionBlock, Editor, PointerTarget};
 use dashboard_helper_protocol::{Mode, Optimization};
 
 #[test]
+/// Every named profile uses shared actual divisors and Expert gating; unknown names preserve the previous selection.
 fn defaults_and_all_named_profiles_use_the_shared_resolver() {
     let mut selection = BuildSelection::default();
     let stock = selection.normalized().unwrap();
@@ -27,6 +30,7 @@ fn defaults_and_all_named_profiles_use_the_shared_resolver() {
 }
 
 #[test]
+/// Expert clock profiles retain actual PLL/SPI values including legacy rounding; this is not electrical qualification.
 fn expert_gating_and_legacy_failure_settings_are_preserved() {
     let mut selection = BuildSelection::default();
     selection.select("cpu280-spi70-1v30").unwrap();
@@ -46,6 +50,8 @@ fn expert_gating_and_legacy_failure_settings_are_preserved() {
 }
 
 #[test]
+/// Strict decimal Hz parsing rejects signs/whitespace/overflow; shared PLL/divisor admission determines achievable SPI
+/// rates.
 fn custom_clocks_reject_invalid_text_overflow_and_unrepresentable_requests() {
     let mut selection = BuildSelection::default();
     selection.select("custom").unwrap();
@@ -82,6 +88,7 @@ fn custom_clocks_reject_invalid_text_overflow_and_unrepresentable_requests() {
 }
 
 #[test]
+/// Oversized custom clock input remains invalid across named-profile switching until explicitly replaced.
 fn overlong_browser_input_stays_invalid_until_replaced() {
     let mut selection = BuildSelection::default();
     selection.select("custom").unwrap();
@@ -100,6 +107,7 @@ fn overlong_browser_input_stays_invalid_until_replaced() {
 }
 
 #[test]
+/// Payload-only transfer estimates use exact divisors and reject malformed clocks; no scanout/FPS evidence is produced.
 fn full_frame_estimate_uses_exact_dividers_not_truncated_spi_hz() {
     let clock = resolve(ClockSelection::Named(ProfileId::Cpu280Spi70)).unwrap();
     assert_eq!(
@@ -126,6 +134,7 @@ fn full_frame_estimate_uses_exact_dividers_not_truncated_spi_hz() {
 }
 
 #[test]
+/// Recipe capture matches accepted binary bytes and denies an active pointer until cancellation.
 fn recipe_captures_only_a_ready_accepted_configuration() {
     let selection = BuildSelection::default();
     let mut editor = Editor::default();
@@ -141,6 +150,7 @@ fn recipe_captures_only_a_ready_accepted_configuration() {
 }
 
 #[test]
+/// Startup profile bytes are frozen after shared validation; durations over ten seconds fail.
 fn recipe_carries_validated_startup_pixels_settings() {
     use dashboard_config::startup::{StartupProfile, StartupTheme};
     let profile = StartupProfile {
@@ -171,6 +181,9 @@ fn recipe_carries_validated_startup_pixels_settings() {
 // The fixture records the real script's bytes/options; it does not emulate its logic.
 #[cfg(windows)]
 #[test]
+/// Runs exported PowerShell against a temporary recording build-script boundary, checking
+/// exact bytes/options, environment restoration, duplicate-name/toolchain rejection and
+/// failure propagation. Requires pwsh; fixture never invokes Cargo, USB or flashing.
 fn powershell_recipe_preserves_configuration_flags_and_failure_boundaries() {
     use std::fs;
     use std::process::Command;
@@ -183,8 +196,13 @@ fn powershell_recipe_preserves_configuration_flags_and_failure_boundaries() {
             .as_nanos()
     ));
     fs::create_dir_all(dir.join("firmware/scripts")).unwrap();
-    struct Cleanup(std::path::PathBuf);
+    /// Removes only the unique temporary recipe fixture directory on scope exit.
+    struct Cleanup(
+        /// Owned temporary repository root created by this test.
+        std::path::PathBuf,
+    );
     impl Drop for Cleanup {
+        /// Best-effort removal of this fixture tree; cleanup errors do not mask assertions.
         fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
     }
     let _cleanup = Cleanup(dir.clone());
@@ -314,6 +332,7 @@ finally {
 }
 
 #[test]
+/// A prepared recipe retains accepted startup settings even after editor undo.
 fn recipe_snapshots_accepted_startup_instead_of_defaults() {
     use dashboard_config::startup::{StartupProfile, StartupTheme};
     let mut editor = Editor::default();
@@ -332,6 +351,8 @@ fn recipe_snapshots_accepted_startup_instead_of_defaults() {
 use std::sync::Arc;
 
 use dashboard_config_tools::project::*;
+/// Returns a valid red landscape RLE asset with synthetic PNG-signature original identity;
+/// source is not a decodable PNG. Fixture CRC/recipe admission failures panic.
 fn artwork() -> Arc<Artwork> {
     use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
     let mut asset = vec![0; 52];
@@ -380,6 +401,7 @@ fn artwork() -> Arc<Artwork> {
 }
 
 #[test]
+/// Build recipes freeze converted pixels and all digests while excluding original bytes, even after editor undo.
 fn recipe_freezes_converted_asset_and_never_embeds_original() {
     let mut editor = Editor::default();
     let art = artwork();

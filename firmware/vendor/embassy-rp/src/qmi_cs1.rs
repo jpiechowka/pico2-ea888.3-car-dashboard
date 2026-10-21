@@ -14,12 +14,17 @@ use crate::{pac, peripherals};
 
 /// QMI CS1 driver.
 pub struct QmiCs1<'d> {
+    /// Exclusive CS1 peripheral ownership; external memory configuration is separate.
     _inner: Peri<'d, peripherals::QMI_CS1>,
 }
 
 impl<'d> QmiCs1<'d> {
-    /// Create a new QMI CS1 instance.
-    pub fn new(qmi_cs1: Peri<'d, peripherals::QMI_CS1>, cs1: Peri<'d, impl QmiCs1Pin>) -> Self {
+    /// Returns CS1 ownership from `qmi_cs1` after selecting function 9 on `cs1`.
+    /// Sets 12mA drive, fast slew, input enable and clears isolation; does not configure memory timing.
+    pub fn new(
+        qmi_cs1: Peri<'d, peripherals::QMI_CS1>,
+        cs1: Peri<'d, impl QmiCs1Pin>,
+    ) -> Self {
         // Configure CS1 pin for QMI function (funcsel = 9)
         cs1.gpio().ctrl().write(|w| w.set_funcsel(9));
 
@@ -36,6 +41,7 @@ impl<'d> QmiCs1<'d> {
     }
 }
 
+/// Restricts instances to the HAL QMI_CS1 singleton.
 trait SealedInstance {}
 
 /// QMI CS1 instance trait.

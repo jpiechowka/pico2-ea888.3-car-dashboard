@@ -7,8 +7,10 @@
 
 #[cfg_attr(feature = "chrono", path = "datetime_chrono.rs")]
 #[cfg_attr(not(feature = "chrono"), path = "datetime_no_deps.rs")]
+/// Feature-selected calendar representation.
 mod datetime;
 
+/// Shared bounded Unix-millisecond conversion implementation.
 pub(crate) mod epoch;
 
 pub use self::datetime::{DateTime, DayOfWeek, Error};

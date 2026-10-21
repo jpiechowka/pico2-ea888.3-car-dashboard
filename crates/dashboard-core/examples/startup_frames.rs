@@ -2,6 +2,9 @@
 use dashboard_core::display::{FrameBuffer, St7789Renderer};
 use dashboard_core::startup::*;
 use dashboard_core::vehicle_status::VehicleStatus;
+/// Writes four landscape RGB565 samples for each procedural theme into the first
+/// CLI argument's directory, creating it if necessary and replacing matching files.
+/// Panics for a missing argument or filesystem failure; performs no device I/O.
 fn main() {
     let directory = std::env::args().nth(1).expect("output directory");
     std::fs::create_dir_all(&directory).unwrap();

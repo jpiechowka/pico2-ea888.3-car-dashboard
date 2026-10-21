@@ -1,5 +1,8 @@
+//! Probe failure provenance and generation fences; all radio events are synthetic.
 use dashboard_core::discovery::*;
 
+/// Returns a probe with one connectable peer and an explicit Inspect request at100ms;
+/// panics if the synthetic setup cannot issue that request.
 fn inspecting() -> Probe {
     let mut probe = Probe::new();
     probe.catalog.observe(Advertisement::new(
@@ -17,6 +20,7 @@ fn inspecting() -> Probe {
 }
 
 #[test]
+/// Ensures late completion cannot convert any terminal inspection failure into success.
 fn failed_inspection_cannot_be_marked_complete_by_a_late_completion() {
     for error in [
         ProbeError::Discovery,
@@ -39,6 +43,7 @@ fn failed_inspection_cannot_be_marked_complete_by_a_late_completion() {
 }
 
 #[test]
+/// Preserves first failure and reader page while enriching terminal context, then fences a new generation.
 fn terminal_context_enriches_first_failure_without_replacing_its_cause() {
     let mut probe = inspecting();
     let revision = probe.request.revision;
@@ -91,6 +96,7 @@ fn terminal_context_enriches_first_failure_without_replacing_its_cause() {
 }
 
 #[test]
+/// Confirms late local ingress failure invalidates completed inventory and cannot be erased by another Complete.
 fn terminal_context_can_reveal_a_failure_after_inventory_completed() {
     let mut probe = inspecting();
     let revision = probe.request.revision;
@@ -147,6 +153,8 @@ fn terminal_context_can_reveal_a_failure_after_inventory_completed() {
 }
 
 #[test]
+/// Merges local/disconnect evidence independently and rejects both old/current inspection context after
+/// cancel/recovery.
 fn delayed_terminal_code_merges_with_local_error_and_cannot_cross_cancel_or_recovery() {
     for input in [Input::Back, Input::Recover] {
         let mut probe = inspecting();
@@ -186,6 +194,7 @@ fn delayed_terminal_code_merges_with_local_error_and_cannot_cross_cancel_or_reco
 }
 
 #[test]
+/// Keeps the first inspection cause through cleanup/late events until an explicit newer Inspect request.
 fn first_failure_survives_cleanup_and_only_new_requests_clear_it() {
     let mut probe = inspecting();
     let revision = probe.request.revision;
@@ -224,6 +233,7 @@ fn first_failure_survives_cleanup_and_only_new_requests_clear_it() {
 }
 
 #[test]
+/// Verifies Back/Recover exclude old inspection failure and completion evidence from scanning state.
 fn cancellation_recovery_and_scan_cannot_receive_old_failure_evidence() {
     for input in [Input::Back, Input::Recover] {
         let mut probe = inspecting();
@@ -243,6 +253,7 @@ fn cancellation_recovery_and_scan_cannot_receive_old_failure_evidence() {
 }
 
 #[test]
+/// Treats protected reads as retained evidence, while explicit failures preserve partial rows without completion.
 fn successful_and_protected_values_complete_but_failures_preserve_partial_rows() {
     for success in [true, false] {
         let mut probe = inspecting();
@@ -302,6 +313,7 @@ fn successful_and_protected_values_complete_but_failures_preserve_partial_rows()
 }
 
 #[test]
+/// Exhausts declaration lengths and invalid order/handle boundaries, retaining only valid16/128-bit UUID layouts.
 fn characteristic_wire_validation_handles_length_order_bounds_and_uuid_widths() {
     for length in 0..=32 {
         let mut bytes = [0xFF; 32];
@@ -333,6 +345,7 @@ fn characteristic_wire_validation_handles_length_order_bounds_and_uuid_widths() 
 }
 
 #[test]
+/// Checks all raw error-code bytes retain their value and missing timing/ranges stay absent.
 fn failure_codes_and_missing_measurements_remain_exact() {
     for code in u8::MIN..=u8::MAX {
         for reason in [
@@ -358,6 +371,7 @@ fn failure_codes_and_missing_measurements_remain_exact() {
 }
 
 #[test]
+/// Confirms global scan faults survive peer clearing/recovery without being relabeled to a newer request.
 fn global_scan_diagnostics_survive_pause_and_clear_and_keep_the_original_revision() {
     let mut probe = inspecting();
     let failure = ScanFailure {
@@ -379,6 +393,7 @@ fn global_scan_diagnostics_survive_pause_and_clear_and_keep_the_original_revisio
 }
 
 #[test]
+/// Opens non-radio fault details with no peer and proves details navigation cannot issue a connection.
 fn non_scan_fault_details_are_reachable_without_a_peer_and_never_connect() {
     let mut probe = Probe::new();
     probe.fault_latch = FaultLatch::from_parts(Fault::Encoder.bit() | Fault::Usb.bit(), Fault::Encoder as u8).unwrap();
@@ -403,6 +418,7 @@ fn non_scan_fault_details_are_reachable_without_a_peer_and_never_connect() {
 }
 
 #[test]
+/// Keeps parser failure evidence accessible without peers and ignores old reports while global details are paused.
 fn scan_failure_details_are_reachable_without_any_valid_peer() {
     let mut probe = Probe::new();
     assert!(probe.input(Input::Details, 10).is_none());

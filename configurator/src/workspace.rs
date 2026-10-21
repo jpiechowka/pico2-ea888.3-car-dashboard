@@ -10,42 +10,111 @@ use crate::editor::{ActionBlock, Edit, Editor, EditorError, EditorStamp, Inspect
 use crate::field_registry::{FieldTarget, Registry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Dashboard-only export selection; complete project/startup artwork uses separate project actions.
 pub enum ExportFormat {
+    /// Editable configuration JSON.
     Json,
+    /// Validated binary EAV configuration for firmware.
     Eav,
 }
 /// A closed action allowlist. Object authority is minted only by Editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    Navigate(Workspace),
-    Find(FieldTarget),
-    DuplicateWidget(Option<InspectionTarget>),
-    DuplicateView(Option<InspectionTarget>),
+    /// Activate a browser workspace without editing firmware state.
+    Navigate(
+        /// Workspace to activate and focus.
+        Workspace,
+    ),
+    /// Reveal one current registry-owned field.
+    Find(
+        /// Revision/owner-bound field inspection target.
+        FieldTarget,
+    ),
+    /// Clone selected widget into available same-view geometry.
+    DuplicateWidget(
+        /// Captured selected object authority; None is an unavailable inventory row.
+        Option<InspectionTarget>,
+    ),
+    /// Clone selected view and its widgets within shared limits.
+    DuplicateView(
+        /// Captured selected object authority; None is an unavailable inventory row.
+        Option<InspectionTarget>,
+    ),
+    /// Capture portable appearance from a current clean selected widget.
     CopyAppearance,
-    ApplyAppearance(AppearanceScope),
+    /// Open confirmation for a guarded appearance offer, without applying it yet.
+    ApplyAppearance(
+        /// Destination set captured by the appearance offer.
+        AppearanceScope,
+    ),
+    /// Restore the previous accepted history entry when history admission permits.
     Undo,
+    /// Reapply the next accepted history entry when history admission permits.
     Redo,
+    /// Open the editor-owned JSON transaction in Diagnostics.
     OpenJson,
-    Export(ExportFormat),
+    /// Request an admitted dashboard-only export from the browser adapter.
+    Export(
+        /// Requested configuration encoding.
+        ExportFormat,
+    ),
+    /// Request the simulator's reserved two-second Y recovery gesture.
     RecoverSimulator,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Reducer dispatch result; browser adapters perform deferred focus, download and simulator effects.
 pub enum CommandEffect {
-    OpenJson(crate::json_draft::JsonDraftHandle),
-    CopiedAppearance(AppearanceSnapshot),
-    PreviewAppearance(AppearanceRequest),
-    Navigate(Workspace),
-    Inspect(FieldTarget),
+    /// JSON transaction opened and Files group activated.
+    OpenJson(
+        /// Editor-owned current JSON handle for adapter focus/parsing.
+        crate::json_draft::JsonDraftHandle,
+    ),
+    /// Portable appearance captured, ready for local clipboard storage.
+    CopiedAppearance(
+        /// Value snapshot excluding source identity and unrelated settings.
+        AppearanceSnapshot,
+    ),
+    /// Appearance target/source admitted for confirmation, without changing config.
+    PreviewAppearance(
+        /// Guarded request to retain until explicit apply.
+        AppearanceRequest,
+    ),
+    /// Workspace activation already applied to workspace state.
+    Navigate(
+        /// Activated workspace for browser focus/persistence.
+        Workspace,
+    ),
+    /// Target workspace/group opened, leaving browser field focus pending.
+    Inspect(
+        /// Still-guarded field target to resolve at focus time.
+        FieldTarget,
+    ),
+    /// Editor transaction/history action completed; refresh rendered state.
     Changed,
-    Export(ExportFormat),
+    /// Export admitted; adapter must still snapshot/write the current project safely.
+    Export(
+        /// Dashboard-only output encoding.
+        ExportFormat,
+    ),
+    /// Adapter should issue the reserved simulator recovery gesture.
     RecoverSimulator,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Command admission or editor transaction rejection, retaining their different state effects.
 pub enum CommandError {
-    Unavailable(&'static str),
-    Editor(EditorError),
+    /// No command mutation admitted.
+    Unavailable(
+        /// Stable user-facing admission reason.
+        &'static str,
+    ),
+    /// Editor rejected dispatch; an invalid edit may remain inspectable according to editor transaction rules.
+    Editor(
+        /// Underlying typed reducer failure.
+        EditorError,
+    ),
 }
 impl CommandError {
+    /// Returns a display reason, preserving an unavailable message or formatting the typed editor rejection.
     pub fn message(self) -> String {
         match self {
             Self::Unavailable(reason) => reason.into(),
@@ -54,6 +123,8 @@ impl CommandError {
     }
 }
 impl Command {
+    /// Returns a duplication command capturing `editor`'s selected preview widget, or a disabled None-target row if
+    /// unresolved.
     pub fn selected_widget(editor: &Editor) -> Self {
         Self::DuplicateWidget(editor.selection().widget.and_then(|id| {
             let index = editor.preview().config().widgets.iter().position(|w| w.id == id)?;
@@ -61,6 +132,8 @@ impl Command {
         }))
     }
 
+    /// Returns a duplication command capturing `editor`'s selected preview view, or a disabled None-target row if
+    /// unresolved.
     pub fn selected_view(editor: &Editor) -> Self {
         Self::DuplicateView(
             editor
@@ -73,6 +146,8 @@ impl Command {
         )
     }
 
+    /// Returns the fixed command palette inventory plus selected-object authorities minted from `editor` now.
+    /// Availability is checked separately at display/dispatch time; this does not issue Find results.
     pub fn inventory(editor: &Editor) -> Vec<Self> {
         let mut commands = Workspace::ALL.into_iter().map(Self::Navigate).collect::<Vec<_>>();
         commands.extend([
@@ -92,6 +167,7 @@ impl Command {
         commands
     }
 
+    /// Returns the fixed palette label for this command; no object value or admission reason is included.
     pub fn label(self) -> &'static str {
         match self {
             Self::Navigate(w) => w.label(),
@@ -111,7 +187,9 @@ impl Command {
         }
     }
 
-    /// Row state and dispatch use the identical synchronous admission policy.
+    /// Returns an unavailable reason for `editor` against `captured_stamp`, or None when currently admitted.
+    /// No appearance offer is supplied, so copy/apply actions remain unavailable; dispatch uses this same synchronous
+    /// policy.
     pub fn availability(
         self,
         editor: &Editor,
@@ -120,6 +198,10 @@ impl Command {
         self.availability_with_appearance(editor, captured_stamp, None)
     }
 
+    /// Returns None when `editor` admits this command at `captured_stamp` using optional captured `appearance`, else a
+    /// reason. Even navigation/recovery reject stale stamps; Undo/Redo use history readiness, other mutating/export
+    /// actions use snapshot readiness. Selection targets and geometry are rechecked; no state is changed or
+    /// appearance confirmation applied.
     pub fn availability_with_appearance(
         self,
         editor: &Editor,
@@ -213,6 +295,8 @@ impl Command {
         }
     }
 }
+/// Returns `editor`'s selected preview widget only if `target` resolves unambiguously to that widget/view; otherwise
+/// None.
 fn selected_widget(
     editor: &Editor,
     target: InspectionTarget,
@@ -224,6 +308,8 @@ fn selected_widget(
     let widget = editor.preview().config().widgets.get(resolved.widget_index?)?;
     (editor.selection().widget == Some(widget.id) && editor.selection().view == widget.view).then_some(widget)
 }
+/// Returns the selected view ID only if `target` resolves unambiguously in `editor` to that current view; otherwise
+/// None.
 fn selected_view(
     editor: &Editor,
     target: InspectionTarget,
@@ -235,12 +321,17 @@ fn selected_view(
     let id = editor.preview().config().views.get(resolved.view_index?)?.id;
     (editor.selection().view == id).then_some(id)
 }
+/// Returns the first free placement of `widget`'s span in its view within `editor`'s accepted preview, or None when
+/// full/invalid.
 fn free_placement(
     editor: &Editor,
     widget: &crate::config::Widget,
 ) -> Option<Placement> {
     crate::geometry::first_free_placement(editor.preview().config(), widget.view, widget.placement.span, None)
 }
+/// Dispatches `command` against `editor`/`workspace` using original `captured_stamp` and no appearance offer.
+/// Returns its immediate/deferred effect, or admission/editor rejection; same state effects as
+/// dispatch_with_appearance.
 pub fn dispatch(
     editor: &mut Editor,
     workspace: &mut WorkspaceState,
@@ -250,6 +341,11 @@ pub fn dispatch(
     dispatch_with_appearance(editor, workspace, command, captured_stamp, None)
 }
 
+/// Dispatches `command` against `editor` and browser `workspace`, rechecking `captured_stamp` and optional `appearance`
+/// offer. Returns the effect or unavailable/editor error. Duplication/history/JSON may mutate editor; navigation/Find
+/// only workspace. Appearance apply returns confirmation authority, export/recovery return adapter work, and no files
+/// are written here. Admission errors do not mutate; editor errors follow reducer rules, including retained invalid
+/// drafts.
 pub fn dispatch_with_appearance(
     editor: &mut Editor,
     workspace: &mut WorkspaceState,
@@ -321,12 +417,18 @@ pub fn dispatch_with_appearance(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Global shortcut intent after browser adapter supplies effective focus/IME state.
 pub enum ShortcutAction {
+    /// Open command palette, including from editable controls.
     Palette,
+    /// Undo accepted editor history outside text-editing controls.
     Undo,
+    /// Redo accepted editor history outside text-editing controls.
     Redo,
 }
-/// The adapter supplies effective editable ancestry and actual IME state.
+/// Returns shortcut intent for `key` with platform `primary`, `shift` and `alt` modifiers, or None when not admitted.
+/// Rejects `repeat`/`composing` events; `editable` effective ancestry blocks Z history shortcuts but permits primary-K
+/// palette. The adapter supplies actual IME state and performs preventDefault only for an admitted intent.
 #[allow(clippy::too_many_arguments)]
 pub fn shortcut_action(
     key: &str,
@@ -354,13 +456,21 @@ pub fn shortcut_action(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FocusRequest(u64);
+/// Monotonic deferred-focus identity local to one FocusRequests owner.
+pub struct FocusRequest(
+    /// Nonzero issued counter; never wraps.
+    u64,
+);
 #[derive(Default)]
+/// Single outstanding deferred-focus request with permanent exhaustion refusal.
 pub struct FocusRequests {
+    /// Last issued value, initially zero and checked before increment.
     next: u64,
+    /// Sole admitted focus callback token, or None after cancellation/exhaustion.
     active: Option<FocusRequest>,
 }
 impl FocusRequests {
+    /// Retires the prior request and returns a fresh token, or None at counter exhaustion; never reuses authority.
     pub fn issue(&mut self) -> Option<FocusRequest> {
         self.cancel();
         self.next = self.next.checked_add(1)?;
@@ -369,8 +479,10 @@ impl FocusRequests {
         Some(token)
     }
 
+    /// Retires any active request without resetting the counter.
     pub fn cancel(&mut self) { self.active = None; }
 
+    /// Returns whether `token` is this owner's sole active request; does not consume it.
     pub fn is_current(
         &self,
         token: FocusRequest,
@@ -378,18 +490,27 @@ impl FocusRequests {
         self.active == Some(token)
     }
 }
+/// Maximum UTF-8 JSON bytes accepted/emitted for browser workspace preferences.
 pub const MAX_PREFERENCES_BYTES: usize = 4096;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Browser workspace identity, unrelated to selected firmware screen or dashboard view.
 pub enum Workspace {
     #[default]
+    /// Dashboard views, widgets and appearance editing; default workspace.
     Views,
+    /// Device orientation, buttons, startup, RGB and connection configuration.
     Device,
+    /// Data sources, history, fuel assumptions and warning rules.
     DataWarnings,
+    /// JSON/files, simulation evidence and event diagnostics.
     Diagnostics,
+    /// Explicit helper checks/build/inspection/flash controls.
     BuildFlash,
+    /// Read-only ECU research/reference evidence.
     EcuReference,
 }
 impl Workspace {
+    /// Stable visible tab order used by keyboard navigation.
     pub const ALL: [Self; 6] = [
         Self::Views,
         Self::Device,
@@ -399,6 +520,7 @@ impl Workspace {
         Self::EcuReference,
     ];
 
+    /// Returns this workspace's index in ALL, always within 0..6.
     pub const fn index(self) -> usize {
         match self {
             Self::Views => 0,
@@ -410,6 +532,7 @@ impl Workspace {
         }
     }
 
+    /// Returns the visible tab label.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Views => "Views",
@@ -421,6 +544,7 @@ impl Workspace {
         }
     }
 
+    /// Returns the stable DOM identifier suffix; distinct from serialized enum spelling.
     pub const fn id(self) -> &'static str {
         match self {
             Self::Views => "views",
@@ -433,25 +557,43 @@ impl Workspace {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Persisted collapsible inspector group identity, shared by registry navigation and DOM anchors.
 pub enum GroupId {
+    /// BLE connection configuration and prototype limits.
     Ble,
+    /// Widget size, placement and view membership.
     Layout,
+    /// Numeric readout settings and units.
     Readout,
+    /// Gauge shape, range and appearance.
     Gauge,
+    /// Per-widget history and extrema display.
     HistoryStatistics,
+    /// Per-widget warning thresholds/behavior.
     Warnings,
+    /// Colour/font and portable appearance presets.
     Appearance,
+    /// Button and encoder assignments.
     Bindings,
+    /// RGB status policy.
     Indicator,
+    /// Shared channel history duration.
     Channels,
+    /// Qualified channel-source configuration.
     Sources,
+    /// Fuel assumption and equivalent AFR reference.
     Fuel,
+    /// Combined warning rules and ordering.
     CombinedWarnings,
+    /// Timing/control simulation settings.
     Simulation,
+    /// JSON import/export and project files.
     Files,
+    /// Resource/performance observations with provenance.
     Measurements,
 }
 impl GroupId {
+    /// Returns the stable DOM group-anchor suffix used by field navigation.
     pub const fn id(self) -> &'static str {
         match self {
             Self::Layout => "layout",
@@ -473,6 +615,7 @@ impl GroupId {
         }
     }
 
+    /// Returns the visible collapsible-group heading.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Layout => "Layout",
@@ -495,19 +638,29 @@ impl GroupId {
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Manual tab-focus movement; changing focus does not activate the workspace.
 pub enum TabKey {
+    /// Move left, wrapping from first to last.
     Previous,
+    /// Move right, wrapping from last to first.
     Next,
+    /// Focus the first tab.
     First,
+    /// Focus the last tab.
     Last,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Browser-only active tab, roving focus and persistent expanded groups.
 pub struct WorkspaceState {
+    /// Workspace whose panel is visible.
     active: Workspace,
+    /// Roving tab stop, possibly different from visible panel during arrow navigation.
     focused: Workspace,
+    /// Expanded groups across all workspaces, stored without duplicates.
     expanded: BTreeSet<GroupId>,
 }
 impl Default for WorkspaceState {
+    /// Returns Views active/focused with Layout, Readout, Bindings, BLE, Channels and Files expanded.
     fn default() -> Self {
         Self {
             active: Workspace::Views,
@@ -527,16 +680,23 @@ impl Default for WorkspaceState {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Strict versioned browser JSON preferences; contains no editor/project values.
 struct Preferences {
+    /// Only schema version one is accepted.
     version: u16,
+    /// Workspace restored as both active and focused.
     active: Workspace,
+    /// Serialized expanded groups; duplicate entries are rejected on restore.
     expanded: Vec<GroupId>,
 }
 impl WorkspaceState {
+    /// Returns the visible workspace.
     pub fn active(&self) -> Workspace { self.active }
 
+    /// Returns the roving tab-focus workspace, which need not be active.
     pub fn focused(&self) -> Workspace { self.focused }
 
+    /// Returns whether `group` is currently expanded, regardless of active workspace.
     pub fn expanded(
         &self,
         group: GroupId,
@@ -544,6 +704,7 @@ impl WorkspaceState {
         self.expanded.contains(&group)
     }
 
+    /// Moves roving focus according to `key`, wrapping adjacent navigation without changing the active panel.
     pub fn focus(
         &mut self,
         key: TabKey,
@@ -557,8 +718,10 @@ impl WorkspaceState {
         }];
     }
 
+    /// Activates the currently focused tab without changing expanded groups.
     pub fn activate_focused(&mut self) { self.active = self.focused; }
 
+    /// Sets `workspace` active and focused, retaining expanded-group state.
     pub fn activate(
         &mut self,
         workspace: Workspace,
@@ -567,6 +730,7 @@ impl WorkspaceState {
         self.focused = workspace;
     }
 
+    /// Activates/focuses `workspace` and expands `group`; no group/workspace compatibility inference is performed.
     pub fn open(
         &mut self,
         workspace: Workspace,
@@ -576,6 +740,7 @@ impl WorkspaceState {
         self.expanded.insert(group);
     }
 
+    /// Sets `group` membership to `expanded` without changing active workspace or focus.
     pub fn set_expanded(
         &mut self,
         group: GroupId,
@@ -588,6 +753,8 @@ impl WorkspaceState {
         }
     }
 
+    /// Returns version-one JSON for active workspace and sorted expanded groups, or encoding/4-KiB-bound error.
+    /// Does not persist it and omits transient focused-tab state.
     pub fn preferences(&self) -> Result<String, &'static str> {
         let text = serde_json::to_string(&Preferences {
             version: 1,
@@ -601,6 +768,8 @@ impl WorkspaceState {
         Ok(text)
     }
 
+    /// Returns restored preferences from optional `text`, plus a warning on invalid/oversize/version/duplicate input.
+    /// None returns defaults without warning; invalid input returns defaults with warning and never partially restores.
     pub fn from_preferences(text: Option<&str>) -> (Self, Option<&'static str>) {
         let Some(text) = text else {
             return (Self::default(), None);
@@ -628,9 +797,11 @@ impl WorkspaceState {
 }
 
 #[cfg(test)]
+/// Deferred focus identity exhaustion must retire the previous callback without wrapping.
 mod focus_tests {
     use super::*;
     #[test]
+    /// Issuing at MAX returns None and invalidates the prior MAX token.
     fn exhausted_request_retires_previous_without_wrapping() {
         let old = FocusRequest(u64::MAX);
         let mut state = FocusRequests {

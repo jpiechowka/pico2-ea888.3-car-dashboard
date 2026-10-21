@@ -1,7 +1,9 @@
+//! Read-only diagnostic wire grammar and generic OBD scaling; no exact-ECU qualification is inferred.
 use dashboard_host_validation::diagnostics::obd::{Capabilities, DecodeError, Decoded, Support, decode};
 use dashboard_host_validation::diagnostics::request::{Reply, ReplyError, Request};
 use dashboard_host_validation::samples::Quantity;
 
+/// Request frames use read services; replies require exact service/identifier and bounded positive/negative grammar.
 #[test]
 fn requests_only_expose_read_services_and_match_exact_response_identifiers() {
     assert_eq!(Request::Obd(5).frame(0x7E0).unwrap().data(), &[2, 1, 5, 0, 0, 0, 0, 0]);
@@ -29,6 +31,7 @@ fn requests_only_expose_read_services_and_match_exact_response_identifiers() {
     }
 }
 
+/// Every support bit maps to its PID, with page chaining, responder/epoch binding and immutable admitted pages.
 #[test]
 fn every_capability_bit_including_page_edges_maps_to_the_correct_pid() {
     for base in [0, 0x20, 0x40] {
@@ -70,6 +73,7 @@ fn every_capability_bit_including_page_edges_maps_to_the_correct_pid() {
     assert!(Capabilities::new(0x7E0, 1).is_err());
 }
 
+/// Exhausts temperature bytes and voltage words, checks exact widths, and rejects unqualified PIDs.
 #[test]
 fn generic_temperature_and_module_voltage_scaling_cover_every_raw_value() {
     for pid in [5, 0x0F, 0x5C] {

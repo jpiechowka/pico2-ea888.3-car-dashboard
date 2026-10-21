@@ -1,7 +1,11 @@
+//! Native job ledger regressions using in-memory state only; no device/process operations.
+
 use dashboard_helper_protocol::*;
 use studio_helper::jobs::logs::LogInput;
 use studio_helper::jobs::*;
 #[test]
+/// A full 256-record ingress queue accounts dropped bytes while preserving cancellation
+/// and refusing terminal sealing until retained logs drain.
 fn saturated_ingress_drops_only_logs_and_requires_drain_before_seal() {
     let mut s = store();
     s.start(id(1), OperationKind::PrerequisiteCheck, None).unwrap();
@@ -27,6 +31,7 @@ fn saturated_ingress_drops_only_logs_and_requires_drain_before_seal() {
     assert_eq!(p.dropped, 0);
 }
 #[test]
+/// Epoch zero remains available; pre-epoch/overflow are unavailable and monotonic reversal latches anomaly.
 fn timestamp_conversion_distinguishes_epoch_unavailable_and_overflow() {
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -38,8 +43,11 @@ fn timestamp_conversion_distinguishes_epoch_unavailable_and_overflow() {
     assert_eq!(monotonic_elapsed(100, Some(99), &mut anomaly), 100);
     assert!(anomaly);
 }
+/// Returns fixed-width hexadecimal job identity for `n`; fixture encoding failures panic.
 fn id(n: u32) -> JobId { JobId::new(format!("{n:032x}")).unwrap() }
+/// Returns an empty store under a deterministic nonzero synthetic session identity.
 fn store() -> JobStore { JobStore::new(SessionId::new("a".repeat(32)).unwrap()) }
+/// Returns synthetic joined/tree-empty output closure with no losses.
 fn closure() -> OutputClosure {
     OutputClosure {
         workers_joined: true,
@@ -49,7 +57,9 @@ fn closure() -> OutputClosure {
         discarded_bytes: 0,
     }
 }
+/// Returns the prerequisite probe stage used by log fixtures.
 fn stage() -> StageId { StageId::Probe(ProbeStage::Prerequisites) }
+/// Returns an ordinary stdout record containing `s` in the prerequisite stage.
 fn log(s: &str) -> LogInput {
     LogInput {
         stage: stage(),
@@ -58,6 +68,7 @@ fn log(s: &str) -> LogInput {
         progress: false,
     }
 }
+/// Returns the first 128 records for job `n` in `s`; missing/invalid fixture state panics.
 fn poll(
     s: &JobStore,
     n: u32,
@@ -66,6 +77,8 @@ fn poll(
 }
 
 #[test]
+/// Rolling 1024-record retention preserves exact oldest/next/drop cursors and terminal
+/// summary; sealed jobs reject append and future cursors return no records.
 fn rolling_records_do_not_lose_terminal_summary_and_poll_cursor() {
     let mut s = store();
     s.start(id(1), OperationKind::PrerequisiteCheck, None).unwrap();
@@ -98,6 +111,7 @@ fn rolling_records_do_not_lose_terminal_summary_and_poll_cursor() {
 }
 
 #[test]
+/// Active-job rejection preserves summaries, and completing 17 jobs retains 16 with an expiry tombstone.
 fn seventeen_jobs_retain_sixteen_and_active_rejection_is_atomic() {
     let mut s = store();
     for n in 1..=17 {
@@ -119,6 +133,7 @@ fn seventeen_jobs_retain_sixteen_and_active_rejection_is_atomic() {
 }
 
 #[test]
+/// Out-of-order/wrong-operation stages and unjoined closure fail atomically; failed stages skip successors.
 fn illegal_transitions_and_unjoined_seal_preserve_state() {
     let mut s = store();
     s.start(id(1), OperationKind::Build, None).unwrap();
@@ -156,6 +171,7 @@ fn illegal_transitions_and_unjoined_seal_preserve_state() {
 }
 
 #[test]
+/// Transfer cancellation remains pending until the boundary; reboot failure cannot erase prior byte verification.
 fn transfer_cancel_waits_boundary_and_verified_reboot_failure_remains_verified() {
     for cancel in [true, false] {
         let mut s = store();
@@ -196,6 +212,7 @@ fn transfer_cancel_waits_boundary_and_verified_reboot_failure_remains_verified()
 }
 
 #[test]
+/// Setup summary stages derive from their ledger; active-step cancellation requires a recorded outcome before seal.
 fn setup_aggregates_are_ledger_owned_and_cancellation_cannot_seal_active_step() {
     use dashboard_helper_protocol::setup::*;
     let step = SetupStepId {
@@ -242,6 +259,7 @@ fn setup_aggregates_are_ledger_owned_and_cancellation_cannot_seal_active_step() 
     assert!(s.summaries()[0].events_closed);
 }
 #[test]
+/// A skipped build with forged success and no artifact fails protocol serialization.
 fn summaries_reject_forged_success_and_terminal_write_facts() {
     let mut s = store();
     s.start(id(1), OperationKind::Build, None).unwrap();
@@ -261,6 +279,7 @@ fn summaries_reject_forged_success_and_terminal_write_facts() {
     );
 }
 #[test]
+/// Long mixed Unicode/escaped text splits losslessly; bounded expiry tombstones eventually become unavailable.
 fn event_utf8_split_and_tombstone_expiry_are_exact() {
     let mut s = store();
     s.start(id(1), OperationKind::PrerequisiteCheck, None).unwrap();
@@ -292,6 +311,8 @@ fn event_utf8_split_and_tombstone_expiry_are_exact() {
 }
 
 #[test]
+/// Large valid summaries, lists and event batches fit their separate envelopes; escaped
+/// maximum reasons exceed summary admission rather than silently truncate.
 fn public_summary_list_and_poll_bounds_use_independent_envelopes() {
     let mut s = store();
     s.start(id(1), OperationKind::Build, None).unwrap();
@@ -391,6 +412,8 @@ fn public_summary_list_and_poll_bounds_use_independent_envelopes() {
 }
 
 #[test]
+/// Flash artifact/device binding cannot change; cleanup-fatal retains unknown write outcome
+/// and open events until output closure is proven.
 fn immutable_flash_binding_and_unjoined_cleanup_fatal_survive_polling() {
     let mut s = store();
     s.start(id(1), OperationKind::Flash, None).unwrap();
@@ -427,6 +450,7 @@ fn immutable_flash_binding_and_unjoined_cleanup_fatal_survive_polling() {
 }
 
 #[test]
+/// A setup cleanup-fatal outcome dominates cancellation/failure/success and refuses unjoined sealing.
 fn setup_ledger_cleanup_fatal_cannot_be_downgraded_at_finalization() {
     use dashboard_helper_protocol::setup::*;
     let mut s = store();

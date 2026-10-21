@@ -10,10 +10,14 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::samples::{Quality, SensorId};
 use dashboard_host_validation::vehicle_status::VehicleStatus;
 
+/// Number of measured scene transitions in one fixed replay iteration.
 pub const STEPS: usize = 8;
+/// Number of synthetic measurements used to prefill statistics before timing.
 const SEED: u64 = 60;
+/// Fixed measurement spacing in milliseconds, retaining explicit graph gaps.
 const PERIOD_MS: u64 = 5000;
 
+/// Returns eight canonical channel values from periodic sample `index`, changing all channels together.
 fn values(index: u64) -> [f32; 8] {
     let wave = (index % 13) as f32;
     [
@@ -28,6 +32,7 @@ fn values(index: u64) -> [f32; 8] {
     ]
 }
 
+/// Returns a demo model prefilled with sixty five-second samples; fixture admission failure panics.
 pub fn model() -> AcquisitionModel<'static> {
     let mut model = AcquisitionModel::demo();
     for index in 0..SEED {
@@ -36,6 +41,8 @@ pub fn model() -> AcquisitionModel<'static> {
     model
 }
 
+/// Advances seeded `model` with zero-based replay `step` and returns its coherent snapshot.
+/// Panics on rejected/repeated ordering; callers replay steps 0..STEPS once from the seeded model.
 fn update(
     model: &mut AcquisitionModel,
     step: usize,
@@ -45,16 +52,21 @@ fn update(
     model.snapshot()
 }
 
+/// Returns all eight snapshots from the fixed seeded acquisition trace.
 pub fn snapshots() -> [DashboardSnapshot; STEPS] {
     let mut model = model();
     core::array::from_fn(|step| update(&mut model, step))
 }
 
+/// Two prewarmed framebuffers with retained identities for timed alternating presentation.
 pub struct Raster {
+    /// Independent landscape buffers selected by step parity.
     frames: [Box<FrameBuffer>; 2],
+    /// Shared retained-scene metadata for both buffers.
     cache: DashboardCache,
 }
 impl Raster {
+    /// Returns both buffers prewarmed from `initial` before measurement; missing boost sample time panics.
     pub fn new(initial: &DashboardSnapshot) -> Self {
         let mut raster = Self {
             frames: [Box::new(FrameBuffer::new()), Box::new(FrameBuffer::new())],
@@ -67,6 +79,8 @@ impl Raster {
         raster
     }
 
+    /// Draws `snapshot` with fixed visual changes selected by `step`; `retained` chooses cached versus full rendering.
+    /// Returns the parity-selected framebuffer after mutation. Panics if the boost sample has no timestamp.
     fn draw(
         &mut self,
         snapshot: &DashboardSnapshot,
@@ -108,6 +122,7 @@ impl Raster {
         black_box(&self.frames[buffer])
     }
 
+    /// Replays prepared `snapshots` through both buffers; `retained` selects cache or full paint at every step.
     pub fn run(
         &mut self,
         snapshots: &[DashboardSnapshot; STEPS],
@@ -119,6 +134,8 @@ impl Raster {
     }
 }
 
+/// Advances seeded `model` and paints all eight steps into `raster`, with `retained` selecting the draw path.
+/// Mutates both owners; repeated use without resetting the model rejects timestamps and panics.
 pub fn run_model(
     model: &mut AcquisitionModel,
     raster: &mut Raster,
@@ -130,6 +147,8 @@ pub fn run_model(
     }
 }
 
+/// Asserts all channels change with exact sample time, quality and sparse history, and both draw paths match every
+/// pixel.
 pub fn verify() {
     let prepared = snapshots();
     let mut model = model();

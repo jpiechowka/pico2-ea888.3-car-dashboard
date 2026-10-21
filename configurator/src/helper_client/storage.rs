@@ -3,20 +3,33 @@ use dashboard_helper_protocol::{AttemptId, BuildAttemptState, BuildStorage, Wire
 use serde::Deserialize;
 
 #[derive(Clone)]
+/// Validated storage snapshot or the helper's bounded conflict/unavailability result.
 pub enum BuildStorageView {
-    Ready(BuildStorage),
+    /// Complete validated report with unique attempt IDs.
+    Ready(
+        /// Validated metadata snapshot; eligibility still needs server rechecking.
+        BuildStorage,
+    ),
+    /// An active helper operation prevents a current storage snapshot.
     Busy,
+    /// Storage identity/content needs manual review and must remain intact.
     Quarantined,
+    /// Inspection failed without establishing storage contents.
     Unavailable,
 }
 impl BuildStorageView {
+    /// Returns a validated storage view from JSON `bytes`, enforcing the protocol
+    /// byte bound and unique attempt IDs. Recognizes only the three exact conflict
+    /// tags; malformed, oversized, invalid or unknown responses return diagnostics.
     pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() > BuildStorage::MAX_BYTES {
             return Err("Build storage response exceeds its size limit");
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
+        /// Exact one-field conflict envelope; additional fields are rejected.
         struct Conflict {
+            /// Server conflict tag, matched against the explicit supported list.
             error: String,
         }
         if let Ok(report) = serde_json::from_slice::<BuildStorage>(bytes) {
@@ -40,6 +53,7 @@ impl BuildStorageView {
         }
     }
 
+    /// Returns the report's reason or a static actionable explanation for this state.
     pub fn explanation(&self) -> &str {
         match self {
             Self::Ready(report) => report.reason.as_str(),
@@ -53,6 +67,8 @@ impl BuildStorageView {
     }
 
     /// The server rechecks ownership and live readers immediately before deletion.
+    /// Returns the matching `id` only from a Ready report when unprotected and not
+    /// Incomplete; otherwise `None`. This is UI eligibility, not deletion authority.
     pub fn cleanup_id(
         &self,
         id: &str,

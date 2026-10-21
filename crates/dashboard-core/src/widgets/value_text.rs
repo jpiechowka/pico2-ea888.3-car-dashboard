@@ -9,8 +9,11 @@ use crate::ui::{LABEL_FONT, VALUE_FONT, VALUE_FONT_MEDIUM};
 use crate::widgets::primitives::{VALUE_OUTLINE_OFFSETS, draw_value_with_outline, outline_color_for_text};
 
 #[derive(Clone, Copy)]
+/// Complete ASCII value layout including integer enlargement and physical outline margin.
 pub struct ValueFont {
+    /// Selected immutable bitmap font, borrowed from the shared fixed font catalogue.
     pub font: &'static MonoFont<'static>,
+    /// Integer glyph enlargement in `1..=3`; outline thickness is independent.
     pub scale: u32,
     /// Includes one physical pixel of outline on each side.
     pub size: Size,
@@ -18,6 +21,9 @@ pub struct ValueFont {
 
 /// Only bounded single-line ASCII values are supported. Return no layout when
 /// even the smallest complete string cannot fit. Never use clipping to fit it.
+/// Returns the tallest layout for `text` inside pixel `bounds`, considering
+/// enlargement up to `max_scale` capped at three, retaining first-candidate ties.
+/// Empty/nonprintable/non-ASCII/>16-byte text, zero scale or insufficient space returns `None`.
 pub fn fit_value(
     text: &str,
     bounds: Size,
@@ -54,6 +60,11 @@ pub fn fit_value(
 
 /// Draw the already-fitted string inside its independent lane. The outline is
 /// always one panel pixel, even when the glyphs are enlarged two or three times.
+/// Fits `text` within `lane` using `max_scale` capped at three, then draws in
+/// `color` into `display`, horizontally centered and one pixel below the lane top.
+/// Returns occupied height including outline, or zero for invalid/unfittable inputs.
+/// Coordinates must lie in `-320..=320` and dimensions at most 320 or drawing is inert.
+/// Draw errors are discarded; returned height is layout evidence, not transfer success.
 pub fn draw_fitted_value<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     text: &str,
@@ -112,21 +123,32 @@ pub fn draw_fitted_value<D: DrawTarget<Color = Rgb565>>(
     value.size.height
 }
 
+/// Synchronous glyph-pixel adapter coalescing same-color horizontal runs into scaled rectangles.
 struct Enlarged<'a, D> {
+    /// Caller-owned target, clipped to the value lane before constructing this adapter.
     display: &'a mut D,
+    /// Target-pixel origin for source `(0, 0)`, including any physical outline offset.
     position: Point,
+    /// Bounded integer enlargement factor, established by the fitter.
     scale: u32,
+    /// Unscaled glyph-run bounds used to reject pixels outside the source lane.
     source: Size,
 }
 
 impl<D> OriginDimensions for Enlarged<'_, D> {
+    /// Returns the unscaled source glyph-run dimensions.
     fn size(&self) -> Size { self.source }
 }
 
 impl<D: DrawTarget<Color = Rgb565>> DrawTarget for Enlarged<'_, D> {
+    /// RGB565 source and destination color format.
     type Color = Rgb565;
+    /// Underlying target error, propagated after any already drawn runs.
     type Error = D::Error;
 
+    /// Draws bounded source `pixels`, merging adjacent same-color pixels on a
+    /// scanline. Returns the first target error or success; out-of-bounds source
+    /// pixels are skipped and earlier rectangles remain drawn on failure.
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
         pixels: I,
@@ -155,6 +177,9 @@ impl<D: DrawTarget<Color = Rgb565>> DrawTarget for Enlarged<'_, D> {
 }
 
 impl<D: DrawTarget<Color = Rgb565>> Enlarged<'_, D> {
+    /// Writes the fitted run beginning at source `start`, containing `length`
+    /// pixels of `color`, as one scaled rectangle. Returns the underlying target
+    /// result; caller-established source/scale bounds keep arithmetic within panel limits.
     fn flush(
         &mut self,
         start: Point,

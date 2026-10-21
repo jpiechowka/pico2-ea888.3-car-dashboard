@@ -1,5 +1,12 @@
+//! GIF indexed decoding and full-canvas compositing before bounded output sampling.
 use crate::encode::Output;
 use crate::{ConvertError as E, *};
+/// Decode bounded `source` using validated `o`; return validated asset and full-source metadata.
+/// Preflight limits images/rectangles/time; decoder checks LZW end codes and canvas containment.
+/// Its one-MiB indexed-frame limit excludes RGBA canvas, Previous-disposal backup and output.
+/// Local palettes override global; transparent indices preserve canvas pixels. Emit before
+/// disposal, then restore the chosen background or saved rectangle. All source images are
+/// decoded even outside the clip. Grid, decode, palette and output errors discard partial work.
 pub fn convert(
     source: &[u8],
     o: &Options,

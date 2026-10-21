@@ -1,3 +1,4 @@
+//! Poll-work and completion-rate regressions with deterministic synthetic clocks.
 use std::cell::Cell;
 use std::future::Future;
 use std::pin::pin;
@@ -6,16 +7,25 @@ use std::task::{Context, Poll, Waker};
 use dashboard_core::display::telemetry::CompletionRate;
 use dashboard_core::task_work::{WorkWindow, measure};
 
+/// Returns unit after checking the wrapper retains one large !Unpin future at
+/// a stable address across polls; panics on storage duplication or pinning drift.
 #[test]
 fn measuring_large_pinned_futures_does_not_duplicate_their_storage() {
+    /// Large immovable task fixture that remembers its first polled address.
     struct LargeFuture {
+        /// Payload forcing wrapper-size regressions to be observable.
         data: [u8; 4096],
+        /// First polled address, zero before any poll.
         address: Cell<usize>,
+        /// Prevents automatic Unpin so projection must preserve pinning.
         _pinned: core::marker::PhantomPinned,
     }
     impl Future for LargeFuture {
+        /// Last payload byte, returned after the second poll.
         type Output = u8;
 
+        /// Returns Pending once, then the last byte; panics if the pinned address
+        /// changed. The ignored context is unused because the test manually repolls.
         fn poll(
             self: core::pin::Pin<&mut Self>,
             _: &mut Context<'_>,
@@ -47,6 +57,8 @@ fn measuring_large_pinned_futures_does_not_duplicate_their_storage() {
     assert_eq!(measured.as_mut().poll(&mut cx), Poll::Ready(7));
 }
 
+/// Returns unit after a pending/ready sequence preserves the inner error exactly;
+/// panics if measurement rewrites the result or scheduler gap affects completion.
 #[test]
 fn polling_preserves_errors() {
     let clock = Cell::new(0u64);
@@ -67,6 +79,8 @@ fn polling_preserves_errors() {
     assert_eq!(measured.as_mut().poll(&mut cx), Poll::Ready(Err("peer left")));
 }
 
+/// Returns unit after checking recorded spans exclude suspension and final drop
+/// time, while including each actual poll; panics on extra/missing observations.
 #[test]
 fn poll_observer_records_only_running_spans() {
     let clock = Cell::new(0u64);
@@ -105,6 +119,8 @@ fn poll_observer_records_only_running_spans() {
     assert_eq!(spans, [(0, 100), (1_000_100, 1_000_300), (1_000_300, 1_000_350)]);
 }
 
+/// Returns unit after checking elapsed-time weighting, zero-work windows, future
+/// timestamps and expiry; panics if idle becomes unavailable or stale data survives.
 #[test]
 fn work_percentage_uses_actual_window_and_excludes_idle() {
     let mut load = WorkWindow::new();
@@ -120,6 +136,8 @@ fn work_percentage_uses_actual_window_and_excludes_idle() {
     assert_eq!(load.percent_tenths(3_999_999), None);
 }
 
+/// Returns unit after overlap, reversal and overflow invalidate work without
+/// fabricating zero, and fresh windows recover; panics on availability drift.
 #[test]
 fn invalid_work_spans_invalidate_then_recover_without_fake_zero_load() {
     for (start, end) in [(999_999, 1_000_001), (2_000_000, 1_999_999)] {
@@ -137,6 +155,8 @@ fn invalid_work_spans_invalidate_then_recover_without_fake_zero_load() {
     assert_eq!(load.percent_tenths(u64::MAX), None);
 }
 
+/// Returns unit after checking count wrap, variable intervals, idle, rejected
+/// clock/count reset and resumed baselines; panics on completion-rate drift.
 #[test]
 fn probe_frame_rate_accounts_for_idle_variable_windows_and_counter_wrap() {
     let mut rate = CompletionRate::new(500_000, u32::MAX - 9);

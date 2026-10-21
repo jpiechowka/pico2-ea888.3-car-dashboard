@@ -1,3 +1,4 @@
+//! Fixed retained-render transitions and damage plans with complete-pixel acceptance checks.
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion};
@@ -11,15 +12,22 @@ use dashboard_host_validation::vehicle_status::VehicleStatus;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 
+/// Immutable scene inputs shared by timed replay and full-render reference.
 #[derive(Clone, Copy)]
 struct Input {
+    /// Coherent acquisition state with raw quality/history evidence.
     snapshot: DashboardSnapshot,
+    /// Scene presentation time in boot-relative milliseconds.
     now: u64,
+    /// Physical boost-unit toggle used by following-unit widgets.
     psi: bool,
+    /// Optional button/warning overlay included in retained identity.
     overlay: Option<Overlay>,
+    /// Synthetic instantaneous FPS fixture; None hides FPS.
     fps: Option<f32>,
 }
 impl Input {
+    /// Returns a legacy-layout scene borrowing this snapshot with raw readings and black backgrounds.
     fn scene(&self) -> DashboardScene<'_> {
         DashboardScene {
             readings: None,
@@ -41,6 +49,7 @@ impl Input {
         }
     }
 
+    /// Returns a newly allocated complete RGB565 rendering of this scene.
     fn full(&self) -> Box<FrameBuffer> {
         let mut frame = Box::new(FrameBuffer::new());
         self.scene().draw_full(&mut St7789Renderer::new(&mut frame));
@@ -48,17 +57,26 @@ impl Input {
     }
 }
 
+/// Named sequence with explicit initial cache warmth.
 struct Case {
+    /// Stable Criterion workload identity.
     label: &'static str,
+    /// Optional prewarm scene before timed transitions.
     initial: Input,
+    /// Ordered snapshots applied once per replay iteration.
     steps: Vec<Input>,
+    /// True skips initial rendering to measure first-use cache work.
     cold: bool,
 }
+/// One retained framebuffer and its scene-cache state.
 struct Raster {
+    /// Reused landscape RGB565 storage.
     frame: Box<FrameBuffer>,
+    /// Buffer-zero retained scene identity.
     cache: DashboardCache,
 }
 impl Raster {
+    /// Returns black storage for `case`, with its initial scene cached unless the case requests a cold render.
     fn new(case: &Case) -> Self {
         let mut raster = Self {
             frame: Box::new(FrameBuffer::new()),
@@ -70,6 +88,7 @@ impl Raster {
         raster
     }
 
+    /// Applies immutable `input` to buffer zero and returns the actual retained redraw plan.
     fn draw(
         &mut self,
         input: &Input,
@@ -78,6 +97,7 @@ impl Raster {
             .draw(&mut St7789Renderer::new(&mut self.frame), 0, black_box(&input.scene()))
     }
 
+    /// Applies all `case` steps in order, retaining final pixels/cache for Criterion observation.
     fn run(
         &mut self,
         case: &Case,
@@ -89,6 +109,8 @@ impl Raster {
     }
 }
 
+/// Returns fixed cold/unit/text-width/quality transitions with verified sample admission and quality states.
+/// Panics if fixture acquisition contracts drift.
 fn cases() -> Vec<Case> {
     let mut model = AcquisitionModel::demo();
     let values = [1.2001, 90.0, 99.0, 80.0, 30.0, 750.0, 13.8, 1.0];
@@ -186,6 +208,8 @@ fn cases() -> Vec<Case> {
     result
 }
 
+/// Returns named previous/current pixel pairs for digits, dense/sparse changes and popup removal.
+/// The sparse pair deliberately edits pixels; other pairs come from full shared-scene rendering.
 fn damage_cases() -> Vec<(&'static str, Box<FrameBuffer>, Box<FrameBuffer>)> {
     let transitions = cases();
     let digit = transitions.iter().find(|c| c.label == "digit_width_one_frame").unwrap();
@@ -243,6 +267,8 @@ fn damage_cases() -> Vec<(&'static str, Box<FrameBuffer>, Box<FrameBuffer>)> {
     output
 }
 
+/// Returns the damage plan from `previous` to `current` after replaying every payload range.
+/// Panics unless reconstruction is exact, counts agree and the fixture actually changes pixels.
 fn verify_damage(
     previous: &FrameBuffer,
     current: &FrameBuffer,
@@ -266,6 +292,7 @@ fn verify_damage(
     plan
 }
 
+/// Asserts exact retained/full pixels, expected redraw categories and sparse/full damage work counts.
 pub fn verify() {
     for case in cases() {
         let mut raster = Raster::new(&case);
@@ -297,6 +324,8 @@ pub fn verify() {
     }
 }
 
+/// Registers verified cell, scene-transition and damage workloads with `c`, logging measured work shape.
+/// Setup/prechecks run outside timed bodies; results are host timings, not panel transfer or scanout measurements.
 pub fn benchmarks(c: &mut Criterion) {
     verify();
     let initial = cases().remove(0).initial;

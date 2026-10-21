@@ -1,7 +1,12 @@
+//! Retained firmware country/revision selectors; availability depends on the loaded CLM database.
+//! The control initializer currently chooses WORLD_WIDE_XX; these constants do not alter that choice.
 #![allow(unused)]
 
+/// Firmware locale selector, not a runtime measurement or automatic regulatory-location lookup.
 pub struct Country {
+    /// Two-byte firmware locale code; includes vendor pseudo-locales as well as country codes.
     pub code: [u8; 2],
+    /// CLM revision; zero is translated by control initialization into firmware default (-1).
     pub rev: u16,
 }
 

@@ -5,21 +5,32 @@ use dashboard_config::*;
 
 use crate::editor::{EditorError, RawField, RawInput, WidgetField};
 
+/// Shared retention cap for semantic and raw-input diagnostics; traversal still counts omitted issues.
 const ISSUE_LIMIT: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a retained raw control could not be replayed into the candidate.
 pub enum RawDiagnosticCategory {
+    /// Text does not parse as the control's expected scalar/color/address.
     Parse,
+    /// Text or bounded collection capacity was exceeded.
     Capacity,
+    /// Owner/variant/index is missing, ambiguous or inapplicable.
     Unavailable,
+    /// Parsed input failed immediate shared semantic validation.
     SemanticInput,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Repair location for one failed raw replay; original text stays in the candidate owner.
 pub struct RawDiagnostic {
+    /// Index into the exact draft's retained raw vector, not stable across revisions.
     pub raw_index: usize,
+    /// Typed control identity used to recheck an inspection capability.
     pub field: RawField,
+    /// User-facing failure grouping.
     pub category: RawDiagnosticCategory,
+    /// Original typed replay error.
     pub error: EditorError,
 }
 
@@ -27,14 +38,20 @@ pub struct RawDiagnostic {
 /// No raw text is copied into the report. The candidate owns the repair input.
 #[derive(Debug, Default)]
 pub struct ValidationReport {
+    /// Shared semantic issues in validator traversal order within the shared retention cap.
     pub issues: Vec<ValidationIssue>,
+    /// Raw replay errors retained before semantic traversal, sharing the same cap.
     pub raw_errors: Vec<RawDiagnostic>,
+    /// Further issues encountered after the combined 128-entry cap.
     pub omitted: usize,
 }
 
 impl ValidationReport {
+    /// Returns whether one more raw or semantic diagnostic fits the shared cap.
     fn has_capacity(&self) -> bool { self.issues.len() + self.raw_errors.len() < ISSUE_LIMIT }
 
+    /// Traverses all shared validation issues in `config`, retaining bounded entries and counting the remainder.
+    /// This inspection visitor does not create a ValidatedConfig proof.
     fn collect(
         &mut self,
         config: &Config,
@@ -49,10 +66,13 @@ impl ValidationReport {
         });
     }
 
+    /// Returns the first retained semantic issue as a codec error, or `None`; raw errors are not folded into it.
     pub fn first_config_error(&self) -> Option<ConfigError> {
         self.issues.first().map(|issue| ConfigError::Validation(issue.error))
     }
 
+    /// Returns an inspection label for `issue` using indexed owners in `config`, so duplicate IDs do not redirect
+    /// labels. Missing indices omit owner detail; returned user labels must be rendered as text, never markup.
     pub fn describe(
         &self,
         config: &Config,
@@ -76,19 +96,26 @@ impl ValidationReport {
     }
 }
 
+/// Returns all retained/countable semantic issues for candidate `config`, without accepting it or copying raw text.
 pub fn collect_candidate(config: &Config) -> ValidationReport {
     let mut report = ValidationReport::default();
     report.collect(config);
     report
 }
 
+/// Inspection-only rejected visual configuration and retained raw controls; never export/build authority.
 pub struct Draft {
+    /// Candidate configuration after best-effort raw replay; may remain invalid.
     pub config: Config,
+    /// Original raw repair text in replay order.
     pub raw: Vec<RawInput>,
+    /// Reducer's retained rejection cause, used when no finer descriptive differences are available.
     pub error: EditorError,
 }
 
 impl Draft {
+    /// Returns bounded raw/semantic diagnostics after replaying every raw field into a disposable clone.
+    /// Replay continues after individual failures; successful unrelated values remain inspectable without acceptance.
     pub fn validation_report(&self) -> ValidationReport {
         let mut report = ValidationReport::default();
         let mut scratch = self.config.clone();
@@ -118,6 +145,8 @@ impl Draft {
         report
     }
 
+    /// Returns retained raw label for uniquely identified `widget`, otherwise its stored label.
+    /// Missing/duplicate candidate identity prevents borrowing another widget's raw text.
     pub fn label<'a>(
         &'a self,
         widget: &'a Widget,
@@ -140,6 +169,7 @@ impl Draft {
             .unwrap_or(&widget.label)
     }
 
+    /// Returns raw/stored name for `view`, or explicit ambiguous/unknown text; duplicate IDs never select arbitrarily.
     pub fn name(
         &self,
         view: u8,
@@ -161,6 +191,9 @@ impl Draft {
             .unwrap_or("UNKNOWN VIEW")
     }
 
+    /// Returns candidate widget IDs in `view` affected by differences from `accepted`, relevant raw inputs or
+    /// collisions. Both overlap participants are included; the list is diagnostic and duplicate candidate IDs are
+    /// not unique authority.
     pub fn affected(
         &self,
         accepted: &ValidatedConfig,
@@ -228,6 +261,8 @@ impl Draft {
         ids
     }
 
+    /// Returns human-inspectable raw/candidate differences from `accepted`, plus explicit display-fallback notes.
+    /// Text may contain retained user input and is for escaped local UI only; it is not suitable for helper telemetry.
     pub fn descriptions(
         &self,
         accepted: &ValidatedConfig,
@@ -359,6 +394,8 @@ impl Draft {
 /// Render each in-bounds placement independently so overlaps remain visible.
 /// Unsafe numeric/style fields use explicit safe display fallbacks. All labels
 /// (including over-capacity input) are drawn separately under clipping.
+/// Returns a safe one-widget rendering fixture from `accepted` and candidate `widget`, or `None` for missing geometry
+/// or projection/admission failure. The fixture is never used as proof of the original rejected candidate.
 #[cfg(test)]
 pub(crate) fn isolated_widget(
     accepted: &ValidatedConfig,
@@ -371,6 +408,10 @@ pub(crate) fn isolated_widget(
     )
 }
 
+/// Returns a validated one-widget display projection of `widget` in `geometry`, borrowing accepted global
+/// acquisition settings from `accepted`. Clamps placement, substitutes invalid numeric/contrast settings and disables
+/// warnings; rejected text/colors are drawn separately by the diagnostic renderer. Returns `None` if construction
+/// fails.
 pub(crate) fn isolated_widget_in(
     accepted: &ValidatedConfig,
     widget: &Widget,
@@ -463,6 +504,8 @@ pub(crate) fn isolated_widget_in(
     validate(config).ok()
 }
 
+/// Returns explicit advanced-setting fallback descriptions for invalid `widget` readout, smoothing, markers or bands.
+/// Does not alter the widget; finite inactive references are retained and therefore receive no fallback note.
 fn projection_notes(widget: &Widget) -> Vec<String> {
     let mut notes = Vec::new();
     let a = widget.advanced;
@@ -506,9 +549,11 @@ fn projection_notes(widget: &Widget) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    //! Diagnostic projection preserves inactive finite values while isolating unsafe numeric rendering inputs.
     use super::*;
 
     #[test]
+    /// Only Manual enforces channel reference bounds, while every mode projects nonfinite references to Off/zero.
     fn review_reference_projection_bounds_only_manual_and_always_bounds_nonfinite() {
         let accepted = validate(default_config()).unwrap();
         let mut widget = accepted.config().widgets[0].clone();

@@ -2,6 +2,8 @@
 use dashboard_core::discovery::capture::*;
 use dashboard_core::discovery::*;
 
+/// Returns a selected public-peer inspection started at 11ms after a 10ms advertisement; fixture request failure
+/// panics.
 fn probe() -> Probe {
     let mut p = Probe::new();
     p.catalog.observe(Advertisement::new(
@@ -17,6 +19,8 @@ fn probe() -> Probe {
     p.input(Input::Click, 11).unwrap();
     p
 }
+/// Encodes `p` at boot-relative `at` milliseconds with stock build metadata into 8192 temporary bytes.
+/// Returns encoded length or exact capture admission/capacity failure; discards successful bytes.
 fn encode_probe(
     p: &Probe,
     at: u64,
@@ -34,6 +38,7 @@ fn encode_probe(
         &mut [0; 8192],
     )
 }
+/// A generic completion event cannot claim complete inventory without individual stage acknowledgments.
 #[test]
 fn completion_without_all_stage_acknowledgments_is_not_complete() {
     let mut p = probe();
@@ -46,6 +51,7 @@ fn completion_without_all_stage_acknowledgments_is_not_complete() {
         "zero completed stages cannot claim complete inventory"
     );
 }
+/// Manually asserted complete metadata with missing stages is rejected by capture admission.
 #[test]
 fn capture_rejects_complete_metadata_with_missing_stages() {
     let mut p = probe();
@@ -55,6 +61,7 @@ fn capture_rejects_complete_metadata_with_missing_stages() {
         "capture must reject contradictory completion"
     );
 }
+/// Capture/end times preceding peer observation or inspection start are rejected.
 #[test]
 fn capture_rejects_reversed_boot_timeline() {
     let mut p = probe();
@@ -65,6 +72,8 @@ fn capture_rejects_reversed_boot_timeline() {
     );
 }
 
+/// Global scan errors may predate the selected peer but never the capture's future, including CRC-repaired binary
+/// imports.
 #[test]
 fn global_scan_time_may_predate_peer_but_cannot_follow_capture() {
     let mut p = probe();
@@ -110,6 +119,7 @@ fn global_scan_time_may_predate_peer_but_cannot_follow_capture() {
     buffer[20..24].copy_from_slice(&header.to_le_bytes());
     assert_eq!(decode(&buffer[..len]).unwrap_err(), CaptureError::InvalidState);
 }
+/// A passive snapshot cannot attach cleanup/disconnect evidence without an inspection attempt.
 #[test]
 fn passive_capture_rejects_orphan_cleanup_evidence() {
     let mut p = probe();
@@ -122,6 +132,7 @@ fn passive_capture_rejects_orphan_cleanup_evidence() {
         "passive capture cannot claim connection cleanup"
     );
 }
+/// Live admission rejects crossing declaration/value ranges, counts malformed rows and keeps the valid prefix saveable.
 #[test]
 fn live_model_rejects_crossing_characteristic_declaration_ranges() {
     let mut p = probe();
@@ -149,6 +160,7 @@ fn live_model_rejects_crossing_characteristic_declaration_ranges() {
     assert!(encode_probe(&p, 12).is_ok(), "valid prefix remains saveable");
 }
 
+/// Recomputed envelope CRCs cannot admit contradictory revision/count/time/cleanup/stage bookkeeping.
 #[test]
 fn crc_valid_imports_reject_inconsistent_bookkeeping() {
     let p = probe();
@@ -190,6 +202,8 @@ fn crc_valid_imports_reject_inconsistent_bookkeeping() {
     }
 }
 
+/// Pending/failed attempts retain valid partial evidence; returning to fresh passive details clears old inspection
+/// state.
 #[test]
 fn partial_failure_and_passive_snapshots_keep_valid_evidence() {
     let mut p = probe();
@@ -204,6 +218,8 @@ fn partial_failure_and_passive_snapshots_keep_valid_evidence() {
     assert!(encode_probe(&p, 16).is_ok(), "fresh passive view clears old inspection");
 }
 
+/// Independently completed reads remain saveable despite descriptor limits, and all acknowledged stages permit
+/// completion.
 #[test]
 fn valid_completed_and_independently_limited_stages_remain_saveable() {
     let mut p = probe();

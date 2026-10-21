@@ -1,4 +1,9 @@
-//! I2C slave driver.
+//! Interrupt-driven I2C target with bounded FIFO draining and clock stretching.
+//!
+//! Reads require a prompt response; cancelling a response can stall the controller
+//! until [`I2cSlave::reset`]. Listening also consumes bytes before completion, so
+//! cancellation does not restore the stream. No operation has a built-in timeout.
+//! Register behavior follows the [RP2040 I2C chapter](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf).
 use core::future;
 use core::marker::PhantomData;
 use core::task::Poll;
@@ -15,7 +20,10 @@ use crate::{Peri, pac};
 #[non_exhaustive]
 pub enum Error {
     /// I2C abort with error
-    Abort(AbortReason),
+    Abort(
+        /// Decoded hardware abort source.
+        AbortReason,
+    ),
     /// User passed in a response buffer that was 0 length
     InvalidResponseBufferLength,
     /// User passed in a command buffer that was 0 length.
@@ -24,24 +32,35 @@ pub enum Error {
     ///
     /// The length parameter will always be the length of the buffer, and is
     /// provided as a convenience for matching alongside `Command::Write`.
-    PartialWrite(usize),
+    PartialWrite(
+        /// Bytes copied, equal to destination capacity.
+        usize,
+    ),
     /// The response buffer length was too short to contain the message
     ///
     /// The length parameter will always be the length of the buffer, and is
     /// provided as a convenience for matching alongside `Command::GeneralCall`.
-    PartialGeneralCall(usize),
+    PartialGeneralCall(
+        /// Bytes copied, equal to destination capacity.
+        usize,
+    ),
 }
 
+/// Pure admission/lookahead tests avoid peripheral registers.
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use core::{future::Future, pin::Pin, task::Context};
+    use core::future::Future;
+    use core::pin::Pin;
+    use core::task::Context;
 
+    use super::*;
+
+    /// Empty admission must retain the next transaction byte without MMIO.
     #[test]
     fn empty_listen_is_rejected_without_consuming_pending_data() {
         let mut driver = I2cSlave::<crate::peripherals::I2C0> {
             phantom: PhantomData,
-            pending_byte: Some(0xa5),
+            pending_byte: Some(0xA5),
             config: Config::default(),
         };
         let mut empty = [];
@@ -53,26 +72,27 @@ mod tests {
                 Poll::Ready(Err(Error::InvalidListenBufferLength))
             );
         }
-        assert_eq!(driver.pending_byte, Some(0xa5));
+        assert_eq!(driver.pending_byte, Some(0xA5));
     }
 
+    /// No-space destinations retain lookahead, then a later one-byte read consumes it once.
     #[test]
     fn pending_byte_survives_empty_or_full_destination() {
         let mut driver = I2cSlave::<crate::peripherals::I2C0> {
             phantom: PhantomData,
-            pending_byte: Some(0xa5),
+            pending_byte: Some(0xA5),
             config: Config::default(),
         };
         driver.drain_fifo(&mut [], &mut 0);
-        assert_eq!(driver.pending_byte, Some(0xa5));
+        assert_eq!(driver.pending_byte, Some(0xA5));
         let mut buffer = [0u8];
         let mut offset = 1;
         driver.drain_fifo(&mut buffer, &mut offset);
-        assert_eq!(driver.pending_byte, Some(0xa5));
+        assert_eq!(driver.pending_byte, Some(0xA5));
         assert_eq!(buffer, [0]);
         offset = 0;
         driver.drain_fifo(&mut buffer, &mut offset);
-        assert_eq!((buffer, offset, driver.pending_byte), ([0xa5], 1, None));
+        assert_eq!((buffer, offset, driver.pending_byte), ([0xA5], 1, None));
     }
 }
 
@@ -81,13 +101,22 @@ mod tests {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Command {
     /// General Call
-    GeneralCall(usize),
+    GeneralCall(
+        /// General-call bytes copied into the listen buffer.
+        usize,
+    ),
     /// Read
     Read,
     /// Write+read
-    WriteRead(usize),
+    WriteRead(
+        /// Bytes copied before the repeated-start read request.
+        usize,
+    ),
     /// Write
-    Write(usize),
+    Write(
+        /// Write bytes copied before STOP.
+        usize,
+    ),
 }
 
 /// Possible responses to responding to a read
@@ -99,7 +128,10 @@ pub enum ReadStatus {
     /// Transaction Incomplete, controller trying to read more bytes than were provided
     NeedMoreBytes,
     /// Transaction Complete, but controller stopped reading bytes before we ran out
-    LeftoverBytes(u16),
+    LeftoverBytes(
+        /// Hardware TX-flush count, excluding response bytes never queued.
+        u16,
+    ),
 }
 
 /// Slave Configuration
@@ -107,7 +139,7 @@ pub enum ReadStatus {
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
-    /// Target Address
+    /// Nonzero target address written to SAR; this driver leaves 7-bit addressing selected.
     pub addr: u16,
     /// Control if the peripheral should ack to and report general calls.
     pub general_call: bool,
@@ -124,6 +156,7 @@ pub struct Config {
 }
 
 impl Default for Config {
+    /// Returns address 0x55 with general-call acknowledgement and both internal pullups enabled.
     fn default() -> Self {
         Self {
             addr: 0x55,
@@ -136,13 +169,18 @@ impl Default for Config {
 
 /// I2CSlave driver.
 pub struct I2cSlave<'d, T: Instance> {
+    /// Exclusive peripheral lifetime; construction consumes its token.
     phantom: PhantomData<&'d mut T>,
+    /// First byte consumed from the following transaction, or `None` when no lookahead is held.
     pending_byte: Option<u8>,
+    /// Settings reapplied by reset, including address and general-call policy.
     config: Config,
 }
 
 impl<'d, T: Instance> I2cSlave<'d, T> {
-    /// Create a new instance.
+    /// Returns a target owning `_peri`, with `scl`/`sda` configured from `config`.
+    /// `_irq` proves the interrupt-handler binding; construction enables that IRQ.
+    /// Panics for address zero; resets the peripheral and discards existing traffic.
     pub fn new(
         _peri: Peri<'d, T>,
         scl: Peri<'d, impl SclPin<T>>,
@@ -217,11 +255,14 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         unsafe { T::Interrupt::enable() };
     }
 
-    /// Calls `f` to check if we are ready or not.
-    /// If not, `g` is called once(to eg enable the required interrupts).
-    /// The waker will always be registered prior to calling `f`.
+    /// Returns the ready value from `f`, registering the waker before each check.
+    /// Calls `g` after every pending poll to arm interrupts; cancellation leaves hardware state intact.
     #[inline(always)]
-    async fn wait_on<F, U, G>(&mut self, mut f: F, mut g: G) -> U
+    async fn wait_on<F, U, G>(
+        &mut self,
+        mut f: F,
+        mut g: G,
+    ) -> U
     where
         F: FnMut(&mut Self) -> Poll<U>,
         G: FnMut(&mut Self),
@@ -240,8 +281,15 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         .await
     }
 
+    /// Copies pending/FIFO bytes into `buffer` starting at `offset`, advancing `offset`.
+    /// Full or empty destinations preserve lookahead; the first byte of a following
+    /// transaction is retained. An offset at/beyond capacity performs no MMIO.
     #[inline(always)]
-    fn drain_fifo(&mut self, buffer: &mut [u8], offset: &mut usize) {
+    fn drain_fifo(
+        &mut self,
+        buffer: &mut [u8],
+        offset: &mut usize,
+    ) {
         if *offset >= buffer.len() {
             return;
         }
@@ -274,9 +322,15 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         }
     }
 
-    /// Wait asynchronously for commands from an I2C master.
-    /// `buffer` is provided in case master does a 'write', 'write read', or 'general call' and is unused for 'read'.
-    pub async fn listen(&mut self, buffer: &mut [u8]) -> Result<Command, Error> {
+    /// Returns the next controller command, copying write/general-call bytes into `buffer`.
+    /// Empty `buffer` is rejected without consuming lookahead; filling it returns a
+    /// partial-write error even if STOP is already observed, so allow spare capacity.
+    /// Pure reads leave bytes untouched. Cancellation loses this call's byte count
+    /// and may leave data consumed; neither timeout nor automatic reset is provided.
+    pub async fn listen(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<Command, Error> {
         if buffer.is_empty() {
             return Err(Error::InvalidListenBufferLength);
         }
@@ -346,8 +400,15 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         .await
     }
 
-    /// Respond to an I2C master READ command, asynchronously.
-    pub async fn respond_to_read(&mut self, buffer: &[u8]) -> Result<ReadStatus, Error> {
+    /// Queues `buffer` for the pending controller read and returns its completion status.
+    /// Empty input returns `InvalidResponseBufferLength`; hardware aborts return `Abort`
+    /// except TX leftovers, reported as `LeftoverBytes` with the hardware flush count.
+    /// That count excludes later chunks never queued. Cancellation may leave SCL
+    /// stretched; call `reset` to recover, disrupting the controller's transfer.
+    pub async fn respond_to_read(
+        &mut self,
+        buffer: &[u8],
+    ) -> Result<ReadStatus, Error> {
         let p = T::regs();
 
         if buffer.is_empty() {
@@ -399,8 +460,12 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         .await
     }
 
-    /// Respond to reads with the fill byte until the controller stops asking
-    pub async fn respond_till_stop(&mut self, fill: u8) -> Result<(), Error> {
+    /// Sends repeated `fill` bytes until the controller stops, returning `Ok(())`.
+    /// Returns non-leftover hardware aborts; cancellation can stall the bus as for `respond_to_read`.
+    pub async fn respond_till_stop(
+        &mut self,
+        fill: u8,
+    ) -> Result<(), Error> {
         // Send fill bytes a full fifo at a time, to reduce interrupt noise.
         // This does mean we'll almost certainly abort the write, but since these are fill bytes,
         // we don't care.
@@ -415,8 +480,14 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         }
     }
 
-    /// Respond to a master read, then fill any remaining read bytes with `fill`
-    pub async fn respond_and_fill(&mut self, buffer: &[u8], fill: u8) -> Result<ReadStatus, Error> {
+    /// Sends `buffer`, then repeats `fill` if the controller requests more bytes.
+    /// Returns the original completion/leftover status, or `Done` after filler stops.
+    /// Empty input and hardware aborts propagate; cancellation may require `reset`.
+    pub async fn respond_and_fill(
+        &mut self,
+        buffer: &[u8],
+        fill: u8,
+    ) -> Result<ReadStatus, Error> {
         let resp_stat = self.respond_to_read(buffer).await?;
 
         if resp_stat == ReadStatus::NeedMoreBytes {
@@ -427,6 +498,8 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         }
     }
 
+    /// Returns `Ok(())` without an abort, otherwise clears the latched cause and returns it.
+    /// Address NACK takes precedence over arbitration loss, then TX-flush count, then raw bits.
     #[inline(always)]
     fn read_and_clear_abort_reason(&mut self) -> Result<(), Error> {
         let p = T::regs();

@@ -1,172 +1,13 @@
-//! AON (Always-On) Timer driver for RP2350
+//! RP2350 POWMAN always-on counter and single alarm, in nominal milliseconds.
+//! Clock calibration is caller-supplied; this driver writes only integer kHz and clears the fractional field.
+//! IRQ ownership and its software completion latch stay on the constructing core. The async wait does
+//! not enter sleep itself: executor/power-management code chooses WFI or DORMANT separately.
 //!
-//! The AON Timer is a 64-bit counter that typically runs at 1 kHz (1ms resolution) and can operate during
-//! low-power modes. It's part of the POWMAN peripheral and provides:
-//!
-//! - Millisecond resolution counter
-//! - Alarm support for wakeup from low-power modes (WFI/WFE and DORMANT)
-//! - Async alarm waiting with interrupt support (POWMAN_IRQ_TIMER)
-//! - Choice of XOSC or LPOSC clock sources
-//!
-//! # Alarm Wake Modes
-//!
-//! The AON Timer supports multiple wake modes via the [`AlarmWakeMode`] enum:
-//!
-//! - **`WfiOnly` (default)**: Alarm triggers `POWMAN_IRQ_TIMER` interrupt to wake from
-//!   WFI/WFE (light sleep). Use `wait_for_alarm().await` for async waiting. Works with
-//!   both XOSC and LPOSC clock sources.
-//!
-//! - **`DormantOnly`**: Hardware power-up wake from DORMANT (deep sleep). Sets the
-//!   `PWRUP_ON_ALARM` bit to trigger hardware power-up event (no interrupt, since CPU
-//!   clock is stopped). **Requirements:**
-//!   - Must use LPOSC clock source (XOSC is powered down in DORMANT)
-//!   - Requires Secure privilege level (TIMER register is Secure-only)
-//!
-//! - **`Both`**: Enables both interrupt wake (WFI/WFE) and hardware power-up wake (DORMANT).
-//!   Subject to the same requirements as `DormantOnly` for DORMANT support.
-//!
-//! - **`Disabled`**: Alarm flag is set but no wake mechanisms are enabled. Use `alarm_fired()`
-//!   to manually poll the alarm status.
-//!
-//! You can set the wake mode either in [`Config`] at initialization, or at runtime via
-//! [`AonTimer::set_wake_mode()`].
-//!
-//! # Security Considerations
-//!
-//! The TIMER register (including the `PWRUP_ON_ALARM` bit) is **Secure-only** per the
-//! RP2350 datasheet. Setting wake modes that involve DORMANT wake (`DormantOnly` or `Both`)
-//! may fail silently or have no effect when running in Non-secure contexts. Methods
-//! `enable_dormant_wake()`, `disable_dormant_wake()`, and `set_wake_mode()` that configure
-//! DORMANT wake are subject to this restriction.
-//!
-//! # Important Notes
-//!
-//! - All POWMAN registers require password `0x5AFE` in upper 16 bits for writes
-//! - Timer must be stopped before setting the counter value
-//! - Resolution is 1ms (1 kHz tick rate)
-//!
-//! # Example - WFI/WFE Wake (Default)
-//!
-//! ```rust,ignore
-//! use embassy_rp::aon_timer::{AonTimer, Config, ClockSource, AlarmWakeMode};
-//! use embassy_rp::bind_interrupts;
-//! use embassy_time::Duration;
-//!
-//! // Bind the interrupt handler
-//! bind_interrupts!(struct Irqs {
-//!     POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
-//! });
-//!
-//! let config = Config {
-//!     clock_source: ClockSource::Xosc,
-//!     clock_freq_khz: 12000, // 12 MHz
-//!     alarm_wake_mode: AlarmWakeMode::WfiOnly, // Default
-//! };
-//!
-//! let mut timer = AonTimer::new(p.POWMAN, Irqs, config);
-//! timer.set_counter(0);
-//! timer.start();
-//!
-//! // Set an alarm and wait asynchronously (interrupt-based wake)
-//! timer.set_alarm_after(Duration::from_secs(5)).unwrap();
-//! timer.wait_for_alarm().await;  // CPU enters WFI low-power mode
-//! ```
-//!
-//! # Example - DORMANT Wake
-//!
-//! ```rust,ignore
-//! use embassy_rp::aon_timer::{AonTimer, Config, ClockSource, AlarmWakeMode};
-//! use embassy_rp::bind_interrupts;
-//! use embassy_time::Duration;
-//!
-//! bind_interrupts!(struct Irqs {
-//!     POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
-//! });
-//!
-//! let config = Config {
-//!     clock_source: ClockSource::Lposc,  // Required for DORMANT
-//!     clock_freq_khz: 32,                // ~32 kHz LPOSC
-//!     alarm_wake_mode: AlarmWakeMode::DormantOnly,
-//! };
-//!
-//! let mut timer = AonTimer::new(p.POWMAN, Irqs, config);
-//! timer.set_counter(0);
-//! timer.start();
-//!
-//! // Set alarm for DORMANT wake (hardware power-up)
-//! timer.set_alarm_after(Duration::from_secs(10)).unwrap();
-//! // Enter DORMANT mode here - alarm will wake via power-up event
-//! ```
-//!
-//! # Example - Runtime Wake Mode Change
-//!
-//! ```rust,ignore
-//! use embassy_rp::aon_timer::{AonTimer, Config, ClockSource, AlarmWakeMode};
-//! use embassy_rp::bind_interrupts;
-//! use embassy_time::Duration;
-//!
-//! bind_interrupts!(struct Irqs {
-//!     POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
-//! });
-//!
-//! let mut timer = AonTimer::new(p.POWMAN, Irqs, Config::default());
-//! timer.set_counter(0);
-//! timer.start();
-//!
-//! // Use WFI wake initially
-//! timer.set_alarm_after(Duration::from_secs(5)).unwrap();
-//! timer.wait_for_alarm().await;
-//!
-//! // Switch to both wake modes at runtime
-//! timer.set_wake_mode(AlarmWakeMode::Both);
-//! timer.set_alarm_after(Duration::from_secs(10)).unwrap();
-//! // Now supports both WFI and DORMANT wake
-//! ```
-//!
-//! # Example - Using DateTime with AON Timer
-//!
-//! ```rust,ignore
-//! use embassy_rp::aon_timer::{AonTimer, Config, DateTime, DayOfWeek};
-//! use embassy_rp::bind_interrupts;
-//!
-//! bind_interrupts!(struct Irqs {
-//!     POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
-//! });
-//!
-//! let mut timer = AonTimer::new(p.POWMAN, Irqs, Config::default());
-//!
-//! // Set timer to a specific DateTime (e.g., 2024-06-15 12:30:00 UTC)
-//! let start_time = DateTime {
-//!     year: 2024,
-//!     month: 6,
-//!     day: 15,
-//!     day_of_week: DayOfWeek::Saturday,
-//!     hour: 12,
-//!     minute: 30,
-//!     second: 0,
-//! };
-//! timer.set_datetime(start_time).unwrap();
-//! timer.start();
-//!
-//! // Later, read current DateTime
-//! let current = timer.now_as_datetime().unwrap();
-//! info!("Current time: {}-{:02}-{:02} {:02}:{:02}:{:02}",
-//!       current.year, current.month, current.day,
-//!       current.hour, current.minute, current.second);
-//!
-//! // Set alarm for specific DateTime (1 hour later)
-//! let alarm_time = DateTime {
-//!     year: 2024,
-//!     month: 6,
-//!     day: 15,
-//!     day_of_week: DayOfWeek::Saturday,
-//!     hour: 13,
-//!     minute: 30,
-//!     second: 0,
-//! };
-//! timer.set_alarm_at_datetime(alarm_time).unwrap();
-//! timer.wait_for_alarm().await;
-//! ```
+//! [RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf), sections 6.4 and 12.10,
+//! defines password-protected writes, clock selection and wake controls. DORMANT operation requires a
+//! clock retained in that power state, normally LPOSC, plus appropriate Secure register access.
+//! This API does not configure the full power transition or prove wake/restart behavior.
+//! Starting after a stop reloads the programmed SET_TIME value; it does not automatically resume the stopped count.
 
 use core::future::poll_fn;
 use core::marker::PhantomData;
@@ -181,19 +22,30 @@ use embassy_time::Duration;
 pub use crate::datetime::{DateTime, DayOfWeek, Error as DateTimeError};
 use crate::{interrupt, pac};
 
+/// Required password in the upper half of protected register writes.
 const POWMAN_PASSWORD: u32 = 0x5AFE << 16;
 
+/// Single task waiting for interrupt-latched alarm completion.
 static WAKER: AtomicWaker = AtomicWaker::new();
+/// IRQ-produced completion latch, distinct from the hardware W1C alarm flag.
 static ALARM_OCCURRED: AtomicBool = AtomicBool::new(false);
 
-fn set_timer_interrupt(powman: pac::powman::Powman, enabled: bool) {
+/// Updates only the timer interrupt enable in `powman` to `enabled`, preserving other sources and adding password.
+fn set_timer_interrupt(
+    powman: pac::powman::Powman,
+    enabled: bool,
+) {
     powman.inte().modify(|w| {
-        w.0 = (w.0 & 0xffff) | POWMAN_PASSWORD;
+        w.0 = (w.0 & 0xFFFF) | POWMAN_PASSWORD;
         w.set_timer(enabled);
     });
 }
 
-fn clear_alarm_state(powman: pac::powman::Powman, occurred: &AtomicBool) {
+/// Clears hardware W1C alarm in `powman` and software `occurred` under one local interrupt exclusion.
+fn clear_alarm_state(
+    powman: pac::powman::Powman,
+    occurred: &AtomicBool,
+) {
     critical_section::with(|_| {
         powman.timer().modify(|w| {
             w.0 = (w.0 & 0x0000FFFF) | POWMAN_PASSWORD;
@@ -203,8 +55,29 @@ fn clear_alarm_state(powman: pac::powman::Powman, occurred: &AtomicBool) {
     });
 }
 
-fn alarm_after(now: u64, duration_ms: u64) -> Result<u64, Error> {
+/// Returns `now` plus `duration_ms` in milliseconds, or AlarmOverflow without wrapping.
+fn alarm_after(
+    now: u64,
+    duration_ms: u64,
+) -> Result<u64, Error> {
     now.checked_add(duration_ms).ok_or(Error::AlarmOverflow)
+}
+
+/// Checks integer `clock_freq_khz` for `source` before any register writes; panics when unrepresentable.
+fn validate_clock_frequency(
+    source: ClockSource,
+    clock_freq_khz: u32,
+) {
+    let valid = match source {
+        ClockSource::Lposc => (1..=63).contains(&clock_freq_khz),
+        ClockSource::Xosc => (2..=65535).contains(&clock_freq_khz),
+    };
+    assert!(valid, "AON clock is outside its source-specific kHz range");
+}
+
+/// Returns `millis` as an Embassy duration; panics if its tick representation cannot fit.
+fn counter_duration(millis: u64) -> Duration {
+    Duration::try_from_millis(millis).expect("AON counter exceeds Embassy duration range")
 }
 
 /// Alarm wake mode configuration
@@ -248,7 +121,7 @@ pub enum AlarmWakeMode {
 pub struct Config {
     /// Clock source for the timer
     pub clock_source: ClockSource,
-    /// Clock frequency in kHz
+    /// Integer source frequency in kHz: LPOSC 1..=63, XOSC 2..=65535. Fractional calibration is zeroed.
     pub clock_freq_khz: u32,
     /// Alarm wake mode
     ///
@@ -258,6 +131,7 @@ pub struct Config {
 }
 
 impl Default for Config {
+    /// Returns 12 MHz XOSC calibration with interrupt-only wake; no hardware writes.
     fn default() -> Self {
         Self {
             clock_source: ClockSource::Xosc,
@@ -285,42 +159,31 @@ pub enum Error {
     /// Adding a relative duration would overflow the counter.
     AlarmOverflow,
     /// DateTime conversion error
-    DateTime(DateTimeError),
+    DateTime(
+        /// Calendar validation or supported epoch-range failure.
+        DateTimeError,
+    ),
 }
 
 /// AON Timer driver
 pub struct AonTimer<'d> {
-    // The IRQ and its completion flag belong to the constructing core.
+    /// Prevents Send/Sync: the IRQ and completion latch belong to the constructing core.
     _phantom: PhantomData<&'d mut *mut ()>,
+    /// Admitted clock calibration and currently selected wake routing.
     config: Config,
 }
 
 impl<'d> AonTimer<'d> {
-    /// Create a new AON Timer instance
-    ///
-    /// This configures the clock source, frequency, and alarm wake mode but does not
-    /// start the timer. Call `start()` to begin counting.
-    ///
-    /// The wake mode in `config.alarm_wake_mode` determines how alarms wake the CPU:
-    /// - `WfiOnly` (default): Interrupt-based wake from WFI/WFE
-    /// - `DormantOnly`: Hardware power-up wake from DORMANT (requires LPOSC + Secure mode)
-    /// - `Both`: Both interrupt and hardware power-up wake
-    /// - `Disabled`: No automatic wake (manual polling only)
-    ///
-    /// For interrupt-based wake modes (`WfiOnly` or `Both`), you must bind the
-    /// `POWMAN_IRQ_TIMER` interrupt:
-    /// ```rust,ignore
-    /// bind_interrupts!(struct Irqs {
-    ///     POWMAN_IRQ_TIMER => aon_timer::InterruptHandler;
-    /// });
-    /// let timer = AonTimer::new(p.POWMAN, Irqs, config);
-    /// ```
+    /// Claims `_inner` and binds `_irq` to this core; returns a driver configured from `config`.
+    /// Writes clock calibration, disables alarm/wake routing, clears completion and enables the NVIC line.
+    /// Does not stop an already-running timer or set its counter; construct while stopped or while the
+    /// selected calibration source is unused. Panics before writes for source-specific invalid kHz values.
     pub fn new(
         _inner: Peri<'d, crate::peripherals::POWMAN>,
         _irq: impl interrupt::typelevel::Binding<interrupt::typelevel::POWMAN_IRQ_TIMER, InterruptHandler> + 'd,
         config: Config,
     ) -> Self {
-        assert!((1..=65535).contains(&config.clock_freq_khz), "AON clock exceeds its 16-bit kHz field");
+        validate_clock_frequency(config.clock_source, config.clock_freq_khz);
         let powman = pac::POWMAN;
 
         match config.clock_source {
@@ -361,7 +224,7 @@ impl<'d> AonTimer<'d> {
 
     /// Start the timer
     ///
-    /// The timer will begin counting from its current value.
+    /// RUN rising reloads the SET_TIME registers. To resume from a stopped count, explicitly program it first.
     pub fn start(&mut self) {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
@@ -389,16 +252,16 @@ impl<'d> AonTimer<'d> {
         });
     }
 
-    /// Check if the timer is currently running
+    /// Returns the hardware RUN control bit, not confirmation that the selected oscillator is progressing.
     pub fn is_running(&self) -> bool {
         let powman = pac::POWMAN;
         powman.timer().read().run()
     }
 
-    /// Read the current counter value in milliseconds
+    /// Returns the current absolute counter value in nominal milliseconds.
     ///
     /// This reads the 64-bit counter value with rollover protection.
-    /// The value represents milliseconds since the counter was last set.
+    /// The value includes the programmed starting offset; it is not necessarily boot-relative or Unix time.
     pub fn now(&self) -> u64 {
         let powman = pac::POWMAN;
         // Read with rollover protection: read upper, lower, upper again
@@ -415,13 +278,16 @@ impl<'d> AonTimer<'d> {
         }
     }
 
-    /// Set the counter value in milliseconds
+    /// Programs `value_ms` as the initial millisecond count loaded on the next start.
     ///
     /// This allows you to initialize the counter to any value (e.g., milliseconds since epoch,
     /// or 0 to start counting from boot).
     ///
-    /// Note: Timer must be stopped before calling this function.
-    pub fn set_counter(&mut self, value_ms: u64) {
+    /// Panics if RUN is set. Four register writes are sequential; the timer must remain stopped.
+    pub fn set_counter(
+        &mut self,
+        value_ms: u64,
+    ) {
         if self.is_running() {
             panic!("timer must be stopped before setting counter");
         }
@@ -444,17 +310,21 @@ impl<'d> AonTimer<'d> {
         });
     }
 
-    /// Set an alarm for a specific counter value (in milliseconds)
+    /// Sets an absolute millisecond `alarm_ms`, clearing previous completion and applying configured wake routing.
     ///
     /// The alarm will fire when the counter reaches this value.
-    /// Returns an error if the alarm time is in the past.
+    /// Returns AlarmInPast for a deadline at or before the sampled current value, leaving the old alarm intact.
+    /// Returns Ok after programming; time can advance during setup, so this is not a scheduling-latency guarantee.
     ///
     /// The wake behavior depends on the configured `alarm_wake_mode`:
     /// - `WfiOnly`: Alarm triggers interrupt wake from WFI/WFE
     /// - `DormantOnly`: Alarm triggers power-up from DORMANT mode
     /// - `Both`: Alarm triggers both interrupt and power-up wake
     /// - `Disabled`: Alarm flag is set but no wake occurs
-    pub fn set_alarm(&mut self, alarm_ms: u64) -> Result<(), Error> {
+    pub fn set_alarm(
+        &mut self,
+        alarm_ms: u64,
+    ) -> Result<(), Error> {
         let current_ms = self.now();
         if alarm_ms <= current_ms {
             return Err(Error::AlarmInPast);
@@ -491,18 +361,17 @@ impl<'d> AonTimer<'d> {
     /// Enable the alarm interrupt (INTE.TIMER)
     ///
     /// This allows the alarm to trigger POWMAN_IRQ_TIMER and wake from WFI/WFE.
-    fn enable_alarm_interrupt(&mut self) {
-        set_timer_interrupt(pac::POWMAN, true);
-    }
+    fn enable_alarm_interrupt(&mut self) { set_timer_interrupt(pac::POWMAN, true); }
 
     /// Disable the alarm interrupt (INTE.TIMER)
-    pub fn disable_alarm_interrupt(&mut self) {
-        set_timer_interrupt(pac::POWMAN, false);
-    }
+    pub fn disable_alarm_interrupt(&mut self) { set_timer_interrupt(pac::POWMAN, false); }
 
-    /// Set the internal alarm value in milliseconds
+    /// Writes absolute millisecond `value` through four registers; caller must keep alarm comparison disabled.
     #[inline(always)]
-    fn set_alarm_value(&mut self, value: u64) {
+    fn set_alarm_value(
+        &mut self,
+        value: u64,
+    ) {
         let powman = pac::POWMAN;
         powman.alarm_time_15to0().write(|w| {
             w.0 = ((value & 0xFFFF) as u32) | POWMAN_PASSWORD;
@@ -522,18 +391,16 @@ impl<'d> AonTimer<'d> {
         });
     }
 
-    /// Check if the alarm has fired
+    /// Returns the hardware alarm flag only; the IRQ handler clears it while setting the separate async latch.
     pub fn alarm_fired(&self) -> bool {
         let powman = pac::POWMAN;
         powman.timer().read().alarm()
     }
 
-    /// Clear the alarm flag
-    pub fn clear_alarm(&mut self) {
-        clear_alarm_state(pac::POWMAN, &ALARM_OCCURRED);
-    }
+    /// Clears hardware status and invalidates any pending software completion; does not disable comparison.
+    pub fn clear_alarm(&mut self) { clear_alarm_state(pac::POWMAN, &ALARM_OCCURRED); }
 
-    /// Disable the alarm
+    /// Disables comparison without clearing hardware/software completion or interrupt/wake routing.
     pub fn disable_alarm(&mut self) {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
@@ -544,7 +411,7 @@ impl<'d> AonTimer<'d> {
         });
     }
 
-    /// Enable the alarm
+    /// Enables comparison at the current programmed deadline without clearing previous completion.
     pub fn enable_alarm(&mut self) {
         let powman = pac::POWMAN;
         powman.timer().modify(|w| {
@@ -604,7 +471,10 @@ impl<'d> AonTimer<'d> {
     /// # Security Note
     /// Setting modes that involve DORMANT wake (DormantOnly or Both) requires
     /// Secure privilege level. These modes may fail silently in Non-secure contexts.
-    pub fn set_wake_mode(&mut self, mode: AlarmWakeMode) {
+    pub fn set_wake_mode(
+        &mut self,
+        mode: AlarmWakeMode,
+    ) {
         match mode {
             AlarmWakeMode::WfiOnly => {
                 self.enable_alarm_interrupt();
@@ -628,30 +498,35 @@ impl<'d> AonTimer<'d> {
 
     /// Set an alarm to fire after a duration from now
     ///
-    /// This is a convenience method that sets the alarm to `now() + duration`.
-    /// Returns `AlarmOverflow` if the sum cannot be represented.
-    pub fn set_alarm_after(&mut self, duration: Duration) -> Result<(), Error> {
+    /// Uses `duration` truncated to whole milliseconds; zero/sub-millisecond or setup-expired deadlines return
+    /// AlarmInPast. Returns Ok on programming, AlarmOverflow if addition overflows, or AlarmInPast from the second
+    /// counter check.
+    pub fn set_alarm_after(
+        &mut self,
+        duration: Duration,
+    ) -> Result<(), Error> {
         let current_ms = self.now();
         let alarm_ms = alarm_after(current_ms, duration.as_millis())?;
         self.set_alarm(alarm_ms)
     }
 
-    /// Get the current counter value as a Duration
-    ///
-    /// This is useful for measuring time spans. The duration represents
-    /// the time since the counter was last set to 0.
-    pub fn elapsed(&self) -> Duration {
-        Duration::from_millis(self.now())
-    }
+    /// Returns the absolute counter converted to Embassy Duration, including any configured epoch offset.
+    /// Panics before overflow if the counter exceeds the Duration tick range (u64::MAX/1000 milliseconds
+    /// with the one-microsecond time driver). Use now() to retain the full u64 millisecond domain.
+    pub fn elapsed(&self) -> Duration { counter_duration(self.now()) }
 
-    /// Set the counter from a DateTime (Unix epoch)
+    /// Programs the counter from UTC `dt` as Unix-epoch milliseconds; returns Ok after valid conversion.
+    /// No-dependency mode ignores supplied weekday; invalid calendar fields and unsupported years return errors.
     ///
     /// # Errors
     /// Returns error if DateTime is before 1970-01-01.
     ///
     /// # Panics
     /// Panics if timer is running.
-    pub fn set_datetime(&mut self, dt: DateTime) -> Result<(), DateTimeError> {
+    pub fn set_datetime(
+        &mut self,
+        dt: DateTime,
+    ) -> Result<(), DateTimeError> {
         #[cfg(feature = "chrono")]
         let millis = crate::datetime::timestamp_millis(&dt)?;
         #[cfg(not(feature = "chrono"))]
@@ -661,7 +536,8 @@ impl<'d> AonTimer<'d> {
         Ok(())
     }
 
-    /// Get the current counter value as a DateTime (Unix epoch)
+    /// Returns the counter interpreted as Unix-epoch DateTime, or a conversion/range error.
+    /// No-dependency DateTime drops subsecond remainder; this interpretation assumes the caller set a Unix origin.
     ///
     /// # Errors
     /// Returns error if counter value cannot be represented as valid DateTime.
@@ -674,11 +550,14 @@ impl<'d> AonTimer<'d> {
         return DateTime::from_timestamp_millis(millis);
     }
 
-    /// Set an alarm for a specific DateTime
+    /// Sets an absolute UTC alarm from `dt`; returns Ok after conversion and future-deadline admission.
     ///
     /// # Errors
     /// Returns error if DateTime conversion fails or alarm time is in the past.
-    pub fn set_alarm_at_datetime(&mut self, dt: DateTime) -> Result<(), Error> {
+    pub fn set_alarm_at_datetime(
+        &mut self,
+        dt: DateTime,
+    ) -> Result<(), Error> {
         #[cfg(feature = "chrono")]
         let alarm_ms = crate::datetime::timestamp_millis(&dt).map_err(Error::DateTime)?;
         #[cfg(not(feature = "chrono"))]
@@ -687,29 +566,10 @@ impl<'d> AonTimer<'d> {
         self.set_alarm(alarm_ms)
     }
 
-    /// Wait asynchronously for the alarm to fire
-    ///
-    /// This function will wait until the AON Timer alarm is triggered.
-    /// If the alarm is already triggered, it will return immediately.
-    ///
-    /// **Wake Mode Behavior:**
-    /// - `WfiOnly` or `Both`: CPU enters WFI (Wait For Interrupt) low-power mode while
-    ///   waiting. The alarm interrupt will wake the CPU and this function will return.
-    /// - `DormantOnly` or `Disabled`: This function will NOT automatically wake from
-    ///   DORMANT mode. For DORMANT wake, the hardware power-up event will restart the
-    ///   chip, not resume this async function.
-    ///
-    /// This method is primarily intended for `WfiOnly` and `Both` wake modes where
-    /// interrupt-based wake is available.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // Set alarm for 5 seconds from now
-    /// timer.set_alarm_after(Duration::from_secs(5)).unwrap();
-    ///
-    /// // Wait for the alarm (CPU enters WFI low-power mode)
-    /// timer.wait_for_alarm().await;
-    /// ```
+    /// Consumes one interrupt-latched completion, then clears hardware/software alarm state.
+    /// An already latched IRQ completes immediately. Hardware status alone does not complete this future:
+    /// DormantOnly/Disabled modes can wait forever without an IRQ. No sleep instruction is issued here.
+    /// Cancellation leaves alarm routing/completion unchanged; another wait can consume the later IRQ.
     pub async fn wait_for_alarm(&mut self) {
         poll_fn(|cx| {
             WAKER.register(cx.waker());
@@ -729,10 +589,15 @@ impl<'d> AonTimer<'d> {
 
 /// Interrupt handler for AON Timer alarms
 pub struct InterruptHandler {
+    /// Prevents external construction; type is used only for interrupt binding.
     _empty: (),
 }
 
 impl interrupt::typelevel::Handler<interrupt::typelevel::POWMAN_IRQ_TIMER> for InterruptHandler {
+    /// Clears an asserted hardware alarm, disables its comparison/interrupt, latches completion and wakes the waiter.
+    ///
+    /// # Safety
+    /// Must run as the bound POWMAN timer handler on the owning core with exclusive driver register ownership.
     #[inline(always)]
     unsafe fn on_interrupt() {
         let powman = crate::pac::POWMAN;
@@ -755,23 +620,61 @@ impl interrupt::typelevel::Handler<interrupt::typelevel::POWMAN_IRQ_TIMER> for I
 }
 
 #[cfg(test)]
+/// Password/W1C register-model, clock bounds and deadline-overflow regressions.
 mod tests {
     use super::*;
 
+    extern crate std;
+
+    /// Exact millisecond values remain monotonic through the final representable duration; larger values panic.
+    #[test]
+    fn elapsed_duration_rejects_tick_overflow_without_wrapping() {
+        // This retained HAL test context uses the same one-microsecond tick as its hardware time driver.
+        assert_eq!(embassy_time::TICK_HZ, 1_000_000);
+        let maximum_millis = u64::MAX / 1000;
+        assert_eq!(counter_duration(0).as_ticks(), 0);
+        assert_eq!(counter_duration(123).as_ticks(), 123_000);
+        assert_eq!(counter_duration(maximum_millis).as_ticks(), maximum_millis * 1000);
+        for millis in [maximum_millis + 1, u64::MAX] {
+            assert!(std::panic::catch_unwind(|| counter_duration(millis)).is_err());
+        }
+    }
+
+    /// Admits each source's actual field endpoints and rejects zero, truncation and overflow values.
+    #[test]
+    fn clock_frequency_bounds_match_each_source_register() {
+        for (source, valid, invalid) in [
+            (ClockSource::Lposc, [1, 32, 63], [0, 64, 65535, u32::MAX]),
+            (ClockSource::Xosc, [2, 12000, 65535], [0, 1, 65536, u32::MAX]),
+        ] {
+            for khz in valid {
+                validate_clock_frequency(source, khz);
+            }
+            for khz in invalid {
+                assert!(
+                    std::panic::catch_unwind(|| validate_clock_frequency(source, khz)).is_err(),
+                    "invalid frequency admitted: {source:?} {khz} kHz"
+                );
+            }
+        }
+    }
+
+    /// Adds the required write password while preserving unrelated interrupt enable bits.
     #[test]
     fn alarm_interrupt_writes_include_password_and_preserve_other_sources() {
         let mut words = [0u32; 256];
         let regs = unsafe { pac::powman::Powman::from_ptr(words.as_mut_ptr().cast()) };
         regs.inte().write(|w| w.0 = 1);
         set_timer_interrupt(regs, true);
-        assert_eq!(regs.inte().read().0 >> 16, 0x5afe);
+        assert_eq!(regs.inte().read().0 >> 16, 0x5AFE);
         assert!(regs.inte().read().timer());
         assert_eq!(regs.inte().read().0 & 1, 1);
         set_timer_interrupt(regs, false);
-        assert_eq!(regs.inte().read().0 >> 16, 0x5afe);
+        assert_eq!(regs.inte().read().0 >> 16, 0x5AFE);
         assert!(!regs.inte().read().timer());
     }
 
+    /// Invalidates old software completion and emits a password-protected W1C hardware write.
     #[test]
     fn clearing_old_alarm_invalidates_its_software_completion() {
         let mut words = [0u32; 256];
@@ -780,9 +683,10 @@ mod tests {
         clear_alarm_state(regs, &occurred);
         assert!(!occurred.load(Ordering::SeqCst));
         assert!(regs.timer().read().alarm());
-        assert_eq!(regs.timer().read().0 >> 16, 0x5afe);
+        assert_eq!(regs.timer().read().0 >> 16, 0x5AFE);
     }
 
+    /// Returns ordinary deadlines and rejects addition past u64::MAX.
     #[test]
     fn relative_alarm_overflow_is_an_error() {
         assert_eq!(alarm_after(10, 20), Ok(30));

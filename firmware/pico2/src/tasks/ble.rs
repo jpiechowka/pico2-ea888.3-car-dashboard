@@ -1,5 +1,6 @@
 //! Core0 owns radio DMA, HCI and GATT. Only bounded status leaves this task.
 #[path = "ble_error.rs"]
+/// Compact host-runner error formatting preserving HCI/decode distinctions.
 mod ble_error;
 
 use core::cell::Cell;
@@ -21,11 +22,16 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
+/// External CYW HCI controller with five concurrent command slots.
 type Controller = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
+/// Compile-time bounded packet storage shared by this host stack.
 type Pool = DefaultPacketPool;
+/// Borrowed host stack used by the sole dashboard connection lifecycle.
 type BleStack<'a> = Stack<'a, Controller, Pool>;
+/// GATT client caching at most four services for the configured adapter profile.
 type Client<'a> = GattClient<'a, Controller, Pool, 4>;
 
+/// Coherent status/epoch/transaction counters; no vehicle sample data crosses here.
 static STATUS: Mutex<CriticalSectionRawMutex, Cell<LinkSnapshot>> = Mutex::new(Cell::new(LinkSnapshot {
     state: LinkState::Disabled,
     epoch: 0,
@@ -34,22 +40,37 @@ static STATUS: Mutex<CriticalSectionRawMutex, Cell<LinkSnapshot>> = Mutex::new(C
     last_latency_ms: None,
     fault: None,
 }));
+/// Wrapping completed-radio-boundary liveness sequence, also advancing when disabled.
 pub static PROGRESS: AtomicU32 = AtomicU32::new(0);
+/// Latched host/cleanup failure requiring independent watchdog recovery.
 pub static FATAL: AtomicBool = AtomicBool::new(false);
+/// Checked monotonic generation invalidating every session spanning flash parking.
 static PARK_GENERATION: AtomicU32 = AtomicU32::new(0);
+/// PIO/DMA initialization completed enough to require DMA1 self-chain admission.
 static RADIO_STARTED: AtomicBool = AtomicBool::new(false);
 
+/// Exclusive uninitialized Pico 2 W internal wireless tokens transferred to core0.
 pub struct Resources {
+    /// PIO0 owner taking SM0 and IRQ0 for CYW GSPI.
     pub pio: Peri<'static, PIO0>,
+    /// DMA1 reserved for the radio, separate from display DMA0.
     pub dma: Peri<'static, DMA_CH1>,
+    /// GP23 wireless enable, initially low.
     pub power: Peri<'static, PIN_23>,
+    /// GP24 wireless data, not the non-W board VBUS input.
     pub data: Peri<'static, PIN_24>,
+    /// GP25 SIO active-low wireless chip select.
     pub cs: Peri<'static, PIN_25>,
+    /// GP29 wireless clock/shared VSYS pin; ADC cannot use it concurrently.
     pub clock: Peri<'static, PIN_29>,
 }
 
+/// Returns one coherent link snapshot without accessing hardware or sensor samples.
 pub fn snapshot() -> LinkSnapshot { STATUS.lock(Cell::get) }
 
+/// Updates `state` and optional `fault` coherently, clearing latency on faults.
+/// Logs only changed state/fault pairs after releasing the lock; keeps epoch and
+/// transaction/loss counters intact.
 fn publish(
     state: LinkState,
     fault: Option<LinkFault>,
@@ -78,12 +99,18 @@ fn publish(
 
 /// Called only after CYW PIO commands returned, or before radio initialization.
 /// GPIO25 is SIO-controlled CS. PIO owns GPIO24/29, never a flash DMA channel.
+/// Returns whether CS is high and DMA1 idle with its expected self-chain setting
+/// after startup; caller must already be at a completed bus boundary.
 pub fn bus_idle() -> bool {
     pac::SIO.gpio_out(0).value().read() & (1 << 25) != 0
         && !pac::DMA.ch(1).ctrl_trig().read().busy()
         && (!RADIO_STARTED.load(Ordering::Relaxed) || pac::DMA.ch(1).ctrl_trig().read().chain_to() == 1)
 }
 
+/// Publishes radio progress, then parks/resumes the latest maintenance request.
+/// `last_resume` suppresses repeats; each new request advances the checked park
+/// generation before acknowledgement, invalidating live sessions even on rejected
+/// saves. Never cancel here; exhaustion panics and IRQs stay available while parked.
 async fn boundary(last_resume: &mut Option<Request>) {
     PROGRESS.fetch_add(1, Ordering::Relaxed);
     let Some(current) = super::maintenance::command() else {
@@ -117,6 +144,8 @@ async fn boundary(last_resume: &mut Option<Request>) {
     super::maintenance::acknowledge(MaintenanceCommand::Resume(request), Owner::Radio, bus_idle());
 }
 
+/// Waits until `generation` differs from the current radio park generation,
+/// polling each millisecond. This signals invalidation, not completed restoration.
 async fn wait_park(generation: u32) {
     while PARK_GENERATION.load(Ordering::Relaxed) == generation {
         Timer::after_millis(1).await;
@@ -124,6 +153,10 @@ async fn wait_park(generation: u32) {
 }
 
 #[embassy_executor::task]
+/// Owns `resources` under immutable `settings` for the application lifetime.
+/// Disabled settings retain pins and join maintenance without initializing CYW;
+/// enabled settings join permanent bus/host owners. Never cancel DMA or the radio
+/// runner. Unsupported clock or allocation invariants panic for watchdog recovery.
 pub async fn radio_task(
     settings: BleSettings,
     resources: Resources,
@@ -159,6 +192,7 @@ pub async fn radio_task(
         embassy_rp::dma::Channel::new(resources.dma, crate::Irqs),
     );
     RADIO_STARTED.store(true, Ordering::Relaxed);
+    /// One-time CYW protocol and ring state retained by the permanent bus runner.
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let (_wifi, driver, _control, runner) = cyw43::new_with_bluetooth(
         STATE.init_with(cyw43::State::new),
@@ -178,10 +212,15 @@ pub async fn radio_task(
     .await;
 }
 
+/// Builds the bounded pairing-capable host around `driver` using `settings`.
+/// Runs connection policy alongside HCI; terminal lifecycle faults retain HCI for
+/// disconnect cleanup, and stopped/stalled cleanup latches fatal recovery.
+/// Never returns normally or restarts a failed host in place.
 async fn host(
     driver: cyw43::bluetooth::BtDriver<'static>,
     settings: BleSettings,
 ) {
+    /// One connection, two channels and one volatile bond slot for the host.
     static RESOURCES: StaticCell<HostResources<Pool, 1, 2, 0, 1>> = StaticCell::new();
     let stack = trouble_host::new(
         ExternalController::<_, 5>::new(driver),
@@ -217,6 +256,11 @@ async fn host(
     core::future::pending::<()>().await;
 }
 
+/// Runs selected-peer connection epochs on `stack` using `settings`, invalidating
+/// sessions on park and requiring actual disconnect/idle before another attempt.
+/// Returns a terminal fault when reconnect is disabled, cleanup fails or epoch
+/// space exhausts. Automatic retries back off 1..10 seconds; they never qualify
+/// ECU measurements or persist volatile bonds.
 async fn connections(
     stack: &BleStack<'_>,
     settings: BleSettings,
@@ -358,6 +402,10 @@ async fn connections(
     }
 }
 
+/// Services `connection` on `stack` using `settings`, mutable parser `session`,
+/// current `epoch` and flash `generation`. CX requires encryption before discovery;
+/// event processing remains active during security/MTU/setup. Returns the first
+/// terminal link fault and drops losing client work for caller-owned disconnect.
 async fn connected(
     stack: &BleStack<'_>,
     connection: &Connection<'_, Pool>,
@@ -419,6 +467,9 @@ async fn connected(
     }
 }
 
+/// Consumes `connection` events using `stack`, returning transport/security faults.
+/// Stores successful bonds only in RAM; rejects user-interaction pairing and
+/// parameter requests outside zero latency and <=50 ms maximum interval.
 async fn connection_events(
     stack: &BleStack<'_>,
     connection: &Connection<'_, Pool>,
@@ -466,6 +517,8 @@ async fn connection_events(
     }
 }
 
+/// Returns service, RX-notify and TX-write UUIDs for `profile`; TestPeer uses a
+/// distinct private 128-bit namespace and cannot select a real adapter service.
 fn uuids(profile: BleProfile) -> (Uuid, Uuid, Uuid) {
     match profile {
         BleProfile::VlinkerMcPlus => {
@@ -496,6 +549,12 @@ fn uuids(profile: BleProfile) -> (Uuid, Uuid, Uuid) {
     }
 }
 
+/// Discovers one profile service through `client` on `connection`, validates
+/// properties from `settings`, then runs `session` under `epoch`/`generation`.
+/// Returns discovery/security/protocol/transport failure; normal operation loops
+/// forever. MC+/CX send initialization and periodic identity only; TestPeer reads
+/// synthetic PID5 without publishing vehicle channels. Notifications are subscribed
+/// only after the exact profile's RX/TX properties pass admission.
 async fn serial<'stack>(
     client: &Client<'stack>,
     connection: &Connection<'stack, Pool>,
@@ -581,19 +640,32 @@ async fn serial<'stack>(
     }
 }
 
+/// One connected ELM/test-peer stream with generation, sequence and parser admission.
 struct Serial<'a, 'stack> {
+    /// Borrowed live GATT client whose runner is concurrently polled.
     client: &'a Client<'stack>,
+    /// Connection checked before each transaction/chunk/notification acceptance.
     connection: &'a Connection<'stack, Pool>,
+    /// Profile-qualified write characteristic; never restored from saved handles.
     tx: Characteristic<[u8]>,
+    /// Profile-admitted ATT write request or command mode.
     mode: WriteMode,
+    /// Bounded RX notification subscription with explicit lost-message reporting.
     listener: NotificationListener<'a, 244>,
+    /// Immutable profile/deadline/poll-gap configuration for this connection.
     settings: BleSettings,
+    /// Exclusive transaction parser; invalidated before connection replacement.
     session: &'a mut Session,
+    /// Checked connection identity attached to every parser notification.
     epoch: u64,
+    /// Flash-park generation captured when this stream was created.
     generation: u32,
+    /// Checked per-stream notification sequence; exhaustion fails closed.
     sequence: u64,
 }
 impl Serial<'_, '_> {
+    /// Returns success only for the current park generation, connected bearer
+    /// and (for CX) retained encryption; otherwise returns Transport/Security.
     fn admission(&self) -> Result<(), LinkFault> {
         if PARK_GENERATION.load(Ordering::Relaxed) != self.generation {
             return Err(LinkFault::Transport);
@@ -613,6 +685,9 @@ impl Serial<'_, '_> {
         Ok(())
     }
 
+    /// Admits `notification`, accounting reported queue losses and checked
+    /// sequence before feeding the parser. Returns a matched completion, None for
+    /// an incomplete response, or generation/security/loss/protocol failure.
     fn receive(
         &mut self,
         notification: Result<Notification<244>, u64>,
@@ -637,6 +712,9 @@ impl Serial<'_, '_> {
             .map_err(LinkFault::Protocol)
     }
 
+    /// Waits `ms` milliseconds while consuming notifications through admission.
+    /// Returns success at deadline or first receive fault; does not open another
+    /// transaction, and yields after each notification to bound cooperative work.
     async fn gap(
         &mut self,
         ms: u64,
@@ -653,6 +731,10 @@ impl Serial<'_, '_> {
         }
     }
 
+    /// Executes allowed `command` after checking at most four queued notifications.
+    /// Sends <=20-byte chunks under one response deadline, then awaits the exact
+    /// parser completion. Returns admission/loss/transport/protocol/timeout faults;
+    /// partial writes cannot be retried on this stream, so caller disconnects it.
     async fn transact(
         &mut self,
         command: Command,
@@ -708,6 +790,9 @@ impl Serial<'_, '_> {
     }
 }
 
+/// Validates `done` response class and records checked transaction count/latency.
+/// Returns protocol, exhausted-counter or clock-conversion failure without
+/// publishing sensor values. Session completion guarantees ordered millisecond times.
 fn completed(done: &Completion) -> Result<(), LinkFault> {
     if !matches!(
         done.response,

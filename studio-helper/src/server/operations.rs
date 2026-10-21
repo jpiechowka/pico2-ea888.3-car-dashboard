@@ -1,6 +1,8 @@
 //! Serialized worker admission and operation completion. Transfer cancellation,
 //! artifact publication and cleanup failure each keep their operation-specific rules.
 use super::*;
+/// Quarantines `state` after a worker panic and marks open jobs cleanup-fatal when the owner lock remains usable.
+/// Leaves status service running and does not fabricate producer closure; terminal stderr failure can panic.
 fn worker_fault(state: &State) {
     state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
     crate::terminal::event(
@@ -18,6 +20,9 @@ fn worker_fault(state: &State) {
         }
     }
 }
+/// Returns a blocking-task handle running `work` for `state`, catching unwind to latch ownership failure.
+/// Started work is not abortable by dropping/aborting the handle; callers retain its admission permit and join it.
+/// Panics without a Tokio runtime; process aborts and a panic in fault reporting are not caught by the inner boundary.
 fn spawn_worker(
     state: &Arc<State>,
     work: impl FnOnce() + Send + 'static,
@@ -29,7 +34,8 @@ fn spawn_worker(
         }
     })
 }
-// Reserve a footer inside the disk bound so omitted output is never silent.
+/// Appends a UTF-8 prefix of `line` to `bytes` within `limit` minus a 512-byte footer reserve.
+/// Returns omitted input bytes; never truncates existing bytes when they already exceed the available prefix allowance.
 fn retain_diagnostic(
     bytes: &mut Vec<u8>,
     limit: usize,
@@ -41,6 +47,9 @@ fn retain_diagnostic(
     line.len() - end
 }
 
+/// Sanitizes prerequisite `report` rows into bounded internal logs for `id` in `store`.
+/// Missing fields use display defaults; framing/append failures are deliberately ignored and do not alter report
+/// readiness.
 fn log_report(
     store: &mut JobStore,
     id: &JobId,
@@ -81,6 +90,12 @@ fn log_report(
         });
     }
 }
+/// Returns admitted job summary for `state`: `device_scan` chooses descriptor scanning, otherwise prerequisite probes;
+/// `selected` additionally requests inspection and must be paired with device_scan by the private caller.
+/// Returns admission/selection/job errors before launch; inspection requires an exact cached candidate and clean
+/// complete scan. The worker retains its permit after HTTP cancellation, publishes bounded reports and closes only
+/// after owned-process cleanup. Cancelled inspection clears facts/digest; a new scan clears all prior inspections.
+/// Cleanup failure leaves the job unclosed.
 pub(super) async fn start_check(
     state: Arc<State>,
     device_scan: bool,
@@ -242,6 +257,12 @@ pub(super) async fn start_check(
     }));
     Ok(result)
 }
+/// Returns a newly admitted Build summary after validating `request` against `state`'s current uploaded
+/// project/session. Returns Busy/ownership, missing upload, stale/schema or job errors; upload decoding runs off-thread
+/// with the permit retained. Worker freezes source, compiles, validates and closes owned storage before publishing one
+/// of at most two artifacts. Cancellation suppresses artifact publication; failures retain diagnostics and may
+/// quarantine partial storage, never roll back completed filesystem writes. Worker panic/cleanup failure disables
+/// further operations without claiming closure.
 pub(super) async fn start_build(
     state: Arc<State>,
     request: ProjectBuildRequest,
@@ -455,6 +476,11 @@ pub(super) async fn start_build(
     }));
     Ok(result)
 }
+/// Returns an admitted Flash summary for explicit `request` against `state`'s retained artifact/device/inspection
+/// evidence. Returns admission, unavailable selection, consent/identity or job errors before launching; worker
+/// revalidates before writing. Transfer cancellation is deferred to safe command boundaries; failure may leave
+/// programmed flash and never triggers retry. Completed attempts retire device inspection; cleanup-fatal work stays
+/// open/quarantined and does not certify firmware execution.
 pub(super) async fn start_flash(
     state: Arc<State>,
     request: FlashRequest,
@@ -606,6 +632,10 @@ pub(super) async fn start_flash(
     }));
     Ok(summary)
 }
+/// Returns an admitted cleanup summary for validated `request` in `state`; `build` chooses build attempts, false flash
+/// history. Returns activity/ownership/request/job errors before launch. Build cleanup preflights the whole batch and
+/// protects held artifacts; flash history validates each attempt when reached. Cancellation is checked between
+/// attempts; earlier removals remain on failure.
 pub(super) async fn start_cleanup(
     state: Arc<State>,
     request: CleanupRequest,
@@ -718,8 +748,9 @@ pub(super) async fn start_cleanup(
     Ok(summary)
 }
 
-/// Reap the prior worker before admission; JobStore still rejects any unclosed
-/// operation under the returned lock. Never await while holding the owner mutex.
+/// Returns `state`'s owner guard after reaping a finished prior worker; returns Busy if it still runs, InvalidState for
+/// shutdown/poison/cleanup/worker faults. JobStore separately rejects any unclosed operation under the returned lock.
+/// Never awaits with the mutex held; dropping this future while awaiting detaches the finished handle, not native work.
 async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> {
     if state.fatal.load(std::sync::atomic::Ordering::SeqCst) || state.inner.is_poisoned() {
         return Err(Error::InvalidState);
@@ -745,9 +776,11 @@ async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> 
 }
 
 #[cfg(test)]
+/// Worker failure visibility, poisoned-owner route rejection and bounded retained-diagnostic regressions.
 mod diagnostics_tests {
     use super::*;
     #[tokio::test]
+    /// A panicked task latches visible ownership failure without claiming event closure or stopping status service.
     async fn failed_worker_preserves_visible_ownership_fault() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let id = JobId::new("f".repeat(32)).unwrap();
@@ -771,6 +804,7 @@ mod diagnostics_tests {
         );
     }
     #[tokio::test]
+    /// Owner poisoning preserves independent session status while rejecting stateful reads and mutations.
     async fn poisoned_worker_keeps_session_status_and_refuses_mutation() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let worker_state = state.clone();
@@ -799,6 +833,7 @@ mod diagnostics_tests {
         }
     }
     #[test]
+    /// Retained logs reserve footer/validation space and never split a UTF-8 scalar at the prefix bound.
     fn bounded_prefix_reserves_footer_and_validation_space() {
         let mut bytes = Vec::new();
         assert_eq!(super::retain_diagnostic(&mut bytes, 1024, &"x".repeat(512)), 0);

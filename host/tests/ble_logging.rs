@@ -1,9 +1,11 @@
+//! BLE state/fault log identity, maximum-width epochs and protected fault retention.
 use std::collections::BTreeSet;
 
 use dashboard_core::ble::link::{LinkFault, LinkState, log_transition};
 use dashboard_core::ble::{elm, session};
 use dashboard_core::logging::{LOG_ENTRIES, Level, LogStore};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+/// Every currently supported link state, including disabled, synthetic and terminal states.
 const STATES: [LinkState; 11] = [
     LinkState::Disabled,
     LinkState::Starting,
@@ -17,6 +19,7 @@ const STATES: [LinkState; 11] = [
     LinkState::Maintenance,
     LinkState::Fault,
 ];
+/// Returns no-fault plus every direct/session/parser failure used to check unique bounded log labels.
 fn faults() -> Vec<Option<LinkFault>> {
     use session::Error as P;
     let mut faults = vec![
@@ -62,6 +65,7 @@ fn faults() -> Vec<Option<LinkFault>> {
     );
     faults
 }
+/// Every state/reason pair retains a complete epoch and distinct identifiers without truncating the real log entry.
 #[test]
 fn every_ble_transition_keeps_complete_epoch_state_and_reason_in_the_real_log_bound() {
     let store = LogStore::<CriticalSectionRawMutex>::new();
@@ -95,6 +99,7 @@ fn every_ble_transition_keeps_complete_epoch_state_and_reason_in_the_real_log_bo
     }
     assert_eq!(store.counters().truncated, 0);
 }
+/// Info reconnect events can evict ordinary history but cannot replace any retained BLE fault entry.
 #[test]
 fn ble_failures_remain_in_the_fault_slot_after_normal_reconnect_and_info_eviction() {
     for fault in faults().into_iter().flatten() {
@@ -114,6 +119,7 @@ fn ble_failures_remain_in_the_fault_slot_after_normal_reconnect_and_info_evictio
         );
     }
 }
+/// Normal transitions stay informational; terminal Fault retains a fault entry even without a detailed reason.
 #[test]
 fn ordinary_states_are_info_but_terminal_fault_without_detail_is_retained() {
     let store = LogStore::<CriticalSectionRawMutex>::new();

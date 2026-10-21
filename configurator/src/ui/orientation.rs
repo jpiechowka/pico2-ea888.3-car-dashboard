@@ -2,12 +2,23 @@
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Orientation setting targeted by a staged, revision-bound proposal.
 pub enum Scope {
+    /// Mandatory device default inherited by Debug/Logs and unset overrides.
     Device,
-    View(u8),
+    /// Optional orientation of the view with this stored ID.
+    View(
+        /// Stable view ID, not its candidate list position.
+        u8,
+    ),
+    /// Optional Boot info orientation in the project startup profile.
     Status,
+    /// Optional Splash orientation; artwork pixels remain until explicit reconversion.
     Splash,
 }
+/// Returns the stored orientation for `scope` in `editor`; `None` means inheritance
+/// or a missing view. Device reads accepted configuration, view reads editing layout,
+/// and startup scopes read the project startup profile.
 fn stored(
     editor: &Editor,
     scope: Scope,
@@ -26,6 +37,7 @@ fn stored(
         Scope::Splash => editor.startup_profile().splash_orientation,
     }
 }
+/// Returns the visible registry-compatible label for orientation `scope`.
 fn label(scope: Scope) -> &'static str {
     match scope {
         Scope::Device => "Default screen orientation",
@@ -34,6 +46,7 @@ fn label(scope: Scope) -> &'static str {
         Scope::Splash => "Splash orientation",
     }
 }
+/// Returns pixel dimensions, cell-grid dimensions and mounting-flip text for `orientation`.
 fn description(orientation: Orientation) -> String {
     let g = orientation.geometry();
     format!(
@@ -49,9 +62,15 @@ fn description(orientation: Orientation) -> String {
         }
     )
 }
+/// Returns a staged orientation picker for `scope` in `ui`. Proposals capture field
+/// authority and are cleared on external edits; layout previews use shared repacking.
+/// Apply cancels pointer/menu state, rechecks the token and dispatches one project edit.
+/// Failed repacking blocks Apply; artwork bytes remain retained across shape mismatch.
 #[component]
 pub fn Picker(
+    /// Shared editor and layout interaction state.
     ui: Ui,
+    /// Device, view or startup override to propose.
     scope: Scope,
 ) -> impl IntoView {
     let proposed = RwSignal::new(None::<(FieldToken, Option<Orientation>)>);

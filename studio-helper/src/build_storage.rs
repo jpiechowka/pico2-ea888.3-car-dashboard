@@ -5,15 +5,21 @@ use std::path::{Path, PathBuf};
 
 use dashboard_helper_protocol::*;
 use serde_json::{Value, json};
+/// Bytes per binary gibibyte used for retained and scratch budgets.
 pub(crate) const GIB: u64 = 1024 * 1024 * 1024;
+/// Maximum files/directories in one inventory or combined cleanup batch.
 const MAX_ENTRIES: usize = 65536;
+/// Maximum serialized manifest bytes, also the combined cleanup-manifest allowance.
 const MAX_INDEX: usize = 32 * 1024 * 1024;
+/// Returns generated attempt and ownership-index directories beneath `repo`; creates neither.
 fn roots(repo: &Path) -> (PathBuf, PathBuf) {
     (
         repo.join("target/studio-helper/attempts"),
         repo.join("target/studio-helper/attempt-index"),
     )
 }
+/// Returns JSON from regular `path` within `max` bytes; rejects open/read, size and syntax failures.
+/// Private callers use 4096; `max` must leave room for a one-byte overflow sentinel.
 fn read(
     path: &Path,
     max: usize,
@@ -28,6 +34,9 @@ fn read(
     }
     serde_json::from_slice(&b).map_err(|_| "Invalid storage metadata".into())
 }
+/// Publishes `value` at `path` via exclusive `.pending` write, sync and replacement rename.
+/// Returns serialization, 32 MiB bound or filesystem errors; a failed write/rename can retain pending evidence.
+/// Existing pending files refuse retries. Windows requests write-through replacement; this is not a disk guarantee.
 fn publish(
     path: &Path,
     value: &Value,
@@ -70,6 +79,9 @@ fn publish(
     }
     Ok(())
 }
+/// Returns up to `limit` surviving immediate children of `path`, rejecting links/reparse points and I/O errors.
+/// Holds ancestors during enumeration; vanished entries are skipped. Private `limit` values are at most 65536,
+/// leaving one overflow sentinel; this does not retain child handles after returning.
 fn checked_children(
     path: &Path,
     limit: usize,
@@ -101,7 +113,10 @@ fn checked_children(
     }
     Ok(entries)
 }
-/// Only traverses one generated attempt, with count/depth/path/byte budgets.
+/// Returns file-byte total and sorted `[path, directory, length, identity]` rows below generated `root`.
+/// `identities` obtains handle identities and treats disappearance as failure; false permits vanished entries
+/// during active-build polling and emits empty identities. Rejects over 65536 entries, 64 path components,
+/// 1024 platform path units, 16 GiB, non-UTF-8 paths, links and unsupported members; creates/deletes nothing.
 fn inventory(
     root: &Path,
     identities: bool,
@@ -155,6 +170,9 @@ fn inventory(
     rows.sort_by(|a, b| a[0].as_str().cmp(&b[0].as_str()));
     Ok((bytes, rows))
 }
+/// Returns at most 21 ownership records under `repo`, or empty when both storage roots are absent.
+/// Rejects legacy/unowned entries, pending publications, malformed records and changed directory identities;
+/// this validates ownership metadata, not the contents of each closed attempt.
 fn records(repo: &Path) -> Result<Vec<Value>, String> {
     let (attempts, index) = roots(repo);
     if !attempts.exists() && !index.exists() {
@@ -211,6 +229,8 @@ fn records(repo: &Path) -> Result<Vec<Value>, String> {
     }
     Ok(records)
 }
+/// Returns validated storage summaries for `repo`, marking IDs in `protected` and all active records protected.
+/// Byte counts are published charges, not a new disk scan. Returns ownership/schema/protocol errors without mutation.
 pub(crate) fn list(
     repo: &Path,
     protected: &BTreeSet<String>,
@@ -242,13 +262,23 @@ pub(crate) fn list(
     report.validate().map_err(|e| e.to_string())?;
     Ok(report)
 }
+/// Single generated build attempt with durable active record and held ancestry; dropping does not close or delete it.
 pub(crate) struct Reservation {
+    /// Exclusive generated directory receiving frozen inputs, compiler scratch and evidence.
     pub path: PathBuf,
+    /// Mutable ownership record; publication failure can leave memory ahead of disk.
     record: Value,
+    /// Generated `.json` ownership record beside the `.files` manifest.
     index: PathBuf,
+    /// Attempt-directory hold released after close inventory before deletion/publication.
     root_lock: Option<std::fs::File>,
+    /// Ancestor handles retained for the reservation lifetime.
     _parents: Vec<std::fs::File>,
 }
+/// Returns a new active attempt beneath `repo` after ownership, retained-quota and Windows free-space checks.
+/// Requires no incomplete record, fewer than 16 artifacts/4 failures, artifact charge at most 4 GiB minus
+/// 64 MiB and failure charge below 1 GiB; Windows also requires 4 GiB plus 256 MiB available.
+/// Errors can leave newly created directories or active/pending metadata quarantined; no automatic rollback/adoption.
 pub(crate) fn reserve(repo: &Path) -> Result<Reservation, String> {
     let report = list(repo, &BTreeSet::new())?;
     let mut count = 0;
@@ -324,6 +354,8 @@ pub(crate) fn reserve(repo: &Path) -> Result<Reservation, String> {
     })
 }
 impl Reservation {
+    /// Writes and syncs at most 256 KiB of `bytes` to an exclusively created diagnostic file.
+    /// Returns oversize/open/write/sync errors; failures can retain a partial file and retries never overwrite it.
     pub(crate) fn write_diagnostics(
         &self,
         bytes: &[u8],
@@ -342,6 +374,8 @@ impl Reservation {
             .map_err(|e| e.to_string())
     }
 
+    /// Copies the fixed capture diagnostic file into retained evidence, if present.
+    /// Returns link/read, over-256-KiB or exclusive-create/write/sync errors; failures can retain partial output.
     fn retain_cargo_diagnostics(&self) -> Result<(), String> {
         // The fixed capture path belongs to this closed attempt, never a caller path.
         let source = self
@@ -372,6 +406,12 @@ impl Reservation {
             .map_err(|e| e.to_string())
     }
 
+    /// Closes this stopped attempt as an `artifact` or failure; `reason` supplies failure text (first 1024 chars),
+    /// with a default when absent. Call only after compiler cleanup and, for failure, frozen-reader release.
+    /// Returns identity/budget/filesystem/publication errors; prior pruning and writes are not rolled back.
+    /// Artifacts retain at most 4 GiB; failures prune generated source/scratch and retain at most 16 MiB of
+    /// inputs/diagnostics/evidence. Publishes identity manifest then charged record, including metadata bytes.
+    /// No cancellation is polled inside close; a failed close remains quarantined and is not safely retryable.
     pub(crate) fn close(
         &mut self,
         artifact: bool,
@@ -462,7 +502,8 @@ impl Reservation {
         publish(&self.index, &self.record)
     }
 }
-/// Polling bounds owned scratch; not an instantaneous filesystem quota.
+/// Checks generated attempt `path`; returns an error above 4 GiB or below 256 MiB available, or on accounting/I/O
+/// failure. Caller stops the owned process on failure. Polling is not an instantaneous filesystem quota.
 #[cfg(windows)]
 pub(crate) fn check_scratch(path: &Path) -> Result<(), String> {
     let (bytes, _) = inventory(path, false)?;
@@ -492,13 +533,17 @@ pub(crate) fn check_scratch(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// A closed manifest is bound to held volume/file identities. Every requested tree
-// is prepared before mutation; DELETE handles also reject active source readers.
+/// Closed manifest bound to held volume/file identities; preparation rejects incompatible active readers.
 struct Tree {
+    /// Held generated directory, removed only by whole-tree cleanup.
     root: crate::file_locks::DeleteFile,
+    /// Relative name, directory flag and deletion handle, ordered parents before descendants.
     members: Vec<(String, bool, crate::file_locks::DeleteFile)>,
 }
 impl Tree {
+    /// Returns a held deletion tree for `root` matching `identity` and complete manifest `rows`.
+    /// Rejects malformed/duplicate/escaping paths, changed identity/length, unexpected/missing entries and
+    /// handle conflicts before deleting anything; rows are limited to 65536 and names to 1024 UTF-8 bytes.
     fn prepare(
         root: &Path,
         identity: &str,
@@ -575,6 +620,8 @@ impl Tree {
         Ok(Self { root: held, members })
     }
 
+    /// Removes held members named by `selected` rows, descendants first, retaining the root and other members.
+    /// Returns the first disposition error after any earlier deletions; unknown/malformed selected names are ignored.
     fn remove_selected(
         self,
         selected: &[Value],
@@ -588,6 +635,7 @@ impl Tree {
         Ok(())
     }
 
+    /// Removes held members descendants first, then root; returns the first error with earlier deletions retained.
     fn remove(self) -> Result<(), String> {
         for (_, _, file) in self.members.into_iter().rev() {
             file.remove()?;
@@ -595,12 +643,18 @@ impl Tree {
         self.root.remove()
     }
 }
+/// Fully preflighted closed attempt and metadata held until explicit removal or nonmutating drop.
 pub(crate) struct Prepared {
+    /// Complete owned content with deletion handles.
     tree: Tree,
+    /// Held manifest then ownership-record handles, deleted only after content removal.
     metadata: Vec<crate::file_locks::DeleteFile>,
+    /// Ancestors pinned throughout preflight/removal.
     _parents: Vec<std::fs::File>,
 }
 impl Prepared {
+    /// Removes the prepared tree then metadata; returns the first error without rolling back earlier deletions.
+    /// Cancellation is checked by the caller between attempts, not within this deletion sequence.
     pub(crate) fn remove(self) -> Result<(), String> {
         self.tree.remove()?;
         for file in self.metadata {
@@ -609,6 +663,9 @@ impl Prepared {
         Ok(())
     }
 }
+/// Returns held cleanup plans for every ID in validated `request` beneath `repo`, preserving request order.
+/// Rejects IDs in `protected`, nonclosed attempts, changed ownership/content, active readers and combined
+/// limits of 65536 entries/32 MiB manifest bytes. Errors drop all holds without deleting any requested attempt.
 pub(crate) fn prepare(
     repo: &Path,
     request: &CleanupRequest,
@@ -664,9 +721,12 @@ pub(crate) fn prepare(
 }
 
 #[cfg(all(test, windows))]
+/// Windows identity/handle and retained-quota regressions using private temporary directories.
 mod tests {
     use super::*;
+    /// Returns a newly created unique temporary repository root; panics on clock/directory failure.
     fn fixture() -> PathBuf {
+        /// Process-local collision discriminator for concurrent fixtures.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "studio-storage-{}-{}-{}",
@@ -680,6 +740,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         root
     }
+    /// Returns cleanup IDs from `reservations`; panics for malformed fixture metadata or protocol bounds.
     fn request(reservations: &[&Reservation]) -> CleanupRequest {
         CleanupRequest {
             attempts: BoundedVec::new(
@@ -691,11 +752,13 @@ mod tests {
             .unwrap(),
         }
     }
+    /// Removes test-owned `repo` after asserting its temporary-root prefix; panics on refusal or cleanup failure.
     fn cleanup_fixture(repo: PathBuf) {
         assert!(repo.starts_with(std::env::temp_dir()));
         std::fs::remove_dir_all(repo).unwrap();
     }
     #[test]
+    /// Failure close preserves bounded diagnostics/inputs, prunes both scratch layouts and permits explicit removal.
     fn failure_disposes_generated_source_retains_diagnostics_and_frees_explicitly() {
         let repo = fixture();
         let mut r = reserve(&repo).unwrap();
@@ -739,6 +802,7 @@ mod tests {
         cleanup_fixture(repo);
     }
     #[test]
+    /// Oversize captured diagnostics fail before source pruning and retain the original failure evidence.
     fn oversized_failure_diagnostics_quarantine_without_pruning_source() {
         let repo = fixture();
         let mut r = reserve(&repo).unwrap();
@@ -754,6 +818,7 @@ mod tests {
         cleanup_fixture(repo);
     }
     #[test]
+    /// Batch preflight leaves earlier attempts intact for protection, readers, extra files and same-length replacement.
     fn preflight_all_refuses_unknown_members_replacements_readers_and_protected() {
         let repo = fixture();
         let mut a = reserve(&repo).unwrap();
@@ -781,6 +846,8 @@ mod tests {
         cleanup_fixture(repo);
     }
     #[test]
+    /// Four retained failures block admission until explicit removal; an active reservation cannot be cleaned or
+    /// bypassed.
     fn failure_cap_requires_explicit_cleanup_and_active_restart_is_quarantined() {
         let repo = fixture();
         let mut all = Vec::new();
@@ -799,10 +866,13 @@ mod tests {
         drop((active, all));
         cleanup_fixture(repo);
     }
+    /// Extracts failure text without requiring successful reservations to implement Debug.
     trait ErrText {
+        /// Returns the error string; panics if the fixture unexpectedly reserved an attempt.
         fn unwrap_err_text(self) -> String;
     }
     impl ErrText for Result<Reservation, String> {
+        /// Returns the reservation error; panics on unexpected success.
         fn unwrap_err_text(self) -> String {
             match self {
                 Ok(_) => panic!("unexpected reservation"),
@@ -811,6 +881,7 @@ mod tests {
         }
     }
     #[test]
+    /// Sixteen artifacts exhaust count quota, charges include both metadata files, and selected removal frees one slot.
     fn artifact_count_and_exact_accounting_release_only_selected_capacity() {
         let repo = fixture();
         let mut all = Vec::new();
@@ -834,6 +905,7 @@ mod tests {
         cleanup_fixture(repo);
     }
     #[test]
+    /// Unindexed legacy directories block reservation and remain untouched.
     fn unknown_legacy_storage_is_never_adopted() {
         let repo = fixture();
         std::fs::create_dir_all(repo.join("target/studio-helper/attempts/legacy")).unwrap();
@@ -844,9 +916,11 @@ mod tests {
 }
 
 #[cfg(all(test, windows))]
+/// Interrupted metadata publication must preserve committed evidence and block further admission.
 mod publication_failure_tests {
     use super::*;
     #[test]
+    /// An existing partial pending file is neither overwritten nor adopted; listing and reservation reject the store.
     fn interrupted_metadata_publication_preserves_committed_file_and_quarantines_storage() {
         let repo = std::env::temp_dir().join(format!(
             "studio-publication-{}-{}",

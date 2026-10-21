@@ -1,5 +1,6 @@
 //! Reproducible state interleavings. Seeds and step numbers identify every failure.
 //! These exercise software ownership and clocks, not DMA or physical scanout.
+/// Shared panic-only seed/case reporting guard.
 #[path = "../../test-support/generated.rs"]
 mod generated;
 use dashboard_config::Orientation;
@@ -9,8 +10,13 @@ use dashboard_core::display::pipeline::{BufferId, BufferState, FrameLifecycle, F
 use dashboard_core::pages::Page;
 use dashboard_core::startup::{Exit, Phase, Startup, StartupProfile, StartupStatus};
 
-struct Generator(u64);
+/// Deterministic xorshift64 generator for repeatable state interleavings.
+struct Generator(
+    /// Current generator state; zero remains the all-zero stream.
+    u64,
+);
 impl Generator {
+    /// Advances the xorshift state and returns its next raw 64-bit value.
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -18,6 +24,7 @@ impl Generator {
         self.0
     }
 
+    /// Advances state and returns a value in 0..`bound`; modulo-biased and panics when `bound` is zero.
     fn below(
         &mut self,
         bound: u64,
@@ -26,16 +33,19 @@ impl Generator {
     }
 }
 
+/// Returns an unchecked identity from `sequence` and physical `buffer`, including deliberately stale fixtures.
 fn token(
     sequence: u64,
     buffer: BufferId,
 ) -> FrameToken {
     FrameToken { buffer, sequence }
 }
+/// Returns buffer A/B ownership states from immutable `lifecycle` in that order.
 fn states(lifecycle: &FrameLifecycle) -> [BufferState; 2] {
     [lifecycle.state(BufferId::A), lifecycle.state(BufferId::B)]
 }
 
+/// Fabricated, previous-generation and wrong-buffer events leave every legal lifecycle phase unchanged.
 #[test]
 fn stale_and_wrong_buffer_events_never_release_a_live_generation() {
     // Mutation target: removing token equality or freeing on rejected completion.
@@ -110,6 +120,7 @@ fn stale_and_wrong_buffer_events_never_release_a_live_generation() {
     }
 }
 
+/// Quarantine remains absorbing under arbitrary late events and blocks the other buffer's transfer.
 #[test]
 fn quarantine_is_absorbing_despite_arbitrary_late_events() {
     // Mutation target: a timeout/late success accidentally makes storage reusable.
@@ -150,6 +161,7 @@ fn quarantine_is_absorbing_despite_arbitrary_late_events() {
     }
 }
 
+/// Off requires its completed two-second popup and exact clear token despite randomized delays and recovery.
 #[test]
 fn off_requires_visible_feedback_then_its_own_clear_completion() {
     // Mutation target: starting the timer at click/submit, or accepting stale clear.
@@ -199,6 +211,7 @@ fn off_requires_visible_feedback_then_its_own_clear_completion() {
     }
 }
 
+/// Random poll cadences preserve startup deadlines measured from matching first-frame completion.
 #[test]
 fn startup_deadlines_follow_completed_frames_across_random_poll_cadences() {
     // Mutation target: counting frames instead of elapsed time or accepting an
@@ -238,6 +251,7 @@ fn startup_deadlines_follow_completed_frames_across_random_poll_cadences() {
     }
 }
 
+/// Missing completions have bounded startup fallback; backward clocks and explicit faults terminate distinctly.
 #[test]
 fn stalled_startup_and_clock_faults_are_bounded_without_completion() {
     for duration in [0, 1, 500, 10_000] {

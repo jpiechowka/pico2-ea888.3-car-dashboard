@@ -1,3 +1,4 @@
+//! Bounded encoder events, wire identity and sampled debounce/hold admission.
 use dashboard_host_validation::input_model::{
     DebouncedButton,
     EncoderEvents,
@@ -7,6 +8,7 @@ use dashboard_host_validation::input_model::{
     valid_encoder_identity,
 };
 
+/// Checks Seesaw identity's upper version word, big-endian signed delta reversal and the ±128 admission bound.
 #[test]
 fn encoder_identity_endianness_direction_and_corruption_are_checked() {
     assert!(valid_encoder_identity(0x55, (4991u32 << 16).to_be_bytes()));
@@ -20,6 +22,7 @@ fn encoder_identity_endianness_direction_and_corruption_are_checked() {
     }
 }
 
+/// Rotation/press queues saturate at 128/eight, account losses, and drain or clear each pending event once.
 #[test]
 fn pending_events_are_bounded_counted_and_consumed_once() {
     let events = EncoderEvents::new();
@@ -41,6 +44,7 @@ fn pending_events_are_bounded_counted_and_consumed_once() {
     assert_eq!(events.take(), (0, 0));
 }
 
+/// Brightness and scrolling clamp correctly even with extreme signed deltas and malformed initial positions.
 #[test]
 fn brightness_and_scroll_arithmetic_remains_bounded_at_integer_extremes() {
     assert_eq!(brightness_after(50, 1), 55);
@@ -56,6 +60,7 @@ fn brightness_and_scroll_arithmetic_remains_bounded_at_integer_extremes() {
     assert_eq!(scroll_after(30, -5, 0), 0);
 }
 
+/// Fifty-millisecond stable press edges reject bounce, held startup/reconnect and backward release observations.
 #[test]
 fn button_needs_stable_edges_and_suppresses_held_reconnects() {
     let mut button = DebouncedButton::new();
@@ -76,6 +81,7 @@ fn button_needs_stable_edges_and_suppresses_held_reconnects() {
     assert!(!button.update(true, 6100));
 }
 
+/// A fully debounced release rearms the next press even near the u64 millisecond limit.
 #[test]
 fn normal_release_allows_a_second_press_including_large_timestamps() {
     let mut button = DebouncedButton::new();
@@ -93,6 +99,7 @@ fn normal_release_allows_a_second_press_including_large_timestamps() {
     }
 }
 
+/// Stable release appears only after the final bounce interval and cannot be fabricated by a backward clock.
 #[test]
 fn stable_release_survives_bounce_and_never_completes_a_phantom_short_press() {
     let mut button = DebouncedButton::new();
@@ -133,6 +140,8 @@ fn stable_release_survives_bounce_and_never_completes_a_phantom_short_press() {
     assert_eq!(held_at_boot.stable_pressed(), Some(false));
 }
 
+/// Deferred gestures distinguish short release, one-shot hold, late held release and short sampled release after a
+/// stall.
 #[test]
 fn deferred_buttons_separate_short_release_long_hold_and_a_late_held_release() {
     use dashboard_host_validation::input_model::{ButtonEdges, DeferredButton};
@@ -206,6 +215,7 @@ fn deferred_buttons_separate_short_release_long_hold_and_a_late_held_release() {
     assert_eq!(boot.update(false, 4050), ButtonEdges::default());
 }
 
+/// Concurrent producer/consumer accounting conserves all 100000 published observations as consumed or dropped.
 #[test]
 fn concurrent_input_is_consumed_or_counted_as_dropped_without_wrap() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,6 +243,8 @@ fn concurrent_input_is_consumed_or_counted_as_dropped_without_wrap() {
     assert_eq!(consumed + u64::from(events.dropped()), 100_000);
 }
 
+/// Values and oldest observations drain atomically; stale publication is rejected and cancelling deltas retain event
+/// counts.
 #[test]
 fn encoder_values_and_software_observations_are_consumed_coherently() {
     use dashboard_host_validation::input_trace::Observation;

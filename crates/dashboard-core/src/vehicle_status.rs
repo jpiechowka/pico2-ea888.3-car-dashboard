@@ -3,23 +3,38 @@ use crate::acquisition::DashboardSnapshot;
 use crate::diagnostics::service::{LinkSnapshot, LinkState};
 use crate::samples::{DataMode, Quality, SensorId};
 
+/// Header status distinguishing synthetic data, link progress and qualified current samples.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VehicleStatus {
+    /// Explicit synthetic acquisition mode; header label is empty.
     Demo,
+    /// Vehicle transport disabled.
     Disabled,
+    /// Enabled owner absent or link/adapter initialization ongoing.
     Starting,
+    /// Recoverable link failure is backing off/retrying.
     Retrying,
+    /// Legacy byte framing exists, but missing CAN metadata remains unqualified.
     Raw,
+    /// Qualified polling is active without a currently valid or stale measurement.
     Waiting,
+    /// At least one source-qualified fresh value exists; not a vehicle-health certification.
     Data,
+    /// No fresh value exists and at least one channel explicitly reports Stale.
     Stale,
+    /// Terminal owner/link fault requiring explicit reset/recovery.
     ResetRequired,
+    /// Acquisition link is parked or draining for maintenance.
     Maintenance,
+    /// BLE adapter identified; ECU request path remains disabled.
     AdapterOnly,
+    /// Explicit synthetic BLE test peer, never vehicle acquisition.
     SyntheticPeer,
+    /// BLE security establishment is in progress.
     Pairing,
 }
 impl VehicleStatus {
+    /// Returns compact fixed ASCII header text; Demo intentionally returns empty text.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Demo => "",
@@ -39,6 +54,7 @@ impl VehicleStatus {
     }
 
     /// A connected prototype adapter has no qualified vehicle acquisition path.
+    /// Returns status for BLE `state`; AdapterReady/SyntheticReady never map to Data or Demo.
     pub const fn from_ble(state: crate::ble::link::LinkState) -> Self {
         use crate::ble::link::LinkState as Ble;
         match state {
@@ -53,6 +69,10 @@ impl VehicleStatus {
         }
     }
 
+    /// Returns status from transport `enabled`, optional `link`, canonical `samples`
+    /// and monotonic `now` milliseconds. Demo wins first, then disabled/missing link;
+    /// only Polling inspects samples, preferring any fresh source-qualified value over
+    /// explicit stale quality, otherwise Waiting. Other link phases override sample history.
     pub fn derive(
         enabled: bool,
         link: Option<LinkSnapshot>,

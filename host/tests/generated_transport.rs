@@ -1,9 +1,11 @@
 //! Bounded synthetic transport sequences; no vehicle or adapter I/O.
+/// Shared panic-only reproducible case context.
 #[path = "../../test-support/generated.rs"]
 mod generated;
 use dashboard_core::diagnostics::CanFrame;
 use dashboard_core::diagnostics::isotp::{IsoError, IsoTpRx, RxEvent};
 
+/// Returns a classic CAN fixture for 11-bit `id` and at most eight payload `bytes`; invalid inputs panic.
 fn frame(
     id: u16,
     bytes: &[u8],
@@ -11,6 +13,7 @@ fn frame(
     CanFrame::new(id, bytes).unwrap()
 }
 
+/// Every 1..=256-byte payload survives foreign traffic, flow-control boundaries, sequence wrap and padding.
 #[test]
 fn every_payload_length_survives_foreign_traffic_and_sequence_wrap() {
     // Mutation targets: accepting another responder/epoch, stale bytes after
@@ -65,6 +68,7 @@ fn every_payload_length_survives_foreign_traffic_and_sequence_wrap() {
     }
 }
 
+/// Sequence/length/timeout/flow-control faults at every segment discard partial state and allow a fresh epoch.
 #[test]
 fn every_segment_failure_discards_partial_data_and_allows_a_fresh_transaction() {
     // Interruption at every CF, including wrapped sequence and FC boundaries.

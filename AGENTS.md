@@ -80,6 +80,14 @@ Keep the existing `pico2` package, path and command identifiers compatible. Use 
   control logic. Keep hardware I/O and browser/native adapters at the boundaries.
 - Extract common helpers instead of duplicating rules. Keep modules cohesive and
   comments short, explaining ownership, units, timing or non-obvious constraints.
+- Update Rust documentation comments in the same change as the code they describe,
+  including private items, fields, variants, constants, build scripts and tests.
+  Document each named input and returned value with units, bounds and unavailable
+  states; explain relevant errors, partial effects, panics, unsafe preconditions,
+  cancellation and ownership. Keep prose concise, verify claims against callers
+  and locked dependencies, and link primary specifications where useful. Check
+  source coverage plus rendered rustdoc/links in affected feature/target contexts;
+  neither documentation presence nor a successful render proves semantic accuracy.
 - Application code is Rust; generated Wasm browser glue is allowed. Do not add a
   second handwritten JavaScript implementation of application behavior.
 - Preserve features during refactoring and optimization. Version bounded formats

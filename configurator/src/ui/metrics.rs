@@ -9,36 +9,57 @@ use wasm_bindgen::closure::Closure;
 use super::*;
 
 #[derive(Default, Serialize)]
+/// Browser-only local trace export, with operation summaries and bounded interaction evidence.
 pub struct Trace {
+    /// Most recent startup/file operation observations, outside interaction-run resets.
     operations: Operations,
+    /// Whether this browser successfully installed the long-task observer.
     long_tasks_supported: bool,
+    /// Capability-owned interaction recording; serialized fields are flattened.
     #[serde(flatten)]
     capture: TraceCapture,
 }
 
 #[derive(Clone, Default, Serialize)]
+/// Small fixed set of local operation timings; repeated operations replace prior values.
 struct Operations {
+    /// First successful preview's later browser animation opportunity, if observed.
     startup: Option<Startup>,
+    /// Last successful imported file timing, if any.
     last_import: Option<FileTiming>,
+    /// Last JSON export timing, if any.
     export_json: Option<FileTiming>,
+    /// Last non-JSON export timing, including complete projects, if any.
     export_binary: Option<FileTiming>,
 }
 
 #[derive(Clone, Serialize)]
+/// One first-preview opportunity observation, not a physical display completion.
 struct Startup {
+    /// Browser performance time at the later animation callback, in milliseconds.
     navigation_to_preview_ms: f64,
+    /// Nonnegative elapsed milliseconds from Studio mount to that callback.
     mount_to_preview_ms: f64,
+    /// Accepted widget count captured before scheduling the callback.
     widgets: usize,
+    /// Accepted view count captured before scheduling the callback.
     views: usize,
 }
 
 #[derive(Clone, Serialize)]
+/// File operation's local browser duration and encoded byte count.
 struct FileTiming {
+    /// Stable format tag: `eavp`, `json` or `eav`.
     format: &'static str,
+    /// Encoded file byte count reported by the import/export caller.
     bytes: usize,
+    /// Nonnegative browser milliseconds elapsed since the caller's start observation.
     elapsed_ms: f64,
 }
 
+/// Schedule first-preview opportunity evidence for `ui` only while absent.
+/// The later callback publishes at most once and tolerates disposed trace signals;
+/// scheduling does not prove browser presentation or hardware scanout.
 pub fn first_frame(ui: Ui) {
     if ui.trace.with_untracked(|t| t.operations.startup.is_some()) {
         return;
@@ -61,6 +82,10 @@ pub fn first_frame(ui: Ui) {
     });
 }
 
+/// Retain the latest operation timing in `ui`: `import` selects the import slot,
+/// otherwise `format` selects JSON versus binary/project export. `bytes` is encoded
+/// length and `started` is browser performance milliseconds. Clamps negative elapsed
+/// time to zero; requires live signals and performs no file operation itself.
 pub fn file_operation(
     ui: Ui,
     import: bool,
@@ -88,6 +113,8 @@ pub fn file_operation(
     });
 }
 
+/// Returns a trace permit for browser `input` milliseconds in `ui`, or `None` when
+/// run admission rejects it. Callers must finish/abandon returned permits exactly once.
 pub fn begin(
     ui: Ui,
     input: f64,
@@ -103,11 +130,14 @@ pub fn begin(
 /// Explicit scheduling failure abandons immediately; dropping a canceled
 /// callback also abandons. Disposal uses fallible signal access.
 struct PendingTrace {
+    /// Owning Studio signal handles, accessed fallibly after asynchronous disposal.
     ui: Ui,
+    /// Sole unconsumed permit; taking it prevents duplicate completion/abandonment.
     permit: Option<TracePermit>,
 }
 
 impl PendingTrace {
+    /// Take and abandon the permit if its trace still exists; stale/disposed state is ignored.
     fn abandon(&mut self) {
         if let Some(mut permit) = self.permit.take() {
             let _ = self.ui.trace.try_update(|t| {
@@ -118,12 +148,17 @@ impl PendingTrace {
 }
 
 impl Drop for PendingTrace {
+    /// Release outstanding trace accounting when the last callback owner is dropped.
     fn drop(&mut self) { self.abandon(); }
 }
 
 /// Schedule the existing presentation-opportunity callback once. Leptos's
 /// no-handle helper discards errors and frees uncanceled callback captures only
 /// when invoked/GC'd, so keep an explicit error-side reference to the permit.
+/// `input`/`canvas` are browser timestamps, `render` is elapsed milliseconds,
+/// `dimensions` is `(widget_count, view_count)`, and `warnings` marks synthetic
+/// warning preview. `None` `permit` is a no-op. Scheduling failure abandons the
+/// permit and reports through `ui`; completion consumes it even if timing is invalid.
 pub fn schedule_record(
     ui: Ui,
     permit: Option<TracePermit>,
@@ -168,6 +203,9 @@ pub fn schedule_record(
     }
 }
 
+/// Offer observer `entries` to `ui`'s current trace as start/duration milliseconds.
+/// Entries originate from a PerformanceObserver; disposed state and run/bounds
+/// rejections are ignored, with capacity losses counted by the capture itself.
 fn record_tasks(
     ui: Ui,
     entries: js_sys::Array,
@@ -180,12 +218,16 @@ fn record_tasks(
     });
 }
 
+/// Drain any pending long-task observer records into the active trace owned by `ui`.
 fn drain(ui: Ui) {
     if let Some(observer) = ui.observer.get_untracked() {
         record_tasks(ui, observer.take_records());
     }
 }
 
+/// Install a long-task observer for `ui` only when the browser advertises support.
+/// Retains callback ownership until Leptos cleanup, which disconnects and disposes
+/// it. Unsupported/constructor failure leaves observation unavailable, not zero.
 pub fn install(ui: Ui) {
     let observer_type = js_sys::Reflect::get(&js_sys::global(), &"PerformanceObserver".into()).ok();
     let supported = observer_type
@@ -214,6 +256,8 @@ pub fn install(ui: Ui) {
     });
 }
 
+/// Returns count, nearest-rank p95 and maximum input-to-opportunity milliseconds
+/// from `trace`, plus long-task availability. Empty traces return a no-data label.
 fn summary(trace: &Trace) -> String {
     if trace.capture.samples().is_empty() {
         return "No recorded interactions".into();
@@ -241,7 +285,12 @@ fn summary(trace: &Trace) -> String {
 }
 
 #[component]
-pub fn Measurements(ui: Ui) -> impl IntoView {
+/// Returns local trace start/stop/export controls for `ui`; export waits for stopped
+/// collection, consumed permits and no pending input. No telemetry is transmitted.
+pub fn Measurements(
+    /// Live Studio owner of browser trace, observer and download state.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <details class="measurements"><summary>"Browser performance trace"</summary>
             <p class="hint">"Warm the preview, then record edits. Measures handler entry to the next browser frame opportunity after canvas submission and CPU work. Up to 512 inputs and 512 long tasks, kept locally."</p>

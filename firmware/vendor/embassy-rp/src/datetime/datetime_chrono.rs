@@ -1,3 +1,4 @@
+//! Chrono-backed calendar aliases and RP235x millisecond epoch adapters.
 /// Alias for [`chrono::NaiveDateTime`]
 pub type DateTime = chrono::NaiveDateTime;
 /// Alias for [`chrono::Weekday`]
@@ -22,16 +23,16 @@ pub enum Error {
 /// Convert to Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
 ///
 /// # Errors
-/// Returns an error for years outside 1970..=4095.
+/// Returns milliseconds for `dt` interpreted as UTC in 1970..=4095; earlier years return
+/// OutOfRange and later years InvalidYear. Chrono subsecond milliseconds are retained.
 #[cfg(feature = "_rp235x")]
-pub fn timestamp_millis(dt: &DateTime) -> Result<u64, Error> {
-    crate::datetime::epoch::datetime_to_millis(dt)
-}
+pub fn timestamp_millis(dt: &DateTime) -> Result<u64, Error> { crate::datetime::epoch::datetime_to_millis(dt) }
 
 /// Create from Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
 ///
 /// # Errors
-/// Returns error if timestamp cannot be represented as valid DateTime.
+/// Returns the UTC calendar corresponding to `millis`; preserves millisecond precision.
+/// Narrowing/chrono conversion failures return InvalidTimestamp; year>4095 returns InvalidYear.
 #[cfg(feature = "_rp235x")]
 pub fn from_timestamp_millis(millis: u64) -> Result<DateTime, Error> {
     crate::datetime::epoch::millis_to_datetime(millis)

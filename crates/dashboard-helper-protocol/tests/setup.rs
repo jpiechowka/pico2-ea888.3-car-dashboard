@@ -1,5 +1,7 @@
+//! Pure setup transcript/ledger tests; fixtures do not create processes, pipes or install tools.
 use dashboard_helper_protocol::setup::*;
 use dashboard_helper_protocol::*;
+/// Return the tuple from `tool`, `stage` and `command`; admission remains the tested implementation's job.
 fn step(
     tool: ToolId,
     stage: SetupStage,
@@ -7,6 +9,7 @@ fn step(
 ) -> SetupStepId {
     SetupStepId { tool, stage, command }
 }
+/// Return 1 ms fixture evidence for `step`/`state`/`failure`, without a process exit or output loss.
 fn outcome(
     step: SetupStepId,
     state: StageState,
@@ -22,6 +25,7 @@ fn outcome(
     }
 }
 #[test]
+/// A later Validate step keeps that aggregate Running while ordered Install work proceeds; double-start is inert.
 fn cold_prefix_can_validate_before_install_without_reopening_aggregate() {
     let a = step(ToolId::MsvcSdk, SetupStage::Validate, SetupCommand::HostLinkSmoke);
     let b = step(
@@ -65,6 +69,7 @@ fn cold_prefix_can_validate_before_install_without_reopening_aggregate() {
     assert_eq!(l.projection()[4].state, StageState::Succeeded);
 }
 #[test]
+/// Stop retains active work until terminal completion, blocks new starts and marks pending skips with the cause.
 fn stop_retains_active_until_boundary_and_skips_with_truthful_cause() {
     let steps = setup_steps();
     assert_eq!(steps.len(), 82);
@@ -92,7 +97,9 @@ fn stop_retains_active_until_boundary_and_skips_with_truthful_cause() {
     assert_eq!(l.projection()[0].state, StageState::Cancelled);
     assert_eq!(l.projection()[1].failure, Some(SetupFailure::Cancelled));
 }
+/// Return an all-f grammar-valid digest, not a hash of real tool bytes.
 fn hash() -> Sha256 { Sha256::new("f".repeat(64)).unwrap() }
+/// Return widest fixed digest bindings for private codec/transcript tests.
 fn context() -> SetupInputContext {
     SetupInputContext {
         workspace_sha256: hash(),
@@ -107,6 +114,7 @@ fn context() -> SetupInputContext {
         options_sha256: hash(),
     }
 }
+/// Return maximal integer process/file identifiers without claiming any real operating-system process.
 fn peer() -> SetupPeerIdentity {
     SetupPeerIdentity {
         pid: u32::MAX,
@@ -116,6 +124,7 @@ fn peer() -> SetupPeerIdentity {
         image_file_id: FileId128::new("f".repeat(32)).unwrap(),
     }
 }
+/// Return a cold continuation envelope for slot0 with a deterministic private test nonce.
 fn envelope() -> SetupLeaseEnvelope {
     SetupLeaseEnvelope {
         schema_version: 1,
@@ -129,6 +138,7 @@ fn envelope() -> SetupLeaseEnvelope {
         nonce: Nonce::new(&"e".repeat(64)).unwrap(),
     }
 }
+/// Return a slot0 frame with sequence `n` and typed `body`, bound to the fixture attempt/context.
 fn frame(
     n: u16,
     body: SetupLeaseMessage,
@@ -142,6 +152,7 @@ fn frame(
         body,
     }
 }
+/// Return a cold plan assigning ordered `steps` to Peer0; panic if fixture tuples are invalid or duplicated.
 fn assigned(steps: &[SetupStepId]) -> SetupPlan {
     SetupPlan::new(
         steps
@@ -158,6 +169,7 @@ fn assigned(steps: &[SetupStepId]) -> SetupPlan {
     .unwrap()
 }
 #[test]
+/// A completed peer command blocks all new ledger work until its exact receipt is acknowledged.
 fn private_peer_requires_receipt_before_any_next_command() {
     let steps = setup_steps();
     let mut ledger = SetupLedger::new(assigned(&steps[..2]));
@@ -208,6 +220,8 @@ fn private_peer_requires_receipt_before_any_next_command() {
     assert!(ledger.start_next(SetupExecutor::Peer0, steps[1]).is_ok());
 }
 #[test]
+/// A full 82-step success transcript, wide result and cleanup-failure result fit actual serializer limits.
+/// Output loss remains explicit even with successful commands; no OS cleanup behavior is simulated here.
 fn private_serialized_maxima_and_full_82_step_transcript_fit_caps() {
     let steps = setup_steps();
     assert_eq!(steps.len(), 82);
@@ -355,6 +369,7 @@ fn private_serialized_maxima_and_full_82_step_transcript_fit_caps() {
     );
 }
 #[test]
+/// Every control variant and admitted tuple fits framing; conservative whole-transcript bounds cover them.
 fn all_private_control_variants_and_step_tuples_fit_real_serializer() {
     let nonce = Nonce::new(&"a".repeat(64)).unwrap();
     let mut max = 0;
@@ -415,6 +430,7 @@ fn all_private_control_variants_and_step_tuples_fit_real_serializer() {
     );
 }
 #[test]
+/// Native delegation binds the prepared image, distinct nonce, inherited context/action and nonreusable slot.
 fn native_second_peer_binds_prepared_image_nonce_context_and_action() {
     let steps = setup_steps();
     let plan = SetupPlan::new(
@@ -494,7 +510,8 @@ fn native_second_peer_binds_prepared_image_nonce_context_and_action() {
     assert!(peers.register(child, peer(), 7).is_err());
 }
 #[test]
-fn invalid_nonce_replay_context_or_late_ack_retires_peer_without_success() {
+/// Wrong nonce or a 15001 ms handshake retires the peer; repeated/out-of-range slots and oversized prefixes fail.
+fn invalid_nonce_or_late_handshake_retires_peer_without_success() {
     for late in [false, true] {
         let steps = setup_steps();
         let mut ledger = SetupLedger::new(assigned(&steps[..1]));
@@ -530,6 +547,7 @@ fn invalid_nonce_replay_context_or_late_ack_retires_peer_without_success() {
 }
 
 #[test]
+/// Abnormal Close stops pending work before acknowledgement while preserving prior successful/active evidence.
 fn abnormal_close_immediately_stops_pending_work_and_preserves_prior_facts() {
     for (disposition, failure) in [
         (SetupCloseDisposition::Failed, SetupFailure::CommandFailed),
@@ -617,4 +635,66 @@ fn abnormal_close_immediately_stops_pending_work_and_preserves_prior_facts() {
             assert!(ledger.start_next(SetupExecutor::Peer0, steps[1]).is_err());
         }
     }
+}
+
+/// Exact handshake deadline is accepted; replay, changed context, wrong direction and backward time retire it.
+#[test]
+fn transcript_identity_direction_and_time_fail_closed_without_publishing_candidate() {
+    for fault in 0..4 {
+        let steps = setup_steps();
+        let mut ledger = SetupLedger::new(assigned(&steps[..1]));
+        let envelope = envelope();
+        let nonce = envelope.nonce.clone();
+        let mut lease = SetupLeasePeer::new(envelope, peer(), 0).unwrap();
+        let hello = frame(
+            1,
+            SetupLeaseMessage::Hello {
+                nonce: nonce.clone(),
+                peer: peer(),
+            },
+        );
+        lease
+            .accept(SetupDirection::PeerToOwner, &hello, 15000, &mut ledger)
+            .unwrap();
+        let accepted_counts = lease.counts();
+        let mut next = frame(2, SetupLeaseMessage::HelloAck { nonce });
+        let mut direction = SetupDirection::OwnerToPeer;
+        let mut now = 15000;
+        match fault {
+            0 => next = hello,
+            1 => next.context_sha256 = Sha256::new("a".repeat(64)).unwrap(),
+            2 => direction = SetupDirection::PeerToOwner,
+            _ => now -= 1,
+        }
+        assert!(lease.accept(direction, &next, now, &mut ledger).is_err());
+        assert!(lease.closed());
+        assert_eq!(
+            lease.counts(),
+            accepted_counts,
+            "rejected record must not advance accounting"
+        );
+        assert_eq!(ledger.stop_cause(), Some(SetupFailure::InvalidState));
+        assert_eq!(ledger.active(), None);
+        assert_eq!(ledger.outcomes()[0].state, StageState::Skipped);
+        assert!(ledger.start_next(SetupExecutor::Peer0, steps[0]).is_err());
+    }
+}
+
+/// Every truncated prefix and trailing byte fails private framing before a value can escape admission.
+#[test]
+fn private_framing_rejects_truncation_and_trailing_bytes() {
+    let valid = encode_private(&envelope()).unwrap();
+    assert!(decode_private::<SetupLeaseEnvelope>(&valid).is_ok());
+    for len in 0..valid.len() {
+        assert!(
+            decode_private::<SetupLeaseEnvelope>(&valid[..len]).is_err(),
+            "prefix={len}"
+        );
+    }
+    let mut trailing = valid.clone();
+    trailing.push(b' ');
+    assert!(decode_private::<SetupLeaseEnvelope>(&trailing).is_err());
+    let mut mismatched = valid;
+    mismatched[..4].copy_from_slice(&0u32.to_le_bytes());
+    assert!(decode_private::<SetupLeaseEnvelope>(&mismatched).is_err());
 }

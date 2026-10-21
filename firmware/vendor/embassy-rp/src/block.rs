@@ -3,8 +3,9 @@
 //! Blocks contain pointers, to form Block Loops.
 //!
 //! The `IMAGE_DEF` Block (here the `ImageDef` type) tells the ROM how to boot a
-//! firmware image. The `PARTITION_TABLE` Block (here the `PartitionTable` type)
+//! firmware image. The `PARTITION_TABLE` Block (here the [`PartitionTableBlock`] type)
 //! tells the ROM how to divide the flash space up into partitions.
+//! Format constants: <https://github.com/raspberrypi/pico-sdk/blob/master/src/common/boot_picobin_headers/include/boot/picobin.h>.
 
 // Credit: Taken from https://github.com/thejpster/rp-hal-rp2350-public (also licensed Apache 2.0 + MIT).
 // Copyright (c) rp-rs organization
@@ -21,7 +22,7 @@ pub const ITEM_1BS_ROLLING_WINDOW_DELTA: u8 = 0x05;
 pub const ITEM_1BS_SIGNATURE: u8 = 0x09;
 
 /// An item ID for encoding a Salt
-pub const ITEM_1BS_SALT: u8 = 0x0c;
+pub const ITEM_1BS_SALT: u8 = 0x0C;
 
 /// An item ID for encoding an Image Type
 pub const ITEM_1BS_IMAGE_TYPE: u8 = 0x42;
@@ -36,7 +37,7 @@ pub const ITEM_2BS_HASH_DEF: u8 = 0x47;
 pub const ITEM_1BS_VERSION: u8 = 0x48;
 
 /// An item ID for encoding a Hash
-pub const ITEM_1BS_HASH_VALUE: u8 = 0x4b;
+pub const ITEM_1BS_HASH_VALUE: u8 = 0x4B;
 
 // These all have a 2-byte size
 
@@ -44,17 +45,17 @@ pub const ITEM_1BS_HASH_VALUE: u8 = 0x4b;
 pub const ITEM_2BS_LOAD_MAP: u8 = 0x06;
 
 /// An item ID for encoding a Partition Table
-pub const ITEM_2BS_PARTITION_TABLE: u8 = 0x0a;
+pub const ITEM_2BS_PARTITION_TABLE: u8 = 0x0A;
 
 /// An item ID for encoding a placeholder entry that is ignored
 ///
 /// Allows a Block to not be empty.
-pub const ITEM_2BS_IGNORED: u8 = 0xfe;
+pub const ITEM_2BS_IGNORED: u8 = 0xFE;
 
 /// An item ID for encoding the special last item in a Block
 ///
 /// It records how long the Block is.
-pub const ITEM_2BS_LAST: u8 = 0xff;
+pub const ITEM_2BS_LAST: u8 = 0xFF;
 
 // Options for ITEM_1BS_IMAGE_TYPE
 
@@ -98,12 +99,12 @@ pub const IMAGE_TYPE_TBYB: u16 = 0x8000;
 /// This is the magic Block Start value.
 ///
 /// The Pico-SDK calls it `PICOBIN_BLOCK_MARKER_START`
-const BLOCK_MARKER_START: u32 = 0xffffded3;
+const BLOCK_MARKER_START: u32 = 0xFFFFDED3;
 
 /// This is the magic Block END value.
 ///
 /// The Pico-SDK calls it `PICOBIN_BLOCK_MARKER_END`
-const BLOCK_MARKER_END: u32 = 0xab123579;
+const BLOCK_MARKER_END: u32 = 0xAB123579;
 
 /// An Image Definition has one item in it - an [`ITEM_1BS_IMAGE_TYPE`]
 pub type ImageDef = Block<1>;
@@ -118,17 +119,23 @@ pub type ImageDef = Block<1>;
 #[derive(Debug)]
 #[repr(C)]
 pub struct Block<const N: usize> {
+    /// ROM start sentinel; first word in the C-layout block.
     marker_start: u32,
+    /// Encoded item words; callers are responsible for internal lengths and valid combinations.
     items: [u32; N],
+    /// LAST item encoding the item-word count (excluding markers/link).
     length: u32,
+    /// Encoded relative byte offset to the next block, stored as pointer-sized bits; zero closes a self-loop.
     offset: *const u32,
+    /// ROM end sentinel following the loop offset.
     marker_end: u32,
 }
 
 unsafe impl<const N: usize> Sync for Block<N> {}
 
 impl<const N: usize> Block<N> {
-    /// Construct a new Binary Block, with the given items.
+    /// Returns a block containing encoded `items`, with markers, LAST and a self-loop.
+    /// `N` is narrowed to u16 without validation; valid ROM blocks must fit that count.
     ///
     /// The length, and the Start and End markers are added automatically. The
     /// Block Loop pointer initially points to itself.
@@ -144,7 +151,8 @@ impl<const N: usize> Block<N> {
         }
     }
 
-    /// Change the Block Loop offset value.
+    /// Returns this block with `offset` stored as relative byte-offset bits, without dereferencing.
+    /// No alignment/range/loop validation is performed.
     ///
     /// This method isn't that useful because you can't evaluate the difference
     /// between two pointers in a const context as the addresses aren't assigned
@@ -152,45 +160,58 @@ impl<const N: usize> Block<N> {
     ///
     /// If you think you need this method, you might want to set a unique random
     /// value here and swap it for the real offset as a post-processing step.
-    pub const fn with_offset(self, offset: *const u32) -> Block<N> {
+    pub const fn with_offset(
+        self,
+        offset: *const u32,
+    ) -> Block<N> {
         Block { offset, ..self }
     }
 }
 
 impl Block<0> {
-    /// Construct an empty block.
-    pub const fn empty() -> Block<0> {
-        Block::new([])
-    }
+    /// Returns a self-linked block with no item words.
+    pub const fn empty() -> Block<0> { Block::new([]) }
 
-    /// Make the block one word larger
-    pub const fn extend(self, word: u32) -> Block<1> {
+    /// Returns a block with `word` appended, regenerating the footer and resetting any custom loop offset.
+    pub const fn extend(
+        self,
+        word: u32,
+    ) -> Block<1> {
         Block::new([word])
     }
 }
 
 impl Block<1> {
-    /// Make the block one word larger
-    pub const fn extend(self, word: u32) -> Block<2> {
+    /// Returns a block with `word` appended, regenerating the footer and resetting any custom loop offset.
+    pub const fn extend(
+        self,
+        word: u32,
+    ) -> Block<2> {
         Block::new([self.items[0], word])
     }
 }
 
 impl Block<2> {
-    /// Make the block one word larger
-    pub const fn extend(self, word: u32) -> Block<3> {
+    /// Returns a block with `word` appended, regenerating the footer and resetting any custom loop offset.
+    pub const fn extend(
+        self,
+        word: u32,
+    ) -> Block<3> {
         Block::new([self.items[0], self.items[1], word])
     }
 }
 
 impl ImageDef {
-    /// Construct a new IMAGE_DEF Block, for an EXE with the given security and
-    /// architecture.
-    pub const fn arch_exe(security: Security, architecture: Architecture) -> Self {
+    /// Returns an RP2350 executable IMAGE_DEF for `security` and `architecture`.
+    /// This metadata alone does not authenticate an image or validate its entry point.
+    pub const fn arch_exe(
+        security: Security,
+        architecture: Architecture,
+    ) -> Self {
         Self::new([item_image_type_exe(security, architecture)])
     }
 
-    /// Construct a new IMAGE_DEF Block, for an EXE with the given security.
+    /// Returns an executable IMAGE_DEF using `security` and the current target architecture.
     ///
     /// The target architecture is taken from the current build target (i.e. Arm
     /// or RISC-V).
@@ -202,35 +223,33 @@ impl ImageDef {
         }
     }
 
-    /// Construct a new IMAGE_DEF Block, for a Non-Secure EXE.
+    /// Returns an executable IMAGE_DEF requesting non-secure boot.
     ///
     /// The target architecture is taken from the current build target (i.e. Arm
     /// or RISC-V).
-    pub const fn non_secure_exe() -> Self {
-        Self::exe(Security::NonSecure)
-    }
+    pub const fn non_secure_exe() -> Self { Self::exe(Security::NonSecure) }
 
-    /// Construct a new IMAGE_DEF Block, for a Secure EXE.
+    /// Returns an executable IMAGE_DEF requesting secure boot.
     ///
     /// The target architecture is taken from the current build target (i.e. Arm
     /// or RISC-V).
-    pub const fn secure_exe() -> Self {
-        Self::exe(Security::Secure)
-    }
+    pub const fn secure_exe() -> Self { Self::exe(Security::Secure) }
 }
 
-/// We make our partition table this fixed size.
+/// Total builder capacity in u32 words, including the header and three-word footer.
 pub const PARTITION_TABLE_MAX_ITEMS: usize = 128;
 
 /// Describes a unpartitioned space
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UnpartitionedSpace {
+    /// Permissions in bits 26..31 plus two 13-bit inclusive 4 KiB sector indices.
     permissions_and_location: u32,
+    /// ROM permission/family/link/presence flags; raw constructors do not validate consistency.
     permissions_and_flags: u32,
 }
 
 impl UnpartitionedSpace {
-    /// Create a new unpartitioned space.
+    /// Returns zeroed metadata with no permissions or family acceptance.
     ///
     /// It defaults to no permissions.
     pub const fn new() -> Self {
@@ -240,33 +259,43 @@ impl UnpartitionedSpace {
         }
     }
 
-    /// Create a new unpartitioned space from run-time values.
+    /// Returns raw metadata from `permissions_and_location` and `permissions_and_flags`.
+    /// No reserved-bit or sector-order validation is performed.
     ///
     /// Get these from the ROM function `get_partition_table_info` with an argument of `PT_INFO`.
-    pub const fn from_raw(permissions_and_location: u32, permissions_and_flags: u32) -> Self {
+    pub const fn from_raw(
+        permissions_and_location: u32,
+        permissions_and_flags: u32,
+    ) -> Self {
         Self {
             permissions_and_location,
             permissions_and_flags,
         }
     }
 
-    /// Add a permission
-    pub const fn with_permission(self, permission: Permission) -> Self {
+    /// Returns a copy with `permission` ORed into both ROM permission words.
+    pub const fn with_permission(
+        self,
+        permission: Permission,
+    ) -> Self {
         Self {
             permissions_and_flags: self.permissions_and_flags | permission as u32,
             permissions_and_location: self.permissions_and_location | permission as u32,
         }
     }
 
-    /// Set a flag
-    pub const fn with_flag(self, flag: UnpartitionedFlag) -> Self {
+    /// Returns a copy with `flag` ORed into the flags word, preserving other fields.
+    pub const fn with_flag(
+        self,
+        flag: UnpartitionedFlag,
+    ) -> Self {
         Self {
             permissions_and_flags: self.permissions_and_flags | flag as u32,
             ..self
         }
     }
 
-    /// Get the partition start and end
+    /// Returns the encoded inclusive first and last offsets, without order validation.
     ///
     /// The offsets are in 4 KiB sectors, inclusive.
     pub fn get_first_last_sectors(&self) -> (u16, u16) {
@@ -276,7 +305,7 @@ impl UnpartitionedSpace {
         )
     }
 
-    /// Get the partition start and end
+    /// Returns the encoded inclusive first and last offsets, without order validation.
     ///
     /// The offsets are in bytes, inclusive.
     pub fn get_first_last_bytes(&self) -> (u32, u32) {
@@ -284,21 +313,32 @@ impl UnpartitionedSpace {
         (u32::from(first) * 4096, (u32::from(last) * 4096) + 4095)
     }
 
-    /// Check if it has a permission
-    pub fn has_permission(&self, permission: Permission) -> bool {
+    /// Returns whether `permission` is set in the flags word.
+    pub fn has_permission(
+        &self,
+        permission: Permission,
+    ) -> bool {
         let mask = permission as u32;
         (self.permissions_and_flags & mask) != 0
     }
 
-    /// Check if the partition has a flag set
-    pub fn has_flag(&self, flag: UnpartitionedFlag) -> bool {
+    /// Returns whether `flag` is set in the flags word.
+    pub fn has_flag(
+        &self,
+        flag: UnpartitionedFlag,
+    ) -> bool {
         let mask = flag as u32;
         (self.permissions_and_flags & mask) != 0
     }
 }
 
 impl core::fmt::Display for UnpartitionedSpace {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    /// Writes inclusive byte range and S/NS/boot read/write permissions to `f`;
+    /// returns any formatter error, possibly after partial output.
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         let (first, last) = self.get_first_last_bytes();
         write!(
             f,
@@ -342,27 +382,44 @@ impl core::fmt::Display for UnpartitionedSpace {
 /// Describes a Partition
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partition {
+    /// Permissions in bits 26..31 plus two 13-bit inclusive 4 KiB sector indices.
     permissions_and_location: u32,
+    /// ROM permission/family/link/presence flags; raw constructors do not validate consistency.
     permissions_and_flags: u32,
+    /// Optional 64-bit UF2 partition identity; None omits the ID payload.
     id: Option<u64>,
+    /// Storage for extra UF2 family IDs; only the active prefix is serialized.
     extra_families: [u32; 4],
+    /// Active family count, at most three through checked builders.
     extra_families_len: usize,
+    /// Length-prefixed UTF-8 bytes followed by zero padding; byte zero is length.
     name: [u8; 128],
 }
 
 impl Partition {
-    const FLAGS_HAS_ID: u32 = 0b1;
-    const FLAGS_LINK_TYPE_A_PARTITION: u32 = 0b01 << 1;
-    const FLAGS_LINK_TYPE_OWNER: u32 = 0b10 << 1;
-    const FLAGS_LINK_MASK: u32 = 0b111111 << 1;
-    const FLAGS_HAS_NAME: u32 = 0b1 << 12;
-    const FLAGS_HAS_EXTRA_FAMILIES_SHIFT: u8 = 7;
+    /// Mask selecting the two-bit additional-family count.
     const FLAGS_HAS_EXTRA_FAMILIES_MASK: u32 = 0b11 << Self::FLAGS_HAS_EXTRA_FAMILIES_SHIFT;
+    /// Bit offset of the two-bit additional-family count.
+    const FLAGS_HAS_EXTRA_FAMILIES_SHIFT: u8 = 7;
+    /// Presence bit for the optional two-word partition ID.
+    const FLAGS_HAS_ID: u32 = 0b1;
+    /// Presence bit for length-prefixed, word-padded UTF-8 name.
+    const FLAGS_HAS_NAME: u32 = 0b1 << 12;
+    /// Combined link discriminator and four-bit partition index.
+    const FLAGS_LINK_MASK: u32 = 0b111111 << 1;
+    /// Link discriminator for a B partition referring to its A partition.
+    const FLAGS_LINK_TYPE_A_PARTITION: u32 = 0b01 << 1;
+    /// Link discriminator for a partition referring to its owner.
+    const FLAGS_LINK_TYPE_OWNER: u32 = 0b10 << 1;
 
-    /// Create a new partition, with the given start and end sectors.
+    /// Returns a no-permission partition spanning inclusive `first_sector` through
+    /// `last_sector`, in 4 KiB units. Panics unless first <= last and both are <8192.
     ///
     /// It defaults to no permissions.
-    pub const fn new(first_sector: u16, last_sector: u16) -> Self {
+    pub const fn new(
+        first_sector: u16,
+        last_sector: u16,
+    ) -> Self {
         // 0x2000 sectors of 4 KiB is 32 MiB, which is the total XIP area
         core::assert!(first_sector < 0x2000);
         core::assert!(last_sector < 0x2000);
@@ -377,10 +434,15 @@ impl Partition {
         }
     }
 
-    /// Create a new partition from run-time values.
+    /// Returns raw metadata from `permissions_and_location` and `permissions_and_flags`.
+    /// Optional ID/family/name payloads are not loaded; this is not a complete
+    /// serialization round trip when those presence bits are set.
     ///
     /// Get these from the ROM function `get_partition_table_info` with an argument of `PARTITION_LOCATION_AND_FLAGS`.
-    pub const fn from_raw(permissions_and_location: u32, permissions_and_flags: u32) -> Self {
+    pub const fn from_raw(
+        permissions_and_location: u32,
+        permissions_and_flags: u32,
+    ) -> Self {
         Self {
             permissions_and_location,
             permissions_and_flags,
@@ -391,8 +453,11 @@ impl Partition {
         }
     }
 
-    /// Add a permission
-    pub const fn with_permission(self, permission: Permission) -> Self {
+    /// Returns a copy with `permission` ORed into both ROM permission words.
+    pub const fn with_permission(
+        self,
+        permission: Permission,
+    ) -> Self {
         Self {
             permissions_and_location: self.permissions_and_location | permission as u32,
             permissions_and_flags: self.permissions_and_flags | permission as u32,
@@ -400,10 +465,14 @@ impl Partition {
         }
     }
 
-    /// Set the name of the partition
+    /// Returns a copy with UTF-8 `name` encoded with length and zero padding.
+    /// Empty names are serialized as present but `get_name` returns None for them.
     ///
     /// Panics if the UTF-8 name exceeds 127 bytes.
-    pub const fn with_name(self, name: &str) -> Self {
+    pub const fn with_name(
+        self,
+        name: &str,
+    ) -> Self {
         core::assert!(name.len() <= 127);
         let mut new_name = [0u8; 128];
         let name = name.as_bytes();
@@ -420,10 +489,14 @@ impl Partition {
         }
     }
 
-    /// Set the extra families for the partition.
+    /// Returns a copy replacing extra UF2 IDs with `extra_families`, preserving other flags.
+    /// Panics above three entries; an empty slice removes the active list.
     ///
     /// You can supply up to three, as encoded by the ROM's two-bit count.
-    pub const fn with_extra_families(self, extra_families: &[u32]) -> Self {
+    pub const fn with_extra_families(
+        self,
+        extra_families: &[u32],
+    ) -> Self {
         core::assert!(extra_families.len() <= 3);
         let mut new_extra_families = [0u32; 4];
         let mut idx = 0;
@@ -440,8 +513,11 @@ impl Partition {
         }
     }
 
-    /// Set the ID
-    pub const fn with_id(self, id: u64) -> Self {
+    /// Returns a copy storing `id` and setting its presence flag.
+    pub const fn with_id(
+        self,
+        id: u64,
+    ) -> Self {
         Self {
             id: Some(id),
             permissions_and_flags: self.permissions_and_flags | Self::FLAGS_HAS_ID,
@@ -449,8 +525,12 @@ impl Partition {
         }
     }
 
-    /// Add a link
-    pub const fn with_link(self, link: Link) -> Self {
+    /// Returns a copy replacing the relationship with `link`; Nothing clears it.
+    /// Panics for linked partition indices >=16; existence/cycles are not checked.
+    pub const fn with_link(
+        self,
+        link: Link,
+    ) -> Self {
         let mut new_flags = self.permissions_and_flags & !Self::FLAGS_LINK_MASK;
         match link {
             Link::Nothing => {}
@@ -471,15 +551,18 @@ impl Partition {
         }
     }
 
-    /// Set a flag
-    pub const fn with_flag(self, flag: PartitionFlag) -> Self {
+    /// Returns a copy with `flag` ORed into the flags word, preserving other fields.
+    pub const fn with_flag(
+        self,
+        flag: PartitionFlag,
+    ) -> Self {
         Self {
             permissions_and_flags: self.permissions_and_flags | flag as u32,
             ..self
         }
     }
 
-    /// Get the partition start and end
+    /// Returns the encoded inclusive first and last offsets, without order validation.
     ///
     /// The offsets are in 4 KiB sectors, inclusive.
     pub fn get_first_last_sectors(&self) -> (u16, u16) {
@@ -489,7 +572,7 @@ impl Partition {
         )
     }
 
-    /// Get the partition start and end
+    /// Returns the encoded inclusive first and last offsets, without order validation.
     ///
     /// The offsets are in bytes, inclusive.
     pub fn get_first_last_bytes(&self) -> (u32, u32) {
@@ -497,16 +580,17 @@ impl Partition {
         (u32::from(first) * 4096, (u32::from(last) * 4096) + 4095)
     }
 
-    /// Check if it has a permission
-    pub fn has_permission(&self, permission: Permission) -> bool {
+    /// Returns whether `permission` is set in the flags word.
+    pub fn has_permission(
+        &self,
+        permission: Permission,
+    ) -> bool {
         let mask = permission as u32;
         (self.permissions_and_flags & mask) != 0
     }
 
-    /// Get which extra families are allowed in this partition
-    pub fn get_extra_families(&self) -> &[u32] {
-        &self.extra_families[0..self.extra_families_len]
-    }
+    /// Returns the active extra-family slice; empty for raw metadata constructors.
+    pub fn get_extra_families(&self) -> &[u32] { &self.extra_families[0..self.extra_families_len] }
 
     /// Get the name of the partition
     ///
@@ -520,12 +604,10 @@ impl Partition {
         }
     }
 
-    /// Get the ID
-    pub fn get_id(&self) -> Option<u64> {
-        self.id
-    }
+    /// Returns the stored ID, or None if its payload was never supplied.
+    pub fn get_id(&self) -> Option<u64> { self.id }
 
-    /// Check if this partition is linked
+    /// Returns the decoded relationship; malformed raw flags with both type bits select ToA.
     pub fn get_link(&self) -> Link {
         if (self.permissions_and_flags & Self::FLAGS_LINK_TYPE_A_PARTITION) != 0 {
             let partition_idx = ((self.permissions_and_flags >> 3) & 0x0F) as u8;
@@ -538,15 +620,23 @@ impl Partition {
         }
     }
 
-    /// Check if the partition has a flag set
-    pub fn has_flag(&self, flag: PartitionFlag) -> bool {
+    /// Returns whether `flag` is set in the flags word.
+    pub fn has_flag(
+        &self,
+        flag: PartitionFlag,
+    ) -> bool {
         let mask = flag as u32;
         (self.permissions_and_flags & mask) != 0
     }
 }
 
 impl core::fmt::Display for Partition {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    /// Writes inclusive byte range and S/NS/boot read/write permissions to `f`;
+    /// returns any formatter error, possibly after partial output.
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         let (first, last) = self.get_first_last_bytes();
         write!(
             f,
@@ -589,7 +679,8 @@ impl core::fmt::Display for Partition {
 
 /// Describes a partition table.
 ///
-/// Don't store this as a static - make sure you convert it to a block.
+/// Internal builder storage includes bookkeeping and has no stable ROM layout.
+/// Do not place this object directly in a boot section; this API exposes no export method.
 #[derive(Clone)]
 pub struct PartitionTableBlock {
     /// This must look like a block, including the 1 word header and the 3 word footer.
@@ -599,7 +690,7 @@ pub struct PartitionTableBlock {
 }
 
 impl PartitionTableBlock {
-    /// Create an empty Block, big enough for a partition table.
+    /// Returns an empty 128-word builder with valid header/footer and zero active item words.
     ///
     /// At a minimum you need to call [`Self::add_partition_item`].
     pub const fn new() -> PartitionTableBlock {
@@ -611,8 +702,14 @@ impl PartitionTableBlock {
         PartitionTableBlock { contents, num_items: 0 }
     }
 
-    /// Add a partition to the partition table
-    pub const fn add_partition_item(self, unpartitioned: UnpartitionedSpace, partitions: &[Partition]) -> Self {
+    /// Returns a copy appending `partitions` plus `unpartitioned` flags as one table item.
+    /// Panics if the 128-word storage is exceeded. Does not validate overlap,
+    /// linked indices, ROM partition-count limits or raw presence/payload consistency.
+    pub const fn add_partition_item(
+        self,
+        unpartitioned: UnpartitionedSpace,
+        partitions: &[Partition],
+    ) -> Self {
         let mut new_table = PartitionTableBlock::new();
         let mut idx = 0;
         // copy over old table, with the header but not the footer
@@ -694,8 +791,13 @@ impl PartitionTableBlock {
         new_table
     }
 
-    /// Add a version number to the partition table
-    pub const fn with_version(self, major: u16, minor: u16) -> Self {
+    /// Returns a copy appending `major` and `minor` as a two-word version item.
+    /// Panics if the complete block/footer no longer fits the 128-word storage.
+    pub const fn with_version(
+        self,
+        major: u16,
+        minor: u16,
+    ) -> Self {
         let mut new_table = PartitionTableBlock::new();
         let mut idx = 0;
         // copy over old table, with the header but not the footer
@@ -720,7 +822,9 @@ impl PartitionTableBlock {
         new_table
     }
 
-    /// Add a SHA256 hash of the Block
+    /// Returns a copy appending SHA-256 definition and digest items.
+    /// Panics if storage is exhausted; hashes native word bytes, so ROM-compatible
+    /// output requires little-endian evaluation. This is an integrity hash, not a signature.
     ///
     /// Adds a `HASH_DEF` covering all the previous items in the Block, and a
     /// `HASH_VALUE` with a SHA-256 hash of them.
@@ -772,9 +876,8 @@ impl PartitionTableBlock {
 }
 
 impl Default for PartitionTableBlock {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Returns an empty partition-table builder.
+    fn default() -> Self { Self::new() }
 }
 
 /// Flags that a Partition can have
@@ -782,14 +885,23 @@ impl Default for PartitionTableBlock {
 #[repr(u32)]
 #[allow(missing_docs)]
 pub enum PartitionFlag {
+    /// Excludes this partition from Arm boot candidates.
     NotBootableArm = 1 << 9,
+    /// Excludes this partition from RISC-V boot candidates.
     NotBootableRiscv = 1 << 10,
+    /// Applies A/B download affinity to a nonbootable partition through its owner.
     Uf2DownloadAbNonBootableOwnerAffinity = 1 << 11,
+    /// Suppresses automatic reboot after UF2 download to this region.
     Uf2DownloadNoReboot = 1 << 13,
+    /// Accepts the default RP2040 UF2 family.
     AcceptsDefaultFamilyRp2040 = 1 << 14,
+    /// Accepts the generic data UF2 family.
     AcceptsDefaultFamilyData = 1 << 16,
+    /// Accepts the RP2350 secure Arm UF2 family.
     AcceptsDefaultFamilyRp2350ArmS = 1 << 17,
+    /// Accepts the RP2350 RISC-V UF2 family.
     AcceptsDefaultFamilyRp2350Riscv = 1 << 18,
+    /// Accepts the RP2350 non-secure Arm UF2 family.
     AcceptsDefaultFamilyRp2350ArmNs = 1 << 19,
 }
 
@@ -798,12 +910,19 @@ pub enum PartitionFlag {
 #[repr(u32)]
 #[allow(missing_docs)]
 pub enum UnpartitionedFlag {
+    /// Suppresses automatic reboot after UF2 download to this region.
     Uf2DownloadNoReboot = 1 << 13,
+    /// Accepts the default RP2040 UF2 family.
     AcceptsDefaultFamilyRp2040 = 1 << 14,
+    /// Accepts absolute-address UF2 downloads in unpartitioned space.
     AcceptsDefaultFamilyAbsolute = 1 << 15,
+    /// Accepts the generic data UF2 family.
     AcceptsDefaultFamilyData = 1 << 16,
+    /// Accepts the RP2350 secure Arm UF2 family.
     AcceptsDefaultFamilyRp2350ArmS = 1 << 17,
+    /// Accepts the RP2350 RISC-V UF2 family.
     AcceptsDefaultFamilyRp2350Riscv = 1 << 18,
+    /// Accepts the RP2350 non-secure Arm UF2 family.
     AcceptsDefaultFamilyRp2350ArmNs = 1 << 19,
 }
 
@@ -855,8 +974,11 @@ pub enum Permission {
 }
 
 impl Permission {
-    /// Is this permission bit set this in this bitmask?
-    pub const fn is_in(self, mask: u32) -> bool {
+    /// Returns whether this permission bit is set in `mask`; ignores other bits.
+    pub const fn is_in(
+        self,
+        mask: u32,
+    ) -> bool {
         (mask & (self as u32)) != 0
     }
 }
@@ -883,37 +1005,48 @@ pub enum Security {
 
 /// Make an item containing a tag, 1 byte length and two extra bytes.
 ///
-/// The `command` arg should contain `1BS`
-pub const fn item_generic_1bs(value: u16, length: u8, command: u8) -> u32 {
+/// Returns `value` in the upper 16 bits, word count `length` in bits 8..15,
+/// and one-byte-size item tag `command` in the low byte; no tag validation.
+pub const fn item_generic_1bs(
+    value: u16,
+    length: u8,
+    command: u8,
+) -> u32 {
     ((value as u32) << 16) | ((length as u32) << 8) | (command as u32)
 }
 
 /// Make an item containing a tag, 2 byte length and one extra byte.
 ///
-/// The `command` arg should contain `2BS`
-pub const fn item_generic_2bs(value: u8, length: u16, command: u8) -> u32 {
+/// Returns `value` in the upper byte, word count `length` in bits 8..23,
+/// and two-byte-size item tag `command` in the low byte; no tag validation.
+pub const fn item_generic_2bs(
+    value: u8,
+    length: u16,
+    command: u8,
+) -> u32 {
     ((value as u32) << 24) | ((length as u32) << 8) | (command as u32)
 }
 
-/// Create Image Type item, of type IGNORED.
-pub const fn item_ignored() -> u32 {
-    item_generic_2bs(0, 1, ITEM_2BS_IGNORED)
-}
+/// Returns a one-word IGNORED item, useful as a nonempty-block placeholder.
+pub const fn item_ignored() -> u32 { item_generic_2bs(0, 1, ITEM_2BS_IGNORED) }
 
-/// Create Image Type item, of type INVALID.
+/// Returns a one-word IMAGE_TYPE explicitly marked invalid.
 pub const fn item_image_type_invalid() -> u32 {
     let value = IMAGE_TYPE_INVALID;
     item_generic_1bs(value, 1, ITEM_1BS_IMAGE_TYPE)
 }
 
-/// Create Image Type item, of type DATA.
+/// Returns a one-word IMAGE_TYPE identifying non-executable data.
 pub const fn item_image_type_data() -> u32 {
     let value = IMAGE_TYPE_DATA;
     item_generic_1bs(value, 1, ITEM_1BS_IMAGE_TYPE)
 }
 
-/// Create Image Type item, of type EXE.
-pub const fn item_image_type_exe(security: Security, arch: Architecture) -> u32 {
+/// Returns an RP2350 executable IMAGE_TYPE for `security` and CPU `arch`; no image validation.
+pub const fn item_image_type_exe(
+    security: Security,
+    arch: Architecture,
+) -> u32 {
     let mut value = IMAGE_TYPE_EXE | IMAGE_TYPE_EXE_CHIP_RP2350;
 
     match arch {
@@ -934,24 +1067,26 @@ pub const fn item_image_type_exe(security: Security, arch: Architecture) -> u32 
     item_generic_1bs(value, 1, ITEM_1BS_IMAGE_TYPE)
 }
 
-/// Create a Block Last item.
-pub const fn item_last(length: u16) -> u32 {
-    item_generic_2bs(0, length, ITEM_2BS_LAST)
-}
+/// Returns LAST metadata containing `length` preceding item words, excluding header/footer.
+pub const fn item_last(length: u16) -> u32 { item_generic_2bs(0, length, ITEM_2BS_LAST) }
 
-/// Create a Vector Table item.
+/// Returns a two-word vector-table item containing raw address `table_ptr`; no alignment validation.
 ///
 /// This is only allowed on Arm systems.
 pub const fn item_vector_table(table_ptr: u32) -> [u32; 2] {
     [item_generic_1bs(0, 2, ITEM_1BS_VECTOR_TABLE), table_ptr]
 }
 
-/// Create an Entry Point item.
-pub const fn item_entry_point(entry_point: u32, initial_sp: u32) -> [u32; 3] {
+/// Returns entry metadata containing raw instruction address `entry_point` and stack `initial_sp`.
+/// The caller must supply addresses valid for the selected architecture/security mode.
+pub const fn item_entry_point(
+    entry_point: u32,
+    initial_sp: u32,
+) -> [u32; 3] {
     [item_generic_1bs(0, 3, ITEM_1BS_ENTRY_POINT), entry_point, initial_sp]
 }
 
-/// Create an Rolling Window item.
+/// Returns a two-word rolling-window item with byte displacement `delta`.
 ///
 /// The delta is the number of bytes into the image that 0x10000000 should
 /// be mapped.
@@ -959,10 +1094,12 @@ pub const fn item_rolling_window(delta: u32) -> [u32; 2] {
     [item_generic_1bs(0, 2, ITEM_1BS_ROLLING_WINDOW_DELTA), delta]
 }
 
+/// Encoding regressions against boundary cases and the retained picotool fixture.
 #[cfg(test)]
 mod test {
     use super::*;
 
+    /// Checks name length-prefix/padding boundaries, including the 127-byte maximum.
     #[test]
     fn names_preserve_length_prefix_and_word_boundary_bytes() {
         let bytes = [b'n'; 127];
@@ -978,17 +1115,18 @@ mod test {
             }
             assert_eq!(table.contents[5 + name_words + 2], BLOCK_MARKER_END);
         }
-        let unnamed = PartitionTableBlock::new()
-            .add_partition_item(UnpartitionedSpace::new(), &[Partition::new(0, 1)]);
+        let unnamed = PartitionTableBlock::new().add_partition_item(UnpartitionedSpace::new(), &[Partition::new(0, 1)]);
         assert_eq!(unnamed.num_items, 4);
     }
 
+    /// Rejects a count that cannot fit the ROM two-bit field.
     #[test]
     #[should_panic]
     fn four_extra_families_cannot_fit_the_rom_count_field() {
         let _ = Partition::new(0, 1).with_extra_families(&[1, 2, 3, 4]);
     }
 
+    /// Checks maximum families, replacement and independent permission preservation.
     #[test]
     fn three_extra_families_and_replacement_preserve_other_flags() {
         let part = Partition::new(0, 1)
@@ -1002,10 +1140,11 @@ mod test {
         assert!(!part.has_flag(PartitionFlag::NotBootableArm));
     }
 
+    /// Checks the encoded length against the actual rolling-window payload.
     #[test]
     fn rolling_window_item_size_matches_its_two_words() {
         let item = item_rolling_window(0x1000);
-        assert_eq!((item[0] >> 8) & 0xff, item.len() as u32);
+        assert_eq!((item[0] >> 8) & 0xFF, item.len() as u32);
         assert_eq!(item[1], 0x1000);
     }
 
@@ -1090,16 +1229,16 @@ mod test {
             .with_version(1, 0)
             .with_sha256();
         let expected = &[
-            0xffffded3, // start
-            0x02000c0a, // Item = PARTITION_TABLE
-            0xfc008000, // Unpartitioned Space - permissions_and_flags
-            0xfc400002, // Partition 0 - permissions_and_location (512 * 4096, 2 * 4096)
-            0xfc061001, //     permissions_and_flags HAS_ID | HAS_NAME | ARM-S | RISC-V
+            0xFFFFDED3, // start
+            0x02000C0A, // Item = PARTITION_TABLE
+            0xFC008000, // Unpartitioned Space - permissions_and_flags
+            0xFC400002, // Partition 0 - permissions_and_location (512 * 4096, 2 * 4096)
+            0xFC061001, //     permissions_and_flags HAS_ID | HAS_NAME | ARM-S | RISC-V
             0x00000000, //     ID
             0x00000000, //     ID
             0x00004101, //     Name ("A")
-            0xfc7fe201, // Partition 1 - permissions_and_location (1023 * 4096, 513 * 4096)
-            0xfc061003, //     permissions_and_flags LINKA(0) | HAS_ID | HAS_NAME | ARM-S | RISC-V
+            0xFC7FE201, // Partition 1 - permissions_and_location (1023 * 4096, 513 * 4096)
+            0xFC061003, //     permissions_and_flags LINKA(0) | HAS_ID | HAS_NAME | ARM-S | RISC-V
             0x00000001, //     ID
             0x00000000, //     ID
             0x00004201, //     Name ("B")
@@ -1107,18 +1246,18 @@ mod test {
             0x00010000, // 0, 1
             0x01000247, // HASH_DEF with 2 words, and SHA256 hash
             0x00000011, // 17 words hashed
-            0x0000094b, // HASH_VALUE with 9 words
-            0x1945cdad, // Hash word 0
-            0x6b5f9773, // Hash word 1
-            0xe2bf39bd, // Hash word 2
-            0xb243e599, // Hash word 3
-            0xab2f0e9a, // Hash word 4
-            0x4d5d6d0b, // Hash word 5
-            0xf973050f, // Hash word 6
-            0x5ab6dadb, // Hash word 7
-            0x000019ff, // Last Item
+            0x0000094B, // HASH_VALUE with 9 words
+            0x1945CDAD, // Hash word 0
+            0x6B5F9773, // Hash word 1
+            0xE2BF39BD, // Hash word 2
+            0xB243E599, // Hash word 3
+            0xAB2F0E9A, // Hash word 4
+            0x4D5D6D0B, // Hash word 5
+            0xF973050F, // Hash word 6
+            0x5AB6DADB, // Hash word 7
+            0x000019FF, // Last Item
             0x00000000, // Block Loop Next Offset
-            0xab123579, // End
+            0xAB123579, // End
         ];
         core::assert_eq!(
             &table.contents[..29],

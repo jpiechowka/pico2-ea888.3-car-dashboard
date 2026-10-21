@@ -14,6 +14,9 @@ use dashboard_core::startup::*;
 use dashboard_core::vehicle_status::VehicleStatus;
 use dashboard_host_validation::AlignedFrame;
 
+/// Writes procedural-theme/geometry PPM samples and 30 host timing samples per case to the CLI directory.
+/// Optional --animation adds 40 frames per cycle. Returns argument/I/O errors; existing files are replaced and errors
+/// may leave partial output. Timing includes only shared host rendering, not target cycles, transfer or scanout.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let directory = PathBuf::from(args.next().ok_or("expected output directory")?);
@@ -114,6 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Writes RGB888 P6 pixels from big-endian RGB565 `frame` to `path`, declaring caller-matched `geometry` dimensions.
+/// Returns filesystem errors; replaces an existing file and may leave partial bytes on failure.
 fn write_frame(
     path: PathBuf,
     geometry: Geometry,

@@ -1,6 +1,9 @@
 //! Read-only probe capture recovery, separate from hardware discovery.
+/// Derived termination policy kept separate from historical capture flags.
 mod assessment;
+/// Disabled connection hints derived from validated inventory and shared address rules.
 mod handoff;
+/// Content identity and portable names preserving raw observed-name provenance.
 mod identity;
 
 use std::io::{ErrorKind, Read, Write};
@@ -12,10 +15,16 @@ use dashboard_core::discovery::capture_wire::{FrameHeader, FrameKind, HEADER_BYT
 use handoff::uuid;
 use serde_json::{Value, json};
 
+/// One admitted framed USB response, excluding the terminating End frame.
 pub struct Reply {
+    /// Validated kind, slot, generation, length and CRC envelope.
     pub header: FrameHeader,
+    /// Owned payload whose length/CRC match the header; captures also passed schema decoding.
     pub payload: Vec<u8>,
 }
+/// Fills `bytes` from `io` before absolute `deadline`, retrying interrupted/timeout/would-block reads.
+/// Returns Err for expiry, EOF or other I/O failure; a prefix may already have been overwritten.
+/// Individual reads must have finite timeouts because the deadline is checked only between calls.
 fn read_exact(
     io: &mut (impl Read + ?Sized),
     mut bytes: &mut [u8],
@@ -40,6 +49,10 @@ fn read_exact(
 }
 /// The caller must configure finite individual I/O timeouts. This deadline bounds
 /// partial-progress streams too; no flushing call can wait for a non-reading peer.
+/// Sends `request` over `io` within total `timeout`, then returns four unique List replies or one Get reply.
+/// Requires a valid End frame and validates every header/payload plus capture schema for Get.
+/// Returns descriptive errors on bounds, I/O, remote rejection, framing or sequencing failures;
+/// command bytes may already have been sent and partial responses consumed. Does not flush or resynchronize.
 pub fn exchange(
     io: &mut (impl Read + Write + ?Sized),
     request: Request,
@@ -122,6 +135,7 @@ pub fn exchange(
     Err("missing End frame".into())
 }
 
+/// Returns two lowercase hexadecimal characters per input byte in `bytes`, preserving byte order.
 pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut text = String::with_capacity(bytes.len() * 2);
@@ -130,6 +144,7 @@ pub fn hex(bytes: &[u8]) -> String {
     }
     text
 }
+/// Returns JSON null for absent `reason`, otherwise its category and optional raw HCI/ATT/hardware byte.
 fn reason(reason: Option<FailureReason>) -> Value {
     reason.map_or(Value::Null, |reason| {
         let raw = match reason {
@@ -142,12 +157,17 @@ fn reason(reason: Option<FailureReason>) -> Value {
         json!({"kind":format!("{reason:?}").split('(').next().unwrap_or("Unknown"),"raw_code":raw})
     })
 }
+/// Returns raw hex, truncation and optional boot-time/RSSI/kind observation from packet evidence `p`.
 fn packet(p: &PacketEvidence) -> Value {
     json!({"raw_hex":hex(p.bytes()),"truncated":p.truncated,"observation":p.observation.map(|o|json!({"at_boot_ms":o.at_ms,"rssi_dbm":o.rssi,"kind":format!("{:?}",o.kind)}))})
 }
 
+/// Returns a structured evidence export for fully validated capture `bytes`, or a schema error string.
+/// Preserves frozen/raw observations; derived identity and disabled connection hints establish no authenticity.
 pub fn decode_json(bytes: &[u8]) -> Result<Value, String> { decode_export(bytes).map(|(value, _)| value) }
 
+/// Returns JSON and artifact identity from validated capture `bytes`, hashing the entire binary.
+/// Schema failures return Err before projection; raw metadata is retained alongside explicitly derived assessments.
 fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
     let view = capture::decode(bytes).map_err(|e| format!("capture schema rejected: {e:?}"))?;
     let digest = hex(&sha2_const_stable::Sha256::new().update(bytes).finalize());
@@ -180,7 +200,10 @@ fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
     Ok((value, publication))
 }
 
+/// Returns a flattened human-readable report of `value`, prefixed with byte-order and evidence limitations.
+/// JSON formatting escapes scalar strings; this projection does not itself validate an arbitrary input value.
 pub fn text_report(value: &Value) -> String {
+    /// Appends JSON `v` to `out` as dotted/indexed fields under `path`; empty collections remain scalar lines.
     fn flatten(
         path: &str,
         v: &Value,
@@ -220,8 +243,11 @@ pub fn text_report(value: &Value) -> String {
     out
 }
 
+/// Content-derived artifact labels for a successfully decoded or published capture.
 pub struct PublishedCapture {
+    /// Portable ASCII basename shared by binary, JSON and text artifacts, without an extension.
     pub file_stem: String,
+    /// Full SHA256 content identity prefixed by `sha256:`, not a device-authenticity claim.
     pub capture_id: String,
 }
 
@@ -229,6 +255,9 @@ pub struct PublishedCapture {
 /// only after every artifact is synced; marker write/sync failure still returns an
 /// error. A marker alone does not prove durability against storage or power failure.
 /// Slot/generation are either both known and valid, or both absent for offline decode.
+/// Publishes validated `bytes` under new `directory`; `slot` is zero-based 0..=3 and `generation` nonzero.
+/// Returns content-derived artifact labels, or admission/filesystem errors. Parent directory must exist.
+/// Errors after directory creation retain partial output for inspection; no existing files are overwritten.
 pub fn publish(
     directory: &std::path::Path,
     bytes: &[u8],
@@ -277,12 +306,19 @@ pub fn publish(
     Ok(publication)
 }
 
+/// Raspberry Pi USB vendor identifier used by the capture firmware descriptor.
 pub const USB_VID: u16 = 0x2E8A;
+/// Capture firmware's USB product identifier; VID/PID alone is only a candidate match.
 pub const USB_PID: u16 = 0x0009;
+/// Product-string prefix required for automatic unique selection.
 pub const USB_PRODUCT: &str = "Pico BLE Probe Captures";
+/// Returns whether enumerated `port` is USB with the capture VID/PID, without opening it.
 pub fn is_candidate(port: &serialport::SerialPortInfo) -> bool {
     matches!(&port.port_type,serialport::SerialPortType::UsbPort(usb)if usb.vid==USB_VID&&usb.pid==USB_PID)
 }
+/// Returns an enumerated capture port name from `ports` without opening hardware.
+/// `explicit` must exactly match a VID/PID candidate; None additionally requires a unique matching product string.
+/// Returns Err for missing, noncandidate or ambiguous selection; generic OS product labels require explicit choice.
 pub fn select_port(
     ports: &[serialport::SerialPortInfo],
     explicit: Option<&str>,

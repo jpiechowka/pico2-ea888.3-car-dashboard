@@ -1,7 +1,10 @@
+//! Exact pixel reconstruction and bounded damage planning across both display geometries.
 use dashboard_host_validation::display::damage::{DamagePlan, PanelHistory, Region};
 use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
 use dashboard_host_validation::display::{FrameBuffer, HEIGHT, WIDTH};
 
+/// Copies RGB565 pixels from `source` into modeled `panel` using `plan` windows and row strides.
+/// Panics on inconsistent payload lengths or out-of-buffer regions; untouched pixels remain unchanged.
 fn apply(
     panel: &mut FrameBuffer,
     source: &FrameBuffer,
@@ -27,6 +30,7 @@ fn apply(
     }
 }
 
+/// Invalid extents reject; inclusive panel coordinates preserve row strides at the bottom-right edge.
 #[test]
 fn valid_regions_use_inclusive_panel_addresses_and_never_flatten_strided_rows() {
     for invalid in [
@@ -48,6 +52,7 @@ fn valid_regions_use_inclusive_panel_addresses_and_never_flatten_strided_rows() 
     assert_eq!(Region::full().payload_ranges().collect::<Vec<_>>(), vec![0..153600]);
 }
 
+/// Identical frames produce no bytes; dense changes fall back to one full 153,600-byte transfer.
 #[test]
 fn stationary_panel_sends_nothing_and_dense_changes_fall_back_to_full() {
     let a = Box::new(FrameBuffer::new());
@@ -62,6 +67,7 @@ fn stationary_panel_sends_nothing_and_dense_changes_fall_back_to_full() {
     assert_eq!(plan.transfer_count(), 1);
 }
 
+/// Sparse vertical stripes exceeding the transfer-start budget collapse to a single full transfer.
 #[test]
 fn thin_vertical_stripes_cannot_create_thousands_of_dma_starts() {
     let previous = Box::<FrameBuffer>::default();
@@ -76,6 +82,7 @@ fn thin_vertical_stripes_cannot_create_thousands_of_dma_starts() {
     assert_eq!(plan.transfer_count(), 1);
 }
 
+/// Corner and interior changes in both RGB565 bytes reconstruct exact panel contents through partial plans.
 #[test]
 fn every_corner_and_rgb565_byte_produces_exact_panel_content() {
     let mut panel = Box::new(FrameBuffer::new());
@@ -91,6 +98,7 @@ fn every_corner_and_rgb565_byte_produces_exact_panel_content() {
     }
 }
 
+/// Deterministic randomized changes preserve every pixel within sixteen windows and full-frame byte limits.
 #[test]
 fn randomized_damage_union_and_window_budget_never_lose_a_pixel() {
     let mut panel = Box::new(FrameBuffer::new());
@@ -111,6 +119,7 @@ fn randomized_damage_union_and_window_budget_never_lose_a_pixel() {
     }
 }
 
+/// Both bytes at every horizontal band's corner select exactly one 16-by-16 tile and reconstruct it.
 #[test]
 fn first_and_last_bytes_of_every_tile_band_reconstruct_exact_pixels() {
     let previous = Box::<FrameBuffer>::default();
@@ -135,6 +144,7 @@ fn first_and_last_bytes_of_every_tile_band_reconstruct_exact_pixels() {
     }
 }
 
+/// Returns an unchecked fixture token combining physical `buffer` and monotonic `sequence` identity.
 fn token(
     buffer: BufferId,
     sequence: u64,
@@ -142,6 +152,7 @@ fn token(
     FrameToken { buffer, sequence }
 }
 
+/// Partial updates require the exact completed, unmodified buffer generation; stale identities reject.
 #[test]
 fn partial_base_must_be_the_exact_completed_and_unmodified_generation() {
     let (a1, b2, a3) = (token(BufferId::A, 1), token(BufferId::B, 2), token(BufferId::A, 3));
@@ -169,6 +180,7 @@ fn partial_base_must_be_the_exact_completed_and_unmodified_generation() {
     assert!(history.begin_render(a1).is_err());
 }
 
+/// Repeated unsubmitted renders on the other buffer retain the last completed panel generation.
 #[test]
 fn stationary_render_can_repeat_without_changing_the_panel_generation() {
     let mut history = PanelHistory::new();
@@ -184,6 +196,7 @@ fn stationary_render_can_repeat_without_changing_the_panel_generation() {
     assert_eq!(history.reference(), Some(a1));
 }
 
+/// Only Ready storage can be discarded; rendering, queued, in-flight and already-free states reject.
 #[test]
 fn only_ready_frames_can_be_discarded_without_a_transfer() {
     use dashboard_host_validation::display::pipeline::{BufferState, FrameLifecycle};
@@ -202,6 +215,7 @@ fn only_ready_frames_can_be_discarded_without_a_transfer() {
     assert!(lifecycle.discard(next).is_err());
 }
 
+/// Portrait bottom-row changes use 240-pixel strides and stay inside the fixed framebuffer capacity.
 #[test]
 fn portrait_damage_covers_bottom_row_and_uses_bounded_stride() {
     use dashboard_config::Geometry;
@@ -231,6 +245,7 @@ fn portrait_damage_covers_bottom_row_and_uses_bounded_stride() {
     assert_eq!(full.bytes(), 153600);
 }
 
+/// Orientation changes invalidate partial bases even for identical pixels until a full frame completes.
 #[test]
 fn changed_orientation_requires_full_base_even_for_identical_black_pixels() {
     use dashboard_config::Orientation;
@@ -253,6 +268,7 @@ fn changed_orientation_requires_full_base_even_for_identical_black_pixels() {
     assert_eq!(history.reference_for(Orientation::PortraitInverted), None);
 }
 
+/// Both geometries reconstruct tile boundaries and random unions within sixteen windows and 128 starts.
 #[test]
 fn both_geometries_reconstruct_every_tile_boundary_and_random_union() {
     use dashboard_config::Geometry;
@@ -298,6 +314,7 @@ fn both_geometries_reconstruct_every_tile_boundary_and_random_union() {
     }
 }
 
+/// Target orientation follows the queued transfer while completed orientation awaits its acknowledgment.
 #[test]
 fn render_transition_follows_pending_orientation_before_old_completion() {
     use dashboard_config::Orientation;
@@ -318,6 +335,7 @@ fn render_transition_follows_pending_orientation_before_old_completion() {
     assert_eq!(history.target_orientation(), Some(Orientation::Portrait));
 }
 
+/// Region storage remains six bytes, preserving the plan-copy size assumption used by image admission.
 #[test]
 fn oriented_regions_fit_the_vehicle_trace_storage_budget() {
     // Plans are copied into the producer/consumer futures and channel slots.
@@ -325,6 +343,7 @@ fn oriented_regions_fit_the_vehicle_trace_storage_budget() {
     assert_eq!(core::mem::size_of::<Region>(), 6);
 }
 
+/// Every origin preserves inclusive endpoints, exact byte counts and geometry-specific strides.
 #[test]
 fn every_region_origin_preserves_orientation_stride_and_inclusive_addresses() {
     use dashboard_config::Geometry;
@@ -360,6 +379,7 @@ fn every_region_origin_preserves_orientation_stride_and_inclusive_addresses() {
     }
 }
 
+/// Invalid wide extents reject before narrowing; tall merged stripes retain the full portrait tail.
 #[test]
 fn merged_native_height_and_rejected_extents_never_narrow_before_validation() {
     use dashboard_config::Geometry;

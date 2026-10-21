@@ -1,3 +1,5 @@
+//! Stateful client discovery pagination, error correlation, capacity and terminal-handle regressions using synthetic ATT responses.
+
 use super::tests::test_client;
 use super::*;
 use crate::attribute::CharacteristicProp;
@@ -5,6 +7,7 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
+/// Copies ATT `bytes` into a pool packet and injects it into `client` response queue; allocation, capacity or queue failures panic. This bypasses ingress correlation deliberately to exercise client validation.
 fn reply<const N: usize>(
     client: &GattClient<'_, crate::mock_controller::MockController, DefaultPacketPool, N>,
     bytes: &[u8],
@@ -18,6 +21,7 @@ fn reply<const N: usize>(
 }
 
 #[test]
+/// Zero start and reversed service ranges terminate discovery with error instead of retrying invalid progress.
 fn discovery_rejects_invalid_service_ranges_without_retrying() {
     for (start, end) in [(0u16, 1u16), (2, 1)] {
         let (_guard, conn) = connection();
@@ -35,6 +39,7 @@ fn discovery_rejects_invalid_service_ranges_without_retrying() {
 }
 
 #[test]
+/// Read-by-type rejects handles outside the requested interval and duplicate entries within a response.
 fn discovery_read_by_type_rejects_out_of_range_and_duplicate_handles() {
     for bytes in [
         &[0x09, 3, 0, 0, 42][..],
@@ -54,6 +59,7 @@ fn discovery_read_by_type_rejects_out_of_range_and_duplicate_handles() {
 }
 
 #[test]
+/// Handle65535 is delivered once and completes the requested range without wrapping to zero.
 fn discovery_accepts_last_handle_without_overflow_or_extra_request() {
     let (_guard, conn) = connection();
     let client = test_client(&conn);
@@ -72,6 +78,7 @@ fn discovery_accepts_last_handle_without_overflow_or_extra_request() {
 }
 
 #[test]
+/// A read response exceeding negotiated MTU rejects even when destination capacity is sufficient.
 fn discovery_read_rejects_value_larger_than_negotiated_mtu() {
     let (_guard, conn) = connection();
     conn.set_att_mtu(23);
@@ -90,6 +97,7 @@ fn discovery_read_rejects_value_larger_than_negotiated_mtu() {
 use crate::prelude::DefaultPacketPool;
 
 #[test]
+/// A service ending at handle65535 retains its inclusive range and UUID without another query.
 fn discovery_service_terminal_range_is_preserved() {
     let (_guard, conn) = connection();
     let client = test_client(&conn);
@@ -103,6 +111,7 @@ fn discovery_service_terminal_range_is_preserved() {
 }
 
 #[test]
+/// Progressing pages deliver exact values; repeating the previous handle is rejected.
 fn discovery_multiple_pages_preserve_values_and_reject_repeated_page() {
     for second_handle in [2u8, 3] {
         let (_guard, conn) = connection();
@@ -127,6 +136,7 @@ fn discovery_multiple_pages_preserve_values_and_reject_repeated_page() {
     }
 }
 
+/// Consumes one queued request from `guard` and checks its ATT body against `att`; missing output or different bytes panic.
 fn expect_request(guard: &Drain, att: &[u8]) {
     let mut next = pin!(guard.0.outbound());
     let Poll::Ready((_, packet)) = next.as_mut().poll(&mut Context::from_waker(Waker::noop())) else {
@@ -136,6 +146,7 @@ fn expect_request(guard: &Drain, att: &[u8]) {
 }
 
 #[test]
+/// Constructor accepts only exact MTU response or matching Request Not Supported fallback; malformed/unrelated responses close correlation.
 fn discovery_mtu_constructor_correlates_error_opcode_and_preserves_fallback() {
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 
@@ -202,6 +213,7 @@ fn discovery_mtu_constructor_correlates_error_opcode_and_preserves_fallback() {
 }
 
 #[test]
+/// Truncated or trailing-byte ATT errors reject without issuing another discovery request.
 fn discovery_error_response_requires_exact_wire_shape() {
     for bytes in [&[0x01][..], &[0x01, 0x08, 0, 0][..], &[0x01, 0x08, 0, 0, 0x06, 0][..]] {
         let (guard, conn) = connection();
@@ -224,6 +236,7 @@ fn discovery_error_response_requires_exact_wire_shape() {
 }
 
 #[test]
+/// Service/type/information discovery rejects mismatched request opcodes; matching Attribute Not Found completes while other errors propagate.
 fn discovery_error_response_must_name_the_pending_request() {
     for (kind, wire) in [
         (0, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28][..]),
@@ -277,6 +290,7 @@ fn discovery_error_response_must_name_the_pending_request() {
 }
 
 #[test]
+/// A wrong-opcode terminal error preserves already delivered callbacks but fails discovery and sends no retry.
 fn discovery_mismatched_error_preserves_prior_characteristics_without_completing() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -302,6 +316,7 @@ fn discovery_mismatched_error_preserves_prior_characteristics_without_completing
 }
 
 #[test]
+/// Invalid Offset terminates blob reads only when the error names the pending blob opcode.
 fn discovery_blob_terminal_error_must_name_the_pending_request() {
     for matching in [false, true] {
         let (guard, conn) = connection();
@@ -326,6 +341,7 @@ fn discovery_blob_terminal_error_must_name_the_pending_request() {
 }
 
 #[test]
+/// Mixed-width characteristic pages advance past the last declaration and end normally on matching Attribute Not Found.
 fn discovery_characteristic_cursor_and_attribute_not_found_are_normal() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -364,6 +380,7 @@ fn discovery_characteristic_cursor_and_attribute_not_found_are_normal() {
 }
 
 #[test]
+/// Malformed later pages produce no callbacks from their partial entries and retain callbacks from prior valid pages.
 fn discovery_malformed_next_page_preserves_only_prior_complete_responses() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -391,6 +408,7 @@ fn discovery_malformed_next_page_preserves_only_prior_complete_responses() {
 }
 
 #[test]
+/// Descriptor handle65535 completes normally; zero handle rejects.
 fn discovery_descriptors_allow_terminal_handle_and_reject_invalid_order() {
     for bytes in [&[0x05, 1, 0xff, 0xff, 2, 0x29][..], &[0x05, 1, 0, 0, 2, 0x29][..]] {
         let (_guard, conn) = connection();
@@ -407,6 +425,7 @@ fn discovery_descriptors_allow_terminal_handle_and_reject_invalid_order() {
 }
 
 #[test]
+/// A full destination terminates blob reading with its copied byte count instead of requesting an unnecessary continuation.
 fn discovery_blob_stops_when_destination_full() {
     let (_guard, conn) = connection();
     conn.set_att_mtu(23);
@@ -423,6 +442,7 @@ fn discovery_blob_stops_when_destination_full() {
 }
 
 #[test]
+/// A full-size page near offset65535 reports overflow instead of wrapping the next request.
 fn discovery_blob_offset_cannot_wrap() {
     let (_guard, conn) = connection();
     conn.set_att_mtu(23);
@@ -439,6 +459,7 @@ fn discovery_blob_offset_cannot_wrap() {
 }
 extern crate std;
 
+/// Returns a client with empty N-service cache for accepted `connection`, without MTU exchange or controller I/O; duplicate client ownership panics.
 fn service_client<const N: usize>(
     connection: &Connection<'static, DefaultPacketPool>,
 ) -> GattClient<'static, crate::mock_controller::MockController, DefaultPacketPool, N> {
@@ -452,6 +473,7 @@ fn service_client<const N: usize>(
 }
 
 #[test]
+/// Sparse16/128-bit service pages publish one complete cache only after terminal progress, preserving inclusive ranges.
 fn discovery_services_mix_uuid_widths_and_sparse_groups_across_pages() {
     let (guard, conn) = connection();
     let client = service_client::<3>(&conn);
@@ -493,6 +515,7 @@ fn discovery_services_mix_uuid_widths_and_sparse_groups_across_pages() {
 }
 
 #[test]
+/// Filtered service pages reject overlap/reversal and cache only after valid progress reaches a matching terminal error.
 fn discovery_filtered_group_pages_validate_progress_and_cache_only_success() {
     for (second_start, second_end, success) in [(1u8, 9u8, false), (4, 9, false), (5, 4, false), (5, 9, true)] {
         let (guard, conn) = connection();
@@ -526,6 +549,7 @@ fn discovery_filtered_group_pages_validate_progress_and_cache_only_success() {
 }
 
 #[test]
+/// Filtered and unfiltered discovery exceeding bounded output capacity return InsufficientSpace with cache unchanged.
 fn discovery_service_capacity_failure_never_publishes_a_partial_cache() {
     for filtered in [false, true] {
         let (guard, conn) = connection();
@@ -565,6 +589,7 @@ fn discovery_service_capacity_failure_never_publishes_a_partial_cache() {
 }
 
 #[test]
+/// Cache merge deduplicates identical entries; insufficient combined capacity preserves the entire previous cache.
 fn discovery_service_cache_merge_preserves_existing_entries_on_overflow() {
     for filtered in [false, true] {
         for overlap in [false, true] {
@@ -614,6 +639,7 @@ fn discovery_service_cache_merge_preserves_existing_entries_on_overflow() {
 }
 
 #[test]
+/// Single and bulk characteristic discovery reject a value overlapping the next declaration before descriptor traffic.
 fn discovery_overlapping_characteristic_value_stops_both_apis_before_descriptors() {
     for bulk in [false, true] {
         let (guard, conn) = connection();
@@ -640,6 +666,7 @@ fn discovery_overlapping_characteristic_value_stops_both_apis_before_descriptors
 }
 
 #[test]
+/// CCCD lookup starts after the value and ends before the next declaration, preserving sparse handle bounds.
 fn discovery_sparse_characteristic_cccd_query_stays_inside_its_definition() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -664,6 +691,7 @@ fn discovery_sparse_characteristic_cccd_query_stays_inside_its_definition() {
 }
 
 #[test]
+/// A terminal read value is valid; notification capability at handle65535 fails missing-CCCD lookup without overflow.
 fn discovery_terminal_characteristic_value_is_valid_but_cannot_have_cccd() {
     for notify in [false, true] {
         let (guard, conn) = connection();
@@ -698,6 +726,7 @@ fn discovery_terminal_characteristic_value_is_valid_but_cannot_have_cccd() {
 }
 
 #[test]
+/// An initial unused handle gap is not revisited after a terminal service response.
 fn discovery_all_services_does_not_search_backwards_through_unused_handles() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -714,6 +743,7 @@ fn discovery_all_services_does_not_search_backwards_through_unused_handles() {
 }
 
 #[test]
+/// Descriptor listing at handle65535 returns empty and lookup returns NotFound without sending a wrapped request.
 fn discovery_terminal_value_has_no_wrapped_descriptor_query() {
     for lookup in [false, true] {
         let (guard, conn) = connection();
@@ -755,6 +785,7 @@ fn discovery_terminal_value_has_no_wrapped_descriptor_query() {
 }
 
 #[test]
+/// Filtered zero/reversed service ranges reject before cache publication.
 fn discovery_filtered_services_reject_invalid_ranges_before_caching() {
     for (start, end) in [(0u16, 1u16), (2, 1)] {
         let (guard, conn) = connection();
@@ -777,6 +808,7 @@ fn discovery_filtered_services_reject_invalid_ranges_before_caching() {
 }
 
 #[test]
+/// Single/bulk discovery reject declaration/value positions outside the containing service or ordered definition.
 fn discovery_characteristic_apis_reject_value_outside_its_definition() {
     for bulk in [false, true] {
         for (declaration, value) in [(1u8, 2u8), (2, 0), (2, 2), (2, 11), (10, 11)] {
@@ -809,6 +841,7 @@ fn discovery_characteristic_apis_reject_value_outside_its_definition() {
 }
 
 #[test]
+/// Single/bulk characteristic end bounds stop immediately before the next declaration despite sparse value handles.
 fn discovery_characteristic_apis_stop_before_next_declaration_with_sparse_handles() {
     for bulk in [false, true] {
         let (guard, conn) = connection();
@@ -850,6 +883,7 @@ fn discovery_characteristic_apis_stop_before_next_declaration_with_sparse_handle
 }
 
 #[test]
+/// Descriptor results beyond capacity return InsufficientSpace rather than a truncated success.
 fn discovery_descriptor_capacity_is_not_reported_as_complete() {
     let (guard, conn) = connection();
     let client = test_client(&conn);
@@ -872,8 +906,13 @@ fn discovery_descriptor_capacity_is_not_reported_as_complete() {
     ));
 }
 
-struct Drain(&'static crate::connection_manager::ConnectionManager<'static, DefaultPacketPool>);
+/// Drains queued request packets and transferred slot leases at fixture teardown.
+struct Drain(
+    /// Leaked manager whose outbound resources must be returned to the shared pool.
+    &'static crate::connection_manager::ConnectionManager<'static, DefaultPacketPool>,
+);
 impl Drop for Drain {
+    /// Consumes all immediately queued packets/leases until Pending; does not wait for new work or initiate controller I/O.
     fn drop(&mut self) {
         loop {
             let mut next = pin!(self.0.outbound());
@@ -884,6 +923,7 @@ impl Drop for Drain {
         }
     }
 }
+/// Returns a queue-drain guard and accepted fake static connection from a leaked isolated manager; setup failure panics.
 fn connection() -> (Drain, Connection<'static, DefaultPacketPool>) {
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
     let mgr = crate::connection_manager::tests::setup();
@@ -898,4 +938,24 @@ fn connection() -> (Drain, Connection<'static, DefaultPacketPool>) {
         panic!("connection")
     };
     (Drain(mgr), conn)
+}
+
+/// UUID32 service filtering emits its Bluetooth-base UUID128 value, matching the legal service declaration encoding.
+#[test]
+fn service_uuid32_filter_uses_expanded_wire_value() {
+    let (_guard, conn) = connection();
+    let client = test_client(&conn);
+    let uuid = Uuid::Uuid32(0x12345678u32.to_le_bytes());
+    let mut future = pin!(client.services_by_uuid(&uuid));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    let mut outbound = pin!(conn.manager().outbound());
+    let Poll::Ready((_, packet)) = outbound.as_mut().poll(&mut cx) else {
+        panic!("service request queued");
+    };
+    assert_eq!(&packet.as_ref()[4..11], &[0x06, 1, 0, 0xff, 0xff, 0, 0x28]);
+    assert_eq!(
+        &packet.as_ref()[11..],
+        &[0xfb, 0x34, 0x9b, 0x5f, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0x78, 0x56, 0x34, 0x12]
+    );
 }

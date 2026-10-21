@@ -9,21 +9,34 @@ use dashboard_helper_protocol::diagnostics::*;
 use dashboard_helper_protocol::{Error, decode};
 
 use crate::jobs::logs::StreamFramer;
+/// Maximum sanitized terminal lines waiting for the detached sink thread.
 const MAILBOX: usize = 32;
+/// Private terminal message assembled solely from validated diagnostic metadata.
 struct Line {
+    /// Warn/error classification selecting optional terminal colour.
     severity: Severity,
+    /// Sanitized metadata line; excludes browser message/subject payloads.
     text: String,
 }
+/// Optional nonblocking browser-diagnostic mailbox with independent ten-per-second admission.
 pub struct Relay {
+    /// Bounded channel; full or disconnected receivers count as explicit drops.
     sender: SyncSender<Line>,
+    /// Rate state acquired with try_lock so HTTP admission never waits for another batch.
     gate: Mutex<RateGate>,
+    /// Helper-relative monotonic ingress clock origin.
     origin: Instant,
+    /// Saturating count of actual stderr write failures, separate from mailbox drops.
     failures: Arc<AtomicU64>,
 }
 impl Default for Relay {
+    /// Returns a new relay and attempts to start its detached terminal sink.
     fn default() -> Self { Self::new() }
 }
 impl Relay {
+    /// Returns an empty relay and starts a detached stderr writer, coloured only for a terminal without NO_COLOR.
+    /// Thread creation failure leaves a disconnected mailbox: later admission reports drops. Dropping the relay
+    /// closes its sender but does not join the sink or guarantee pending lines reached the terminal.
     pub fn new() -> Self {
         let (sender, receiver) = sync_channel::<Line>(MAILBOX);
         let failures = Arc::new(AtomicU64::new(0));
@@ -57,9 +70,12 @@ impl Relay {
         }
     }
 
+    /// Returns the relaxed, saturating stderr-write failure count; excludes queue/rate drops and spawn failure.
     pub fn failed_writes(&self) -> u64 { self.failures.load(Ordering::Relaxed) }
 
-    /// Acknowledges bounded mailbox admission, not terminal display or job evidence.
+    /// Decodes validated diagnostic `bytes`; returns mailbox-admitted/dropped counts using helper elapsed milliseconds.
+    /// Returns wire errors or Busy for a contended/poisoned rate lock. Admission does not prove terminal display or job
+    /// evidence.
     pub fn admit(
         &self,
         bytes: &[u8],
@@ -70,6 +86,9 @@ impl Relay {
         )
     }
 
+    /// Returns admission/drop counts for wire `bytes` at helper-relative `now` milliseconds, clamped by RateGate.
+    /// Rate slots are consumed before mailbox admission, including full/disconnected drops. Decode/lock/framing errors
+    /// return Err; a later framing error would retain earlier sends and consumed slots.
     fn admit_at(
         &self,
         bytes: &[u8],
@@ -122,10 +141,13 @@ impl Relay {
     }
 }
 #[cfg(test)]
+/// Deterministic mailbox/rate and private-payload rejection tests without terminal threads.
 mod tests {
     use dashboard_helper_protocol::{BoundedVec, Text, encode};
 
     use super::*;
+    /// Returns four valid metadata events retaining a sequence above JavaScript's exact-integer range; panics on
+    /// fixture drift.
     fn bytes() -> Vec<u8> {
         encode(&Request {
             version: 1,
@@ -146,6 +168,7 @@ mod tests {
         .unwrap()
     }
     #[test]
+    /// Full mailboxes report drops, consume rate slots, preserve integer text and reopen exactly at the time boundary.
     fn nonblocking_mailbox_and_rate_drops_are_explicit() {
         let (sender, receiver) = sync_channel(1);
         let relay = Relay {
@@ -172,6 +195,7 @@ mod tests {
         assert_eq!(relay.admit_at(&bytes(), 1000).unwrap().admitted, 1);
     }
     #[test]
+    /// Arbitrary message-shaped JSON is rejected before any terminal line is queued.
     fn malformed_input_never_reaches_sink() {
         let (sender, receiver) = sync_channel(1);
         let relay = Relay {

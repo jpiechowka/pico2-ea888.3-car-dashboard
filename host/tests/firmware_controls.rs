@@ -1,3 +1,4 @@
+//! Firmware control wiring source guards plus shared dispatcher/LED completion regressions.
 use dashboard_config::{ControlAction, ControlMap};
 use dashboard_core::control_session::ControlSession;
 use dashboard_core::controls::ControlGestures;
@@ -5,6 +6,7 @@ use dashboard_core::input_model::EncoderBatch;
 use dashboard_core::input_trace::Observation;
 use dashboard_core::logging::{LogStore, log_warning_rejection};
 
+/// Navigation hints match executable dispatcher routes while excluding protected Y hold and self/incompatible actions.
 #[test]
 fn navigation_hints_follow_current_page_actions_and_never_advertise_reserved_or_self_routes() {
     use dashboard_config::{ButtonId, ControlPage};
@@ -73,6 +75,7 @@ fn navigation_hints_follow_current_page_actions_and_never_advertise_reserved_or_
     );
 }
 
+/// Rejected acknowledgment from a replaced acquisition run logs once when consumed, without creating a protected fault.
 #[test]
 fn warning_rejection_is_logged_once_at_the_consumed_result_edge() {
     use dashboard_core::acquisition::AcquisitionModel;
@@ -99,6 +102,7 @@ use dashboard_core::pages::Page;
 use dashboard_core::render::FpsMode;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+/// Source wiring retains one session, timestamps after encoder consumption and two explicit frame-completion callbacks.
 #[test]
 fn firmware_owns_one_session_and_samples_time_after_encoder_batch() {
     let source = include_str!("../../firmware/pico2/src/main.rs");
@@ -122,6 +126,8 @@ fn firmware_owns_one_session_and_samples_time_after_encoder_batch() {
     );
 }
 
+/// Navigation consumes its own input and discards same-batch encoder/old holds; maintenance reset cannot leak held
+/// recovery.
 #[test]
 fn physical_transition_discards_encoder_and_old_release_then_maintenance_disarms() {
     let c = dashboard_config::validate(dashboard_config::default_config()).unwrap();
@@ -185,6 +191,8 @@ fn physical_transition_discards_encoder_and_old_release_then_maintenance_disarms
     assert_eq!(session.page(), Page::Debug);
 }
 
+/// A reset acknowledgment received after leaving Dashboard clears its pending identity without displaying late success
+/// feedback.
 #[test]
 fn reset_acknowledgment_after_navigation_clears_pending_without_late_popup() {
     let c = dashboard_config::validate(dashboard_config::default_config()).unwrap();
@@ -234,6 +242,8 @@ fn reset_acknowledgment_after_navigation_clears_pending_without_late_popup() {
     assert!(s.popup().is_none());
 }
 
+/// Source guards keep warning commands separate from reset, bound them to one slot, and apply after inputs before timer
+/// ticks.
 #[test]
 fn warning_route_is_separate_capacity_one_and_applies_after_inputs_before_tick() {
     let main = include_str!("../../firmware/pico2/src/main.rs");
@@ -268,6 +278,8 @@ fn warning_route_is_separate_capacity_one_and_applies_after_inputs_before_tick()
     assert!(code.find("model.apply_warning_command(command, now)").unwrap() < code.find("model.tick(now)").unwrap());
 }
 
+/// Completed diagnostic presentation controls LED eligibility until the matching Dashboard return completes; wrong
+/// tokens do nothing.
 #[test]
 fn completed_diagnostic_scene_and_pending_return_use_the_same_led_owner() {
     use dashboard_core::display::pipeline::{BufferId, FrameToken};

@@ -1,3 +1,4 @@
+//! Fixed full/narrow/odd/clipped fill workloads with independent pixel and iterator-work accounting.
 use std::cell::Cell;
 use std::hint::black_box;
 
@@ -7,6 +8,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
+/// Returns label, rectangle, visible pixel count and contiguous iterator-consumption count for each workload.
 fn cases() -> [(&'static str, Rectangle, usize, usize); 4] {
     [
         ("full", Rectangle::new(Point::zero(), Size::new(320, 240)), 76800, 76800),
@@ -31,10 +33,13 @@ fn cases() -> [(&'static str, Rectangle, usize, usize); 4] {
     ]
 }
 
+/// Returns a deterministic RGB565 pattern from source-pixel `index`, with independently repeating channels.
 fn color(index: usize) -> Rgb565 {
     Rgb565::new((index % 32) as u8, ((index / 7) % 64) as u8, ((index / 13) % 32) as u8)
 }
 
+/// Fills `rect` in landscape `frame`; `solid` chooses green or the deterministic source-index pattern.
+/// Clips through the production renderer and leaves untouched pixels intact; renderer errors panic.
 fn draw(
     frame: &mut FrameBuffer,
     rect: &Rectangle,
@@ -52,6 +57,7 @@ fn draw(
     black_box(frame);
 }
 
+/// Asserts every workload's complete pixels and source-iterator consumption against a coordinate oracle.
 pub fn verify() {
     for (label, rect, written, consumed) in cases() {
         for solid in [true, false] {
@@ -99,6 +105,7 @@ pub fn verify() {
     }
 }
 
+/// Registers verified fills with `c`, reporting visible output-byte throughput and exact source work to stderr.
 pub fn benchmarks(c: &mut Criterion) {
     verify();
     for solid in [true, false] {

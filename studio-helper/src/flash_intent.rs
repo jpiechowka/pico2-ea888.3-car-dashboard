@@ -5,15 +5,26 @@ use std::path::{Path, PathBuf};
 
 use dashboard_helper_protocol::*;
 use serde_json::{Value, json};
+/// Maximum UTF-8 JSON bytes in one durable flash observation.
 const MAX_RECORD: usize = 65536;
+/// One generated flash-attempt directory with at most eight immutable published observations.
 pub(crate) struct Journal {
+    /// Generated job-ID directory under the repository's private flash-attempt root.
     directory: PathBuf,
+    /// Next unpublished generation in `0..=8`; eight means exhausted.
     generation: u8,
+    /// Current JSON candidate, which may be newer than the last acknowledged publication after an error.
     record: Value,
+    /// Windows ancestor-directory handles retaining the generated attempt pathname.
     _parents: Vec<File>,
 }
+/// Returns the private flash-attempt root below `repo` without creating it or admitting arbitrary paths.
 fn root(repo: &Path) -> PathBuf { repo.join("target/studio-helper/flash-attempts") }
 impl Journal {
+    /// Creates one fresh attempt for `job` in `repo`, binding `session` and explicit `request` as historical evidence.
+    /// Returns a journal with no published generation; directory/link/open failures or 16 existing attempts reject
+    /// creation. Errors can leave newly created empty directories; caller has already admitted the request and owns
+    /// operation serialization.
     pub fn new(
         repo: &Path,
         job: &JobId,
@@ -44,6 +55,8 @@ impl Journal {
         })
     }
 
+    /// Adds checked `artifact` and half-open flash-address `ranges` to the in-memory record before publication.
+    /// Records 4 MiB as manufacturer/user-confirmed capacity, never measured capacity; does not validate or write here.
     pub fn bind_artifact(
         &mut self,
         artifact: &ArtifactSummary,
@@ -56,6 +69,11 @@ impl Journal {
         self.record["capacity_provenance"] = json!("manufacturer4_mb_user_confirmed");
     }
 
+    /// Publishes fixed `phase`, conservative write `outcome` and optional child `exit` as the next generation.
+    /// Returns success only after bounded JSON is written/synced, renamed and reread identically; then advances
+    /// generation. Errors retain prior published observations, but mutate the in-memory candidate and can leave
+    /// `.pending` or a published-but-unacknowledged file. Existing pending files prevent automatic retry; eight
+    /// generations is the cap.
     pub fn publish(
         &mut self,
         phase: &str,
@@ -92,6 +110,7 @@ impl Journal {
             use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
             let from: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
             let to: Vec<u16> = published.as_os_str().encode_wide().chain(Some(0)).collect();
+            // SAFETY: both buffers are live NUL-terminated UTF-16 paths; flags request same-volume durable rename.
             if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
                 return Err(std::io::Error::last_os_error().to_string());
             }
@@ -108,6 +127,8 @@ impl Journal {
         Ok(())
     }
 }
+/// Returns JSON from checked regular file `path`, rejecting read/link errors, malformed JSON and more than 65,536
+/// bytes.
 fn read(path: &Path) -> Result<Value, String> {
     let mut bytes = Vec::new();
     crate::file_locks::read_file(path)?
@@ -119,13 +140,20 @@ fn read(path: &Path) -> Result<Value, String> {
     }
     serde_json::from_slice(&bytes).map_err(|_| "Invalid flash record".into())
 }
-// Historical consent is evidence only. Never deserialize it into a live FlashRequest.
+/// Historical consent is evidence only. Never deserialize it into a live FlashRequest.
 struct HistoricalRequest {
+    /// Original selected artifact identity, not a currently retained lease.
     artifact_id: ArtifactId,
+    /// Original selected device identity, not current-device authority.
     device_id: DeviceId,
+    /// Original board-acknowledgment session, checked against the enclosing record.
     session_id: SessionId,
 }
+/// Returns historical identities from strict request-shaped `value`, accepting the frozen legacy Pico2 spelling
+/// only as history. Schema, options, IDs, hashes or acknowledgment mismatch reject the record without creating live
+/// consent.
 fn historical_request(value: &Value) -> Result<HistoricalRequest, String> {
+    /// Returns success only when JSON `value` is an object with exactly `names`; rejects missing and unknown fields.
     fn fields(
         value: &Value,
         names: &[&str],
@@ -160,6 +188,7 @@ fn historical_request(value: &Value) -> Result<HistoricalRequest, String> {
     ) {
         return Err("Invalid historical board".into());
     }
+    /// Decodes the named historical object member as the supplied type, propagating a bounded field-specific error.
     macro_rules! field {
         ($object:expr, $name:literal, $ty:ty) => {
             serde_json::from_value::<$ty>($object[$name].clone()).map_err(|_| concat!("Invalid historical ", $name))?
@@ -185,6 +214,11 @@ fn historical_request(value: &Value) -> Result<HistoricalRequest, String> {
         session_id,
     })
 }
+/// Returns at most 16 historical attempts beneath `repo`, reading published generations 0..7 and ignoring pending
+/// files. Missing root returns empty history; unknown/malformed/oversized records, links, identities or filesystem
+/// failures fail the whole read instead of falling back to older success. Only explicit Verified remains verified on
+/// recovery; other published outcomes become Unknown. No operation is resumed and running firmware/hardware remain
+/// unobserved.
 pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
     let parent = root(repo);
     let mut result = Vec::new();
@@ -266,8 +300,10 @@ pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
 }
 #[cfg(test)]
 mod tests {
+    //! Durable generation publication and bounded-history fixture checks without hardware operations.
     use super::*;
     #[test]
+    /// Acknowledged generations recover coherently, with history capacity reclaimed only by explicit owned cleanup.
     fn publication_is_coherent_and_retains_verified_history() {
         let repo = std::env::temp_dir().join(format!(
             "studio-intent-{}-{}",
@@ -329,10 +365,13 @@ mod tests {
 
 #[cfg(test)]
 mod recovery_tests {
+    //! Frozen legacy/current history, torn publication and conservative recovery regressions.
     use super::*;
-    // Frozen historical wire shape; never regenerate using the current Journal/FlashRequest.
+    /// Frozen historical wire shape; never regenerate using the current Journal/FlashRequest.
     const LEGACY_JOURNAL: &str = include_str!("../tests/fixtures/flash-journal-v1-pico2.json");
+    /// Returns an isolated temporary repository and unpublished journal; caller drops the journal before cleanup.
     fn fixture() -> (PathBuf, Journal) {
+        /// Process-local suffix preventing collisions among concurrent same-timestamp fixtures.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let repo = std::env::temp_dir().join(format!(
             "studio-journal-recovery-{}-{}-{}",
@@ -366,6 +405,8 @@ mod recovery_tests {
         let journal = Journal::new(&repo, &job, &session, &request).unwrap();
         (repo, journal)
     }
+    /// Removes test-owned `repo` only after checking its temporary-root and fixture-prefix bounds; panics on
+    /// mismatch/I/O failure.
     fn cleanup(repo: PathBuf) {
         assert!(repo.starts_with(std::env::temp_dir()));
         assert!(
@@ -378,6 +419,7 @@ mod recovery_tests {
         std::fs::remove_dir_all(repo).unwrap();
     }
     #[test]
+    /// Frozen legacy consent remains readable historical evidence but cannot deserialize as a current flash request.
     fn legacy_and_current_journals_remain_read_only_history() {
         let (repo, mut journal) = fixture();
         journal
@@ -408,6 +450,7 @@ mod recovery_tests {
         cleanup(repo);
     }
     #[test]
+    /// Unknown versions, malformed options/identity and extra fields reject historical request admission.
     fn legacy_history_rejects_malformed_requests_and_unknown_versions() {
         let (repo, mut journal) = fixture();
         journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
@@ -437,6 +480,7 @@ mod recovery_tests {
         cleanup(repo);
     }
     #[test]
+    /// Torn or complete pending bytes cannot upgrade recovered outcome until the generation is actually renamed.
     fn pending_generation_never_upgrades_recovered_write_outcome() {
         let (repo, mut journal) = fixture();
         journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
@@ -484,6 +528,7 @@ mod recovery_tests {
         cleanup(repo);
     }
     #[test]
+    /// A corrupt newer published record fails history instead of silently retaining an older verified result.
     fn corrupt_published_generation_fails_history_instead_of_falling_back_to_verified() {
         let (repo, mut journal) = fixture();
         journal
@@ -497,6 +542,7 @@ mod recovery_tests {
         cleanup(repo);
     }
     #[test]
+    /// Rename failure retains prior bytes and next generation number while exposing the leftover pending record.
     fn failed_rename_preserves_last_record_and_never_acknowledges_generation() {
         let (repo, mut journal) = fixture();
         journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();

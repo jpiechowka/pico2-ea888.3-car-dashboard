@@ -3,13 +3,19 @@ use std::path::Path;
 
 use dashboard_helper_protocol::*;
 
+/// Remove only local records for `attempt` below `repo`'s helper flash-attempt root.
+/// Returns `Ok(())` after held-handle removal of all recognized members and the empty
+/// directory. Preflights at most 16 files named 0–7 `.json`/`.pending`, bounded to
+/// 65,536 bytes; published JSON must match schema/job identity. Preflight failure
+/// removes nothing; later disposition errors can leave a partially removed attempt.
+/// This Windows-only path never writes a device or recursively deletes unknown files.
 pub(crate) fn remove(
     repo: &Path,
     attempt: &AttemptId,
 ) -> Result<(), String> {
     let parent = repo.join("target/studio-helper/flash-attempts");
     let directory = parent.join(attempt.as_str());
-    // This holds every ancestor, including the selected directory, against relocation.
+    // Hold ancestors against relocation; held_directory below pins the selected directory.
     let _parents = crate::file_locks::ancestors(std::slice::from_ref(&directory))?;
     let held_directory = crate::file_locks::DeleteFile::directory(&directory)?;
     let entries = std::fs::read_dir(&directory)
@@ -50,8 +56,11 @@ pub(crate) fn remove(
 }
 
 #[cfg(all(test, windows))]
+/// Local deletion preflight/ownership regressions; no connected device is accessed.
 mod tests {
     use super::*;
+    /// Returns an isolated temporary repository, attempt ID and directory containing
+    /// one valid record. Panics on fixture setup failure; tests own directory cleanup.
     fn fixture() -> (std::path::PathBuf, AttemptId, std::path::PathBuf) {
         let repo = std::env::temp_dir().join(format!(
             "studio-cleanup-{}-{}",
@@ -72,6 +81,7 @@ mod tests {
         (repo, id, dir)
     }
     #[test]
+    /// Assert explicit cleanup removes the chosen attempt while preserving its neighbor.
     fn removes_only_selected_members_and_releases_capacity() {
         let (repo, id, dir) = fixture();
         let neighbor = dir.parent().unwrap().join("b".repeat(32));
@@ -85,6 +95,7 @@ mod tests {
         std::fs::remove_dir_all(repo).unwrap();
     }
     #[test]
+    /// Assert unknown files and mismatched JSON block deletion before any member is lost.
     fn refuses_unknown_member_or_mismatched_identity_before_any_delete() {
         let (repo, id, dir) = fixture();
         std::fs::write(dir.join("notes.txt"), b"owned by user").unwrap();
@@ -97,6 +108,7 @@ mod tests {
         std::fs::remove_dir_all(repo).unwrap();
     }
     #[test]
+    /// Assert an active read lease prevents cleanup until its handle is released.
     fn held_record_prevents_cleanup_without_losing_data() {
         let (repo, id, dir) = fixture();
         let held = crate::file_locks::read_file(&dir.join("0.json")).unwrap();

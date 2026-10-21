@@ -1,12 +1,22 @@
 //! Exact picotool 2.3.1 completion grammar, independent of lossy display logs.
 //! Source: pinned main.cpp progress_bar, load_guts, verify_command, reboot_command.
+//! See [picotool 2.3.1 source](https://github.com/raspberrypi/picotool/blob/2.3.1/main.cpp).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Fixed picotool operation whose unmodified raw completion output is admitted.
 pub enum Command {
+    /// Flash load with one completed progress group per qualified image range.
     Load,
+    /// Independent flash verify with completed progress and OK marker per range.
     Verify,
+    /// Explicit application-mode ARM reboot with one exact success line.
     Reboot,
 }
 
+/// Returns whether raw `stdout`/`stderr` and exit `code` prove the pinned `command` completed its expected grammar.
+/// Requires zero exit, empty stderr and <=16 MiB ASCII stdout. Load/verify require exactly `ranges` groups (1..=1024),
+/// each starting at 0%, increasing strictly to 100% with exact 30-cell bars; verify also requires each OK marker.
+/// Reboot ignores `ranges` and accepts only the exact application-mode line. LF/CRLF endings are supported;
+/// truncation, extra text or malformed progress returns false without sanitizing evidence.
 pub fn complete(
     command: Command,
     code: Option<i32>,
@@ -89,7 +99,11 @@ pub fn complete(
 
 #[cfg(test)]
 mod tests {
+    //! Strict raw-output acceptance tests; no picotool process or device operation is executed.
     use super::*;
+    /// Returns one exact load/verify progress group for `command`, using CRLF suffixes when `windows` is true.
+    /// Caller uses Load/Verify; Reboot would use the verify prefix because this helper only constructs progress
+    /// fixtures.
     fn group(
         command: Command,
         windows: bool,
@@ -114,6 +128,7 @@ mod tests {
         text.into_bytes()
     }
     #[test]
+    /// Exact group counts, exit codes and bytes are required; every truncation/non-ASCII corruption and suffix fails.
     fn exact_complete_groups_and_windows_exit_codes() {
         for command in [Command::Load, Command::Verify] {
             for windows in [false, true] {
@@ -140,6 +155,7 @@ mod tests {
         }
     }
     #[test]
+    /// Application reboot is distinct from BOOTSEL reboot and zero verification ranges cannot imply verification.
     fn reboot_and_no_ranges_cannot_manufacture_verification() {
         assert!(complete(
             Command::Reboot,

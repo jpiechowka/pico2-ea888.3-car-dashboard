@@ -1,7 +1,9 @@
+//! Pixel-publication authority across scene, draft, geometry and editor identity changes.
 use dashboard_configurator::canvas_frame::{CanvasFrame, PreviewMode, PublishedCanvas};
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
+/// Returns `e`'s selected view identity in `mode`; panics if the fixture loses its view.
 fn frame(
     e: &Editor,
     mode: PreviewMode,
@@ -15,6 +17,7 @@ fn frame(
             .geometry(),
     )
 }
+/// Return a valid two-view editor; panic on fixture capacity or validation drift.
 fn editor() -> Editor {
     let mut c = default_config();
     c.views
@@ -28,6 +31,7 @@ fn editor() -> Editor {
 }
 
 #[test]
+/// Assert switching lanes grants no pointer authority until appearance pixels succeed.
 fn current_mode_cannot_admit_retained_simulation_or_startup_pixels() {
     for mode in [PreviewMode::Simulation, PreviewMode::Startup] {
         let e = editor();
@@ -49,6 +53,7 @@ fn current_mode_cannot_admit_retained_simulation_or_startup_pixels() {
 }
 
 #[test]
+/// Assert view/revision changes and failed writes revoke old pixel authority.
 fn same_shape_view_and_revision_changes_wait_for_successful_publication() {
     let mut e = editor();
     let mut canvas = PublishedCanvas::default();
@@ -72,6 +77,7 @@ fn same_shape_view_and_revision_changes_wait_for_successful_publication() {
 }
 
 #[test]
+/// Assert pending JSON remains read-only even after rendering, and rejected edits retire hits.
 fn pending_json_and_rejected_draft_retire_the_previous_hit_layer() {
     let mut e = editor();
     let mut canvas = PublishedCanvas::default();
@@ -101,6 +107,7 @@ fn pending_json_and_rejected_draft_retire_the_previous_hit_layer() {
 }
 
 #[test]
+/// Assert only selection within unchanged rendered content can advance a canvas stamp.
 fn selecting_a_widget_preserves_drag_but_cannot_rebind_changed_view_or_config() {
     let mut e = editor();
     let mut canvas = PublishedCanvas::default();
@@ -122,6 +129,7 @@ fn selecting_a_widget_preserves_drag_but_cannot_rebind_changed_view_or_config() 
 }
 
 #[test]
+/// Assert resize failure blocks retained pixels and replacement editors cannot inherit authority.
 fn failed_resize_and_replaced_editor_cannot_reuse_old_pixel_authority() {
     let mut e = editor();
     let mut canvas = PublishedCanvas::default();

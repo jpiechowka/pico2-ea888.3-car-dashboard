@@ -7,10 +7,14 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Instant, Timer};
 
+/// Cross-core generation/phase barrier; radio participates only in BLE builds.
 static GATE: Mutex<CriticalSectionRawMutex, RefCell<Gate>> =
     Mutex::new(RefCell::new(Gate::with_radio(cfg!(feature = "ble-obd"))));
 
+/// Returns the current Park/Resume command, or `None` outside an active request.
 pub fn command() -> Option<Command> { GATE.lock(|gate| gate.borrow().command()) }
+/// Records `owner`'s `success` for the exact `command` generation and phase.
+/// The shared gate rejects stale/duplicate acknowledgement as defined by its state.
 pub fn acknowledge(
     command: Command,
     owner: Owner,
@@ -21,14 +25,21 @@ pub fn acknowledge(
     });
 }
 
+/// Returns whether this core is in thread mode with all interrupt masks clear.
 pub fn interrupt_ready() -> bool { dashboard_pico2::flash_guard::interrupt_ready() }
 
+/// Returns whether core1 can receive its secure FIFO lockout interrupt.
 pub fn core1_ready() -> bool { dashboard_pico2::flash_guard::core1_ready() }
 
+/// Returns whether I2C0 has no active transaction or buffered RX/TX data.
 pub fn i2c_idle() -> bool { dashboard_pico2::flash_guard::i2c_idle() }
 
 /// Called only between complete encoder iterations. In particular an error
 /// return need not imply STOP has finished. Observe idle without cancelling IO.
+/// `last_resume` suppresses duplicate handling of a completed request and is
+/// updated before Resume acknowledgement. Returns `true` after processing a
+/// maintenance request (caller must reset input state), or `false` if none is new.
+/// Do not cancel while parked: the initiator waits for the matching owner reply.
 pub async fn input_boundary(last_resume: &mut Option<Request>) -> bool {
     let Some(current) = command() else {
         return false;
@@ -58,15 +69,31 @@ pub async fn input_boundary(last_resume: &mut Option<Request>) -> bool {
 }
 
 #[derive(Debug)]
+/// Preparation/deadline failure or the journal operation's own failure.
 pub enum SaveError<E> {
-    Preparation(dashboard_pico2::maintenance::Error),
-    Operation(E),
+    /// Barrier, phase, or elapsed-time checks prevented a valid operation.
+    Preparation(
+        /// Shared gate rejection, including post-operation expiry.
+        dashboard_pico2::maintenance::Error,
+    ),
+    /// The operation ran under its permit and returned an error.
+    Operation(
+        /// Unmodified caller-specific journal or hardware failure.
+        E,
+    ),
 }
 
+/// Returns whether `request` still owns the writing phase at the current
+/// boot-relative millisecond timestamp; the shared gate latches invalid timing.
 pub fn writing(request: Request) -> bool {
     GATE.lock(|gate| gate.borrow_mut().writing(request, Instant::now().as_millis()).is_ok())
 }
 
+/// Parks all owners, invokes synchronous `operation` once with the admitted
+/// request, then waits for every Resume acknowledgement before returning its
+/// result. Preparation/elapsed-time errors supersede an operation error.
+/// Never cancel this future: it retains the watchdog ticket through restoration.
+/// Resume failure waits forever without feeding; protocol violations panic.
 pub async fn run<E>(operation: impl FnOnce(Request) -> Result<(), E>) -> Result<(), SaveError<E>> {
     let ticket = super::recovery::begin_maintenance().await;
     let request = GATE

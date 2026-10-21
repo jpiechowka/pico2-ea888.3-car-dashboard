@@ -1,3 +1,4 @@
+//! Synthetic diagnostic terminal/replay workloads with exact quality, extrema and raster acceptance checks.
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion};
@@ -16,6 +17,7 @@ use dashboard_host_validation::vehicle_status::VehicleStatus;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 
+/// Returns an epoch-one PID05 client whose request completed transmission at 1 ms; invariant failures panic.
 fn started() -> Client {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
     let tx = client.start(Request::Obd(5), 0).unwrap();
@@ -23,19 +25,27 @@ fn started() -> Client {
     client
 }
 
+/// Terminal diagnostic scenario applied after the fixed request transmission.
 #[derive(Clone, Copy, Debug)]
 enum Terminal {
+    /// Immediate NRC 0x12 response.
     Negative,
+    /// Single-frame declared length exceeds actual payload.
     Malformed,
+    /// No response before the configured response deadline.
     Timeout,
+    /// NRC 0x78 extends waiting before terminal NRC 0x12.
     PendingThenNegative,
 }
+/// Fixed terminal cases registered with identical setup costs outside measured bodies.
 const TERMINALS: [Terminal; 4] = [
     Terminal::Negative,
     Terminal::Malformed,
     Terminal::Timeout,
     Terminal::PendingThenNegative,
 ];
+/// Applies `case` to started `client` and returns optional pending-phase event plus terminal event.
+/// Fixed fixture times are milliseconds; malformed fixture construction or client state rejection panics.
 fn terminal(
     client: &mut Client,
     case: Terminal,
@@ -56,6 +66,7 @@ fn terminal(
     (initial, result)
 }
 
+/// Asserts exact terminal categories, inactive final clients and ignored late responses for all four cases.
 pub fn verify_terminals() {
     for case in TERMINALS {
         let mut client = started();
@@ -101,27 +112,47 @@ pub fn verify_terminals() {
 
 // Synthetic qualified RX12 records. Qualification is a fixture assumption;
 // their contents do not establish DLC/flags or any real bridge/ECU support.
+/// Synthetic RX12 capability response advertising only coolant PID05.
 const CAP: [u8; 12] = [0, 0, 7, 0xE8, 6, 0x41, 0, 8, 0, 0, 0, 0];
+/// Synthetic coolant response encoding 95 Celsius.
 const COOLANT: [u8; 12] = [0, 0, 7, 0xE8, 3, 0x41, 5, 135, 0, 0, 0, 0];
+/// Synthetic PID05 response with one extra declared payload byte, rejected by semantic length checks.
 const BAD: [u8; 12] = [0, 0, 7, 0xE8, 4, 0x41, 5, 140, 0, 0, 0, 0];
+/// Synthetic coolant response encoding 90 Celsius.
 const LOW: [u8; 12] = [0, 0, 7, 0xE8, 3, 0x41, 5, 130, 0, 0, 0, 0];
+/// Three contiguous replies; only the first 105-Celsius response is solicited and may update extrema.
 const BURST: [u8; 36] = [
     0, 0, 7, 0xE8, 3, 0x41, 5, 145, 0, 0, 0, 0, 0, 0, 7, 0xE8, 3, 0x41, 5, 255, 0, 0, 0, 0, 0, 0, 7, 0xE8, 3, 0x41, 5,
     130, 0, 0, 0, 0,
 ];
+/// One transport/presentation operation at a fixed replay time.
 enum Action {
+    /// Poll one millisecond earlier, then complete any returned transmission at the step time.
     Poll,
-    Bytes(&'static [u8]),
+    /// Feed a raw RX12 fragment into the parser at the step time.
+    Bytes(
+        /// Borrowed fixed fixture fragment, possibly spanning multiple records.
+        &'static [u8],
+    ),
+    /// Capture/render current state without polling or injecting samples.
     Observe,
 }
+/// Fixed operation and independently declared expected coolant state.
 struct Step {
+    /// Boot-relative operation/presentation time in milliseconds.
     at: u64,
+    /// Transport operation performed before snapshot/raster observation.
     action: Action,
+    /// Expected emitted OBD PID, or None for no transmission.
     request: Option<u8>,
+    /// Expected coolant presentation quality at this time.
     quality: Quality,
+    /// Expected available coolant Celsius value, or None when unqualified.
     value: Option<f32>,
+    /// Last admitted coolant measurement time in milliseconds, retained through faults.
     sample_at: Option<u64>,
 }
+/// Returns seventeen fixed steps covering split frames, timeout, malformed payload, burst filtering and staleness.
 fn steps() -> [Step; 17] {
     use Action::*;
     use Quality::*;
@@ -156,13 +187,19 @@ fn steps() -> [Step; 17] {
     ]
 }
 
+/// Stateful synthetic UART-to-session-to-raster workload without real adapter I/O.
 struct Replay {
+    /// Sole diagnostic transaction/acquisition owner.
     session: Session<'static>,
+    /// RX12 byte parser with a fixture-qualified initial boundary.
     parser: Rx12,
+    /// Alternating landscape framebuffers.
     frames: [Box<FrameBuffer>; 2],
+    /// Retained metadata for both framebuffers.
     cache: DashboardCache,
 }
 impl Replay {
+    /// Returns a fresh parser/session sharing the confirmed initial epoch and two black buffers; invalid setup panics.
     fn new() -> Self {
         let mut parser = Rx12::new();
         let epoch = parser.confirm_boundary().unwrap();
@@ -174,6 +211,8 @@ impl Replay {
         }
     }
 
+    /// Applies `step` and returns its emitted PID if polling starts a request; byte/observe steps return None.
+    /// Mutates parser/session and acknowledges TX immediately at step time; invalid fixture/state transitions panic.
     fn advance(
         &mut self,
         step: &Step,
@@ -202,6 +241,8 @@ impl Replay {
         }
     }
 
+    /// Draws `snapshot` at `now` ms into buffer `index` modulo two; `retained` chooses cache versus complete paint.
+    /// Derives vehicle quality/status from that same snapshot without injecting measurements.
     fn draw(
         &mut self,
         snapshot: &DashboardSnapshot,
@@ -232,6 +273,7 @@ impl Replay {
         black_box(&self.frames[index % 2]);
     }
 
+    /// Applies ordered `steps` and renders each resulting snapshot, using `retained` for all draw operations.
     fn run(
         &mut self,
         steps: &[Step],
@@ -244,6 +286,7 @@ impl Replay {
     }
 }
 
+/// Asserts every replay PID, quality/value/age, both framebuffer contents, extrema and terminal counters.
 pub fn verify_replay() {
     let steps = steps();
     let mut retained = Replay::new();
@@ -291,6 +334,8 @@ pub fn verify_replay() {
     }
 }
 
+/// Registers verified terminal and seventeen-frame replay workloads with Criterion `c`, excluding fresh setup from
+/// timing.
 pub fn benchmarks(c: &mut Criterion) {
     verify_terminals();
     verify_replay();

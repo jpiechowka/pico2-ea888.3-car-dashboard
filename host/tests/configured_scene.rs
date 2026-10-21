@@ -1,3 +1,6 @@
+//! Configured widget text/layout and retained framebuffer parity against independent glyph, geometry and full-render
+//! oracles.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::configured_scene::{Layout, widget_text};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
@@ -6,6 +9,7 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Config-fault transitions preserve mode/title/FPS lanes and repaint both headers against independent glyph positions.
 #[test]
 fn configuration_fault_keeps_mode_visible_and_repairs_both_headers() {
     use dashboard_host_validation::samples::DataMode;
@@ -83,6 +87,7 @@ fn configuration_fault_keeps_mode_visible_and_repairs_both_headers() {
     }
 }
 
+/// Compact stock widgets reserve secondary content selectively so primary measurements retain space.
 #[test]
 fn default_small_widgets_prioritize_the_primary_measurement() {
     let config = default_config();
@@ -92,6 +97,7 @@ fn default_small_widgets_prioritize_the_primary_measurement() {
     assert!(!config.widgets[0].display.graph && !config.widgets[0].display.average);
 }
 
+/// Actual primary white-pixel heights grow by at least 2x/3x in wider/taller widgets independently of font metadata.
 #[test]
 fn wider_and_taller_widgets_use_visibly_larger_primary_digits() {
     // Count the vertical extent of actual white pixels in the primary lane,
@@ -155,6 +161,8 @@ fn wider_and_taller_widgets_use_visibly_larger_primary_digits() {
     );
 }
 
+/// Digit-width/font-fit transitions and unit toggles erase stale glyphs in both retained buffers, matching complete
+/// renders.
 #[test]
 fn growing_and_shrinking_digits_repair_both_buffers_across_fit_thresholds() {
     use dashboard_host_validation::widgets::value_text::fit_value;
@@ -226,6 +234,7 @@ fn growing_and_shrinking_digits_repair_both_buffers_across_fit_thresholds() {
     }
 }
 
+/// Extreme bounded text fits measured lanes; invalid lambda values never produce a numeric equivalent AFR.
 #[test]
 fn extreme_text_stays_measurable_and_invalid_lambda_has_no_numeric_afr() {
     use embedded_graphics::mono_font::MonoTextStyle;
@@ -260,6 +269,8 @@ fn extreme_text_stays_measurable_and_invalid_lambda_has_no_numeric_afr() {
     }
 }
 
+/// Exact configured strings honor decimal precision, physical/fixed units, optional statistics and explicit fuel
+/// stoichiometry.
 #[test]
 fn configured_text_respects_precision_units_flags_and_fuel_scale() {
     let mut config = default_config();
@@ -287,6 +298,7 @@ fn configured_text_respects_precision_units_flags_and_fuel_scale() {
     assert!(text[2..].iter().all(|s| s.is_empty()));
 }
 
+/// The oil peak highlight's 750ms elapsed deadline invalidates its cell without a new snapshot.
 #[test]
 fn peak_highlight_expires_on_elapsed_time_without_a_new_sample() {
     let config = validate(default_config()).unwrap();
@@ -314,6 +326,7 @@ fn peak_highlight_expires_on_elapsed_time_without_a_new_sample() {
     assert_ne!(cache.prepare(0, &scene).cells & (1 << 4), 0);
 }
 
+/// Blend assumptions remain labeled estimates; AFR-only changes, stale expiry and faults repair both retained buffers.
 #[test]
 fn blend_percentage_is_explicit_and_afr_only_changes_repaint_both_buffers() {
     let mut model = AcquisitionModel::demo();
@@ -393,6 +406,8 @@ fn blend_percentage_is_explicit_and_afr_only_changes_repaint_both_buffers() {
     }
 }
 
+/// Alternating buffers match full renders through named views, spans, holes, overlays and config faults, then settle
+/// clean.
 #[test]
 fn both_buffers_match_full_redraw_for_spans_holes_views_overlays_and_options() {
     let mut config = default_config();
@@ -450,6 +465,8 @@ fn both_buffers_match_full_redraw_for_spans_holes_views_overlays_and_options() {
     assert!(Layout::new(&config, 255, false).is_none());
 }
 
+/// Every channel/span/option combination at the lower-right boundary preserves all pixels above/left of its independent
+/// grid bounds.
 #[test]
 fn every_span_and_display_option_stays_inside_its_declared_rectangle() {
     use embedded_graphics::pixelcolor::Rgb565;
@@ -521,6 +538,8 @@ fn every_span_and_display_option_stays_inside_its_declared_rectangle() {
     }
 }
 
+/// Switching legacy/configured/empty scenes and reusing IDs with changed options cannot retain stale pixels in either
+/// buffer.
 #[test]
 fn cache_repairs_empty_views_and_reused_ids_with_changed_options() {
     let mut model = AcquisitionModel::demo();

@@ -1,5 +1,7 @@
+//! Descending-stack samples validate bounds and retain the largest observed usage only.
 use dashboard_host_validation::stack_samples::StackSamples;
 
+/// Empty/reversed ranges and out-of-range SPs fail; valid boundary samples update a monotonic observed maximum.
 #[test]
 fn stack_samples_are_checked_and_only_an_observed_lower_bound() {
     assert!(StackSamples::new(100, 99).is_none());

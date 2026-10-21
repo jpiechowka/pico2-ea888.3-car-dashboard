@@ -6,11 +6,16 @@ use super::{BuildOptions, BuildSelection, Editor, PreparedBuild};
 use crate::editor::AcceptedConfigKey;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Content/options comparison used to label an artifact current or stale in the UI.
 pub struct ArtifactDisplayIdentity {
+    /// Normalized requested build options; not a captured build request.
     pub(super) options: BuildOptions,
+    /// Project, configuration, startup-profile and startup-asset SHA256 strings, in order.
     pub(super) hashes: [String; 4],
 }
 impl ArtifactDisplayIdentity {
+    /// Returns whether `artifact` matches these options and four content digests.
+    /// Does not check helper session, source revision, device or flash authorization.
     pub fn matches_artifact(
         &self,
         artifact: &ArtifactSummary,
@@ -20,18 +25,27 @@ impl ArtifactDisplayIdentity {
 }
 
 #[derive(PartialEq, Eq)]
+/// Accepted-content cache key, independent of selection-only UI changes/build options.
 struct ContentKey {
+    /// Owning editor and accepted configuration lineage.
     config: AcceptedConfigKey,
+    /// Accepted startup behavior, included even if configuration itself is unchanged.
     profile: StartupProfile,
+    /// Accepted converted-artwork hash, or absent when no artwork is attached.
     artwork: Option<[u8; 32]>,
 }
 
 /// Retains only the last display digests: no payload, original pin, or session capability.
 #[derive(Default)]
 pub struct ArtifactDisplayCache {
+    /// Most recent accepted-content identity and ordered digests; no payload is retained.
     content: Option<(ContentKey, [String; 4])>,
 }
 impl ArtifactDisplayCache {
+    /// Returns display identity for `editor` and normalized `selection`, reusing
+    /// digests only when accepted content matches. Readiness/options/capture failures
+    /// return diagnostics without replacing cached content. Every call rechecks
+    /// pending edits even when its content hash would otherwise be cached.
     pub fn inspect(
         &mut self,
         editor: &Editor,
@@ -61,6 +75,8 @@ impl ArtifactDisplayCache {
     }
 }
 
+/// Returns whether `artifact` has requested `options` and ordered `hashes`
+/// (project/configuration/startup-profile/startup-asset); performs no authorization.
 pub(super) fn matches(
     options: &BuildOptions,
     hashes: &[String; 4],
@@ -76,10 +92,12 @@ pub(super) fn matches(
 }
 
 #[cfg(test)]
+/// Cache-key ownership and allocation-retention regressions.
 mod tests {
     use super::*;
     use crate::editor::Selection;
     #[test]
+    /// Assert selection/options reuse digest allocations, while a new editor replaces lineage.
     fn hits_retain_digest_allocations_but_new_owner_changes_key() {
         let mut editor = Editor::default();
         let mut selection = BuildSelection::default();

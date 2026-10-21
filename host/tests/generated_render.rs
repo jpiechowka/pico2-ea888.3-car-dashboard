@@ -1,4 +1,5 @@
 //! Capacity and retained-render interleavings, using the public shared scene path.
+/// Shared panic-only seed/step reporting.
 #[path = "../../test-support/generated.rs"]
 mod generated;
 use dashboard_config::*;
@@ -12,6 +13,8 @@ use dashboard_core::vehicle_status::VehicleStatus;
 use dashboard_core::view_state::WarningPager;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Returns 64 widgets across eight views spanning all orientations/styles, with ten-second histories and warnings.
+/// Enables advanced display features and 250 ms smoothing; fixture construction/validation failure panics.
 fn capacity_config() -> ValidatedConfig {
     let mut raw = default_config();
     raw.views.clear();
@@ -63,6 +66,8 @@ fn capacity_config() -> ValidatedConfig {
     validate(raw).unwrap()
 }
 
+/// Full-capacity randomized view/unit/overlay/staleness changes keep both retained buffers equal to poisoned full
+/// repaint.
 #[test]
 fn maximum_configuration_stays_coherent_after_view_warning_and_geometry_changes() {
     // Mutation targets: cache keys missing view/geometry/unit/overlay/data age,

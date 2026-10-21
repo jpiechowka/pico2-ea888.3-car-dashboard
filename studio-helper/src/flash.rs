@@ -5,6 +5,10 @@ use dashboard_helper_protocol::*;
 
 use crate::artifacts::Artifact;
 use crate::flash_output::Command;
+/// Returns success only when explicit `request` matches `session`, immutable `artifact`, selected `device` and complete
+/// `inspection`, including normalized options and board-acknowledgment identity. Schema/state mismatches reject
+/// admission. A reported estimate above 4 MiB contradicts the board contract; absent/smaller estimates do not measure
+/// capacity. This pure gate does not verify native leases, repeat device inspection or dispatch any command.
 pub(crate) fn admit(
     request: &FlashRequest,
     session: &SessionId,
@@ -37,6 +41,9 @@ pub(crate) fn admit(
     inspection.validate()?;
     Ok(())
 }
+/// Re-inspects selected `device` under `process` in `repo`/`session`, returning success only for unchanged admitted
+/// descriptor/chip/boot/security/partition facts relative to `inspection`. Content-derived flash estimates may change,
+/// but estimates above 4 MiB fail. Read/cancellation/identity failures prevent subsequent command dispatch.
 fn fresh(
     process: &mut crate::process::ProcessContext,
     repo: &Path,
@@ -62,6 +69,7 @@ fn fresh(
     }
     Ok(())
 }
+/// Returns success unless cancellation is latched; on cancellation records the cause in `process` and forbids dispatch.
 fn cancellation(process: &mut crate::process::ProcessContext) -> Result<(), String> {
     if crate::process::cancelled() {
         process.last_failure = Some(crate::process::FailureKind::Cancelled);
@@ -70,19 +78,36 @@ fn cancellation(process: &mut crate::process::ProcessContext) -> Result<(), Stri
         Ok(())
     }
 }
+/// Explicit flash operation failure retaining its last completed process exit observation.
 pub(crate) struct Failure {
+    /// Typed-path diagnostic serialized as bounded job text by the caller.
     pub reason: String,
+    /// Last child exit code, if any; not proof of transfer/verification semantics.
     pub exit: Option<RawExit>,
 }
+/// Borrowed immutable authority for one explicitly requested selected-device flash attempt.
 pub(crate) struct Operation<'a> {
+    /// Canonical repository root for pinned tooling and the private intent journal.
     pub repo: &'a Path,
+    /// Current helper session binding all selected authorities.
     pub session: &'a SessionId,
+    /// Job identity owning stage state and durable intent.
     pub job: &'a JobId,
+    /// Explicit user request with content/options/board acknowledgment binding.
     pub request: &'a FlashRequest,
+    /// Immutable checked image with retained native lease.
     pub artifact: &'a Artifact,
+    /// Explicit descriptor-only selected USB device.
     pub device: &'a DeviceSummary,
+    /// Previously admitted complete read-only BOOTSEL observation.
     pub inspection: &'a DeviceInspection,
 }
+/// Executes explicit `operation` under owned `process`, publishing stage transitions through `transition` and sanitized
+/// `(stage, stderr, text)` output through `log`. Callbacks must not panic or block process supervision.
+/// Returns the final raw exit observation only after exact pinned load, verify and reboot semantics succeed; failures
+/// preserve last exit and best-effort publish interrupted intent. A durable armed journal precedes transfer/reboot.
+/// Cancellation is checked between commands; a dispatched load defers ordinary cancellation until its process boundary.
+/// Errors after load may leave device flash partially/fully changed; no retry or resume occurs automatically.
 pub(crate) fn run(
     process: &mut crate::process::ProcessContext,
     operation: Operation<'_>,
@@ -220,8 +245,11 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    //! Pure request/session/content/device admission checks; fixtures never dispatch hardware commands.
     use super::*;
     #[test]
+    /// Admission binds project/revision/session/options/inspection and rejects contradictory capacity or incomplete
+    /// facts.
     fn admission_binds_complete_project_session_options_and_inspection() {
         let session = SessionId::new("1".repeat(32)).unwrap();
         let device_id = DeviceId::new("2".repeat(32)).unwrap();

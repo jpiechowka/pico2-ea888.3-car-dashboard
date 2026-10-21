@@ -1,6 +1,8 @@
+//! Importer raw-text rejection and accepted-project feedback identity regressions.
 use dashboard_configurator::artwork_draft::{Number, Numbers};
 use dashboard_startup_tools::{Options, Sheet, SourceKind};
 #[test]
+/// Assert malformed/out-of-range text stays inspectable and cannot reuse old options.
 fn invalid_text_is_retained_and_never_falls_back_to_old_recipe() {
     let base = Options::default();
     let mut draft = Numbers::new(&base);
@@ -21,6 +23,7 @@ fn invalid_text_is_retained_and_never_falls_back_to_old_recipe() {
     assert_eq!(draft.options(&base).unwrap().trim_start_ms, 1000);
 }
 #[test]
+/// Assert hidden sheet fields survive switching kinds and are validated when active.
 fn hidden_grid_drafts_are_preserved_but_only_admitted_for_sheet_conversion() {
     let base = Options::default();
     let mut draft = Numbers::new(&base);
@@ -48,6 +51,7 @@ fn hidden_grid_drafts_are_preserved_but_only_admitted_for_sheet_conversion() {
 }
 
 #[test]
+/// Assert feedback survives draft activity but expires on accepted revision/owner changes.
 fn feedback_tracks_accepted_project_and_own_publication_not_draft_activity() {
     use dashboard_configurator::artwork_draft::ProjectFeedback;
     use dashboard_configurator::config::startup::{StartupProfile, StartupTheme};

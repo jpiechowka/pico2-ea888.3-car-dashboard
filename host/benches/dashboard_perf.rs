@@ -1,3 +1,5 @@
+//! Verified host CPU workloads for shared rendering, acquisition, transport and ownership models.
+//! These timings exclude physical bus latency, target scheduling and panel scanout unless explicitly modeled.
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -22,10 +24,12 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
+/// Exact vendored UART ring functions exercised by the synthetic byte-copy workload.
 #[allow(dead_code)]
 #[path = "../../firmware/vendor/embassy-rp/src/uart/buffered_io.rs"]
 mod uart_io;
 
+/// Registers full RGB565 clear and left-clipped contiguous fill workloads with Criterion `c`.
 fn framebuffer(c: &mut Criterion) {
     let mut frame = AlignedFrame::boxed();
     let mut group = c.benchmark_group("framebuffer");
@@ -59,6 +63,7 @@ fn framebuffer(c: &mut Criterion) {
     group.finish();
 }
 
+/// Registers boost-cell, fixed graph and continuously timestamped sensor-update workloads with `c`.
 fn widgets_and_history(c: &mut Criterion) {
     let mut frame = AlignedFrame::boxed();
     c.bench_function("boost_cell/psi_peak", |b| {
@@ -119,6 +124,8 @@ fn widgets_and_history(c: &mut Criterion) {
     });
 }
 
+/// Registers typed/batch acquisition snapshots and synchronous watch-copy roundtrips with `c`.
+/// Sample sequence/time advance per iteration; fixture admission or watch delivery failure panics.
 fn acquisition(c: &mut Criterion) {
     let mut vehicle = AcquisitionModel::new();
     let mut sequence = 0;
@@ -155,6 +162,7 @@ fn acquisition(c: &mut Criterion) {
     });
 }
 
+/// Registers fixed stationary/cell/dense/boundary damage scans with `c` after asserting exact planned byte counts.
 fn damage_planning(c: &mut Criterion) {
     let previous = AlignedFrame::boxed();
     let mut current = AlignedFrame::boxed();
@@ -199,6 +207,8 @@ fn damage_planning(c: &mut Criterion) {
     }
 }
 
+/// Registers full/stationary-retained and alternating snapshot renders with `c`, keeping acquisition outside timing.
+/// Each alternating path begins with independent initialized pixels and cache state.
 fn dashboard_scene(c: &mut Criterion) {
     let mut model = AcquisitionModel::demo();
     for sample in 0..200 {
@@ -234,8 +244,8 @@ fn dashboard_scene(c: &mut Criterion) {
             black_box(&frame.0);
         });
     });
-    // The paired changing fixtures toggle only boost. Acquisition is outside
-    // the measured region, and both paths render exactly the same scenes.
+    // Demo batch admission ignores NaNs, preserving all seven companion channels.
+    // Only boost changes; acquisition remains outside timing for both renderers.
     model.ingest_batch(
         [
             1.7,
@@ -250,6 +260,19 @@ fn dashboard_scene(c: &mut Criterion) {
         2000,
     );
     let alternate = model.snapshot();
+    for index in 1..8 {
+        assert_eq!(alternate.sensors[index], snapshot.sensors[index]);
+        assert_eq!(alternate.metadata[index], snapshot.metadata[index]);
+    }
+    let alternate_scene = DashboardScene {
+        measurements: &alternate,
+        ..scene
+    };
+    let mut reference = AlignedFrame::boxed();
+    let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), 0, &alternate_scene);
+    assert_eq!(redraw.cells, 1, "one-cell benchmark fixture");
+    alternate_scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+    assert!(frame.0 == reference.0, "one-cell retained/full pixel parity");
     for retained in [false, true] {
         // Independent initial pixels/cache: filtering or the preceding full
         // renderer must not leave the retained case with a mismatched cache.
@@ -282,6 +305,8 @@ fn dashboard_scene(c: &mut Criterion) {
     }
 }
 
+/// Registers RX12 parsing, single-frame OBD decoding and 128-byte ISO-TP assembly with `c` using synthetic frames.
+/// Fixture protocol errors panic; no adapter/ECU transmission occurs.
 fn protocol(c: &mut Criterion) {
     let mut rx12 = Rx12::new();
     rx12.confirm_boundary().unwrap();
@@ -328,6 +353,8 @@ fn protocol(c: &mut Criterion) {
     });
 }
 
+/// Registers complete client single/multiframe transactions with `c`, including immediate flow-control acknowledgments.
+/// Monotonic synthetic times advance per iteration; protocol invariant failures panic.
 fn diagnostic_client(c: &mut Criterion) {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
     let mut now = 0;
@@ -368,6 +395,8 @@ fn diagnostic_client(c: &mut Criterion) {
     });
 }
 
+/// Registers coolant transaction/snapshot and diagnostic distribution-export workloads with `c`.
+/// Export uses a separately seeded fixed trace so earlier benchmark duration/filtering cannot change its work.
 fn vehicle_session(c: &mut Criterion) {
     let mut session = Session::new(0x7E8, 1).unwrap();
     let tx = session.poll(0).unwrap().unwrap();
@@ -413,8 +442,10 @@ fn vehicle_session(c: &mut Criterion) {
     });
 }
 
+/// Immediate synthetic command-response port for CPU-only vehicle service measurements.
 mod vehicle_port;
 
+/// Registers synthetic port/bootstrap/session/snapshot work with `c` after verifying initial capability discovery.
 fn vehicle_service(c: &mut Criterion) {
     use std::task::{Context, Waker};
 
@@ -444,6 +475,8 @@ fn vehicle_service(c: &mut Criterion) {
     });
 }
 
+/// Registers RX12 ring copying with `c`, retaining backing storage and one reader/writer for the entire workload.
+/// No hardware FIFO or IRQ scheduling is measured; unexpected software read state panics.
 fn uart_ring(c: &mut Criterion) {
     use core::sync::atomic::AtomicU8;
     use core::task::Poll;
@@ -483,6 +516,7 @@ fn uart_ring(c: &mut Criterion) {
     });
 }
 
+/// Registers fresh eight-channel alarm engines over three prebuilt samples with Criterion `c`.
 fn alarm_policy(c: &mut Criterion) {
     use dashboard_host_validation::alarms::{AlarmEngine, demo_contexts, demo_rules};
     let mut model = AcquisitionModel::demo();
@@ -503,6 +537,7 @@ fn alarm_policy(c: &mut Criterion) {
     });
 }
 
+/// Registers log insertion/snapshot and independently seeded plain/hinted page rendering with `c`.
 fn logging(c: &mut Criterion) {
     use dashboard_config::ControlMap;
     use dashboard_host_validation::logging::{Level, LogStore};
@@ -546,6 +581,8 @@ fn logging(c: &mut Criterion) {
     });
 }
 
+/// Registers ordinary, unavailable and maximum-width Debug page fixture rendering with `c`.
+/// All displayed performance/clock values are synthetic inputs, not host or device measurements.
 fn shared_debug(c: &mut Criterion) {
     use dashboard_config::ControlMap;
     use dashboard_host_validation::backlight::Brightness;
@@ -620,13 +657,20 @@ fn shared_debug(c: &mut Criterion) {
     }
 }
 
+/// Registers full settings-journal scan and rollover transaction models with `c`; flash electrical effects are absent.
 fn settings_journal(c: &mut Criterion) {
     use dashboard_host_validation::settings::{self, PAGE_SIZE, SECTOR_SIZE, STORAGE_SIZE, Settings, Storage};
+    /// Byte-addressed NOR model cloned outside timed rollover work.
     #[derive(Clone)]
-    struct Memory([u8; STORAGE_SIZE]);
+    struct Memory(
+        /// Two-sector settings storage; FF represents erased bits.
+        [u8; STORAGE_SIZE],
+    );
     impl Storage for Memory {
+        /// Infallible fixture error type; invalid indexing panics instead.
         type Error = ();
 
+        /// Copies from relative byte `offset` into `out` and returns Ok; out-of-range indexing panics.
         fn read(
             &mut self,
             offset: u32,
@@ -636,6 +680,8 @@ fn settings_journal(c: &mut Criterion) {
             Ok(())
         }
 
+        /// AND-programs `page` at relative byte `offset` and returns Ok; invalid bounds panic.
+        /// This fixture does not validate alignment or reject attempted zero-to-one requests.
         fn program(
             &mut self,
             offset: u32,
@@ -648,6 +694,8 @@ fn settings_journal(c: &mut Criterion) {
             Ok(())
         }
 
+        /// Sets one sector from relative `offset` to FF and returns Ok; invalid bounds panic.
+        /// Alignment is supplied by the journal caller, not independently checked here.
         fn erase(
             &mut self,
             offset: u32,
@@ -676,6 +724,8 @@ fn settings_journal(c: &mut Criterion) {
     });
 }
 
+/// Registers a complete park/write/resume/health-ticket model transaction with `c` using fixed millisecond times.
+/// Invalid acknowledgment/state transitions panic; no physical flash operation occurs.
 fn maintenance(c: &mut Criterion) {
     use dashboard_host_validation::health::{Progress, ProgressMonitor};
     use dashboard_host_validation::maintenance::{Command, Gate, Owner};
@@ -719,12 +769,18 @@ criterion_group! {
 }
 criterion_main!(dashboard_perf);
 
+/// Configuration codec/admission workloads.
 mod config_perf;
+/// Shared exact-output benchmark prechecks and additional workloads.
 mod coverage;
+/// Configured rule/LED/history workloads.
 mod rule_perf;
+/// Fixed changing-scene snapshots and paired replay loops.
 mod scene_replay;
+/// Configured gauge, geometry and advanced presentation workloads.
 mod view_perf;
 
+/// Registers verified eight-step prepared-raster and live-model replay pairs with `c`, excluding setup.
 fn mixed_scene_replay(c: &mut Criterion) {
     scene_replay::verify();
     let snapshots = scene_replay::snapshots();
@@ -748,6 +804,8 @@ fn mixed_scene_replay(c: &mut Criterion) {
     }
 }
 
+/// Registers the target's fixed eight-iteration kernels with `c` after exact checksum preflight.
+/// Setup and checksum stay outside timing; host timing remains distinct from target cycle measurements.
 fn target_kernels(c: &mut Criterion) {
     use dashboard_host_validation::display::FrameBuffer;
     use dashboard_host_validation::microbench::ITERATIONS;
@@ -780,10 +838,11 @@ fn target_kernels(c: &mut Criterion) {
     }
 }
 
-// Exact input_model.rs from 56af170, retained solely for the paired cost fixture.
+/// Frozen input behavior from 56af170, retained solely for paired host cost comparison.
 #[allow(dead_code)]
 mod input_legacy;
 
+/// Registers legacy/current event roundtrips with `c` after checking identical single motion/press results.
 fn input_mailbox(c: &mut Criterion) {
     let legacy = input_legacy::EncoderEvents::new();
     let current = dashboard_host_validation::input_model::EncoderEvents::new();
@@ -809,6 +868,7 @@ fn input_mailbox(c: &mut Criterion) {
     });
 }
 
+/// Registers one all-metric frame insertion and a 1500-frame window summary with `c`; prepopulation is untimed.
 fn frame_window(c: &mut Criterion) {
     use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
     use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};

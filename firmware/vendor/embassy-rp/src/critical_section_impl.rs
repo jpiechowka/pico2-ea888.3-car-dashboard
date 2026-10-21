@@ -1,8 +1,11 @@
+//! Reentrant cross-core critical sections using reserved SIO spinlock 31 and local interrupt masking.
+//! Spin waits have no deadline; do not pause the peer while it owns this lock.
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::pac;
 use crate::spinlock::Spinlock;
 
+/// Global critical-section implementation; ownership is tracked per core for nesting.
 struct RpSpinlockCs;
 critical_section::set_impl!(RpSpinlockCs);
 
@@ -13,28 +16,34 @@ const LOCK_UNOWNED: u8 = 0;
 
 /// Indicates which core owns the lock so that we can call critical_section recursively.
 ///
-/// 0 = no one has the lock, 1 = core0 has the lock, 2 = core1 has the lock
+/// 0 = no one has the lock, 1 = core 0 has the lock, 2 = core 1 has the lock
 static LOCK_OWNER: AtomicU8 = AtomicU8::new(LOCK_UNOWNED);
 
 /// Marker value to indicate that we already owned the lock when we started the `critical_section`.
 ///
-/// Since we can't take the spinlock when we already have it, we need some other way to keep track of `critical_section` ownership.
-/// `critical_section` provides a token for communicating between `acquire` and `release` so we use that.
-/// If we're the outermost call to `critical_section` we use the values 0 and 1 to indicate we should release the spinlock and set the interrupts back to disabled and enabled, respectively.
-/// The value 2 indicates that we aren't the outermost call, and should not release the spinlock or re-enable interrupts in `release`
+/// Since we can't take the spinlock when we already have it, we need some other way to keep track of `critical_section`
+/// ownership. `critical_section` provides a token for communicating between `acquire` and `release` so we use that.
+/// If we're the outermost call to `critical_section` we use the values 0 and 1 to indicate we should release the
+/// spinlock and set the interrupts back to disabled and enabled, respectively. The value 2 indicates that we aren't the
+/// outermost call, and should not release the spinlock or re-enable interrupts in `release`
 const LOCK_ALREADY_OWNED: u8 = 2;
 
 unsafe impl critical_section::Impl for RpSpinlockCs {
-    unsafe fn acquire() -> u8 {
-        RpSpinlockCs::acquire()
-    }
+    /// Returns restore token 0/1 for outer entry (IRQs disabled/enabled), or 2 for nested entry.
+    /// # Safety
+    /// Each acquisition must be released on the same core in reverse nesting order.
+    unsafe fn acquire() -> u8 { RpSpinlockCs::acquire() }
 
-    unsafe fn release(token: u8) {
-        RpSpinlockCs::release(token);
-    }
+    /// Releases an outer lock and restores IRQ state from `token`; nested token 2 does nothing.
+    /// # Safety
+    /// `token` must be the matching acquisition result, consumed once in reverse nesting order.
+    unsafe fn release(token: u8) { RpSpinlockCs::release(token); }
 }
 
 impl RpSpinlockCs {
+    /// Returns restore token 0/1 for outer entry (IRQs disabled/enabled), or 2 for nested entry.
+    /// # Safety
+    /// Each acquisition must be released on the same core in reverse nesting order.
     unsafe fn acquire() -> u8 {
         // Store the initial interrupt state and current core id in stack variables
         let interrupts_active = cortex_m::register::primask::read().is_active();
@@ -73,11 +82,15 @@ impl RpSpinlockCs {
         }
     }
 
+    /// Releases an outer lock and restores IRQ state from `token`; nested token 2 does nothing.
+    /// # Safety
+    /// `token` must be the matching acquisition result, consumed once in reverse nesting order.
     unsafe fn release(token: u8) {
         // Did we already own the lock at the start of the `critical_section`?
         if token != LOCK_ALREADY_OWNED {
             // No, it wasn't owned at the start of this `critical_section`, so this core no longer owns it.
-            // Set `LOCK_OWNER` back to `LOCK_UNOWNED` to ensure the next critical section tries to obtain the spinlock instead
+            // Set `LOCK_OWNER` back to `LOCK_UNOWNED` to ensure the next critical section tries to obtain the spinlock
+            // instead
             LOCK_OWNER.store(LOCK_UNOWNED, Ordering::Relaxed);
             // Ensure the compiler doesn't re-order accesses and violate safety here
             core::sync::atomic::compiler_fence(Ordering::SeqCst);
@@ -93,4 +106,5 @@ impl RpSpinlockCs {
     }
 }
 
+/// Hardware spinlock reserved for global critical-section exclusion.
 pub(crate) type Spinlock31 = Spinlock<31>;

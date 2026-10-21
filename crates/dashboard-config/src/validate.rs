@@ -1,3 +1,5 @@
+//! Shared candidate traversal, precise invalid-field locations and immutable admission proof.
+//! The same ordered visitor supports first-error firmware admission and full editor repair lists.
 use core::ops::ControlFlow;
 
 use crate::*;
@@ -6,94 +8,210 @@ use crate::*;
 mod slot;
 pub use slot::ConfigSlot;
 
+/// Stable validation category; [`Field`] and candidate coordinates supply the precise context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
+    /// Unsupported dashboard or catalogue version.
     Version,
+    /// Required collection is empty.
     Empty,
+    /// Reused view/widget ID.
     Duplicate,
+    /// Missing reference or unreachable required action.
     Reference,
+    /// Empty, blank, oversized or non-printable-ASCII text where disallowed.
     Text,
+    /// Numeric, geometric, timing or collection bound violated; includes nonfinite numbers.
     Bounds,
+    /// Widget occupancy or ordered gauge bands overlap.
     Overlap,
+    /// Field combination is incompatible with its channel, screen or policy.
     Incompatible,
+    /// Editable source metadata differs from its closed catalogue definition.
     SourceMetadata,
+    /// Finite warning endpoints lack the required hysteresis ordering.
     Hysteresis,
+    /// Fuel composition/ratio/reference assumptions are inconsistent.
     FuelBasis,
+    /// Required foreground/background pair lacks the configured contrast floor.
     Contrast,
 }
 
+/// Repair field, including bounded subcoordinates for bands, controls and LED patterns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
+    /// BLE address/type/enable combination, displayed at the address field.
     BlePeer,
+    /// BLE connection deadline in milliseconds.
     BleConnectTimeout,
+    /// BLE response deadline in milliseconds.
     BleResponseTimeout,
+    /// BLE inter-transaction gap in milliseconds.
     BlePollGap,
-    Controls(ControlError),
+    /// Input binding/reachability coordinate.
+    Controls(
+        /// Specific page/button/gesture or global control failure.
+        ControlError,
+    ),
+    /// Dashboard payload schema revision.
     Version,
+    /// Documentary source catalogue revision.
     CatalogueVersion,
+    /// Root named-view collection.
     Views,
+    /// A view's nonzero unique ID.
     ViewId,
+    /// A view's printable nonblank name.
     ViewName,
+    /// Initial selected view reference.
     BootView,
+    /// A widget's nonzero globally unique ID.
     WidgetId,
+    /// A widget's referenced view ID.
     WidgetView,
+    /// Widget grid rectangle or overlap.
     Placement,
+    /// Widget printable label and span-dependent length.
     Label,
+    /// Decimal precision.
     Decimals,
+    /// AFR/channel/readout consistency.
     Afr,
+    /// Primary readout units and channel compatibility.
     Readout,
+    /// Optional secondary pressure units.
     Secondary,
+    /// Numeric smoothing time constant.
     Smoothing,
+    /// Peak-hold duration.
     PeakHold,
+    /// Manual reference value or finite dormant value.
     Reference,
+    /// Active band count or out-of-range band edit index.
     BandCount,
-    BandLabel(u8),
-    BandMinimum(u8),
-    BandMaximum(u8),
-    BandOrder(u8),
-    BandColor(u8),
-    HistorySeconds(Channel),
+    /// Optional short band text.
+    BandLabel(
+        /// Zero-based active band index.
+        u8,
+    ),
+    /// Band lower canonical endpoint.
+    BandMinimum(
+        /// Zero-based active band index.
+        u8,
+    ),
+    /// Band upper endpoint or within-band ordering.
+    BandMaximum(
+        /// Zero-based active band index.
+        u8,
+    ),
+    /// Band ordering/overlap with its predecessor.
+    BandOrder(
+        /// Zero-based later band index.
+        u8,
+    ),
+    /// Band/track contrast.
+    BandColor(
+        /// Zero-based active band index.
+        u8,
+    ),
+    /// Per-channel history duration.
+    HistorySeconds(
+        /// Channel whose indexed duration needs repair.
+        Channel,
+    ),
+    /// Upper warning trigger edge or non-window canonical zero.
     WarningTriggerHigh,
+    /// Upper warning clear edge or non-window canonical zero.
     WarningClearHigh,
+    /// Warning snooze duration.
     WarningSnooze,
+    /// Missing onboard acknowledgment action for enabled latch/snooze behavior.
     WarningAcknowledge,
-    LedBrightness(bool),
-    LedPeriod(bool),
-    LedOnPercent(bool),
+    /// RGB pattern brightness percentage.
+    LedBrightness(
+        /// `true` selects warning; `false` selects normal pattern.
+        bool,
+    ),
+    /// RGB pattern period.
+    LedPeriod(
+        /// `true` selects warning; `false` selects normal pattern.
+        bool,
+    ),
+    /// RGB blink on-percentage.
+    LedOnPercent(
+        /// `true` selects warning; `false` selects normal pattern.
+        bool,
+    ),
+    /// Fixed graph endpoints or ordering.
     GraphRange,
+    /// Gauge mode/range/channel compatibility.
     GaugeRange,
-    Color(ColorRole),
+    /// Per-widget contrast role.
+    Color(
+        /// Foreground/decorative role that failed its required comparison.
+        ColorRole,
+    ),
+    /// Shared warning-popup foreground/background contrast.
     WarningColors,
+    /// Warning predicate/channel compatibility.
     WarningMode,
+    /// Trigger threshold or lower trigger-window edge.
     WarningTrigger,
+    /// Clear threshold, lower clear-window edge or hysteresis relation.
     WarningClear,
+    /// Minimum qualifying load percentage.
     WarningLoad,
+    /// Activation dwell in milliseconds.
     WarningOn,
+    /// Clear dwell in milliseconds.
     WarningOff,
+    /// Printable warning label.
     WarningMessage,
+    /// Popup page interval.
     WarningPage,
+    /// Catalogue definition/channel compatibility.
     SourceDefinition,
+    /// Request metadata/catalogue mismatch.
     SourceAccess,
+    /// Decoder metadata/catalogue mismatch.
     SourceDecoder,
+    /// Evidence classification/catalogue mismatch.
     SourceEvidence,
+    /// Explicit CAN route bounds/identity.
     SourceRoute,
+    /// Poll interval or disabled-source scheduling.
     SourcePoll,
+    /// Source freshness lifetime.
     SourceFreshness,
+    /// Final or explicit stoichiometric air/fuel ratio.
     FuelRatio,
+    /// Ethanol composition percentage.
     FuelPercent,
+    /// Gasoline ratio or ordering against ethanol's ratio.
     FuelGasolineRatio,
+    /// Ethanol stoichiometric ratio.
     FuelEthanolRatio,
+    /// Gasoline density.
     FuelGasolineDensity,
+    /// Ethanol density.
     FuelEthanolDensity,
+    /// Shared density temperature or measured-volume reference requirement.
     FuelReference,
 }
 
+/// First-error-compatible diagnostic carrying candidate IDs, which may themselves be invalid.
+/// Use [`ValidationIssue::location`] when duplicate IDs require unambiguous editor selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidationError {
+    /// Failure category.
     pub code: ErrorCode,
+    /// Specific repair field.
     pub field: Field,
+    /// Candidate view ID when applicable; not a validated reference/index.
     pub view: Option<u8>,
+    /// Candidate widget ID when applicable; may be zero or duplicated.
     pub widget: Option<u16>,
+    /// Owning channel when applicable.
     pub channel: Option<Channel>,
 }
 
@@ -101,13 +219,18 @@ pub struct ValidationError {
 /// Field carries bounded band, control page/button/gesture and LED coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidationLocation {
+    /// Candidate view-array index, only retained for unambiguous widget view references.
     view: Option<u8>,
+    /// Candidate root widget-array index, independent of its ID.
     widget: Option<u8>,
+    /// Owning source/history channel or widget channel.
     channel: Option<Channel>,
+    /// Field and any bounded subcoordinate.
     field: Field,
 }
 
 impl ValidationLocation {
+    /// Return a root-only coordinate for `field`, without view/widget/channel indices.
     const fn root(field: Field) -> Self {
         Self {
             view: None,
@@ -117,6 +240,7 @@ impl ValidationLocation {
         }
     }
 
+    /// Return the candidate view-array index, or `None` for root/ambiguous references.
     pub const fn view_index(self) -> Option<usize> {
         match self.view {
             Some(i) => Some(i as usize),
@@ -124,6 +248,7 @@ impl ValidationLocation {
         }
     }
 
+    /// Return the candidate root widget-array index, or `None` outside widget validation.
     pub const fn widget_index(self) -> Option<usize> {
         match self.widget {
             Some(i) => Some(i as usize),
@@ -131,6 +256,7 @@ impl ValidationLocation {
         }
     }
 
+    /// Return the stable owning-channel array index, or `None` without channel context.
     pub const fn channel_index(self) -> Option<usize> {
         match self.channel {
             Some(c) => Some(c.index()),
@@ -138,12 +264,15 @@ impl ValidationLocation {
         }
     }
 
+    /// Return the specific repair field, including any band/control/LED subcoordinate.
     pub const fn field(self) -> Field { self.field }
 }
 
 /// Formatting follows the JSON arrays: widgets are a root list.
 /// No heap strings are retained or constructed by firmware validation.
 impl core::fmt::Display for ValidationLocation {
+    /// Write a JSON-style repair path to `f`; returns only sink formatting errors.
+    /// Candidate list indices take precedence over IDs; no heap allocation is performed here.
     fn fmt(
         &self,
         f: &mut core::fmt::Formatter<'_>,
@@ -282,13 +411,17 @@ impl core::fmt::Display for ValidationLocation {
     }
 }
 
+/// Complete repair issue combining compatibility error IDs with unambiguous candidate coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidationIssue {
+    /// Category, field and candidate identity values.
     pub error: ValidationError,
+    /// Candidate array/subfield coordinate for editor navigation.
     pub location: ValidationLocation,
 }
 
 impl ValidationError {
+    /// Return root-level `code`/`field` failure; callers add applicable IDs/channel context.
     pub(crate) const fn new(
         code: ErrorCode,
         field: Field,
@@ -316,17 +449,23 @@ impl ValidationError {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ValidatedConfig {
+    /// Admitted immutable candidate; mutation requires new validation.
     config: Config,
+    /// Validated finite stoichiometric air/fuel mass ratio, 5..=25.
     stoich: f32,
+    /// Process-local exact cache key; `None` requires cache bypass.
     cache_identity: Option<ConfigCacheIdentity>,
+    /// Distinguishes never-issued storage from permanent global issuer exhaustion.
     cache_status: CacheIdentityStatus,
 }
 
 // Config storage plus runtime proof metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
+/// Target storage ceiling for model plus admission/cache metadata; not whole-image headroom.
 const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_608);
 
 impl PartialEq for ValidatedConfig {
+    /// Return semantic equality with `other`, ignoring runtime cache-key/status differences.
     fn eq(
         &self,
         other: &Self,
@@ -336,12 +475,17 @@ impl PartialEq for ValidatedConfig {
 }
 
 impl ValidatedConfig {
+    /// Return the exact process-local cache key or `None` when caching must be bypassed.
     pub const fn cache_identity(&self) -> Option<ConfigCacheIdentity> { self.cache_identity }
 
+    /// Return why an exact cache key is present or unavailable; does not change validation status.
     pub const fn cache_identity_status(&self) -> CacheIdentityStatus { self.cache_status }
 
+    /// Attempt fresh global issuance after admission; exhaustion preserves valid configuration.
     fn publish_identity(&mut self) { self.publish_issued(crate::cache_identity::issue()); }
 
+    /// Apply `issued` atomically under exclusive borrow; error clears the key and marks exhaustion.
+    /// Existing configuration and stoichiometry remain unchanged.
     fn publish_issued(
         &mut self,
         issued: Result<ConfigCacheIdentity, crate::cache_identity::IssueError>,
@@ -358,11 +502,15 @@ impl ValidatedConfig {
         }
     }
 
+    /// Return immutable admitted model data; no mutable accessor can invalidate the proof.
     pub const fn config(&self) -> &Config { &self.config }
 
+    /// Return admitted stoichiometric air/fuel mass ratio; not a measured lambda/AFR target.
     pub const fn stoich(&self) -> f32 { self.stoich }
 }
 
+/// Return whether `value` is finite and inclusively within caller-supplied `min`, `max`.
+/// Endpoints are not independently validated; reversed/NaN endpoints naturally reject values.
 pub(crate) fn in_range(
     value: f32,
     min: f32,
@@ -371,6 +519,7 @@ pub(crate) fn in_range(
     value.is_finite() && value >= min && value <= max
 }
 
+/// Return whether `text` is nonempty printable ASCII, at most `max` bytes and not all spaces.
 fn text_valid(
     text: &str,
     max: usize,
@@ -381,8 +530,9 @@ fn text_valid(
         && text.bytes().any(|b| b != b' ')
 }
 
-/// Validation is bounded by eight views and sixty-four widget instances. The
-/// quadratic ID checks use no secondary heap or target-sized scratch buffer.
+/// Consume candidate `config` and return immutable admission proof or its first validation error.
+/// Validation is bounded by eight views and sixty-four widget instances; quadratic ID checks
+/// use no secondary heap. Cache-key exhaustion preserves success with caching disabled.
 pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
     let stoich = validate_ref(&config)?;
     let mut validated = ValidatedConfig {
@@ -395,6 +545,8 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
     Ok(validated)
 }
 
+/// Validate borrowed `config` and return admitted stoichiometric ratio or the first failure.
+/// Does not issue a cache key or mutate the candidate; first-error order matches the full visitor.
 pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
     let mut first = None;
     let result = visit_validation(config, |issue| {
@@ -407,15 +559,18 @@ pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
     }
 }
 
-/// Visit checks in first-error order without allocating or publishing a config proof.
-/// Break exits immediately. Continue(Some(stoich)) means the entire traversal
-/// succeeded; Continue(None) means at least one issue was emitted.
+/// Visit candidate `config` in deterministic admission order, passing each issue to `emit`.
+/// Returns `Break(())` immediately when requested; `Continue(Some(stoich))` means every check
+/// succeeded, and `Continue(None)` means at least one issue. No proof/key is published.
+/// Independent fields remain inspectable after earlier errors; invalid/ambiguous placement
+/// never indexes occupancy. Disabled/dormant fields still undergo their applicable checks.
 pub fn visit_validation(
     config: &Config,
     mut emit: impl FnMut(ValidationIssue) -> ControlFlow<()>,
 ) -> ControlFlow<(), Option<f32>> {
     let mut valid = true;
     let mut location = ValidationLocation::root(Field::Version);
+    /// Mark failure, attach current candidate coordinates and propagate visitor cancellation.
     macro_rules! issue {
         ($error:expr) => {{
             let error = $error;
@@ -777,9 +932,11 @@ pub fn visit_validation(
 }
 
 #[cfg(test)]
+/// Visitor-order and identity-exhaustion regressions for otherwise valid configurations.
 mod cache_tests {
     use super::*;
     #[test]
+    /// First-error visitor and borrowed admission stop at the same malformed placement.
     fn visitor_first_error_matches_borrowed_validator() {
         let mut config = default_config();
         config.widgets[0].placement.row = 255;
@@ -794,6 +951,7 @@ mod cache_tests {
         assert_eq!(first.unwrap().field, Field::Placement);
     }
     #[test]
+    /// Exhaustion disables exact caching without changing valid model semantics or clone state.
     fn actual_issuance_failure_preserves_validation_and_semantic_equality() {
         let issuer = crate::cache_identity::Issuer::with_next_for_test(u32::MAX - 1);
         let mut config = validate(default_config()).unwrap();

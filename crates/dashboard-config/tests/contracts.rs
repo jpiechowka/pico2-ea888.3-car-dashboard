@@ -1,6 +1,8 @@
+//! Shared binary/JSON, geometry and fuel admission contracts.
 use dashboard_config::*;
 
 #[test]
+/// Every truncated prefix, single-byte corruption and short output buffer rejects around a valid roundtrip.
 fn default_roundtrip_and_all_truncations_are_checked() {
     let valid = validate(default_config()).unwrap();
     let mut output = [0; MAX_FILE_BYTES];
@@ -26,6 +28,7 @@ fn default_roundtrip_and_all_truncations_are_checked() {
 }
 
 #[test]
+/// Invalid IDs, layout, text, timing and nonfinite values reject whole-document admission.
 fn geometry_identity_text_and_numeric_errors_reject_the_whole_document() {
     let mutations: &[fn(&mut Config)] = &[
         |c| c.version = VERSION + 1,
@@ -62,6 +65,7 @@ fn geometry_identity_text_and_numeric_errors_reject_the_whole_document() {
 }
 
 #[test]
+/// All three spans, an empty view and eight fully populated views remain supported and roundtrip.
 fn all_spans_empty_view_and_maximum_document_are_valid() {
     for (span, width, height) in [
         (Span::OneByOne, 80, 107),
@@ -111,6 +115,7 @@ fn all_spans_empty_view_and_maximum_document_are_valid() {
 }
 
 #[test]
+/// Mass and volume blend assumptions match independent endpoint/intermediate stoichiometric values.
 fn fuel_mass_volume_and_endpoints_match_independent_values() {
     for (percent, expected) in [(0.0, 14.7), (5.0, 14.395964), (10.0, 14.094058), (100.0, 9.0)] {
         let mut config = default_config();
@@ -131,6 +136,7 @@ fn fuel_mass_volume_and_endpoints_match_independent_values() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Duplicate/unknown fields, trailing input, invalid UTF-8 and oversized JSON reject without field loss.
 fn strict_json_is_shared_and_never_discards_fields() {
     let valid = validate(default_config()).unwrap();
     let json = to_json(&valid).unwrap();
@@ -150,6 +156,7 @@ fn strict_json_is_shared_and_never_discards_fields() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Decimal midpoint cases round directly to stored f32 bits, preserving signed zero through binary export.
 fn json_decimal_fields_round_directly_to_the_stored_f32() {
     let mut config = default_config();
     config.fuel = Fuel::EthanolBlend(Blend {
@@ -186,6 +193,7 @@ fn json_decimal_fields_round_directly_to_the_stored_f32() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Decimal rounding that collapses range endpoints is rejected after conversion to stored precision.
 fn json_decimal_rounding_cannot_turn_an_equal_graph_range_into_a_valid_one() {
     let mut config = default_config();
     config.widgets[0].display.graph_range = GraphRange::Fixed {

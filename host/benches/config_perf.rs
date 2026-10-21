@@ -1,8 +1,11 @@
+//! Default/maximal bounded configuration admission and codec workloads, including late semantic fallback.
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion};
 use dashboard_config::*;
 
+/// Returns an unvalidated 64-widget/eight-view fixture with maximum-length text and varied advanced settings.
+/// Uses explicit illustrative E5 fuel and fixed physical routes; bounded fixture construction failures panic.
 pub fn maximum() -> Config {
     let mut config = default_config();
     let widgets = config.widgets.clone();
@@ -107,6 +110,9 @@ pub fn maximum() -> Config {
     config
 }
 
+/// Registers default/maximal validation, encode/decode, boot-slot fallback and rejection workloads with `c`.
+/// Verifies roundtrip/error classes first; optional TASK11_MAX_EAV writes the maximal fixture and panics on I/O
+/// failure.
 pub fn benchmarks(c: &mut Criterion) {
     for (name, config) in [("default", default_config()), ("maximum", maximum())] {
         let valid = validate(config.clone()).unwrap();
@@ -168,6 +174,8 @@ pub fn benchmarks(c: &mut Criterion) {
     });
 }
 
+/// Consumes `bytes` and returns reflected CRC32 with polynomial 0xEDB88320 and initial/final complements.
+/// Used to reseal malformed payload fixtures so decoding reaches the intended semantic boundary.
 fn crc32(bytes: impl Iterator<Item = u8>) -> u32 {
     let mut crc = !0u32;
     for byte in bytes {

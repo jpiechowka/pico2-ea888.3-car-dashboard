@@ -1,8 +1,12 @@
+//! Synthetic OBD scheduler transactions, source-qualified samples and per-PID timing/failure conservation.
+
 use dashboard_host_validation::diagnostics::CanFrame;
 use dashboard_host_validation::diagnostics::client::{ClientError, TxAction};
 use dashboard_host_validation::diagnostics::session::{Session, SessionError};
 use dashboard_host_validation::samples::{Quality, SensorId};
 
+/// Returns a standard 0x7E8 single-frame positive `pid` reply containing `bytes`; panics when more than five bytes are
+/// supplied.
 fn reply(
     pid: u8,
     bytes: &[u8],
@@ -14,6 +18,8 @@ fn reply(
     data[3..3 + bytes.len()].copy_from_slice(bytes);
     CanFrame::new(0x7E8, &data).unwrap()
 }
+/// Polls `session` at `at` milliseconds, requires due OBD `pid`, and completes its TX one millisecond later.
+/// Returns the original TX action; panics on unexpected scheduling/protocol state or fixture clock overflow.
 fn begin(
     session: &mut Session,
     at: u64,
@@ -25,6 +31,8 @@ fn begin(
     session.tx_completed(tx.token, at + 1).unwrap();
     tx
 }
+/// Runs due `pid` request in `session` at `at` milliseconds and injects `bytes` in an epoch 1 reply two milliseconds
+/// later. Panics on scheduling, decoder or protocol mismatch; sends no physical traffic.
 fn exchange(
     session: &mut Session,
     at: u64,
@@ -34,12 +42,16 @@ fn exchange(
     begin(session, at, pid);
     assert_eq!(session.receive(&reply(pid, bytes), 1, at + 2).unwrap(), None);
 }
+/// Admits three capability pages into `session` at 0/22/44ms, advertising coolant, intake, voltage and oil PIDs.
+/// Panics if the synthetic scheduler exchange differs.
 fn discover(session: &mut Session) {
     exchange(session, 0, 0, &0x0802_0001u32.to_be_bytes()); // 05, 0F, 20
     exchange(session, 22, 0x20, &1u32.to_be_bytes()); // 40
     exchange(session, 44, 0x40, &0x4000_0010u32.to_be_bytes()); // 42, 5C
 }
 
+/// Capability discovery precedes fair supported polling; exact decoded values preserve unavailable proprietary
+/// channels.
 #[test]
 fn discovery_precedes_fair_supported_queries_and_samples_keep_sources() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -68,6 +80,8 @@ fn discovery_precedes_fair_supported_queries_and_samples_keep_sources() {
     assert_eq!(session.counters().completed, 7);
 }
 
+/// Missing capability continuation proves only the affected generic channels unsupported; valid zero coolant remains
+/// data.
 #[test]
 fn absent_continuation_marks_only_proven_unsupported_channels() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -85,6 +99,8 @@ fn absent_continuation_marks_only_proven_unsupported_channels() {
     begin(&mut session, 1024, 5);
 }
 
+/// Failed capability discovery leaves unproven support Unknown and gives already-advertised channels a turn before
+/// retry.
 #[test]
 fn failed_capability_page_does_not_starve_known_channels_or_claim_unsupported() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -100,6 +116,7 @@ fn failed_capability_page_does_not_starve_known_channels_or_claim_unsupported() 
     assert_eq!(session.counters().timeouts, 1);
 }
 
+/// Timeout and wrong-width payload revoke live quality/history while retaining last-good raw statistics until recovery.
 #[test]
 fn timeout_and_malformed_refresh_invalidate_without_corrupting_last_good_statistics() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -160,6 +177,8 @@ fn timeout_and_malformed_refresh_invalidate_without_corrupting_last_good_statist
     assert_eq!(session.counters().malformed, 1);
 }
 
+/// Wire faults block polling until a newer epoch; old replies/completions cannot revive samples or repeat reset
+/// acknowledgment.
 #[test]
 fn known_wire_loss_blocks_queries_until_a_new_epoch_and_late_replies_cannot_restore_data() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -196,6 +215,8 @@ fn known_wire_loss_blocks_queries_until_a_new_epoch_and_late_replies_cannot_rest
     assert_eq!(session.snapshot().reset_generation, 1);
 }
 
+/// Foreign ECU replies, negative responses, clock reversal and missing TX completion preserve explicit
+/// unavailable/fault state.
 #[test]
 fn bad_source_negative_reply_clock_fault_and_tx_timeout_fail_closed() {
     assert!(Session::new(0x700, 1).is_err());
@@ -218,6 +239,7 @@ fn bad_source_negative_reply_clock_fault_and_tx_timeout_fail_closed() {
     assert_eq!(session.snapshot().value_at(SensorId::Water, 106), None);
 }
 
+/// A regressed current TX completion invalidates previously valid samples as a transport clock fault.
 #[test]
 fn regressed_tx_completion_invalidates_every_previously_valid_sample() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -235,6 +257,8 @@ fn regressed_tx_completion_invalidates_every_previously_valid_sample() {
     assert_eq!(session.snapshot().value_at(SensorId::Water, 1024), None);
 }
 
+/// Twelve silent-ECU retries follow capped backoff without invented values and allow recovery on a later real fixture
+/// reply.
 #[test]
 fn sleeping_ecu_retries_are_bounded_and_never_invent_values() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -256,6 +280,8 @@ fn sleeping_ecu_retries_are_bounded_and_never_invent_values() {
     assert_eq!(session.snapshot().value_at(SensorId::Water, now + 24), Some(90.0));
 }
 
+/// PID RTT starts at actual TX completion, includes response-pending delay and preserves accumulated statistics across
+/// epochs.
 #[test]
 fn per_pid_timing_starts_at_actual_request_tx_and_preserves_epoch_totals() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -314,6 +340,7 @@ fn per_pid_timing_starts_at_actual_request_tx_and_preserves_epoch_totals() {
     assert_eq!(telemetry.channels[0].reply_ms.samples, 2);
 }
 
+/// Untransmitted timeouts have no RTT; duplicate/stale faults and replies cannot double-count terminal PID outcomes.
 #[test]
 fn per_pid_failures_do_not_invent_rtt_or_double_count_stale_events() {
     let mut session = Session::new(0x7E8, 1).unwrap();
@@ -366,6 +393,8 @@ fn per_pid_failures_do_not_invent_rtt_or_double_count_stale_events() {
     assert_eq!(session.channel(0).unwrap().abandoned, 3);
 }
 
+/// Session/telemetry storage remains bounded and every scheduler PID starts with an unavailable, empty timing
+/// distribution.
 #[test]
 fn telemetry_storage_is_bounded_and_covers_all_scheduler_slots() {
     use dashboard_host_validation::diagnostics::session::{PIDS, Telemetry};

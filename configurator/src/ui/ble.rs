@@ -1,5 +1,7 @@
 //! Configuration shares the normal transactional editor and field navigation.
 use super::*;
+/// Copies current BLE settings from `ui`, applies private mutation `f`, and submits them using captured `token`.
+/// Reducer handles stale/invalid results; rejected values remain repairable under ordinary editor transaction rules.
 fn change(
     ui: Ui,
     token: FieldToken,
@@ -10,7 +12,13 @@ fn change(
     ui.typed(token, Edit::SetBle(settings));
 }
 #[component]
-pub fn BlePanel(ui: Ui) -> impl IntoView {
+/// Returns BLE configuration controls for `ui`, sharing candidate inspection/raw repair and token-bound mutations.
+/// Copy distinguishes adapter initialization from ECU qualification and browser fixtures from physical link
+/// observations.
+pub fn BlePanel(
+    /// Shared BLE settings, draft admission and synthetic diagnostics owner.
+    ui: Ui
+) -> impl IntoView {
     let settings = move || ui.editor.with(|e| Registry::with_candidate(e, |c| c.ble));
     view! {
         <div class="settings-content"><div class="settings-copy">
@@ -38,7 +46,13 @@ pub fn BlePanel(ui: Ui) -> impl IntoView {
 }
 
 #[component]
-pub fn BleSimulationPanel(ui: Ui) -> impl IntoView {
+/// Returns explicit synthetic protocol actions for `ui`, restarting the fixture when accepted configuration lineage
+/// changes. Invalid/pending/disabled state blocks actions; results are bounded local simulation notices, never browser
+/// Bluetooth or ECU traffic.
+pub fn BleSimulationPanel(
+    /// Shared BLE settings, draft admission and synthetic diagnostics owner.
+    ui: Ui
+) -> impl IntoView {
     use dashboard_configurator::ble_simulator::BleSimulator;
     let sim = RwSignal::new_local(
         ui.editor

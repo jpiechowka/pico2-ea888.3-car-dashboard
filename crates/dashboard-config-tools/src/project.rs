@@ -5,102 +5,176 @@ use dashboard_config::startup::{StartupProfile, StartupTheme};
 use dashboard_config::{Geometry, ValidatedConfig};
 use serde::{Deserialize, Serialize};
 
+/// Complete container size ceiling, including original artwork and descriptors, bytes.
 pub const MAX_PROJECT_BYTES: usize = 9 * 1024 * 1024;
+/// Container ceiling when no original bytes are embedded, bytes.
 pub const MAX_REDUCED_BYTES: usize = 576 * 1024;
+/// Maximum original PNG/GIF/sheet source bytes; zero-length originals are invalid.
 pub const MAX_ORIGINAL_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum canonical JSON recipe bytes within the container.
 pub const MAX_RECIPE_BYTES: usize = 4096;
+/// Current converter identity, paired with version-2 converted assets.
 pub const CONVERTER: &str = "dashboard-startup-tools/2";
+/// Frozen version-1 converter identity, admitted only with landscape geometry.
 const LEGACY_CONVERTER: &str = "dashboard-startup-tools/1";
+/// Emitted project container version; decoding also admits version 1.
 pub const PROJECT_VERSION: u16 = 2;
+/// Current recipe shape, which explicitly records target geometry.
 pub const RECIPE_VERSION: u16 = 2;
+/// Rejection category; APIs construct replacements without mutating an existing project.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectError {
+    /// Container/section sizes, offset arithmetic or trailing bytes violate limits.
     Length,
+    /// Container magic or version is unsupported.
     Version,
+    /// Descriptor order, reserved fields, section presence or offsets are invalid.
     Structure,
+    /// CRC or SHA-256 disagrees with its referenced bytes; not an authenticity verdict.
     Integrity,
+    /// Dashboard encoding, validation, migration or canonical form is invalid.
     Dashboard,
+    /// Startup profile is invalid or Custom/artwork presence disagrees.
     Profile,
+    /// Converted startup asset fails bounded format validation.
     Asset,
+    /// Recipe shape, canonical JSON, conversion parameters or asset version mismatch.
     Recipe,
+    /// Original identity/length/signature or reference disagrees with its recipe.
     Source,
+    /// Complete export needs original bytes that currently exist only in external backing.
     SourceUnavailable,
     /// Converted artwork does not match the effective Splash geometry.
     Orientation,
 }
+/// Explicit project export policy; source omission is never an implicit size fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportMode {
+    /// Include resident originals; external references must first be materialized.
     Complete,
+    /// Omit originals deliberately, retaining converted pixels and their recipe.
     ConvertedOnly,
 }
+/// Original artwork encoding recorded by the conversion recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
+    /// Single PNG image.
     Png,
+    /// GIF animation; conversion handles its disposal/background rules.
     Gif,
+    /// PNG grid interpreted as ordered equal-size frames using [`Sheet`].
     SpriteSheet,
 }
+/// Spatial mapping from source pixels into the selected startup geometry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fit {
+    /// Preserve aspect ratio and letterbox with the matte color.
     Contain,
+    /// Preserve aspect ratio and crop to cover the target frame.
     Cover,
+    /// Scale axes independently to fill the target frame.
     Stretch,
 }
+/// GIF compositing background policy retained for reproducible reconversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GifBackground {
+    /// Use the GIF logical-screen background policy.
     Logical,
+    /// Treat cleared background as transparent before compositing on the matte.
     Transparent,
 }
+/// Sprite-grid parameters; recipe validation bounds count and total duration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sheet {
+    /// Positive column count; columns times rows must not exceed 300.
     pub columns: u16,
+    /// Positive row count; frames are interpreted by the converter in grid order.
     pub rows: u16,
+    /// Uniform source-frame duration, 1–60000 ms; total duration must be at most 60000 ms.
     pub frame_ms: u16,
 }
+/// Canonical conversion provenance and parameters, validated when admitting [`Artwork`].
+///
+/// Hashes bind recorded bytes; they do not prove those pixels were produced from the
+/// source by the claimed converter. Byte-identical compact JSON is required on import.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
+    /// Current recipe schema, [`RECIPE_VERSION`].
     pub version: u16,
+    /// Admitted producer identity; legacy producer remains unchanged after migration.
     pub converter: String,
+    /// Display label, at most 128 UTF-8 bytes; controls and path separators are rejected.
     pub label: String,
+    /// Declared original encoding; embedded originals must match its file signature.
     pub source_kind: SourceKind,
+    /// SHA-256 of the original source, even when its bytes are omitted.
     pub source_sha256: [u8; 32],
+    /// Original length in bytes, 1 through [`MAX_ORIGINAL_BYTES`].
     pub source_length: u32,
+    /// Original is owned/resolvable in memory; encoding rewrites this to actual embedded presence.
     pub original_included: bool,
+    /// SHA-256 of the complete converted asset container.
     pub asset_sha256: [u8; 32],
+    /// Spatial fitting rule used by the converter.
     pub fit: Fit,
+    /// Matte color as 8-bit red, green, blue channels.
     pub matte_rgb: [u8; 3],
+    /// Requested conversion sampling frequency, 1–20 frames per second.
     pub sample_fps: u8,
+    /// Inclusive selected timeline start in ms; must precede `trim_end_ms`.
     pub trim_start_ms: u32,
+    /// Exclusive selected end in ms, at most 60000; selected duration at most 10000 ms.
     pub trim_end_ms: u32,
+    /// Required only for sprite sheets; PNG/GIF require `None`.
     pub sheet: Option<Sheet>,
+    /// GIF background/disposal compositing choice retained even for non-GIF sources.
     pub gif_background: GifBackground,
+    /// Converted pixel geometry; must match the effective startup Splash orientation.
     pub geometry: Geometry,
 }
 /// Frozen v1 JSON shape. Canonical bytes are checked before migration.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyRecipeV1 {
+    /// Frozen schema value 1.
     version: u16,
+    /// Frozen version-1 producer identity.
     converter: String,
+    /// Original display label, validated after migration.
     label: String,
+    /// Original source encoding.
     source_kind: SourceKind,
+    /// Original source SHA-256.
     source_sha256: [u8; 32],
+    /// Original source byte length.
     source_length: u32,
+    /// Whether the legacy container embeds original source bytes.
     original_included: bool,
+    /// Converted version-1 asset SHA-256.
     asset_sha256: [u8; 32],
+    /// Original spatial fitting choice.
     fit: Fit,
+    /// Original matte RGB channels.
     matte_rgb: [u8; 3],
+    /// Requested sampling rate in frames per second.
     sample_fps: u8,
+    /// Selected source start in ms.
     trim_start_ms: u32,
+    /// Selected source end in ms.
     trim_end_ms: u32,
+    /// Optional sprite grid retained unchanged through migration.
     sheet: Option<Sheet>,
+    /// Original GIF background policy.
     gif_background: GifBackground,
 }
 impl LegacyRecipeV1 {
+    /// Return the geometry-aware recipe with implicit legacy landscape made explicit.
+    /// Reject unknown v1 producer/version; no pixels are reconverted or relabeled as v2.
     fn upgrade(self) -> Result<Recipe, ProjectError> {
         if self.version != 1 || self.converter != LEGACY_CONVERTER {
             return Err(ProjectError::Recipe);
@@ -129,10 +203,14 @@ impl LegacyRecipeV1 {
 /// Immutable backing identity. Browser ownership/pins retain this Arc, not source bytes.
 #[derive(Debug, PartialEq, Eq)]
 pub struct OriginalReference {
+    /// Original byte identity; lookup key is its lowercase hex encoding.
     sha256: [u8; 32],
+    /// Nonzero original byte length, bounded at construction.
     length: u32,
 }
 impl OriginalReference {
+    /// Return a bounded reference for `sha256` and byte `length`; reject zero/oversized length.
+    /// Hash possession does not prove backing bytes exist; the caller owns that guarantee.
     pub fn new(
         sha256: [u8; 32],
         length: usize,
@@ -146,30 +224,47 @@ impl OriginalReference {
         })
     }
 
+    /// Return the recorded 32-byte source digest without reading external backing.
     pub fn sha256(&self) -> [u8; 32] { self.sha256 }
 
+    /// Return the admitted nonzero source length in bytes.
     pub fn len(&self) -> usize { self.length as usize }
 
+    /// Return false; construction excludes empty original sources.
     pub fn is_empty(&self) -> bool { false }
 
+    /// Return the 64-character lowercase content key used to locate immutable backing.
     pub fn key(&self) -> String { crate::hex_bytes(&self.sha256) }
 }
+/// Admitted converted pixels and recipe with resident or externally pinned originals.
+/// Clones share large immutable byte buffers; they do not repeat pixel validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artwork {
+    /// Bounded validated asset; owns shared encoded pixels and parsed metadata.
     converted: dashboard_config::startup_asset::OwnedAsset,
+    /// Admitted conversion parameters and source/asset identities.
     recipe: Recipe,
+    /// Resident original bytes, if materialized; mutually exclusive with `reference`.
     original: Option<Arc<[u8]>>,
+    /// Immutable external-backing identity/pin; complete export requires materialization.
     reference: Option<Arc<OriginalReference>>,
 }
+/// Admitted complete project snapshot; cloning shares dashboard/artwork bytes.
 #[derive(Clone, Debug)]
 pub struct Project {
+    /// Canonical current-schema dashboard binary, not original imported legacy bytes.
     dashboard: Arc<[u8]>,
+    /// Validated startup controls and effective orientation override.
     profile: StartupProfile,
+    /// Present exactly when the startup profile selects Custom artwork.
     artwork: Option<Arc<Artwork>>,
+    /// Effective splash pixel shape used to admit replacement artwork.
     splash_geometry: Geometry,
 }
 
+/// Return raw SHA-256 bytes for `bytes`; integrity identity is not an authentication signature.
 pub fn digest(bytes: &[u8]) -> [u8; 32] { sha2_const_stable::Sha256::new().update(bytes).finalize() }
+/// Reflected CRC-32 lookup table using polynomial 0xEDB88320.
 const CRC_TABLE: [u32; 256] = {
     let mut table = [0; 256];
     let mut i = 0;
@@ -185,6 +280,7 @@ const CRC_TABLE: [u32; 256] = {
     }
     table
 };
+/// Return reflected CRC-32 of `bytes`, with all-one initialization and final inversion.
 fn crc(bytes: &[u8]) -> u32 {
     let mut value = u32::MAX;
     for byte in bytes {
@@ -193,6 +289,8 @@ fn crc(bytes: &[u8]) -> u32 {
     !value
 }
 impl Recipe {
+    /// Return success only for bounded current/legacy producer, label, timing and sheet fields.
+    /// Does not validate source/asset bytes or hashes; [`Artwork::new`] completes admission.
     fn validate(&self) -> Result<(), ProjectError> {
         if self.version != RECIPE_VERSION
             || !(self.converter == CONVERTER
@@ -222,6 +320,11 @@ impl Recipe {
     }
 }
 impl Artwork {
+    /// Admit `converted`, `recipe` and optional resident `original`; return immutable artwork.
+    ///
+    /// Check bounded asset decoding, geometry/version, asset digest, original presence,
+    /// length/digest and PNG/GIF signature. Full original decoding/reconversion is not
+    /// performed here. Any mismatch returns its category without a partial object.
     pub fn new(
         converted: Arc<[u8]>,
         recipe: Recipe,
@@ -265,7 +368,11 @@ impl Artwork {
         })
     }
 
-    /// The caller must have committed these exact bytes to immutable backing first.
+    /// Return a clone using `reference` instead of resident original bytes.
+    ///
+    /// The caller must have committed exact original bytes to immutable backing first;
+    /// only digest/length agreement is checked here. A mismatch returns `Source`.
+    /// Converted pixels stay shared and complete export waits for materialization.
     pub fn externalized(
         &self,
         reference: Arc<OriginalReference>,
@@ -283,6 +390,8 @@ impl Artwork {
         })
     }
 
+    /// Return artwork with resident `source`, rechecking its signature, size and digest.
+    /// Errors preserve this instance; success drops external-reference ownership in the new one.
     pub fn materialized(
         &self,
         source: Arc<[u8]>,
@@ -292,33 +401,46 @@ impl Artwork {
         Self::new(self.converted_arc(), recipe, Some(source))
     }
 
+    /// Return the external backing pin, or `None` for resident/omitted originals.
     pub fn original_reference(&self) -> Option<&Arc<OriginalReference>> { self.reference.as_ref() }
 
+    /// Return whether an original is resident or externally referenced; not a backing-read check.
     pub fn has_original(&self) -> bool { self.original.is_some() || self.reference.is_some() }
 
+    /// Return SHA-256 of canonical recipe JSON, including parameters and original-presence state.
     pub fn identity(&self) -> [u8; 32] { digest(&serde_json::to_vec(&self.recipe).expect("typed recipe serializes")) }
 
+    /// Return admitted encoded asset bytes without reparsing or retaining original backing.
     pub fn converted(&self) -> &[u8] { self.converted.bytes() }
 
-    /// Share firmware pixels without retaining an original-source pin.
+    /// Return shared firmware pixels without retaining an original-source pin.
     pub fn converted_arc(&self) -> Arc<[u8]> { self.converted.bytes_arc() }
 
-    /// Borrow the admitted view without parsing or cloning its pixels.
+    /// Return the borrowed admitted view without parsing or cloning its pixels.
     pub fn asset(&self) -> dashboard_config::startup_asset::Asset<'_> { self.converted.as_asset() }
 
-    /// Retain validated pixels without retaining original-source pins.
+    /// Return shared validated pixels without retaining original-source pins.
     pub fn owned_asset(&self) -> dashboard_config::startup_asset::OwnedAsset { self.converted.clone() }
 
+    /// Return the admitted immutable conversion recipe.
     pub fn recipe(&self) -> &Recipe { &self.recipe }
 
+    /// Return the asset/recipe's common pixel geometry.
     pub fn geometry(&self) -> Geometry { self.recipe.geometry }
 
+    /// Return resident originals only; externally referenced originals return `None`.
     pub fn original(&self) -> Option<&Arc<[u8]>> { self.original.as_ref() }
 }
+/// Container header length, bytes; includes CRC over its first 28 bytes.
 const HEADER: usize = 32;
+/// Section descriptor length, bytes; includes CRC-32 and SHA-256.
 const DESCRIPTOR: usize = 48;
+/// Fixed header plus five section descriptors, bytes.
 const PREFIX: usize = HEADER + 5 * DESCRIPTOR;
 impl Project {
+    /// Return a project from validated `config`, startup `profile` and optional `artwork`.
+    /// Reject profile/artwork/geometry disagreement or dashboard encoding failure;
+    /// serialize the dashboard once and share immutable artwork without reconversion.
     pub fn new(
         config: &ValidatedConfig,
         profile: StartupProfile,
@@ -334,6 +456,8 @@ impl Project {
         })
     }
 
+    /// Return a replacement snapshot sharing `artwork` and the existing dashboard.
+    /// Require Custom theme and matching splash geometry; errors retain the original snapshot.
     pub fn with_artwork(
         &self,
         artwork: Arc<Artwork>,
@@ -352,12 +476,21 @@ impl Project {
         })
     }
 
+    /// Return the admitted startup profile by value.
     pub fn profile(&self) -> StartupProfile { self.profile }
 
+    /// Return shared artwork, or `None` for procedural startup themes.
     pub fn artwork(&self) -> Option<&Arc<Artwork>> { self.artwork.as_ref() }
 
+    /// Return canonical dashboard binary bytes without decoding or copying.
     pub fn dashboard_bytes(&self) -> &[u8] { &self.dashboard }
 
+    /// Encode using explicit `mode`; return a bounded version-2 project container.
+    ///
+    /// Complete export refuses external-only originals with `SourceUnavailable`;
+    /// ConvertedOnly deliberately removes them and updates recipe presence. Sections
+    /// are contiguous with length/CRC/SHA metadata. No existing snapshot is modified,
+    /// and oversized content is rejected rather than dropping settings or artwork.
     pub fn encode(
         &self,
         mode: ExportMode,
@@ -420,6 +553,12 @@ impl Project {
         Ok(out)
     }
 
+    /// Decode bounded `bytes`; return an admitted project or a precise rejection category.
+    ///
+    /// Validate header/reserved fields, five ordered contiguous descriptors, per-section
+    /// lengths and hashes, canonical recipe JSON, dashboard/profile versions and splash
+    /// geometry before publication. Version 1 migrates its v4 dashboard and v1 startup profile;
+    /// version 2 accepts v5/current dashboards. Trailing bytes and implicit omissions fail.
     pub fn decode(bytes: &[u8]) -> Result<Self, ProjectError> {
         if bytes.len() < PREFIX || bytes.len() > MAX_PROJECT_BYTES {
             return Err(ProjectError::Length);
@@ -520,6 +659,8 @@ impl Project {
         })
     }
 }
+/// Return effective splash geometry for `config`, `profile` and admitted `artwork`.
+/// Delegate presence/orientation checks to the same path used by direct build inputs.
 fn check_project(
     config: &ValidatedConfig,
     profile: StartupProfile,
@@ -528,7 +669,10 @@ fn check_project(
     validate_startup_geometry(config.config().orientation, profile, artwork.map(Artwork::geometry))
 }
 
-/// Shared admission for portable projects and direct Cargo startup inputs.
+/// Return splash geometry from device `default`, startup `profile` and optional `artwork` shape.
+///
+/// Shared by project import and direct Cargo admission. Invalid profiles or Custom
+/// presence mismatch return `Profile`; incompatible asset geometry returns `Orientation`.
 pub fn validate_startup_geometry(
     default: dashboard_config::Orientation,
     profile: StartupProfile,
@@ -543,6 +687,10 @@ pub fn validate_startup_geometry(
     }
     Ok(geometry)
 }
+/// Return `T` decoded from `bytes` only when reserialization reproduces every input byte.
+///
+/// Whitespace, alternate field order/spellings and invalid JSON return `Recipe`;
+/// callers enforce outer byte limits and semantic validation separately.
 fn parse_canonical<T: serde::de::DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<T, ProjectError> {
     let value = serde_json::from_slice(bytes).map_err(|_| ProjectError::Recipe)?;
     if serde_json::to_vec(&value).map_err(|_| ProjectError::Recipe)? != bytes {
@@ -550,12 +698,16 @@ fn parse_canonical<T: serde::de::DeserializeOwned + Serialize>(bytes: &[u8]) -> 
     }
     Ok(value)
 }
+/// Return little-endian u16 from `b` at byte offset `o`; caller must prove two bytes exist.
+/// Panics on invalid offsets; used only after container/asset minimum-size admission.
 fn u16le(
     b: &[u8],
     o: usize,
 ) -> u16 {
     u16::from_le_bytes([b[o], b[o + 1]])
 }
+/// Return little-endian u32 from `b` at byte offset `o`; caller must prove four bytes exist.
+/// Panics on invalid offsets; descriptor iteration is bounded by the validated prefix.
 fn u32le(
     b: &[u8],
     o: usize,

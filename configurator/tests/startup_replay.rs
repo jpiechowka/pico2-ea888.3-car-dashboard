@@ -1,18 +1,24 @@
+//! Synthetic startup replay timing, completed-frame ownership and protected recovery contracts.
+
 use dashboard_config_tools::project::Project;
 use dashboard_configurator::config::*;
 use dashboard_configurator::preview::Preview;
 use dashboard_configurator::simulator::ControlSimulator;
 use dashboard_core::display::pipeline::{BufferId, FrameToken};
 use dashboard_core::startup::{Exit, Phase, StartupProfile, StartupStatus};
+/// Returns a default-dashboard project using `profile` with no artwork; invalid profile/admission panics.
 fn project(profile: StartupProfile) -> Project {
     Project::new(&validate(default_config()).unwrap(), profile, None).unwrap()
 }
+/// Returns a frame identity on buffer A with caller-supplied `sequence`, without allocating pixels.
 fn token(sequence: u64) -> FrameToken {
     FrameToken {
         buffer: BufferId::A,
         sequence,
     }
 }
+/// Submits through `preview` to `sim` with `sequence`, then asserts matching simulator
+/// completion and preview release; fixture failure panics instead of forging completion.
 fn present(
     sim: &mut ControlSimulator,
     preview: &mut Preview,
@@ -24,6 +30,7 @@ fn present(
     assert!(preview.finish_pending(t));
 }
 #[test]
+/// Status/splash durations anchor to matching completion; wrong tokens leave phase and retained pixels unchanged.
 fn full_replay_uses_matching_completion_durations_and_preserves_pending_pixels() {
     let project = project(StartupProfile {
         status_ms: 100,
@@ -55,6 +62,8 @@ fn full_replay_uses_matching_completion_durations_and_preserves_pending_pixels()
     present(&mut sim, &mut preview, 3);
 }
 #[test]
+/// The skip-causing button/rotation does not also trigger dashboard action; protected recovery returns Dashboard at
+/// Full.
 fn startup_skip_is_consumed_and_recovery_stays_protected() {
     let project = project(StartupProfile {
         status: StartupStatus::Off,
@@ -87,6 +96,8 @@ fn startup_skip_is_consumed_and_recovery_stays_protected() {
     assert_eq!(sim.session().page(), ControlPage::Dashboard);
 }
 #[test]
+/// Warnings acquire during splash without hidden-page acknowledgment; explicit attention-interrupt policy and faults
+/// exit startup.
 fn startup_warnings_keep_acquiring_without_hidden_acknowledgment() {
     let mut raw = default_config();
     raw.widgets.truncate(1);
@@ -132,6 +143,8 @@ fn startup_warnings_keep_acquiring_without_hidden_acknowledgment() {
     assert_eq!(sim.startup_exit(), Some(Exit::Fault));
 }
 #[test]
+/// Stall deadline exits startup without completion evidence; replay retires pending identity and time reversal reports
+/// Clock.
 fn stalled_startup_frames_expire_without_forging_completion_and_old_replay_is_retired() {
     let project = project(StartupProfile {
         status: StartupStatus::Off,
@@ -157,6 +170,7 @@ fn stalled_startup_frames_expire_without_forging_completion_and_old_replay_is_re
 }
 
 #[test]
+/// A button held across natural startup completion cannot dispatch its release into Dashboard; a later fresh tap works.
 fn naturally_finished_startup_suppresses_a_held_buttons_release() {
     use dashboard_core::input_model::EncoderBatch;
     let project = project(StartupProfile {
@@ -181,6 +195,8 @@ fn naturally_finished_startup_suppresses_a_held_buttons_release() {
 }
 
 #[test]
+/// Restart advances delivery source identity while preserving acquisition snapshot, clock and previously completed
+/// warning scene.
 fn replay_retires_delivery_but_preserves_acquisition_history_and_clock() {
     let project = project(StartupProfile::default());
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
@@ -205,6 +221,7 @@ fn replay_retires_delivery_but_preserves_acquisition_history_and_clock() {
 }
 
 #[test]
+/// Cancelling replay restores Dashboard and retires pending pixels without resetting acquisition/history/clock.
 fn editing_a_captured_startup_cancels_only_presentation() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     let mut preview = Preview::new();
@@ -227,6 +244,7 @@ fn editing_a_captured_startup_cancels_only_presentation() {
 }
 
 #[test]
+/// Each replay uses elapsed time relative to its new playback anchor and reports Status/Splash/Dashboard transitions.
 fn replay_uses_a_fresh_relative_clock_and_reports_visible_startup_phase() {
     use dashboard_configurator::timing::Playback;
     let project = project(StartupProfile::default());

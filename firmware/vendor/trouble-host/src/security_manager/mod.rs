@@ -1,5 +1,10 @@
 #![warn(missing_docs)]
-//! # Bluetooth Security Manager
+//! Bluetooth Security Manager: one active pairing state machine, bounded deferred HCI work and bonds.
+//!
+//! Synchronous methods use RefCell borrows and a NoopRawMutex event queue; callers must serialize
+//! access on the host executor and avoid reentrant borrows. A queued encryption request is not
+//! encryption completion. HCI completion updates each connection's admitted security level.
+//! See [Bluetooth SMP](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html).
 // ([Vol 3] Part H, Section 3.5.5)
 
 mod constants;
@@ -42,15 +47,32 @@ use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
     /// A long term key request has been issued (handle, ediv, rand)
-    SendLongTermKey(ConnHandle, u16, [u8; 8]),
+    SendLongTermKey(
+        /// Controller connection requesting the key.
+        ConnHandle,
+        /// Legacy encrypted diversifier; zero for Secure Connections.
+        u16,
+        /// Eight wire-order legacy random bytes; zero for Secure Connections.
+        [u8; 8],
+    ),
     /// Enable encryption on channel
-    EnableEncryption(ConnHandle, BondInformation),
+    EnableEncryption(
+        /// Controller connection to encrypt.
+        ConnHandle,
+        /// Key, identity and intended security properties to submit to HCI.
+        BondInformation,
+    ),
     /// Pairing timeout
     Timeout,
     /// Pairing timer changed
     TimerChange,
     /// A new bond was stored during pairing
-    BondAdded(ConnHandle, crate::Identity),
+    BondAdded(
+        /// Connection whose bond gained identity resolution data.
+        ConnHandle,
+        /// Identity/IRK to synchronize with controller privacy state.
+        crate::Identity,
+    ),
 }
 
 /// Bond Information
@@ -66,10 +88,10 @@ pub struct BondInformation {
     /// Security level of this long term key.
     pub security_level: SecurityLevel,
     #[cfg(feature = "legacy-pairing")]
-    /// Encrypted Diversifier (0 for LESC, non-zero for legacy)
+    /// Encrypted diversifier (zero for LESC; legacy generation can also produce zero).
     pub ediv: u16,
     #[cfg(feature = "legacy-pairing")]
-    /// Random Number (all zeros for LESC, non-zero for legacy)
+    /// Eight wire-order random bytes (zero for LESC; legacy random generation does not exclude zero).
     pub rand: [u8; 8],
     #[cfg(feature = "legacy-pairing")]
     /// Negotiated encryption key length in bytes (16 for LESC)
@@ -77,7 +99,8 @@ pub struct BondInformation {
 }
 
 impl BondInformation {
-    /// Create a BondInformation
+    /// Returns a record binding `identity` to `ltk`, claimed `security_level` and retention flag
+    /// `is_bonded`; inputs are not validated. Legacy fields default to EDIV/Rand zero and 16-byte key.
     pub fn new(identity: Identity, ltk: LongTermKey, security_level: SecurityLevel, is_bonded: bool) -> Self {
         Self {
             ltk,
@@ -95,6 +118,7 @@ impl BondInformation {
 }
 
 impl core::fmt::Display for BondInformation {
+    /// Writes identity and unredacted LTK to `f`; Returns its write result. Not safe for secret-free logs.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Identity {:?} LTK {}", self.identity, self.ltk)
     }
@@ -102,6 +126,7 @@ impl core::fmt::Display for BondInformation {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for BondInformation {
+    /// Writes identity and unredacted LTK to `fmt`; do not use in secret-free logs.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "Identity {:?} LTK {}", self.identity, self.ltk);
     }
@@ -116,7 +141,7 @@ struct SecurityManagerData {
 }
 
 impl SecurityManagerData {
-    /// Create a new security manager data structure
+    /// Returns unconfigured identity/privacy state with no local address or IRK.
     fn new() -> Self {
         Self {
             local_address: None,
@@ -125,9 +150,11 @@ impl SecurityManagerData {
     }
 }
 
-/// Add or replace a bond in the given bond storage.
+/// Inserts `bond_information` into `bond`, replacing the first matching identity when present.
+/// Returns OutOfMemory without insertion when a new identity exceeds capacity; replacement can succeed
+/// in a full store. This in-memory update does not persist anything outside the host resources.
 fn add_bond(bond: &mut VecView<BondInformation>, bond_information: BondInformation) -> Result<(), Error> {
-    trace!("[security manager] Add bond for {:?}", bond_information.identity);
+    trace!("[security manager] Add bond for {:?}", bond_information.identity.addr);
     if let Some(idx) = bond
         .iter()
         .position(|b| bond_information.identity.match_identity(&b.identity))
@@ -151,7 +178,9 @@ impl<P: PacketPool> TxPacket<P> {
     /// Size of L2CAP header and command
     const HEADER_SIZE: usize = 5;
 
-    /// Get a packet from the pool
+    /// Writes L2CAP length/CID and `command` into owned `packet`; Returns the packet wrapper.
+    /// Payload bytes remain untouched. Panics if storage is shorter than five bytes;
+    /// payload access additionally requires capacity for the command's complete body.
     pub fn new(mut packet: P::Packet, command: Command) -> Result<Self, Error> {
         let packet_data = packet.as_mut();
         let smp_size = command.payload_size() + 1;
@@ -160,24 +189,24 @@ impl<P: PacketPool> TxPacket<P> {
         packet_data[4] = command.into();
         Ok(Self { packet, command })
     }
-    /// Packet command
+    /// Returns the opcode selected when this packet was constructed.
     pub fn command(&self) -> Command {
         self.command
     }
 
-    /// Packet payload
+    /// Returns the exact command-body slice; panics if the pool packet is undersized.
     pub fn payload(&self) -> &[u8] {
         &self.packet.as_ref()[Self::HEADER_SIZE..Self::HEADER_SIZE + usize::from(self.command.payload_size())]
     }
-    /// Package mutable payload
+    /// Returns the exact mutable command-body slice, excluding headers; panics on undersized storage.
     pub fn payload_mut(&mut self) -> &mut [u8] {
         &mut self.packet.as_mut()[Self::HEADER_SIZE..Self::HEADER_SIZE + usize::from(self.command.payload_size())]
     }
-    /// Package size
+    /// Returns total used bytes: four-byte L2CAP header, opcode and fixed command payload.
     pub fn total_size(&self) -> usize {
         usize::from(self.command.payload_size()) + Self::HEADER_SIZE
     }
-    /// Create a PDU from the packet
+    /// Consumes this wrapper; Returns the owned packet PDU with its used length, without transmission.
     pub fn into_pdu(self) -> Pdu<P::Packet> {
         let len = self.total_size();
         Pdu::new(self.packet, len)
@@ -200,8 +229,8 @@ struct Inner {
     finished_waker: WakerRegistration,
     /// Io capabilities
     io_capabilities: IoCapabilities,
-    /// Optional fixed passkey to use for PassKey Entry pairing (DisplayOnly).
-    /// If Some, this value is used instead of a randomly generated one.
+    /// Optional fixed passkey used by supported display-side paths; no range validation here.
+    /// Secure Connections central display currently generates its own random value.
     passkey: Option<u32>,
     /// When true, reject legacy pairing even if the feature is compiled in
     #[cfg(feature = "legacy-pairing")]
@@ -210,20 +239,24 @@ struct Inner {
 
 /// Parsed SMP command data extracted from an L2CAP PDU
 struct SmpCommand<'a> {
+    /// Validated opcode whose exact payload size has been checked.
     command: Command,
+    /// Borrowed command-body bytes without opcode/L2CAP header.
     payload: &'a [u8],
+    /// Connection handle associated with this received PDU.
     handle: ConnHandle,
+    /// Connection's resolved or observed peer identity for bond lookup.
     peer_identity: Identity,
 }
 
 impl Inner {
+    /// Returns true when no pairing machine exists or its result is terminal, including failure.
     fn is_idle(&self) -> bool {
         self.pairing_sm.as_ref().map(|sm| sm.result().is_some()).unwrap_or(true)
     }
 
-    /// Get the local address to use for pairing calculations.
-    /// When privacy is enabled and a local RPA was used for this connection, use it;
-    /// otherwise fall back to the identity address.
+    /// Returns `storage`'s local RPA when recorded, otherwise the configured identity address.
+    /// Missing both returns InvalidValue; pairing must bind the actual link address.
     fn connection_local_address<P>(&self, storage: &ConnectionStorage<P>) -> Result<Address, Error> {
         if let Some(rpa) = storage.resolvable_addrs.local {
             return Ok(Address {
@@ -234,9 +267,7 @@ impl Inner {
         self.state.local_address.ok_or(Error::InvalidValue)
     }
 
-    /// Get the peer address to use for pairing calculations.
-    /// When privacy is enabled and a peer RPA was used for this connection, use it;
-    /// otherwise fall back to the identity address.
+    /// Returns `storage`'s recorded peer RPA, otherwise its identity address, for pairing calculations.
     fn connection_peer_address<P>(storage: &ConnectionStorage<P>) -> Address {
         if let Some(rpa) = storage.resolvable_addrs.peer {
             Address {
@@ -248,11 +279,16 @@ impl Inner {
         }
     }
 
+    /// Returns `sm` only if its bound peer address matches the actual link peer in `storage`.
+    /// None leaves an unrelated pairing machine untouched; matching uses normalized Address equality.
     fn pairing_sm_for<'a, P>(sm: Option<&'a mut Pairing>, storage: &ConnectionStorage<P>) -> Option<&'a mut Pairing> {
         let expected = Self::connection_peer_address(storage);
         sm.filter(|sm| sm.peer_address() == expected)
     }
 
+    /// Advances responder pairing for `cmd` on `storage`, using `bonds`, deferred `events` and
+    /// `connections` for side effects. Returns state, validation, crypto or queue errors; earlier
+    /// effects remain. A fresh request may install/switch a machine; SC-only mode rejects legacy.
     fn handle_peripheral<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -345,6 +381,9 @@ impl Inner {
         pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
     }
 
+    /// Advances initiator pairing for `cmd` on `storage`, using `bonds`, deferred `events` and
+    /// `connections`. Returns state/admission/crypto/queue errors without undoing earlier effects.
+    /// Security Request can install an idle machine; legacy downgrade obeys SC-only policy.
     fn handle_central<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -413,6 +452,9 @@ impl Inner {
         pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
     }
 
+    /// Applies `pairing_event` only to the peer bound to `storage`, through `connections`, `bonds`
+    /// and `events`. Returns InvalidState for another peer or the transition error. Successful
+    /// handling restarts the timeout; the TimerChange notification is best-effort.
     fn handle_pairing_event<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -445,6 +487,10 @@ impl Inner {
         }
     }
 
+    /// Applies a successful HCI status with actual `encrypted` state to mutable `storage`.
+    /// Uses matching pairing or `bonds`, with `connections`/`events` for follow-up work; Returns
+    /// the pairing transition error if any. Updates admission before best-effort Encrypted delivery;
+    /// an unrelated peer's pairing is preserved. The outer HCI handler revokes/disconnects on Off.
     fn handle_encryption_success<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -488,7 +534,7 @@ impl Inner {
                 .cloned()
             {
                 Some(b) if encrypted => {
-                    info!("[smp] Encrypted using bond {:?}", b.identity);
+                    info!("[smp] Encrypted using bond {:?}", b.identity.addr);
                     storage.security_level = b.security_level;
                     #[cfg(feature = "legacy-pairing")]
                     {
@@ -499,7 +545,7 @@ impl Inner {
                 _ => {
                     warn!(
                         "[smp] Either encryption failed to enable or bond not found for {:?}",
-                        storage.peer_identity
+                        storage.peer_identity.addr
                     );
                     storage.security_level = SecurityLevel::NoEncryption;
                 }
@@ -518,6 +564,9 @@ impl Inner {
         res
     }
 
+    /// Revokes `storage`'s encryption and marks its existing `bonds` entry rejected for this connection.
+    /// Advances only the matching machine through `connections`/`events`, wakes terminal waiters,
+    /// and preserves stored keys; no SMP PairingFailed is sent for an HCI failure.
     fn handle_encryption_failure<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -563,6 +612,10 @@ impl Inner {
         }
     }
 
+    /// Starts role-appropriate pairing for `storage`, using `bonds`, `events` and `connections`;
+    /// `user_initiated` controls user-visible terminal reporting. Returns Ok for an existing active
+    /// machine for this peer, InvalidState if another peer owns it, or startup/queue errors.
+    /// Address validation precedes creation; attempted sends are not rolled back after failure.
     fn initiate<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -620,7 +673,7 @@ impl Inner {
     }
 }
 
-/// Security manager that handles SM packet
+/// Executor-local security coordinator with one pairing machine and externally owned bond storage.
 pub struct SecurityManager<'d> {
     /// Inner mutable state
     inner: RefCell<Inner>,
@@ -631,7 +684,9 @@ pub struct SecurityManager<'d> {
 }
 
 impl<'d> SecurityManager<'d> {
-    /// Create a new SecurityManager
+    /// Returns a coordinator borrowing `bonds` for its lifetime; no entries are cleared.
+    /// The deterministic zero-seeded RNG/keypair is a placeholder: host initialization must call
+    /// set_random_generator_seed with controller entropy before any security use.
     pub(crate) fn new(bonds: &'d RefCell<VecView<BondInformation>>) -> Self {
         let mut rng = ChaCha12Rng::from_seed([0u8; 32]);
         let secret_key = crypto::SecretKey::new(&mut rng);
@@ -654,27 +709,27 @@ impl<'d> SecurityManager<'d> {
         }
     }
 
-    /// Set the IO capabilities
+    /// Sets advertised `io_capabilities` for subsequent pairing creation; does not rewrite active features.
     pub(crate) fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         self.inner.borrow_mut().io_capabilities = io_capabilities;
     }
 
-    /// Set a fixed passkey to use for PassKey Entry pairing (DisplayOnly).
-    ///
-    /// When set, this passkey will be displayed/used instead of a randomly generated one.
-    /// Set to `None` to return to random passkey generation (the default).
+    /// Stores optional display-side `passkey` (callers must constrain Some to 0 through 999999).
+    /// None selects random generation. Secure Connections central display does not use this override.
     pub(crate) fn set_passkey(&self, passkey: Option<u32>) {
         self.inner.borrow_mut().passkey = passkey;
     }
 
-    /// Enable or disable secure connections only mode.
-    /// When enabled, legacy pairing is rejected even if the feature is compiled in.
+    /// Sets `enabled` to reject later legacy selection/downgrade even when compiled in.
+    /// Does not cancel a legacy procedure already in progress.
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn set_secure_connections_only(&self, enabled: bool) {
         self.inner.borrow_mut().secure_connections_only = enabled;
     }
 
-    /// Seed the security manager's CSPRNG and regenerate the persistent LESC keypair.
+    /// Replaces the CSPRNG from full-entropy `random_seed` and regenerates the persistent LESC keypair.
+    /// Call before security operations; existing OOB commitments become stale and no active pairing
+    /// is cancelled. Key generation can panic only through its RNG/backend invariants.
     pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
         let mut inner = self.inner.borrow_mut();
         inner.rng = ChaCha12Rng::from_seed(random_seed);
@@ -682,7 +737,7 @@ impl<'d> SecurityManager<'d> {
         inner.public_key = inner.secret_key.public_key();
     }
 
-    /// Set the current local address
+    /// Stores `address` as local identity/fallback pairing address without validating its kind.
     pub(crate) fn set_local_address(&self, address: Address) {
         self.inner.borrow_mut().state.local_address = Some(address);
     }
@@ -692,6 +747,7 @@ impl<'d> SecurityManager<'d> {
         self.inner.borrow().is_idle()
     }
 
+    /// Returns whether an unfinished machine is bound to link peer `address`.
     pub(crate) fn is_pairing_in_progress(&self, address: Address) -> bool {
         let inner = self.inner.borrow();
         match &inner.pairing_sm {
@@ -700,7 +756,7 @@ impl<'d> SecurityManager<'d> {
         }
     }
 
-    /// The address of the peer that is currently being paired with.
+    /// Returns the active link peer, or None when no machine exists or its result is terminal.
     pub(crate) fn peer_address(&self) -> Option<Address> {
         self.inner
             .borrow()
@@ -709,6 +765,9 @@ impl<'d> SecurityManager<'d> {
             .and_then(|sm| sm.result().is_none().then_some(sm.peer_address()))
     }
 
+    /// Waits for the machine bound to link peer `address`; Returns its terminal result, Busy if a
+    /// different peer owns the machine, or Disconnected if none exists. Dropping this future does not
+    /// cancel pairing. One registered waker is retained, so concurrent waiters replace each other.
     pub(crate) async fn wait_finished(&self, address: Address) -> Result<(), Error> {
         poll_fn(|cx| {
             let mut inner = self.inner.borrow_mut();
@@ -729,8 +788,9 @@ impl<'d> SecurityManager<'d> {
         .await
     }
 
+    /// Returns a clone of the first bond matching `identity`, including IRK resolution, or None.
     pub(crate) fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
-        trace!("[security manager] Find long term key for {:?}", identity);
+        trace!("[security manager] Find long term key for {:?}", identity.addr);
         self.bonds.borrow().iter().find_map(|bond| {
             if bond.identity.match_identity(identity) {
                 Some(bond.clone())
@@ -740,7 +800,7 @@ impl<'d> SecurityManager<'d> {
         })
     }
 
-    /// Generate local OOB data for LESC pairing.
+    /// Returns fresh little-endian random/confirm bytes for local LESC OOB exchange.
     ///
     /// The returned data should be exchanged with the peer via an out-of-band channel.
     /// The persistent keypair is used so the confirm value matches the public key
@@ -755,12 +815,12 @@ impl<'d> SecurityManager<'d> {
         }
     }
 
-    /// Get the current local address.
+    /// Returns the configured local identity/fallback address, or None before configuration.
     pub(crate) fn get_local_address(&self) -> Option<Address> {
         self.inner.borrow().state.local_address
     }
 
-    /// Set the local Identity Resolving Key (IRK) for privacy.
+    /// Replaces the local privacy key with `irk`; controller resolving-list updates occur elsewhere.
     pub(crate) fn set_local_irk(&self, irk: IdentityResolvingKey) {
         self.inner.borrow_mut().state.local_irk = Some(irk);
     }
@@ -771,7 +831,8 @@ impl<'d> SecurityManager<'d> {
         self.inner.borrow().state.local_irk
     }
 
-    /// Generate a local resolvable private address when privacy is enabled.
+    /// Returns a fresh local RPA, None without an IRK, or InvalidValue if bounded random generation fails.
+    /// Does not install the resulting address in the controller.
     #[cfg(feature = "central")]
     pub(crate) fn generate_local_rpa(&self) -> Result<Option<BdAddr>, Error> {
         let mut inner = self.inner.borrow_mut();
@@ -781,14 +842,16 @@ impl<'d> SecurityManager<'d> {
         Ok(Some(BdAddr::new(irk.generate_resolvable_address(&mut inner.rng)?)))
     }
 
-    /// Add a bonded device
+    /// Inserts/replaces `bond_information` in memory; Returns OutOfMemory for a new identity in a full
+    /// store. The record is accepted without validation or persistence/controller synchronization.
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
         add_bond(&mut self.bonds.borrow_mut(), bond_information)
     }
 
-    /// Remove a bonded device
+    /// Removes the first entry matching `identity`; Returns NotFound without mutation if absent.
+    /// Does not disconnect, erase external persistence or change a controller resolving list.
     pub(crate) fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
-        trace!("[security manager] Remove bond for {:?}", identity);
+        trace!("[security manager] Remove bond for {:?}", identity.addr);
         let mut bonds = self.bonds.borrow_mut();
         let index = bonds.iter().position(|bond| bond.identity.match_identity(&identity));
         match index {
@@ -800,26 +863,29 @@ impl<'d> SecurityManager<'d> {
         }
     }
 
-    /// Get bonded devices
+    /// Returns a shared borrow of all retained records; holding it prevents mutable bond operations.
     pub(crate) fn get_bond_information(&self) -> Ref<'_, VecView<BondInformation>> {
         self.bonds.borrow()
     }
 
-    /// Get the number of bonded devices
+    /// Returns the number of in-memory records, including transient nonbonded encryption records.
     pub(crate) fn bond_count(&self) -> usize {
         self.bonds.borrow().len()
     }
 
-    /// Get a bond by its index
+    /// Returns a cloned record at zero-based `index`, or None outside the current store length.
     pub(crate) fn get_bond(&self, index: usize) -> Option<BondInformation> {
         self.bonds.borrow().get(index).cloned()
     }
 
-    /// Get the identity of a bonded device by index
+    /// Returns the identity at zero-based `index`, or None outside the current store length.
     pub(crate) fn get_bond_identity(&self, index: usize) -> Option<Identity> {
         self.bonds.borrow().get(index).map(|b| b.identity)
     }
 
+    /// Copies/relinquishes opcode-bearing `pdu`; Returns (command, padded 72-byte buffer, copied length).
+    /// Requires an exact command body size; short/mismatched packets return InvalidParameters and
+    /// unknown opcodes return CommandNotSupported. Oversized PDUs are capped at 72 and rejected by size.
     fn parse_smp_command<P: PacketPool>(pdu: Pdu<P::Packet>) -> Result<(Command, [u8; 72], usize), Error> {
         let mut buffer = [0u8; 72];
         let size = {
@@ -845,6 +911,8 @@ impl<'d> SecurityManager<'d> {
         Ok((command, buffer, size))
     }
 
+    /// Parses consumed `pdu` and advances responder state for `storage` via `connections`.
+    /// Returns malformed-PDU or transition errors; the packet is released before state processing.
     fn handle_peripheral<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
@@ -867,6 +935,8 @@ impl<'d> SecurityManager<'d> {
         )
     }
 
+    /// Parses consumed `pdu` and advances initiator state for `storage` via `connections`.
+    /// Returns malformed-PDU or transition errors; the packet is released before state processing.
     fn handle_central<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
@@ -885,7 +955,9 @@ impl<'d> SecurityManager<'d> {
             .handle_central(&mut self.bonds.borrow_mut(), &self.events, &cmd, connections, storage)
     }
 
-    /// Handle packet
+    /// Consumes SMP `pdu` for role/peer in `storage`, using `connections` for packet/event effects.
+    /// Returns the original parse/transition error after best-effort PairingFailed reporting.
+    /// Success resets the active timeout; terminal states wake completion waiters. Effects may be partial.
     pub(crate) fn handle_l2cap_command<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
@@ -921,6 +993,9 @@ impl<'d> SecurityManager<'d> {
         result
     }
 
+    /// Reports an error in `result` as SMP PairingFailed for `storage` through `connections`.
+    /// Ok/Timeout produce no packet; nonsecurity failures map to UnspecifiedReason.
+    /// Returns packet allocation/queue errors only, without changing the original pairing result.
     fn handle_security_error<P: PacketPool>(
         &self,
         connections: &ConnectionManager<P>,
@@ -956,7 +1031,9 @@ impl<'d> SecurityManager<'d> {
         Ok(())
     }
 
-    /// Initiate pairing
+    /// Requests pairing on `storage` through `connections`; `user_initiated` controls user-visible
+    /// completion reporting. Returns a security error if already encrypted, otherwise startup/state/
+    /// queue errors. Success means initiation or an existing same-peer procedure, not completed pairing.
     pub fn initiate<P: PacketPool>(
         &self,
         connections: &ConnectionManager<'_, P>,
@@ -975,7 +1052,7 @@ impl<'d> SecurityManager<'d> {
         )
     }
 
-    /// Cancel pairing after timeout
+    /// Marks the current active state timed out and wakes its completion waiter; sends no SMP packet.
     pub(crate) fn cancel_timeout(&self) {
         let mut inner = self.inner.borrow_mut();
         if let Some(pairing) = inner.pairing_sm.as_mut() {
@@ -984,7 +1061,8 @@ impl<'d> SecurityManager<'d> {
         }
     }
 
-    /// Channel disconnected
+    /// Drops the machine for `storage`'s link peer and wakes its waiter; preserves other peers.
+    /// Removes nonbonded records whose full identity equals `storage`'s peer identity.
     pub(crate) fn disconnect<P>(&self, storage: &ConnectionStorage<P>) {
         {
             let mut inner = self.inner.borrow_mut();
@@ -1001,7 +1079,9 @@ impl<'d> SecurityManager<'d> {
             .retain(|x| x.is_bonded || x.identity != storage.peer_identity);
     }
 
-    /// Handle recevied events from HCI
+    /// Decodes an LE LTK-request `event` and queues key lookup; other LE events are ignored.
+    /// `connections` supplies the packet-pool type but is otherwise unused. Returns HCI decode or
+    /// OutOfMemory queue errors; no controller command is issued synchronously.
     pub(crate) fn handle_hci_le_event<P: PacketPool>(
         &self,
         event: LeEventPacket,
@@ -1022,7 +1102,9 @@ impl<'d> SecurityManager<'d> {
         Ok(())
     }
 
-    /// Handle recevied events from HCI
+    /// Applies encryption change/refresh `event` to its live connection in `connections`.
+    /// Returns decode/lookup/transition errors. Failure or encryption-Off revokes admission and
+    /// requests AuthenticationFailure disconnect after releasing storage; unrelated events are ignored.
     pub(crate) fn handle_hci_event<P: PacketPool>(
         &self,
         event: EventPacket,
@@ -1089,6 +1171,9 @@ impl<'d> SecurityManager<'d> {
         Ok(())
     }
 
+    /// Dispatches application `pairing_event` for `storage` through `connections`.
+    /// Returns the original transition error after best-effort SMP failure notification;
+    /// successfully queued side effects are not rolled back.
     fn handle_event<P: PacketPool>(
         &self,
         pairing_event: pairing::Event,
@@ -1110,6 +1195,8 @@ impl<'d> SecurityManager<'d> {
         res
     }
 
+    /// Submits decimal `input` for `storage` through `connections`; Returns state/crypto/queue errors.
+    /// Caller must constrain the value to 0 through 999999; this path does not enforce the range.
     pub(crate) fn handle_pass_key_input<P: PacketPool>(
         &self,
         input: u32,
@@ -1119,6 +1206,10 @@ impl<'d> SecurityManager<'d> {
         self.handle_event(pairing::Event::PassKeyInput(input), connections, storage)
     }
 
+    /// Submits `local_oob`/`peer_oob` to the active phase for `storage` through `connections`.
+    /// Returns state/confirm/queue errors, including OobNotAvailable for absent peer SC material when
+    /// local availability was advertised. Consumed fields depend on legacy versus Secure Connections.
+    /// This wrapper neither authenticates the external channel nor persists the material.
     pub(crate) fn handle_oob_data_received<P: PacketPool>(
         &self,
         local_oob: pairing::OobData,
@@ -1136,6 +1227,8 @@ impl<'d> SecurityManager<'d> {
         )
     }
 
+    /// Submits acceptance when `confirmed`, rejection otherwise, for `storage` through `connections`.
+    /// Returns state/security/queue errors; a false comparison can terminate the procedure.
     pub(crate) fn handle_pass_key_confirm<P: PacketPool>(
         &self,
         confirmed: bool,
@@ -1149,7 +1242,8 @@ impl<'d> SecurityManager<'d> {
         self.handle_event(pairing_event, connections, storage)
     }
 
-    /// Prepare a packet for sending
+    /// Returns a pool packet with header for `command`, or OutOfMemory on exhaustion.
+    /// `connections` supplies the pool type only. Payload remains unset; undersized packets panic.
     fn prepare_packet<P: PacketPool>(
         &self,
         command: Command,
@@ -1159,7 +1253,8 @@ impl<'d> SecurityManager<'d> {
         TxPacket::new(packet, command)
     }
 
-    /// Send a packet
+    /// Consumes `packet` into `connections`' outbound queue for `handle`; Returns its admission error.
+    /// Success is queue acceptance, not controller/wire completion.
     fn try_send_packet<P: PacketPool>(
         &self,
         packet: TxPacket<P>,
@@ -1171,12 +1266,14 @@ impl<'d> SecurityManager<'d> {
         connections.try_outbound(handle, packet.into_pdu())
     }
 
-    /// Send a packet
+    /// Queues deferred `event`; Returns OutOfMemory if the three-entry queue is full.
     fn try_send_event(&self, event: SecurityEventData) -> Result<(), Error> {
         self.events.try_send(event).map_err(|_| Error::OutOfMemory)
     }
 
-    /// Poll for security manager work
+    /// Returns a future receiving one deferred event, or TimeoutError at the captured pairing deadline.
+    /// Deadline is sampled at creation; TimerChange tells the caller to create a fresh future.
+    /// Dropping a pending future does not cancel pairing or consume an event.
     pub(crate) fn poll_events(&self) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, 'd> {
         let deadline = self
             .inner
@@ -1190,28 +1287,44 @@ impl<'d> SecurityManager<'d> {
     }
 }
 
+/// Borrowed bridge from one synchronous pairing transition to connection/bond queues.
 struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> {
+    /// Mutable in-memory records; insertion/replacement can survive a later queue error.
     bonds: &'sm mut VecView<BondInformation>,
+    /// Three-entry deferred security/HCI work queue.
     events: &'sm Channel<NoopRawMutex, SecurityEventData, 3>,
+    /// Persistent private scalar used for this host's Secure Connections exchanges.
     secret_key: &'sm crypto::SecretKey,
+    /// Public point corresponding to secret_key.
     public_key: &'sm crypto::PublicKey,
+    /// Optional configured display passkey; caller owns its six-digit validity.
     passkey: Option<u32>,
+    /// Connection owner providing bounded outbound admission.
     connections: &'cm ConnectionManager<'cm2, P>,
+    /// Connection flags and user-event queue borrowed for the transition.
     storage: &'cs ConnectionStorage<P::Packet>,
+    /// Controller handle associated with all emitted work.
     conn_handle: ConnHandle,
+    /// Resolved/observed identity used to select retained keys.
     peer_identity: Identity,
+    /// Configured local identity address and optional privacy IRK.
     state: &'sm SecurityManagerData,
 }
 
 impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P> {
+    /// Queues owned `packet` using this already-borrowed storage's checked slot identity, without
+    /// reborrowing the connection table. Returns outbound errors, otherwise sends a best-effort
+    /// TimerChange. Queue acceptance does not establish wire completion.
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
         let len = packet.total_size();
         trace!("[security manager] Send {} {}", packet.command, len);
-        self.connections.try_outbound(self.conn_handle, packet.into_pdu())?;
+        self.connections.try_outbound_storage(self.storage, packet.into_pdu())?;
         let _ = self.events.try_send(SecurityEventData::TimerChange);
         Ok(())
     }
 
+    /// Stores cloned `bond`; Returns capacity errors. A bond with IRK also emits best-effort BondAdded;
+    /// successful storage is retained even if notification is dropped. No external persistence occurs.
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
         add_bond(self.bonds, bond.clone())?;
         if bond.identity.irk.is_some() {
@@ -1222,6 +1335,7 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         Ok(())
     }
 
+    /// Returns a clone of the first identity-matching record, or None; does not check bond_rejected.
     fn find_bond(&self) -> Option<BondInformation> {
         self.bonds
             .iter()
@@ -1229,6 +1343,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
             .cloned()
     }
 
+    /// Stores `ltk`, claimed `security_level` and retention flag `is_bonded`, with legacy `ediv`,
+    /// wire-order `rand` and byte length `encryption_key_len` when enabled. Returns the record after
+    /// queuing EnableEncryption, or capacity/queue error. A queue error can leave the new bond stored;
+    /// no arguments are validated and successful return does not imply HCI completion.
     fn try_enable_encryption(
         &mut self,
         ltk: &LongTermKey,
@@ -1238,7 +1356,7 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
         #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error> {
-        info!("Enabling encryption for {:?}", self.peer_identity);
+        info!("Enabling encryption for {:?}", self.peer_identity.addr);
         let bond_info = BondInformation {
             ltk: *ltk,
             identity: self.peer_identity,
@@ -1258,6 +1376,8 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         Ok(bond_info)
     }
 
+    /// Returns None for a rejected/missing bond, Some cloned bond after queueing encryption, or
+    /// OutOfMemory when the work queue is full. The stored record is not changed.
     fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
         if self.storage.bond_rejected {
             return Ok(None);
@@ -1272,10 +1392,12 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         }
     }
 
+    /// Returns the configured display passkey, or None for random generation; no validation occurs.
     fn passkey(&self) -> Option<u32> {
         self.passkey
     }
 
+    /// Returns Bonding exactly when this connection permits retaining a new bond.
     fn bonding_flag(&self) -> BondingFlag {
         if self.storage.bondable {
             BondingFlag::Bonding
@@ -1284,10 +1406,13 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         }
     }
 
+    /// Returns the controller handle bound to this transition without changing it.
     fn connection_handle(&mut self) -> ConnHandle {
         self.conn_handle
     }
 
+    /// Queues user `event`; Returns OutOfMemory if full. Accepted completion/failure events also
+    /// attempt TimerChange delivery, whose failure is ignored.
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
         let timer_changed = matches!(
             event,
@@ -1300,28 +1425,34 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         Ok(())
     }
 
+    /// Returns this connection's advertised possession of peer OOB data.
     fn oob_available(&self) -> bool {
         self.storage.oob_available
     }
 
+    /// Returns the borrowed persistent local private scalar.
     fn secret_key(&self) -> &crypto::SecretKey {
         self.secret_key
     }
 
+    /// Returns the borrowed public point corresponding to the persistent local private scalar.
     fn public_key(&self) -> &crypto::PublicKey {
         self.public_key
     }
 
+    /// Returns local IRK wire bytes, or sixteen zeros when privacy is not configured.
     fn local_irk(&self) -> [u8; 16] {
         self.state.local_irk.map(|k| k.to_le_bytes()).unwrap_or_default()
     }
 
+    /// Returns the configured identity address, or InvalidValue before configuration; excludes per-link RPA.
     fn local_identity_address(&self) -> Result<Address, Error> {
         self.state.local_address.ok_or(Error::InvalidValue)
     }
 }
 
 #[cfg(test)]
+/// Peer-specific pairing/HCI routing and immediate admission revocation on encryption loss.
 mod tests {
     extern crate std;
 
@@ -1339,6 +1470,7 @@ mod tests {
     use crate::prelude::DefaultPacketPool;
     use crate::IoCapabilities;
 
+    /// Returns a deliberately leaked two-connection/four-bond manager for independent native tests.
     fn setup_manager() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 2])));
         let bond_storage: &RefCell<heapless::VecView<_>> =
@@ -1346,6 +1478,7 @@ mod tests {
         Box::leak(Box::new(ConnectionManager::new(storage, bond_storage)))
     }
 
+    /// Returns deterministic no-I/O responder state bound to `peer_address`, awaiting its request.
     fn test_inner(peer_address: Address) -> Inner {
         let mut rng = ChaCha12Rng::from_seed([7; 32]);
         let secret_key = crypto::SecretKey::new(&mut rng);
@@ -1372,6 +1505,7 @@ mod tests {
     }
 
     #[test]
+    /// Bond resumption for one peer publishes its level without advancing another peer's pairing.
     fn encryption_success_uses_bond_when_pairing_sm_is_for_other_peer() {
         let mgr = setup_manager();
         let handle = ConnHandle::new(2);
@@ -1399,6 +1533,7 @@ mod tests {
     }
 
     #[test]
+    /// HCI failure marks only the current peer's retained bond rejected and preserves another machine.
     fn encryption_failure_rejects_current_bond_without_touching_other_peer_sm() {
         let mgr = setup_manager();
         let handle = ConnHandle::new(3);
@@ -1426,6 +1561,7 @@ mod tests {
     }
 
     #[test]
+    /// Failed refresh/change and encryption-Off revoke admission before physical disconnect completion.
     fn lost_encryption_revokes_live_connection_before_disconnect_complete() {
         // Decoded HCI failures on refresh/change, then encryption switched off.
         for (kind, data) in [
@@ -1457,6 +1593,7 @@ mod tests {
     }
 
     #[test]
+    /// A user event for the wrong peer returns InvalidState without replacing the active machine.
     fn pairing_event_for_other_peer_fails_without_advancing_sm() {
         let mgr = setup_manager();
         let handle = ConnHandle::new(4);
@@ -1477,5 +1614,169 @@ mod tests {
             assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
             Ok(())
         }));
+    }
+
+    /// A retained but connection-rejected bond falls back to fresh pairing on Security Request.
+    #[test]
+    fn security_request_after_rejected_bond_starts_fresh_pairing() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(6);
+        let peer = Address::random([0x14, 2, 3, 4, 5, 6]);
+        unwrap!(mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new()));
+        let mut inner = test_inner(peer);
+        inner.pairing_sm = Some(Pairing::new_central(
+            Address::random([1, 2, 3, 4, 5, 6]),
+            peer,
+            IoCapabilities::NoInputNoOutput,
+        ));
+        let mut bonds: heapless::Vec<BondInformation, 4> = heapless::Vec::new();
+        unwrap!(bonds.push(BondInformation::new(
+            peer.into(),
+            LongTermKey::new(3),
+            SecurityLevel::EncryptedAuthenticated,
+            true,
+        )));
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            storage.bond_rejected = true;
+            inner.handle_central(
+                &mut bonds,
+                &events,
+                &SmpCommand {
+                    command: Command::SecurityRequest,
+                    payload: &[0x0d],
+                    handle,
+                    peer_identity: peer.into(),
+                },
+                mgr,
+                storage,
+            )?;
+            let sm = inner.pairing_sm.as_ref().unwrap();
+            assert!(!sm.is_waiting_bonded_encryption());
+            assert_eq!(sm.result(), None);
+            assert_eq!(storage.security_level, SecurityLevel::NoEncryption);
+            assert!(storage.bond_rejected);
+            Ok(())
+        }));
+    }
+    /// Captures real bond lookup/update/encryption and both-role IRK distribution traces without exposing keys.
+    #[cfg(feature = "log")]
+    #[test]
+    fn automatic_security_diagnostics_omit_keys() {
+        /// Environment marker isolating the process-global logger from unrelated tests.
+        const CHILD: &str = "TROUBLE_SECURITY_TRACE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "security_manager::tests::automatic_security_diagnostics_omit_keys",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        /// Synchronous test-only log sink for security-manager module descendants.
+        struct Capture;
+        /// Actual formatted trace lines, populated only by this isolated test process.
+        static LINES: std::sync::Mutex<std::vec::Vec<std::string::String>> =
+            std::sync::Mutex::new(std::vec::Vec::new());
+        /// Process-lifetime logger required by log's static registration contract.
+        static LOGGER: Capture = Capture;
+        impl log::Log for Capture {
+            /// Returns whether `metadata` belongs to the security manager or its pairing descendants.
+            fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                metadata.target().starts_with("trouble_host::security_manager")
+            }
+            /// Formats actual `record` arguments and retains matching security traces for assertions.
+            fn log(&self, record: &log::Record<'_>) {
+                if self.enabled(record.metadata()) {
+                    LINES.lock().unwrap().push(std::format!("{}", record.args()));
+                }
+            }
+            /// In-memory recording is synchronous and requires no flush.
+            fn flush(&self) {}
+        }
+        log::set_logger(&LOGGER).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+        let mut identity = Identity::from(Address::random([0x10, 2, 3, 4, 5, 6]));
+        identity.irk = crypto::IdentityResolvingKey::new(0x112233445566778899aabbccddeeff00);
+        let bond = BondInformation::new(identity, LongTermKey::new(0x5a5a), SecurityLevel::Encrypted, true);
+        let stored = RefCell::new(heapless::Vec::<BondInformation, 4>::new());
+        let security = SecurityManager::new(&stored);
+        security.add_bond_information(bond.clone()).unwrap();
+        assert!(security.get_peer_bond_information(&identity).is_some());
+        security.remove_bond_information(identity).unwrap();
+
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(2);
+        mgr.connect(handle, identity.addr, LeConnRole::Peripheral, ConnParams::new())
+            .unwrap();
+        let mut inner = test_inner(Address::random([0x40, 2, 3, 4, 5, 6]));
+        let mut bonds = heapless::Vec::<BondInformation, 4>::new();
+        bonds.push(bond).unwrap();
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+        mgr.with_connected_handle(handle, |storage| {
+            storage.peer_identity = identity;
+            inner.handle_encryption_success(&mut bonds, &events, true, mgr, storage)?;
+            inner.handle_encryption_success(&mut bonds, &events, false, mgr, storage)?;
+            let mut ops = PairingOpsImpl {
+                bonds: &mut bonds,
+                events: &events,
+                secret_key: &inner.secret_key,
+                public_key: &inner.public_key,
+                passkey: None,
+                peer_identity: identity,
+                connections: mgr,
+                storage,
+                conn_handle: handle,
+                state: &inner.state,
+            };
+            ops.try_enable_encryption(
+                &LongTermKey::new(0x5a5a),
+                SecurityLevel::Encrypted,
+                true,
+                #[cfg(feature = "legacy-pairing")]
+                0,
+                #[cfg(feature = "legacy-pairing")]
+                [0; 8],
+                #[cfg(feature = "legacy-pairing")]
+                16,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        // Reuse the complete bilateral SMP exchange, including both IRK receivers.
+        pairing::tests::bondable_just_works_with_irk([0x77; 16]);
+        let lines = LINES.lock().unwrap();
+        for marker in [
+            "Add bond",
+            "Find long term key",
+            "Remove bond",
+            "Encrypted using bond",
+            "Either encryption failed",
+            "Enabling encryption",
+        ] {
+            assert!(
+                lines.iter().any(|line| line.contains(marker)),
+                "missing exercised site: {marker}"
+            );
+        }
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("Identity information"))
+                .count(),
+            2
+        );
+        for line in lines.iter() {
+            assert!(
+                !line.contains("Identity {") && !line.contains("IdentityResolvingKey") && !line.contains("IRK:"),
+                "automatic trace contains identity/key payload: {line}"
+            );
+        }
     }
 }

@@ -52,3 +52,51 @@ They do not emulate the RP2350, its PIO instruction engine, bus ordering or wire
 timing. Physical clock tolerance, UART stop bits, DMA/IRQ races, radio operation
 and flash/XIP behavior still need their applicable hardware validation. No fix
 here is evidence of the cause of a photographed watchdog reset.
+
+## Rust contract audit (2026-10-21)
+
+Item-level documentation covers retained APIs as well as the selected M33 path.
+The source review identified these additional boundary/lifetime corrections:
+
+| Area | Correction and scope |
+| --- | --- |
+| Core 1 launch | Reject stacks shorter than the eight launch bookkeeping words before reset or pointer writes. This does not budget the launched closure's full stack. |
+| RP2040 flash identifier | Empty output returns without entering the hardware path; nonempty reads are bounded to 65,532 bytes after accounting for four dummy bytes in the SSI count. RP2350 uses its own ROM route. |
+| Hardware SPI | Widen divider ceiling arithmetic so large frequency requests cannot overflow; zero and unattainable low frequencies remain rejected. |
+| Interrupt executor | Initialize storage and publish the started flag in the same cross-core critical section, before unmasking the IRQ. |
+| PIO batch | The latest enable/disable request for each selected state machine wins; untouched machines retain their state. |
+| HD44780 PIO | Use relative IRQ0 so each state machine signals its matching waiter. |
+| AON timer | Validate LPOSC 1..=63 and XOSC 2..=65,535 kHz before writes; reject elapsed-millisecond conversion beyond Embassy's tick range instead of wrapping in release builds. |
+| ADC | Reject an empty multichannel selection before register mutation. A zero-length destination is still not documented as a hardware no-op. |
+| I2C | Reject zero bus frequency before division and peripheral disable; reject an empty async write iterator before waiting for a STOP that no command could generate. Constructors still perform reset/pin setup before timing validation. |
+| PWM duty trait | Use TOP+1 for the representable full-duty endpoint; return an explicit error when TOP 65535 would require compare 65536. Direct `Config` compares and configured inversion remain unchanged. |
+| RP2040 float arithmetic | Correct nonfinite multiply/divide signs and NaN handling; pass both `atan2` coordinates unchanged to ROM after NaN admission. Finite ROM approximations remain unchanged. |
+| RP2040 float ABI | Signed EABI conversions truncate toward zero using negative magnitude; `float_to_fix64` returns `i64`, matching ROM. The latter is an intentional public signature correction. |
+| RP2040 ROM cache | Replace the generated mutable-static pointer cache with atomic publication and exact trampoline identity. Resolve the actual ROM target before an XIP-sensitive call. |
+| Integer intrinsic ABI | Remove u32 implementations of the three DI64 aliases; retain SI32 aliases and let compiler-builtins supply the correct 64-bit implementations. |
+| RTC and clock observations | Respect the RP2040 zero divider encoding and reject RTC rates outside the retained `u16` representation; return cached RTC output and keep unmeasured LPOSC frequency unavailable. |
+| UART line control | Compute the required 15-bit delay with shared wide ceiling arithmetic, including low peripheral clocks. |
+| RP235x ROM ABI | Supply `pick_ab_parition`'s fourth `u32` boot-window-base argument; retain its historical spelling. No existing caller used this wrapper. |
+| PIO pin windows | Translate explicit JMP pins and synchronizer bypass relative to GPIOBASE; reject incompatible windows before writes. Optional side-set enable consumes an encoding bit, not another GPIO. All machines still share GPIOBASE. |
+| USB control lifecycle | Admit EP0 packet sizes 8/16/32/64; cancel obsolete SETUP/reset/disable work and reject stale address completion. Explicit disable does not rearm OUT. Re-enable restarts the bus event lifecycle. |
+| USB ownership | Track endpoint generations and quiesce pending buffers through EP_ABORT/DONE. A bounded abort timeout or unsupported early RP2040 revision quarantines that direction without reusing its buffer. Hardware bus reset retains the primary driver's protocol-reset assumption. |
+
+Native tests use production helpers, assembled PIO instructions or controlled
+future/register fixtures. They do not establish hardware timing, ROM accuracy or
+physical race freedom. The RP2040-only float/ROM routes are retained upstream API
+coverage, not a newly supported dashboard board. Their final ABI/arithmetic checks
+and source contracts are part of the same review.
+
+USB generations add 128 static bytes; `ControlPipe` adds one `u32`. PIO `Config`
+adds a private explicit-JMP flag. Whole-bus disable can perform at most
+32 × 65,536 abort-status reads in a critical section; this bounds work, not wall
+time. Fake-register tests do not model SIE timing, SRAM arbitration or silicon
+errata. The [21 October audit](../../../docs/validation/rust-documentation-audit-2026-10-21.md)
+records linked-image checks and the remaining physical limits.
+
+References: [Arm run-time ABI, conversion functions](https://github.com/ARM-software/abi-aa/blob/main/rtabi32/rtabi32.rst),
+[Pico SDK RP2040 float entry points](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/pico_float/float_aeabi_rp2040.S),
+[GCC integer runtime functions](https://gcc.gnu.org/onlinedocs/gccint/Integer-library-routines.html),
+[embedded-hal PWM contract](https://docs.rs/embedded-hal/1.0.0/embedded_hal/pwm/trait.SetDutyCycle.html),
+[TinyUSB endpoint abort and bus reset](https://github.com/hathach/tinyusb/blob/master/src/portable/raspberrypi/rp2040/dcd_rp2040.c),
+and [Pico SDK GPIOBASE mapping](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pio/include/hardware/pio.h).

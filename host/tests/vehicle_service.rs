@@ -1,3 +1,5 @@
+//! Scripted UART boundary tests for historical Longan service ownership, qualification, drains and recovery.
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -6,21 +8,35 @@ use std::task::{Context, Poll, Waker};
 use dashboard_host_validation::diagnostics::service::{IoError, LinkState, Port, Profile, ReceiveContract, Vehicle};
 use dashboard_host_validation::samples::{Quality, SensorId};
 
+/// Shared simulated UART state; models poll boundaries and faults, not electrical timing.
 struct Registers {
+    /// Bytes awaiting software read in arrival order.
     rx: VecDeque<u8>,
+    /// Accepted transmit bytes since the last test drain.
     sent: Vec<u8>,
+    /// Write polls, including zero-progress calls.
     writes: usize,
+    /// Read polls, including pending/error calls.
     reads: usize,
+    /// RX-discard attempts, including failures.
     discards: usize,
+    /// Maximum accepted bytes per write poll; zero injects invalid progress.
     limit: usize,
+    /// Simulated UART wire-busy state, independent of flush readiness.
     busy: bool,
+    /// Whether flush returns immediately rather than pending.
     flush_ready: bool,
+    /// Fail discard before clearing buffered data or sticky errors.
     discard_fails: bool,
+    /// Sticky receive fault sampled independently before/after copies.
     rx_error: Option<IoError>,
+    /// Latch Overrun immediately after copying a read prefix.
     fault_after_copy: bool,
+    /// Return an impossible length after copying to exercise invalid-port quarantine.
     invalid_read_count: bool,
 }
 impl Default for Registers {
+    /// Returns empty queues/counters, 24-byte writes and idle/flushed fault-free transport.
     fn default() -> Self {
         Self {
             rx: VecDeque::new(),
@@ -38,9 +54,14 @@ impl Default for Registers {
         }
     }
 }
+/// Cloneable handle sharing one single-threaded UART model with owner and test driver.
 #[derive(Clone, Default)]
-struct Hardware(Rc<RefCell<Registers>>);
+struct Hardware(
+    /// Shared register state; overlapping RefCell borrows panic.
+    Rc<RefCell<Registers>>,
+);
 impl Hardware {
+    /// Appends `bytes` to simulated RX without waking a task; tests explicitly drive the next step.
     fn feed(
         &self,
         bytes: &[u8],
@@ -48,9 +69,12 @@ impl Hardware {
         self.0.borrow_mut().rx.extend(bytes);
     }
 
+    /// Returns all accepted TX bytes and clears capture without changing TX counters/readiness.
     fn take_tx(&self) -> Vec<u8> { std::mem::take(&mut self.0.borrow_mut().sent) }
 }
 impl Port for Hardware {
+    /// Copies queued data into `bytes`, counting reads; returns Pending when empty or a sticky error before copying.
+    /// Injection may latch a fault after copying or return an impossible length; no waker is registered.
     fn poll_read(
         &mut self,
         _: &mut Context<'_>,
@@ -74,6 +98,8 @@ impl Port for Hardware {
         Poll::Ready(Ok(if r.invalid_read_count { bytes.len() + 1 } else { n }))
     }
 
+    /// Appends at most the configured limit from `bytes`; returns Ready with accepted length, including injected zero
+    /// progress.
     fn poll_write(
         &mut self,
         _: &mut Context<'_>,
@@ -86,6 +112,7 @@ impl Port for Hardware {
         Poll::Ready(Ok(n))
     }
 
+    /// Returns Ready success when the flush flag is set; otherwise Pending without registering a waker.
     fn poll_flush(
         &mut self,
         _: &mut Context<'_>,
@@ -97,10 +124,13 @@ impl Port for Hardware {
         }
     }
 
+    /// Returns simulated wire-busy independently of accepted bytes and flush completion.
     fn busy(&self) -> bool { self.0.borrow().busy }
 
+    /// Returns the current sticky receive fault without clearing it.
     fn rx_error(&self) -> Option<IoError> { self.0.borrow().rx_error }
 
+    /// Counts the attempt and returns injected Overrun unchanged, or clears RX/error state and returns success.
     fn discard_rx(&mut self) -> Result<(), IoError> {
         let mut r = self.0.borrow_mut();
         r.discards += 1;
@@ -112,6 +142,7 @@ impl Port for Hardware {
         Ok(())
     }
 }
+/// Returns a 0x7E8 owner with receive `contract` and shared fake hardware at 0ms; invalid profile panics.
 fn new(contract: ReceiveContract) -> (Vehicle<'static, Hardware>, Hardware) {
     let hardware = Hardware::default();
     let vehicle = Vehicle::new(
@@ -125,12 +156,14 @@ fn new(contract: ReceiveContract) -> (Vehicle<'static, Hardware>, Hardware) {
     .unwrap();
     (vehicle, hardware)
 }
+/// Drives one bounded `vehicle` step at `now` milliseconds with a noop waker.
 fn tick(
     vehicle: &mut Vehicle<Hardware>,
     now: u64,
 ) {
     vehicle.step(&mut Context::from_waker(Waker::noop()), now);
 }
+/// Returns the 12-byte RX record: big-endian 32-bit `id` then eight `data` bytes; no ID validation.
 fn record(
     id: u16,
     data: [u8; 8],
@@ -140,6 +173,8 @@ fn record(
     bytes[4..].copy_from_slice(&data);
     bytes
 }
+/// Drives `vehicle`/`hw` through exact setting-mode/AT exchanges relative to `base` milliseconds, stopping after AT+Q
+/// TX. Panics on unexpected command bytes or fixture clock overflow.
 fn handshake_until_exit(
     vehicle: &mut Vehicle<Hardware>,
     hw: &Hardware,
@@ -158,6 +193,8 @@ fn handshake_until_exit(
     tick(vehicle, base + 55);
     assert_eq!(hw.take_tx(), b"AT+Q\r\n");
 }
+/// Completes `vehicle`/`hw` bootstrap from `base` milliseconds, then separately observes drained RX at a record
+/// boundary. Uses exact banners and panics on command/clock fixture mismatch.
 fn handshake(
     vehicle: &mut Vehicle<Hardware>,
     hw: &Hardware,
@@ -168,6 +205,8 @@ fn handshake(
     tick(vehicle, base + 56);
     tick(vehicle, base + 56); // separate pass observes drained RX at a boundary
 }
+/// Bootstraps `vehicle`/`hw` at 0ms, advertises coolant support and advances to its due request at 78ms.
+/// Panics unless capability query bytes match the standard OBD fixture transaction.
 fn coolant_request(
     vehicle: &mut Vehicle<Hardware>,
     hw: &Hardware,
@@ -180,6 +219,7 @@ fn coolant_request(
     tick(vehicle, 78);
 }
 
+/// Unqualified bootstrap retains raw records but never issues diagnostic requests or publishes decoded values.
 #[test]
 fn unqualified_profile_records_raw_data_but_never_polls_can_or_publishes_values() {
     let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
@@ -199,6 +239,7 @@ fn unqualified_profile_records_raw_data_but_never_polls_can_or_publishes_values(
     assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 30_000), None);
 }
 
+/// Recovery/maintenance retain the exact configuration reference and 100ms freshness policy across new epochs.
 #[test]
 fn configured_owner_preserves_selection_and_freshness_through_recovery_and_maintenance() {
     use dashboard_host_validation::view_config::{Channel, default_config, validate};
@@ -248,6 +289,7 @@ fn configured_owner_preserves_selection_and_freshness_through_recovery_and_maint
     }
 }
 
+/// Valid/fallback settings cannot promote an unqualified transport, including after maintenance restart.
 #[test]
 fn runtime_fallback_or_enabled_sources_never_qualify_a_transport() {
     use dashboard_host_validation::view_config::{default_config, load_at_boot, validate};
@@ -270,6 +312,7 @@ fn runtime_fallback_or_enabled_sources_never_qualify_a_transport() {
     }
 }
 
+/// Maintenance drains TX bytes, flush and wire-busy before parking, leaves RX unread and restarts with fresh discovery.
 #[test]
 fn maintenance_drains_every_byte_then_flush_and_busy_without_consuming_replies() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -314,6 +357,7 @@ fn maintenance_drains_every_byte_then_flush_and_busy_without_consuming_replies()
     assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 1057), None);
 }
 
+/// Unqualified/bootstrap owners park only after flush/wire idle; parked faults are discarded by fresh bootstrap.
 #[test]
 fn maintenance_can_pause_unqualified_or_recovering_owners_without_polling() {
     for online in [false, true] {
@@ -342,6 +386,7 @@ fn maintenance_can_pause_unqualified_or_recovering_owners_without_polling() {
     }
 }
 
+/// Pause cannot renew a TX deadline, cancel its partial frame or recover quarantine; clock reversal also quarantines.
 #[test]
 fn maintenance_never_recovers_a_quarantine_or_hides_a_tx_deadline() {
     for flush_stall in [false, true] {
@@ -366,6 +411,7 @@ fn maintenance_never_recovers_a_quarantine_or_hides_a_tx_deadline() {
     assert_eq!(vehicle.link().state, LinkState::Quarantined);
 }
 
+/// Qualified synthetic transport discovers coolant support and publishes only its matching decoded source value.
 #[test]
 fn qualified_session_discovers_support_and_reports_only_the_matching_value() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -382,6 +428,7 @@ fn qualified_session_discovers_support_and_reports_only_the_matching_value() {
     assert_eq!(vehicle.snapshot().reset_generation, 1);
 }
 
+/// Buffered replies remain unread until both flush and wire-busy report TX completion.
 #[test]
 fn buffered_response_is_not_consumed_until_tx_flush_and_busy_are_complete() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -401,6 +448,7 @@ fn buffered_response_is_not_consumed_until_tx_flush_and_busy_are_complete() {
     assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 82), Some(95.0));
 }
 
+/// RX faults before/after copying invalidate data before parsing/publication and trigger recovery.
 #[test]
 fn receive_fault_before_or_during_copy_invalidates_values_before_publication() {
     for after_copy in [false, true] {
@@ -420,6 +468,7 @@ fn receive_fault_before_or_during_copy_invalidates_values_before_publication() {
     }
 }
 
+/// Every partial 12-byte record split is discarded on loss before a new-epoch complete record can be retained.
 #[test]
 fn receive_loss_discards_every_partial_record_before_a_new_epoch() {
     for prefix in 1..12 {
@@ -440,6 +489,7 @@ fn receive_loss_discards_every_partial_record_before_a_new_epoch() {
     }
 }
 
+/// Silent ECU timeout backs off requests while preserving the initialized adapter and responsive service.
 #[test]
 fn silent_ecu_times_out_without_restarting_the_adapter_or_blocking_service() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -456,6 +506,7 @@ fn silent_ecu_times_out_without_restarting_the_adapter_or_blocking_service() {
     assert_eq!(hw.take_tx().len(), 14);
 }
 
+/// TX stall, clock reversal, zero progress and oversized read counts quarantine the owner and stop future commands.
 #[test]
 fn tx_stall_clock_failure_and_invalid_port_counts_stop_future_commands() {
     for mode in 0..3 {
@@ -487,6 +538,7 @@ fn tx_stall_clock_failure_and_invalid_port_counts_stop_future_commands() {
     assert_eq!(vehicle.link().state, LinkState::Quarantined);
 }
 
+/// Repeated discard failure follows exact capped exponential retry delays without spinning or transmitting.
 #[test]
 fn recovery_retries_use_capped_backoff_and_never_spin_on_a_sticky_fault() {
     let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
@@ -506,6 +558,7 @@ fn recovery_retries_use_capped_backoff_and_never_spin_on_a_sticky_fault() {
     assert!(hw.take_tx().is_empty());
 }
 
+/// Per-step reads consume at most 32 bytes; the 16-record trace reports exact overwrites and newest order.
 #[test]
 fn raw_trace_is_bounded_and_reports_overwrites_and_each_step_has_a_read_limit() {
     let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
@@ -526,6 +579,7 @@ fn raw_trace_is_bounded_and_reports_overwrites_and_each_step_has_a_read_limit() 
     );
 }
 
+/// A different responder violates the qualified receive contract, retaining raw evidence but revoking sample admission.
 #[test]
 fn selected_responder_contract_violation_fails_closed() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -538,6 +592,7 @@ fn selected_responder_contract_violation_fails_closed() {
     assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 58), None);
 }
 
+/// Bytes behind the final banner must drain at a full record boundary before a new capability TX can begin.
 #[test]
 fn old_record_after_final_banner_cannot_complete_a_new_capability_query() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -558,6 +613,7 @@ fn old_record_after_final_banner_cannot_complete_a_new_capability_query() {
     assert_eq!(vehicle.link().diagnostics.completed, 1);
 }
 
+/// Every partial stale-record split blocks the next request until drained and cannot replace the last matching value.
 #[test]
 fn every_partial_record_must_drain_before_the_next_polling_request() {
     for prefix in 1..12 {
@@ -586,6 +642,7 @@ fn every_partial_record_must_drain_before_the_next_polling_request() {
     }
 }
 
+/// Record age starts at its first byte, allows the 100ms boundary and requires recovery afterward despite later bytes.
 #[test]
 fn incomplete_record_deadline_is_fixed_inclusive_and_requires_a_new_epoch() {
     for prefix in 1..12 {
@@ -611,6 +668,7 @@ fn incomplete_record_deadline_is_fixed_inclusive_and_requires_a_new_epoch() {
     }
 }
 
+/// A bounded but nonempty RX backlog cannot defer the active diagnostic response deadline.
 #[test]
 fn receive_backlog_cannot_starve_an_active_response_deadline() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
@@ -627,6 +685,7 @@ fn receive_backlog_cannot_starve_an_active_response_deadline() {
     assert!(hw.take_tx().is_empty());
 }
 
+/// Parked acquisition advances timer/history publication without sampling transport or inventing measurements.
 #[test]
 fn parked_vehicle_forwards_timer_publication_without_transport_or_samples() {
     let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
@@ -644,6 +703,7 @@ fn parked_vehicle_forwards_timer_publication_without_transport_or_samples() {
     assert_eq!(hw.0.borrow().reads, reads);
 }
 
+/// Receive/tick activates an episode before a queued acknowledgment, rejecting an older watermark in the same pass.
 #[test]
 fn queued_command_observes_activation_from_the_same_vehicle_receive_pass() {
     use dashboard_host_validation::alarms::{RuleIndex, Status};

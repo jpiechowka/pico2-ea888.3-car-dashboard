@@ -11,13 +11,21 @@ use heapless::String;
 use crate::logging::{Counters, Entry, Level, LogStore, VISIBLE_LINES, Window};
 use crate::ui::{BLACK, GREEN, LABEL_FONT, RED, WHITE, YELLOW};
 
+/// Owned log-page capture for resumable row drawing without retained storage locks.
 pub struct LogPage {
+    /// Copied history window, or `None` if its try-lock was busy during capture.
     history: Option<Window>,
+    /// Independently captured latest explicit fault; no shared transaction with history.
     fault: Option<Entry>,
+    /// Independently sampled loss/truncation statistics.
     counters: Counters,
+    /// Whether the caller selected a fixed history anchor rather than follow-latest.
     anchored: bool,
 }
 impl LogPage {
+    /// Returns owned snapshots from `store` for ending sequence `anchor` (`None`
+    /// follows latest). Captures history, fault and counters separately; all locks
+    /// are released before return and busy history remains visibly unavailable.
     pub fn capture<M: RawMutex>(
         store: &LogStore<M>,
         anchor: Option<u64>,
@@ -30,6 +38,8 @@ impl LogPage {
         }
     }
 
+    /// Clears the whole `display` to black and draws LOGS plus LIVE/HISTORY state.
+    /// Draw errors are discarded; caller must handle transport completion separately.
     pub fn draw_header<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -46,6 +56,9 @@ impl LogPage {
         .ok();
     }
 
+    /// Draws captured `row` into `display`: zero is the protected fault, `1..=12`
+    /// are history rows, larger indices are inert. Empty/busy history is labeled
+    /// in its first row; drawing errors are discarded and no storage is reread.
     pub fn draw_row<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -95,6 +108,8 @@ impl LogPage {
         }
     }
 
+    /// Draws loss/truncation/eviction counts into `display`, using `--` for unavailable
+    /// history. Loss sums saturate; eviction display clamps to `u32::MAX`. Draw errors are discarded.
     pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -133,6 +148,8 @@ impl LogPage {
         .ok();
     }
 
+    /// Clears and draws this complete captured log page into `display`; ignores
+    /// target errors. Navigation hints are a separate call so adapters can use current controls.
     pub fn draw_full<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -145,6 +162,8 @@ impl LogPage {
     }
 
     /// Independent of counters/fault/history; callers can yield between rows.
+    /// Draws the Logs-to-Dashboard navigation route from `map` into `display`,
+    /// selecting compact portrait text and discarding draw errors.
     pub fn draw_hint<D: DrawTarget<Color = Rgb565>>(
         &self,
         display: &mut D,
@@ -162,6 +181,9 @@ impl LogPage {
         }
     }
 }
+/// Draws `entry` into `display` at baseline `y` pixels, replacing control
+/// characters with `?`. Timestamp text wraps modulo 100000 ms; the stored timestamp
+/// remains full-width. Chooses font/offset by target geometry and ignores draw errors.
 fn draw_entry<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     entry: &Entry,
@@ -197,6 +219,7 @@ fn draw_entry<D: DrawTarget<Color = Rgb565>>(
     .ok();
 }
 
+/// Returns whether `display` has the exact shared portrait size, 240 by 320 pixels.
 fn portrait<D: Dimensions>(display: &D) -> bool {
     crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait
 }

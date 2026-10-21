@@ -1,12 +1,19 @@
 //! Bounded opaque capture journal. Hardware adapters own flash exclusion.
 #![allow(async_fn_in_trait)]
 
+/// Flash program-page and journal-envelope size in bytes.
 pub const PAGE_BYTES: usize = 256;
+/// Flash erase-sector size in bytes; operations never combine sectors.
 pub const SECTOR_BYTES: usize = 4096;
+/// Bytes per physical copy: three sectors including header, payload and final commit page.
 pub const COPY_BYTES: usize = 12288;
+/// Bytes per logical slot, containing two independently committed copies.
 pub const SLOT_BYTES: usize = 24576;
+/// Physical flash byte offset of the four-slot reservation; excludes the XIP base address.
 pub const FLASH_OFFSET: u32 = 0x1E6000;
+/// Maximum opaque capture payload length in bytes; journal does not interpret payload schema.
 pub const PAYLOAD_MAX: usize = 8192;
+/// Number of logical slots; valid public slot indices are 0..4.
 pub const SLOT_COUNT: u8 = 4;
 
 /// All offsets are physical flash offsets, confined to the capture reservation.
@@ -14,16 +21,26 @@ pub const SLOT_COUNT: u8 = 4;
 /// Each mutation performs exactly one sector erase or page program; hardware owns
 /// its bounded maintenance ticket, XIP exclusion and cancellation safety.
 pub trait Storage {
+    /// Adapter-specific read/erase/program error, retained unchanged inside [`Error::Storage`].
     type Error;
+    /// Reads physical byte `offset` into all of `bytes`, returning `Ok(())` on success.
+    /// Journal requests are at most one page and within the reservation. An error may
+    /// leave a partially modified destination; `self` owns adapter serialization and XIP safety.
     async fn read(
         &mut self,
         offset: u32,
         bytes: &mut [u8],
     ) -> Result<(), Self::Error>;
+    /// Erases one sector at sector-aligned physical `offset`, returning `Ok(())` when
+    /// the adapter finishes. The journal reads back erase state separately. Errors or
+    /// cancellation may leave a partial erase; `self` must retain safe hardware ownership.
     async fn erase_sector(
         &mut self,
         offset: u32,
     ) -> Result<(), Self::Error>;
+    /// Programs the complete `bytes` page at page-aligned physical `offset`, returning
+    /// `Ok(())` after adapter completion. Caller erases first and verifies separately.
+    /// Errors/cancellation can leave partial programming; `self` owns exclusion and cleanup.
     async fn program_page(
         &mut self,
         offset: u32,
@@ -31,48 +48,91 @@ pub trait Storage {
     ) -> Result<(), Self::Error>;
 }
 
+/// Journal envelope identity; supplied metadata must be reverified before addressing flash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoredCapture {
+    /// Zero-based logical slot, below [`SLOT_COUNT`] after admission.
     pub slot: u8,
+    /// Physical copy index, zero or one after admission.
     pub copy: u8,
+    /// Nonzero monotonically increasing generation; never compared with wrapping arithmetic.
     pub generation: u64,
+    /// Opaque payload length in bytes, 1..=8192 after admission.
     pub length: u32,
+    /// CRC-32/ISO-HDLC of exactly `length` payload bytes; not authenticity evidence.
     pub payload_crc: u32,
 }
 
+/// Physical copy classification, including unsupported journal formats that block replacement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyState {
+    /// Every byte of the whole physical copy reads as erased 0xFF.
     Empty,
+    /// Header, payload, commit or erased-state consistency failed.
     Corrupt,
-    UnsupportedSchema(u16),
-    Valid(StoredCapture),
+    /// Recognized journal magic with a different version; no payload interpretation follows.
+    UnsupportedSchema(
+        /// Unrecognized little-endian journal version.
+        u16,
+    ),
+    /// Header, commit and payload CRC agree with physical slot/copy identity.
+    Valid(
+        /// Verified envelope, without application-schema admission.
+        StoredCapture,
+    ),
 }
 
+/// Admission of both copies, preserving inactive unknown formats even when one copy is readable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotInfo {
+    /// Physical-copy states in index order.
     pub copies: [CopyState; 2],
+    /// Valid copy with highest generation; absent if neither copy is valid.
     pub selected: Option<StoredCapture>,
 }
 
+/// Journal operation failure; mutation errors do not imply that flash stayed unchanged.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<E> {
-    Storage(E),
+    /// Adapter operation failed, possibly after partial mutation/read.
+    Storage(
+        /// Original adapter error.
+        E,
+    ),
+    /// Logical slot or supplied physical-copy index lies outside the reservation.
     InvalidSlot,
+    /// Payload is empty/oversized, or requested prefix exceeds page/payload length.
     InvalidLength,
+    /// Destination cannot hold the admitted payload.
     BufferTooSmall,
+    /// Both physical copies are fully erased.
     Empty,
+    /// No valid copy exists and nonempty corruption prevents implicit initialization.
     Corrupt,
-    UnsupportedSchema(u16),
+    /// Unknown journal version blocks interpretation or overwrite.
+    UnsupportedSchema(
+        /// Unsupported journal version.
+        u16,
+    ),
+    /// Both valid copies claim the same generation, so no newest copy is selected.
     AmbiguousGeneration,
+    /// Current generation is `u64::MAX`; explicit reset is required before saving.
     GenerationExhausted,
+    /// Readback, supplied identity or payload integrity disagrees with the expected bytes.
     VerifyFailed,
 }
 
+/// Eight-byte journal header discriminator, distinct from application payload magic.
 const HEADER_MAGIC: &[u8; 8] = b"BLECAPJ1";
+/// Eight-byte commit-page discriminator written only after header/payload verification.
 const COMMIT_MAGIC: &[u8; 8] = b"BLECOMT1";
+/// Journal envelope version, independent of payload and USB protocol versions.
 const VERSION: u16 = 1;
+/// Byte offset of the final page within one copy.
 const COMMIT_OFFSET: usize = COPY_BYTES - PAGE_BYTES;
 
+/// Returns the unfinalized reflected CRC state after folding `bytes` into initial `crc`.
+/// Uses polynomial 0xEDB88320; callers supply initialization and final XOR.
 fn crc_update(
     mut crc: u32,
     bytes: &[u8],
@@ -87,22 +147,28 @@ fn crc_update(
 }
 
 /// CRC-32/ISO-HDLC: reflected polynomial, all-ones initial value and final XOR.
+/// Returns the checksum of `bytes`; an empty slice returns zero. Detects corruption,
+/// not malicious replacement or authenticity.
 pub fn crc32(bytes: &[u8]) -> u32 { !crc_update(u32::MAX, bytes) }
 
+/// Returns the envelope checksum of `bytes`, excluding its checksum field at bytes 32..36.
 fn page_crc(bytes: &[u8; PAGE_BYTES]) -> u32 { !crc_update(crc_update(u32::MAX, &bytes[..32]), &bytes[36..]) }
 
+/// Returns little-endian u16 from `bytes` at byte `at`; panics unless two bytes remain.
 fn u16_at(
     bytes: &[u8],
     at: usize,
 ) -> u16 {
     u16::from_le_bytes([bytes[at], bytes[at + 1]])
 }
+/// Returns little-endian u32 from `bytes` at byte `at`; panics unless four bytes remain.
 fn u32_at(
     bytes: &[u8],
     at: usize,
 ) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
+/// Returns little-endian u64 from `bytes` at byte `at`; panics unless eight bytes remain.
 fn u64_at(
     bytes: &[u8],
     at: usize,
@@ -119,6 +185,8 @@ fn u64_at(
     ])
 }
 
+/// Returns the physical byte offset for `slot` and `copy`; callers must first bound
+/// slot below four and copy below two. Arithmetic itself does not enforce the reservation.
 fn base(
     slot: u8,
     copy: u8,
@@ -126,6 +194,8 @@ fn base(
     FLASH_OFFSET + u32::from(slot) * SLOT_BYTES as u32 + u32::from(copy) * COPY_BYTES as u32
 }
 
+/// Writes canonical envelope for `capture` into `page`, filling reserved bytes with
+/// 0xFF, and returns its CRC. Does not validate supplied metadata or access flash.
 fn header(
     page: &mut [u8; PAGE_BYTES],
     capture: StoredCapture,
@@ -144,6 +214,10 @@ fn header(
     crc
 }
 
+/// Returns the header classification of `page` for expected `slot`/`copy`, checking
+/// lengths, nonzero generation, reserved bytes and CRC for version one.
+/// Unknown versions are protected before other semantic checks; erased pages require
+/// the separate whole-copy empty check and classify corrupt here.
 fn parse_header(
     page: &[u8; PAGE_BYTES],
     slot: u8,
@@ -179,6 +253,8 @@ fn parse_header(
     })
 }
 
+/// Writes a canonical commit envelope into `page`, binding `capture` and `header_crc`,
+/// filling reserved bytes with 0xFF and inserting the commit CRC. Returns unit; no flash I/O.
 fn commit(
     page: &mut [u8; PAGE_BYTES],
     capture: StoredCapture,
@@ -197,6 +273,8 @@ fn commit(
     page[32..36].copy_from_slice(&crc.to_le_bytes());
 }
 
+/// Returns whether `page` is a canonical commit for exact `capture` and `header_crc`,
+/// including version, reserved bytes and commit-page CRC.
 fn valid_commit(
     page: &[u8; PAGE_BYTES],
     capture: StoredCapture,
@@ -214,6 +292,9 @@ fn valid_commit(
         && page_crc(page) == u32_at(page, 32)
 }
 
+/// Reads the copy at physical `address` through exclusively owned `storage`, reusing
+/// `page` as scratch. Returns true only if all copy bytes are 0xFF, false at the first
+/// nonerased page, or the adapter error. Read-only; cancellation may leave scratch changed.
 async fn erased<S: Storage>(
     storage: &mut S,
     address: u32,
@@ -231,6 +312,9 @@ async fn erased<S: Storage>(
     Ok(true)
 }
 
+/// Returns whether admitted `capture`'s payload CRC matches flash read through exclusive
+/// `storage`, using `page` scratch. Metadata must already be bounded by header admission.
+/// Propagates read errors; cancellation affects scratch only and never programs flash.
 async fn payload_valid<S: Storage>(
     storage: &mut S,
     capture: StoredCapture,
@@ -252,6 +336,9 @@ async fn payload_valid<S: Storage>(
     Ok(!crc == capture.payload_crc)
 }
 
+/// Returns full physical-copy admission for prevalidated `slot`/`copy` using exclusive
+/// `storage`: whole-copy erasure or header/commit/payload integrity. Adapter read errors
+/// propagate; unknown journal versions remain protected without payload interpretation.
 async fn inspect_copy<S: Storage>(
     storage: &mut S,
     slot: u8,
@@ -283,6 +370,9 @@ async fn inspect_copy<S: Storage>(
 }
 
 /// Inspect both copies including payload integrity. Unknown formats stay visible.
+/// Reads zero-based `slot` through exclusively held `storage`, returning both states
+/// and the highest valid generation. Invalid slots, equal valid generations or adapter
+/// failures return errors. Read-only and cancellable without flash mutation.
 pub async fn inspect_slot<S: Storage>(
     storage: &mut S,
     slot: u8,
@@ -313,6 +403,8 @@ pub async fn inspect_slot<S: Storage>(
     Ok(info)
 }
 
+/// Returns the no-selected-copy error for `info`: first unknown schema, all-empty,
+/// otherwise corrupt. Caller must already establish that `selected` is absent.
 fn unavailable<E>(info: SlotInfo) -> Error<E> {
     for state in info.copies {
         if let CopyState::UnsupportedSchema(version) = state {
@@ -328,6 +420,9 @@ fn unavailable<E>(info: SlotInfo) -> Error<E> {
 
 /// On any error the destination is untrusted and may contain a partial payload.
 /// The storage adapter must exclusively own this journal for the entire future.
+/// Returns the newest verified envelope in zero-based `slot`, loading its exact payload
+/// prefix into `destination` through `storage`; destination tail stays unchanged.
+/// Propagates slot/admission/read/CRC errors and rejects a destination shorter than payload.
 pub async fn load_slot<S: Storage>(
     storage: &mut S,
     slot: u8,
@@ -338,6 +433,9 @@ pub async fn load_slot<S: Storage>(
     read_payload(storage, capture, destination).await
 }
 
+/// Reverifies exact `capture` against exclusively held `storage`, returning unit on
+/// identity/integrity equality. Rejects out-of-range slot/copy and changed/invalid bytes;
+/// read failures propagate. Performs no writes.
 async fn checked_copy<S: Storage>(
     storage: &mut S,
     capture: StoredCapture,
@@ -353,6 +451,9 @@ async fn checked_copy<S: Storage>(
 
 /// Read at most one page from a fully verified copy. Supplied metadata is checked
 /// against flash, not trusted as an address. Retain exclusive storage ownership.
+/// Fills `prefix` from exact `capture` through `storage`, returning unit on success.
+/// Rejects lengths above 256 or payload size, then reverifies the entire copy before
+/// reading; zero length is allowed. On read error the prefix may be partially changed.
 pub async fn read_prefix<S: Storage>(
     storage: &mut S,
     capture: StoredCapture,
@@ -370,6 +471,9 @@ pub async fn read_prefix<S: Storage>(
 
 /// Load a particular verified generation, including an older supported payload
 /// when the newer copy has an unsupported application format. Never mutates flash.
+/// Returns exact `capture` after reverification through exclusive `storage` and filling
+/// `destination`'s payload prefix. Rejects changed metadata, short destination and CRC/read
+/// failures; errors/cancellation may leave partial untrusted destination bytes.
 pub async fn load_copy<S: Storage>(
     storage: &mut S,
     capture: StoredCapture,
@@ -379,6 +483,10 @@ pub async fn load_copy<S: Storage>(
     read_payload(storage, capture, destination).await
 }
 
+/// Reads already-admitted `capture` through exclusive `storage` into `destination`'s
+/// payload prefix and returns its envelope after CRC validation. Destination tail is
+/// untouched. Short buffers fail before reading; later failures/cancellation can leave
+/// a partial untrusted prefix. Caller supplies bounded slot/copy/length metadata.
 async fn read_payload<S: Storage>(
     storage: &mut S,
     capture: StoredCapture,
@@ -405,6 +513,12 @@ async fn read_payload<S: Storage>(
 
 /// Replace the inactive copy only. A failed/cancelled future must never be resumed
 /// as an implicit retry. Reinspect after an unknown commit outcome.
+/// Saves nonempty `payload` (at most 8192 bytes) to zero-based `slot` through exclusive
+/// `storage`, returning its readback-verified new envelope. Refuses either unknown journal
+/// copy, ambiguous/exhausted generations and nonempty slots without a valid copy.
+/// Erases only the inactive copy, writes/verifies header and payload, then commits last.
+/// Adapter/verification failure can occur after the new copy committed; prior valid copy
+/// remains intact, but an interrupted first save can require explicit reset.
 pub async fn save_slot<S: Storage>(
     storage: &mut S,
     slot: u8,
@@ -481,6 +595,9 @@ pub async fn save_slot<S: Storage>(
 /// Destructive recovery, exclusively after explicit local confirmation. This
 /// erases both copies, including unknown schemas; it is never called by save.
 /// Interruption may destroy this slot's only valid copy. Other slots are untouched.
+/// Erases zero-based `slot` through exclusive `storage`, returning unit only after both
+/// copies read entirely 0xFF. Rejects invalid slot before mutation; adapter/readback errors
+/// can leave a partially erased slot. This function does not implement user confirmation.
 pub async fn reset_slot<S: Storage>(
     storage: &mut S,
     slot: u8,

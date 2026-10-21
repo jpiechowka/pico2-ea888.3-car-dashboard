@@ -1,7 +1,12 @@
+//! Synthetic input, acquisition ownership and completed-presentation state regressions.
+//! These host fixtures do not establish GPIO, DMA, radio or physical display behavior.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::simulator::ControlSimulator;
 
 #[test]
+/// Candidate controls follow candidate view membership/order and proof identity while accepted session and acquisition
+/// remain unchanged.
 fn unapplied_json_controls_use_candidate_view_membership_and_order() {
     let accepted = validate(default_config()).unwrap();
     let mut sim = ControlSimulator::new(accepted.clone());
@@ -78,6 +83,8 @@ fn unapplied_json_controls_use_candidate_view_membership_and_order() {
 }
 
 #[test]
+/// Scenario injection uses shared sample admission, leaves unrelated channels missing, and distinguishes UI test-range
+/// limits from diagnostic admission.
 fn scenarios_use_real_gate_without_refreshing_unselected_channels() {
     use dashboard_configurator::simulator::{InputOutcome, Scenario, SimulationInput};
     use dashboard_core::samples::{SampleError, SensorId};
@@ -136,6 +143,8 @@ fn scenarios_use_real_gate_without_refreshing_unselected_channels() {
 }
 
 #[test]
+/// Cancelling held inputs produces no release action; inspection-only acknowledgment/reset cannot dispatch to accepted
+/// acquisition.
 fn held_input_cancel_never_synthesizes_tap_hold_or_accepted_candidate_ack() {
     use dashboard_core::input_model::EncoderBatch;
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
@@ -157,6 +166,7 @@ fn held_input_cancel_never_synthesizes_tap_hold_or_accepted_candidate_ack() {
 }
 
 #[test]
+/// Reset acknowledgment requires the pending token and applies its statistics reset only once.
 fn reset_ack_requires_exact_latest_token_and_only_resets_once() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     sim.tap(ButtonId::B);
@@ -169,6 +179,7 @@ fn reset_ack_requires_exact_latest_token_and_only_resets_once() {
 }
 
 #[test]
+/// Restart preserves reset-token monotonicity so an old acknowledgment cannot reset the new acquisition owner.
 fn source_restart_does_not_recycle_old_reset_acknowledgment_tokens() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     sim.tap(ButtonId::B);
@@ -184,6 +195,8 @@ fn source_restart_does_not_recycle_old_reset_acknowledgment_tokens() {
 }
 
 #[test]
+/// Strict browser completion mode requires feedback and clear frame completions before Off, including before any
+/// earlier submission and after restart.
 fn strict_browser_transport_requires_pixels_even_before_first_submission_and_after_restart() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -219,6 +232,8 @@ fn strict_browser_transport_requires_pixels_even_before_first_submission_and_aft
 }
 
 #[test]
+/// Synthetic warning fixtures cross configured thresholds only after real dwell and leave context-dependent rules
+/// unavailable when unsupported.
 fn warning_scenario_crosses_configured_threshold_with_real_dwell_and_context_limits() {
     use dashboard_configurator::simulator::{Scenario, WarningFixture};
     use dashboard_core::alarms::{RuleIndex, Status};
@@ -278,6 +293,8 @@ fn warning_scenario_crosses_configured_threshold_with_real_dwell_and_context_lim
 }
 
 #[test]
+/// Missing/stale/fault scenarios preserve factual gaps; rejected payloads retain previous extrema while recording
+/// invalid quality.
 fn missing_stale_fault_and_rejected_samples_keep_factual_gaps_and_raw_extrema() {
     use dashboard_configurator::simulator::{InputOutcome, Scenario, SimulationInput};
     use dashboard_core::samples::{Quality, SampleError, SensorId};
@@ -319,6 +336,8 @@ fn missing_stale_fault_and_rejected_samples_keep_factual_gaps_and_raw_extrema() 
 }
 
 #[test]
+/// Sampled physical inputs honor the exact two-second Y recovery boundary and cancellation prevents simultaneous held
+/// inputs from firing later.
 fn physical_simultaneous_cancel_and_y_recovery_use_actual_elapsed_boundary() {
     use dashboard_core::input_model::EncoderBatch;
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
@@ -343,6 +362,7 @@ fn physical_simultaneous_cancel_and_y_recovery_use_actual_elapsed_boundary() {
 }
 
 #[test]
+/// Inspection navigation leaves accepted page, acquisition snapshot and reset ownership unchanged when bindings resume.
 fn candidate_navigation_does_not_mutate_accepted_session_or_statistics() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     let start = sim.now_ms();
@@ -361,6 +381,7 @@ fn candidate_navigation_does_not_mutate_accepted_session_or_statistics() {
 }
 
 #[test]
+/// Debug and Logs submit distinct shared rasters, accept completion once and do not publish Dashboard warning rules.
 fn diagnostic_pages_submit_their_shared_pixels_and_complete_once() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -389,6 +410,8 @@ fn diagnostic_pages_submit_their_shared_pixels_and_complete_once() {
 }
 
 #[test]
+/// Gesture navigation retains unit choice, protected recovery restores Full, reset feedback waits for acknowledgment
+/// and restart clears session choices.
 fn gestures_navigate_preserve_choices_and_recover_from_off() {
     let config = validate(default_config()).unwrap();
     let mut sim = ControlSimulator::new(config.clone());
@@ -423,6 +446,7 @@ fn gestures_navigate_preserve_choices_and_recover_from_off() {
 }
 
 #[test]
+/// Invalid-map inspection uses accepted layout for navigation and log scrolling while preserving protected recovery.
 fn invalid_maps_use_accepted_layout_and_cannot_disable_recovery() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     let mut map = ControlMap::default();
@@ -439,6 +463,7 @@ fn invalid_maps_use_accepted_layout_and_cannot_disable_recovery() {
 }
 
 #[test]
+/// Incompatible inspection actions increment the ignored count without replacing accepted layout or disabling recovery.
 fn incompatible_candidate_actions_are_counted_and_layout_is_accepted() {
     let accepted = validate(default_config()).unwrap();
     let mut sim = ControlSimulator::new(accepted.clone());
@@ -457,6 +482,8 @@ fn incompatible_candidate_actions_are_counted_and_layout_is_accepted() {
 }
 
 #[test]
+/// Every control action is exercised through a permitted page gesture, including unavailable unseen-warning
+/// acknowledgment and reset acknowledgment.
 fn every_catalogue_action_runs_through_gestures_and_shared_session() {
     use dashboard_configurator::editor::{Edit, Editor};
     use dashboard_core::backlight::Brightness;
@@ -536,6 +563,8 @@ fn every_catalogue_action_runs_through_gestures_and_shared_session() {
 }
 
 #[test]
+/// Summary-mode Off waits for its feedback interval before clearing, and protected recovery restores visible output
+/// without a stale popup.
 fn off_feedback_clear_and_recovery_follow_presentation_rules() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     sim.hold(ButtonId::X); // Full -> Dim
@@ -555,6 +584,8 @@ fn off_feedback_clear_and_recovery_follow_presentation_rules() {
 }
 
 #[test]
+/// Persistent samples retain extrema/history, long no-sample advancement expires data, and restart allocates a fresh
+/// empty acquisition origin.
 fn persistent_samples_keep_history_and_restart_resets_origin() {
     use dashboard_core::samples::SensorId;
     let cfg = validate(default_config()).unwrap();
@@ -589,6 +620,8 @@ fn persistent_samples_keep_history_and_restart_resets_origin() {
 }
 
 #[test]
+/// Simulator-owned acquisition matches borrowed shared acquisition across valid, nonfinite and out-of-order
+/// observations.
 fn owned_and_borrowed_ingestion_match_including_rejected_values() {
     use dashboard_core::acquisition::AcquisitionModel;
     let cfg = validate(default_config()).unwrap();
@@ -605,6 +638,8 @@ fn owned_and_borrowed_ingestion_match_including_rejected_values() {
 }
 
 #[test]
+/// Owned acquisition retains its immutable threshold/dwell contract; a separately configured replacement starts fresh
+/// and evaluates independently.
 fn boxed_owner_binds_threshold_and_dwell_to_its_immutable_config() {
     use dashboard_core::acquisition::{AcquisitionModel, OwnedAcquisitionModel};
     use dashboard_core::alarms::{RuleIndex, Status};
@@ -639,6 +674,8 @@ fn boxed_owner_binds_threshold_and_dwell_to_its_immutable_config() {
 }
 
 #[test]
+/// Reset request preserves statistics until owner acknowledgment, duplicate acknowledgment is inert and elapsed time
+/// expires feedback.
 fn reset_acknowledgment_resets_owned_statistics_once_and_time_expires_feedback() {
     use dashboard_core::samples::SensorId;
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
@@ -659,6 +696,8 @@ fn reset_acknowledgment_resets_owned_statistics_once_and_time_expires_feedback()
 }
 
 #[test]
+/// Warning acknowledgment requires a matching completed presentation and then producer processing before accepted
+/// feedback.
 fn warnings_require_render_acceptance_and_matching_completion_before_ack() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -713,6 +752,8 @@ fn warnings_require_render_acceptance_and_matching_completion_before_ack() {
 }
 
 #[test]
+/// Rendered transport cannot shut off from elapsed time alone: exact feedback completion and a subsequent clear
+/// completion are required.
 fn rendered_transport_off_waits_for_feedback_and_clear_completions() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -744,6 +785,7 @@ fn rendered_transport_off_waits_for_feedback_and_clear_completions() {
 }
 
 #[test]
+/// Dashboard, Debug and Logs submit distinct rasters and reject completion for the wrong buffer identity.
 fn diagnostic_pages_submit_real_shared_rasters_instead_of_dashboard_pixels() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -772,6 +814,8 @@ fn diagnostic_pages_submit_real_shared_rasters_instead_of_dashboard_pixels() {
     }
 }
 #[test]
+/// Pending frames prevent buffer overwrite; rejected/replayed preparations cannot advance completed warning identity or
+/// paging.
 fn deadline_interruption_and_dropped_preparation_never_change_completed_identity() {
     use dashboard_configurator::preview::{Preview, PreviewError};
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -857,6 +901,7 @@ fn deadline_interruption_and_dropped_preparation_never_change_completed_identity
 }
 
 #[test]
+/// Transport faults and stale ticks preserve an established warning latch while completed presentation remains absent.
 fn injected_fault_and_stale_tick_use_owner_qualification_and_preserve_latch() {
     use dashboard_core::alarms::RuleIndex;
     use dashboard_core::samples::{Quality, SensorId};
@@ -887,6 +932,8 @@ fn injected_fault_and_stale_tick_use_owner_qualification_and_preserve_latch() {
 }
 
 #[test]
+/// LED warning state follows exact completed frames and returns to configured normal only after completed backlight
+/// shutdown.
 fn led_follows_completed_warning_and_actual_backlight_shutdown() {
     use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -944,6 +991,8 @@ fn led_follows_completed_warning_and_actual_backlight_shutdown() {
 }
 
 #[test]
+/// Summary navigation and elapsed time do not fabricate warning completion; reduced motion preserves the configured
+/// steady normal colour.
 fn summary_navigation_does_not_fabricate_completed_led_warnings() {
     use dashboard_config::{Color, LedPatternKind};
     let mut raw = default_config();
@@ -958,6 +1007,8 @@ fn summary_navigation_does_not_fabricate_completed_led_warnings() {
     assert_eq!(sim.completed_warning().rules, 0);
 }
 #[test]
+/// Resuming accepted bindings preserves acquisition time/history and selected view while restoring accepted control
+/// behavior.
 fn unchanged_config_invalid_resume_restores_bindings_without_restarting_state() {
     use dashboard_configurator::config::*;
     use dashboard_configurator::simulator::ControlSimulator;
@@ -989,6 +1040,8 @@ fn unchanged_config_invalid_resume_restores_bindings_without_restarting_state() 
 }
 
 #[test]
+/// Separate diagnostic scratch rendering cannot overwrite an unconsumed timing frame, which remains completable only
+/// under its original token.
 fn appearance_inspection_scratch_never_overwrites_retained_timing_candidate() {
     use dashboard_configurator::config::*;
     use dashboard_configurator::editor::*;

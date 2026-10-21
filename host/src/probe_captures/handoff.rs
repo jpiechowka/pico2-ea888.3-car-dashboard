@@ -5,6 +5,8 @@ use dashboard_core::discovery::capture::{DecodedCapture, Record};
 use dashboard_core::discovery::{ReadResult, Uuid};
 use serde_json::{Value, json};
 
+/// Returns canonical display-order text for validated wire-order `uuid`, expanding 16/32-bit Bluetooth UUIDs.
+/// Panics for widths other than 2, 4 or 16; admitted captures already enforce those widths.
 fn canonical(uuid: Uuid) -> String {
     // Expand short UUIDs with the Bluetooth base, then reverse wire byte order.
     let mut wire = [0xFB, 0x34, 0x9B, 0x5F, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0, 0, 0, 0];
@@ -18,11 +20,14 @@ fn canonical(uuid: Uuid) -> String {
     format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
+/// Returns raw wire hex, width, optional assigned 16-bit value and canonical display text for `uuid`.
+/// Panics for invalid width; callers supply capture-validated UUIDs.
 pub(super) fn uuid(uuid: Uuid) -> Value {
     json!({"wire_hex":super::hex(&uuid.bytes[..usize::from(uuid.len)]),
         "width_bytes":uuid.len,"assigned_u16":uuid.short(),"canonical":canonical(uuid)})
 }
 
+/// Returns all eight GATT characteristic-property booleans from `bits`; advertised properties prove no access rights.
 pub(super) fn properties(bits: u8) -> Value {
     json!({
         "broadcast":bits & 0x01 != 0,
@@ -36,6 +41,9 @@ pub(super) fn properties(bits: u8) -> Value {
     })
 }
 
+/// Returns disabled, evidence-only connection hints from validated `view`, preserving original record indexes.
+/// Uses shared address admission and UUID-pair uniqueness; saved handles remain explicitly nonreusable.
+/// Panics only if decoder guarantees about UUID widths or characteristic parent services are violated.
 pub(super) fn connection(view: &DecodedCapture<'_>) -> Value {
     let m = view.metadata();
     let kind = if !m.peer.random {

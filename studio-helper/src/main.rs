@@ -1,3 +1,8 @@
+//! Native helper dispatcher for bounded prerequisite checks and explicit serving.
+/// Dispatch OS-string arguments to descriptor enumeration, loopback serving or
+/// prerequisite CLI. Serving accepts only an absolute `--repo` path; malformed
+/// syntax exits 2, server failure exits 1, and fatal cleanup exits 70. No arguments
+/// are forwarded to a shell, and serving itself does not authorize a device write.
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--internal-device-descriptors" {

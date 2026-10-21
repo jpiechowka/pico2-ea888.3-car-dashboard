@@ -1,9 +1,12 @@
+//! Emits RP2040 linker support and derives the has_fpu cfg from Cargo's target triple.
 use std::env;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Copies the RP2040 linker script into OUT_DIR when selected and recognizes eabihf targets.
+/// Panics on missing Cargo environment, non-UTF8 custom target stems or file-write failure.
 fn main() {
     if env::var("CARGO_FEATURE_RP2040").is_ok() {
         // Put the linker script somewhere the linker can find it

@@ -1,3 +1,9 @@
+//! Pico 2 W dashboard boot and core0 control/render integration.
+//! Two affine framebuffers cross a capacity-one SPI task boundary; all UI/LED
+//! completion effects use the matching transfer token. Core1 owns acquisition.
+//! Flash saves drain display ownership and park participating owners before ROM
+//! mutation; receive timeouts never cancel DMA. Hardware faults retain owners
+//! until watchdog recovery. Default vehicle channels remain unavailable.
 #![no_std]
 #![no_main]
 #![allow(clippy::cast_possible_truncation)]
@@ -5,16 +11,26 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
+/// Once-per-boot reporting of bounded cache identity exhaustion.
 mod cache_reporting;
+/// Exclusive hardware adapters for panel, LEDs, flash and watchdog.
 mod drivers;
+/// Optional encoder polling and bounded event publication.
 mod peripherals;
+/// Cycle/stack/log observations and optional diagnostic exports.
 mod profiling;
+/// Incremental Debug and Logs rendering from coherent snapshots.
 mod screens;
+/// Shared page and application-state compatibility exports.
 mod state;
+/// Cross-core acquisition, display and finite maintenance supervision.
 mod tasks;
+/// Shared visual constants and UI compatibility exports.
 mod ui;
+/// One-time embedded configuration parsing before task startup.
 mod view_config;
 
+/// Shared configuration constants used by the hardware adapters.
 mod config {
     pub use dashboard_pico2::config::*;
 }
@@ -73,11 +89,14 @@ use crate::ui::BLACK;
 #[used]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".startup_profile")]
+/// Exact encoded startup policy retained for independent linked-image admission.
 static DASHBOARD_STARTUP_PROFILE: [u8; 16] = *include_bytes!(concat!(env!("OUT_DIR"), "/startup_profile.bin"));
+/// Original converted-asset byte length, excluding the retained sentinel.
 const STARTUP_ASSET_LENGTH: usize = include_bytes!(concat!(env!("OUT_DIR"), "/startup_asset.bin")).len();
 #[used]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".startup_asset")]
+/// Converted bounded artwork plus one zero sentinel; parsers exclude the sentinel.
 static DASHBOARD_STARTUP_ASSET: [u8; STARTUP_ASSET_LENGTH + 1] = {
     // A retained zero sentinel gives even an absent asset a concrete linked object.
     // The runtime parser receives only the original asset bytes.
@@ -93,6 +112,7 @@ static DASHBOARD_STARTUP_ASSET: [u8; STARTUP_ASSET_LENGTH + 1] = {
 
 #[unsafe(link_section = ".bi_entries")]
 #[used]
+/// Read-only picotool name/description/version/build metadata; no runtime authority.
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_name!(c"pico2-dashboard"),
     embassy_rp::binary_info::rp_program_description!(c"OBD-II Dashboard for EA888.3 on PIM715 Display"),
@@ -100,6 +120,8 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
+/// Applies `backlight` compare to owned `pwm` only when cached `config` changes;
+/// preserves the configured divider/TOP and performs no feedback timing itself.
 fn apply_backlight(
     pwm: &mut Pwm<'_>,
     config: &mut PwmConfig,
@@ -111,6 +133,9 @@ fn apply_backlight(
     }
 }
 
+/// Evaluates configured LED policy in `controller` from completed `presentation`,
+/// current `backlight`, and `config`, then applies light duty to owned `rgb`.
+/// Uses monotonic milliseconds; queued/uncompleted warnings do not become visible.
 fn apply_indicator(
     rgb: &mut drivers::rgb_led::RgbLed<'_>,
     controller: &mut LedController,
@@ -127,6 +152,8 @@ fn apply_indicator(
     ));
 }
 
+/// Returns the admitted RP2350 VSEL setting in millivolts, or None for an invalid
+/// encoding; this register observation is not an ADC/electrical measurement.
 fn vreg_setting_mv() -> Option<u32> {
     // HAL validates the RP2350 VSEL encoding. This is a setting, not an ADC reading.
     embassy_rp::clocks::core_voltage()
@@ -134,6 +161,8 @@ fn vreg_setting_mv() -> Option<u32> {
         .map(|voltage| 550 + u32::from(voltage as u8) * 50)
 }
 
+/// Returns Demo only for the explicit demo feature; otherwise returns Vehicle
+/// even when no qualified transport can publish live measurements.
 fn data_mode() -> dashboard_pico2::samples::DataMode {
     if cfg!(feature = "demo") {
         dashboard_pico2::samples::DataMode::Demo
@@ -142,6 +171,8 @@ fn data_mode() -> dashboard_pico2::samples::DataMode {
     }
 }
 
+/// Logs `error` with retained HAL/JEDEC detail; debug-build rejection is an Info
+/// volatile-settings notice. Does not retry, clear state, or mutate flash.
 fn log_settings_error(error: &drivers::settings_flash::JournalError) {
     use dashboard_pico2::settings::Error as JournalError;
     use drivers::settings_flash::Error;
@@ -160,6 +191,10 @@ fn log_settings_error(error: &drivers::settings_flash::JournalError) {
 ))]
 compile_error!("Select exactly one acquisition backend: demo, ble-obd or longan-rx12");
 
+/// Starts core1 DWT profiling at `cpu_freq_hz` and runs acquisition forever.
+/// `animation_start` anchors synthetic time; `stack_bottom`/`stack_top` bound
+/// stack observations, and `resources` transfers uninitialized source ownership.
+/// Panics on executor/task allocation failure; no return path releases owners.
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
@@ -174,7 +209,9 @@ fn core1_main(
     })
 }
 
-bind_interrupts!(struct Irqs {
+bind_interrupts!(
+/// Core0 DMA0 display, optional DMA1/PIO0 radio, and I2C0 interrupt bindings.
+struct Irqs {
     DMA_IRQ_0 => DmaInterruptHandler<embassy_rp::peripherals::DMA_CH0>,
         #[cfg(feature = "ble-obd")] DmaInterruptHandler<embassy_rp::peripherals::DMA_CH1>;
     I2C0_IRQ => I2cInterruptHandler<embassy_rp::peripherals::I2C0>;
@@ -183,6 +220,9 @@ bind_interrupts!(struct Irqs {
 });
 
 #[embassy_executor::main]
+/// Parses configuration once, then uses `spawner` to enqueue the large dashboard
+/// task so its poll frame is absent during parsing. Returns after enqueue; panics
+/// on task allocation failure. No hardware is initialized by this boot shim.
 async fn main(spawner: Spawner) {
     // Configuration parsing must finish before the large dashboard poll frame
     // becomes resident. spawn only enqueues; Embassy polls this task after the
@@ -192,6 +232,13 @@ async fn main(spawner: Spawner) {
 }
 
 #[embassy_executor::task]
+/// Owns core0 hardware/control/render state indefinitely after boot admission.
+/// `spawner` launches sole peripheral owners; immutable `dashboard_configuration`
+/// supplies accepted settings and explicit fallback evidence. Boot qualifies flash
+/// before core1, initializes panel/encoder, then renders token-bound presentations.
+/// Errors retain prior valid settings or exit startup where supported; ownership,
+/// timing and transfer invariant violations panic for independent watchdog recovery.
+/// Never cancel this future: it may own buffers or a maintenance ticket.
 async fn dashboard_task(
     spawner: Spawner,
     dashboard_configuration: &'static dashboard_pico2::view_config::BootConfig,
@@ -314,7 +361,9 @@ async fn dashboard_task(
 
     log_info!("Display initialized");
 
+    /// First fixed 153600-byte framebuffer, taken once into an affine lease.
     static FRAME_A: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
+    /// Second fixed framebuffer; no transpose or third framebuffer is allocated.
     static FRAME_B: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
     let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
     #[cfg(feature = "target-bench")]
@@ -345,6 +394,7 @@ async fn dashboard_task(
         .unwrap(),
     );
 
+    /// One-time static residence of the sole initialized SPI/DC/CS owner.
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
 

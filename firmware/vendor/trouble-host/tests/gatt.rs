@@ -1,23 +1,31 @@
+//! Ignored physical two-adapter integration scenario; compilation alone does not validate radio behavior.
 use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use tokio::select;
 use trouble_host::prelude::*;
 
+/// Shared serial-adapter discovery/setup and supervision checks.
 mod common;
 
+/// One concurrent logical link per test-side host.
 const CONNECTIONS_MAX: usize = 1;
+/// Three dynamic-channel slots per test-side host.
 const L2CAP_CHANNELS_MAX: usize = 3;
 
+/// Test-specific 128-bit service identity, supplied in Bluetooth little-endian byte order.
 const SERVICE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x00, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
+/// Test-specific byte characteristic identity used for discovery and read/write assertions.
 const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
 #[tokio::test]
 #[ignore = "requires two physical Zephyr HCI UART adapters"]
+/// Discovers/reads a randomized byte and verifies two wrapping increments reach the server within 30 seconds.
+/// Requires explicitly running the ignored test with two Zephyr HCI UART adapters; any task error fails.
 async fn gatt_client_server() {
     let _ = env_logger::try_init();
     let adapters = common::find_controllers();
@@ -56,10 +64,10 @@ async fn gatt_client_server() {
         table.add_service(Service::new(0x1801u16));
 
         // Custom service
-        let _handle: Characteristic<u8> = table.add_service(Service::new(SERVICE_UUID.clone()))
+        let _handle: Characteristic<u8> = table.add_service(Service::new(SERVICE_UUID))
             .add_characteristic(
-                VALUE_UUID.clone(),
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                VALUE_UUID,
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 value,
                 &mut storage[..]
             ).build();

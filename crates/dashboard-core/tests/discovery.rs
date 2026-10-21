@@ -1,5 +1,9 @@
+//! Bounded discovery evidence, explicit inspection controls and stale-generation regressions.
 use dashboard_core::discovery::*;
 
+/// Returns a synthetic random-address report whose final address byte is `id`,
+/// report type is `kind`, payload is `bytes` and receipt clock is `at_ms` milliseconds.
+/// Uses fixed -65dBm RSSI; production payload admission supplies truncation evidence.
 fn report(
     id: u8,
     kind: ReportKind,
@@ -19,6 +23,7 @@ fn report(
 }
 
 #[test]
+/// Rejects orphan scan responses and preserves distinct accepted advertisement/response payloads.
 fn connectable_advertisement_and_response_keep_independent_payloads() {
     let mut catalog = Catalog::new();
     catalog.observe(report(1, ReportKind::ScanResponse, &[4, 9, b'B', b'L', b'E'], 10));
@@ -37,6 +42,7 @@ fn connectable_advertisement_and_response_keep_independent_payloads() {
 }
 
 #[test]
+/// Confirms a shortened response name cannot replace a retained complete advertisement name.
 fn scan_response_does_not_erase_unnamed_or_complete_advertisement_name() {
     let mut catalog = Catalog::new();
     catalog.observe(report(1, ReportKind::Connectable, &[5, 9, b'T', b'E', b'S', b'T'], 11));
@@ -45,6 +51,7 @@ fn scan_response_does_not_erase_unnamed_or_complete_advertisement_name() {
 }
 
 #[test]
+/// Treats public/random address kind as identity and preserves discovery order despite stronger RSSI.
 fn address_kind_is_part_of_identity_and_order_does_not_follow_rssi() {
     let mut catalog = Catalog::new();
     let mut a = report(1, ReportKind::Connectable, &[], 0);
@@ -59,6 +66,7 @@ fn address_kind_is_part_of_identity_and_order_does_not_follow_rssi() {
 }
 
 #[test]
+/// Checks48-peer capacity preserves existing records, counts new-peer loss and still updates known peers.
 fn capacity_keeps_old_records_and_counts_rejected_reports() {
     let mut catalog = Catalog::new();
     for id in 0..60 {
@@ -72,6 +80,7 @@ fn capacity_keeps_old_records_and_counts_rejected_reports() {
 }
 
 #[test]
+/// Checks malformed AD length termination, zero padding and exact valid field slicing.
 fn malformed_ad_lengths_terminate_without_reading_past_end() {
     for bytes in [&[4, 9, b'A'][..], &[1][..], &[2, 1][..]] {
         let parsed = AdFields::new(bytes).collect::<Vec<_>>();
@@ -85,6 +94,7 @@ fn malformed_ad_lengths_terminate_without_reading_past_end() {
 }
 
 #[test]
+/// Rejects nonconnectable reports while permitting directed connectable evidence.
 fn nonconnectable_reports_never_create_a_connectable_record() {
     let mut catalog = Catalog::new();
     catalog.observe(report(1, ReportKind::Other, &[], 0));
@@ -94,6 +104,7 @@ fn nonconnectable_reports_never_create_a_connectable_record() {
 }
 
 #[test]
+/// Retains payload truncation and unavailable RSSI while refusing a regressed report timestamp.
 fn payload_truncation_rssi_unknown_and_time_reversal_are_explicit() {
     let mut catalog = Catalog::new();
     let mut a = report(1, ReportKind::Connectable, &[3; 40], 200);
@@ -108,6 +119,7 @@ fn payload_truncation_rssi_unknown_and_time_reversal_are_explicit() {
 }
 
 #[test]
+/// Sanitizes control/non-ASCII name bytes and verifies displayed address order.
 fn untrusted_names_are_printable_and_bounded() {
     let mut catalog = Catalog::new();
     catalog.observe(report(1, ReportKind::Connectable, &[6, 9, b'A', 10, 0xFF, 0, b'Z'], 0));
@@ -119,6 +131,7 @@ fn untrusted_names_are_printable_and_bounded() {
 }
 
 #[test]
+/// Freezes the selected peer on Inspect and proves Back invalidates late radio results.
 fn click_freezes_selected_peer_and_back_invalidates_late_results() {
     let mut probe = Probe::new();
     probe.event(Event::Report {
@@ -148,6 +161,7 @@ fn click_freezes_selected_peer_and_back_invalidates_late_results() {
 }
 
 #[test]
+/// Ensures empty/stale selections cannot initiate inspection and expose InvalidPeer for stale data.
 fn stale_peer_and_empty_list_do_not_initiate_connection() {
     let mut probe = Probe::new();
     assert!(probe.input(Input::Click, 100).is_none());
@@ -157,6 +171,8 @@ fn stale_peer_and_empty_list_do_not_initiate_connection() {
 }
 
 #[test]
+/// Requires a pause acknowledgment before Details can inspect, requires all inventory stages for completion,
+/// and clears prior GATT evidence when opening a fresh advertisement view.
 fn x_opens_a_fresh_advertisement_view_and_only_a_second_press_requests_gatt() {
     let mut p = Probe::new();
     p.catalog.observe(report(1, ReportKind::Connectable, &[2, 1, 6], 10));
@@ -218,6 +234,7 @@ fn x_opens_a_fresh_advertisement_view_and_only_a_second_press_requests_gatt() {
 }
 
 #[test]
+/// Saturates extreme encoder movement to valid selection while pause retains evidence and recovery clears peers.
 fn huge_encoder_steps_are_bounded_and_pause_does_not_clear_evidence() {
     let mut probe = Probe::new();
     for id in 0..5 {
@@ -234,6 +251,7 @@ fn huge_encoder_steps_are_bounded_and_pause_does_not_clear_evidence() {
 }
 
 #[test]
+/// Rejects vendor/wrong-service/unreadable values from the standard device-information read allowlist.
 fn vendor_or_wrong_service_values_are_not_allowlisted() {
     let dis = Uuid::from_wire(&[0x0A, 0x18]).unwrap();
     let fw = Uuid::from_wire(&[0x26, 0x2A]).unwrap();
@@ -244,6 +262,7 @@ fn vendor_or_wrong_service_values_are_not_allowlisted() {
 }
 
 #[test]
+/// Recognizes exact Bluetooth base UUID aliases without accepting near-match vendor UUIDs or nonzero upper32 bits.
 fn bluetooth_base_uuid_aliases_preserve_read_allowlist_without_matching_vendor_uuids() {
     // 0000180a-0000-1000-8000-00805f9b34fb in ATT little-endian order.
     let mut base = [
@@ -258,6 +277,7 @@ fn bluetooth_base_uuid_aliases_preserve_read_allowlist_without_matching_vendor_u
 }
 
 #[test]
+/// Records invalid handle ordering and omitted services explicitly rather than implying complete inventory.
 fn invalid_gatt_ranges_and_capacity_cannot_appear_complete() {
     let mut inspection = Inspection::new();
     let uuid = Uuid::from_wire(&[0x0A, 0x18]).unwrap();
@@ -287,6 +307,7 @@ fn invalid_gatt_ranges_and_capacity_cannot_appear_complete() {
 }
 
 #[test]
+/// Runs deterministic malformed advertisement streams through field parsing/name selection with bounded work/output.
 fn deterministic_advertisement_fuzz_is_bounded() {
     let mut seed = 12345_u32;
     for len in 0..=64 {
@@ -307,6 +328,7 @@ fn deterministic_advertisement_fuzz_is_bounded() {
 }
 
 #[test]
+/// Proves cancelled inspection values, completions and reports cannot reappear after recovery advances generation.
 fn cancelled_inspection_cannot_publish_values_or_completion_after_recovery() {
     let mut probe = Probe::new();
     probe.catalog.observe(report(1, ReportKind::Connectable, &[], 10));
@@ -342,6 +364,7 @@ fn cancelled_inspection_cannot_publish_values_or_completion_after_recovery() {
 }
 
 #[test]
+/// Preserves partial inventory after timeout and records a later capacity-limited completion without claiming success.
 fn interrupted_and_capacity_limited_results_remain_partial() {
     let mut probe = Probe::new();
     probe.catalog.observe(report(1, ReportKind::Connectable, &[], 0));
@@ -370,6 +393,7 @@ fn interrupted_and_capacity_limited_results_remain_partial() {
 }
 
 #[test]
+/// Rejects queued advertisements across photo pause and repeated scan-generation toggles.
 fn photo_pause_and_repeated_toggles_reject_queued_advertisements() {
     let mut probe = Probe::new();
     probe
@@ -393,6 +417,7 @@ fn photo_pause_and_repeated_toggles_reject_queued_advertisements() {
 }
 
 #[test]
+/// Confirms exhausted request generation becomes a terminal fault instead of wrapping into an old identity.
 fn request_exhaustion_never_reuses_old_generation() {
     let mut probe = Probe::new();
     probe.request.revision = u32::MAX;
@@ -402,6 +427,8 @@ fn request_exhaustion_never_reuses_old_generation() {
 }
 
 #[test]
+/// Exercises20,000 deterministic input/event interleavings, asserting bounded selection/page/capacity and frozen peer
+/// identity.
 fn deterministic_control_and_report_interleavings_keep_bounded_identity() {
     let mut seed = 81231_u32;
     let mut probe = Probe::new();
@@ -452,6 +479,8 @@ fn deterministic_control_and_report_interleavings_keep_bounded_identity() {
 }
 
 #[test]
+/// Models absent-encoder retry progress and idle display separately from radio stalls, including sticky liveness
+/// failure.
 fn useful_progress_monitors_cover_absent_encoder_idle_display_and_stalled_radio() {
     use dashboard_core::ble::runtime::Liveness;
     use dashboard_core::health::{Progress, ProgressMonitor};

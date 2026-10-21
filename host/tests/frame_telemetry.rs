@@ -1,7 +1,9 @@
+//! Completed-frame trace identity, interval arithmetic, compact storage and elapsed-time completion rates.
 use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
 use dashboard_host_validation::display::telemetry::{CompletionRate, FrameTrace, RenderTrace, TraceRing};
 use dashboard_host_validation::input_trace::InputTrace;
 
+/// Guards compact trace size and the 64-entry RAM budget on the wider native host ABI.
 #[test]
 fn trace_storage_retains_the_64_entry_ram_budget() {
     assert_eq!(core::mem::size_of::<FrameTrace>(), 152);
@@ -10,6 +12,7 @@ fn trace_storage_retains_the_64_entry_ram_budget() {
     assert!(core::mem::size_of::<TraceRing<64>>() <= 9752);
 }
 
+/// Optional sample/input/cycle fields round-trip at zero and maximum values without reserving a cycle sentinel.
 #[test]
 fn trace_roundtrips_all_optional_fields_without_reserving_any_cycle_value() {
     for at in [0, 37, u64::MAX] {
@@ -61,6 +64,7 @@ fn trace_roundtrips_all_optional_fields_without_reserving_any_cycle_value() {
     }
 }
 
+/// The full ring preserves missing/zero/max cycle states and chronological newest entries through overwrite.
 #[test]
 fn full_trace_ring_preserves_missing_zero_and_max_cycles_through_overwrites() {
     let make = |sequence, at| {
@@ -96,6 +100,7 @@ fn full_trace_ring_preserves_missing_zero_and_max_cycles_through_overwrites() {
     assert!(ring.get(64).is_none());
 }
 
+/// Compact representation still rejects zero frame identities, odd payloads and malformed input ordering/counts.
 #[test]
 fn compact_trace_still_rejects_invalid_tokens_payloads_and_input_metadata() {
     let good = frame(1);
@@ -146,6 +151,8 @@ fn compact_trace_still_rejects_invalid_tokens_payloads_and_input_metadata() {
     }
 }
 
+/// Returns buffer A's full-payload trace with nonzero `sequence`, render 100..140us,
+/// queue 170us and observed transfer 180..220us; panics for invalid sequence zero.
 fn frame(sequence: u64) -> FrameTrace {
     FrameTrace::finish(
         FrameToken {
@@ -168,6 +175,7 @@ fn frame(sequence: u64) -> FrameTrace {
     .unwrap()
 }
 
+/// Render, queue, observed transfer, total and sample-age intervals retain their distinct endpoints and units.
 #[test]
 fn trace_joins_one_frame_and_distinguishes_each_interval() {
     let trace = frame(1);
@@ -180,6 +188,7 @@ fn trace_joins_one_frame_and_distinguishes_each_interval() {
     assert_eq!(trace.payload_bytes(), 153600);
 }
 
+/// Inverted times, excessive blocked work and invalid payload lengths fail; instantaneous u64-max traces remain valid.
 #[test]
 fn malformed_trace_cannot_underflow_or_claim_zero_byte_frames() {
     let good = frame(1);
@@ -212,6 +221,7 @@ fn malformed_trace_cannot_underflow_or_claim_zero_byte_frames() {
     assert_eq!(trace.sample_age_us(), None);
 }
 
+/// A small ring retains the newest ordered sequences and rejects duplicate/older pushes without counting overwrite.
 #[test]
 fn bounded_trace_ring_retains_order_and_reports_overwrite() {
     let mut ring = TraceRing::<3>::new();
@@ -230,6 +240,7 @@ fn bounded_trace_ring_retains_order_and_reports_overwrite() {
     assert_eq!(ring.overwritten(), 3);
 }
 
+/// Completion FPS waits for a full second, averages by total elapsed time and reports zero when no transfer completes.
 #[test]
 fn completed_fps_uses_elapsed_time_and_weighted_average() {
     let mut meter = CompletionRate::new(0, 0);
@@ -244,6 +255,8 @@ fn completed_fps_uses_elapsed_time_and_weighted_average() {
     assert_eq!(meter.sample(4_000_000, 80).unwrap().unwrap().current, 0.0);
 }
 
+/// Accepted counter wrap contributes completions while clock/count regressions reject without corrupting the retry
+/// interval.
 #[test]
 fn completed_fps_handles_counter_wrap_and_rejects_clock_or_count_regressions() {
     let mut meter = CompletionRate::new(10, u32::MAX - 5);

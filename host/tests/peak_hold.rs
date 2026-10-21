@@ -1,7 +1,10 @@
+//! Per-widget raw peak selection/expiry remains independent of paint cadence and smoothing.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::RuleIndex;
 use dashboard_host_validation::samples::{Quality, SensorId};
 use dashboard_host_validation::view_config::*;
+/// Returns three boost widgets: maximum for 200/400ms and minimum for 200ms,
+/// with warnings disabled so peak markers are tested independently.
 fn config() -> ValidatedConfig {
     let mut c = default_config();
     c.widgets.truncate(3);
@@ -19,6 +22,8 @@ fn config() -> ValidatedConfig {
     }
     validate(c).unwrap()
 }
+/// Publishes canonical boost `x` bar into demo model `m` at milliseconds `at`;
+/// panics if the fixture violates monotonic valid batch admission.
 fn sample(
     m: &mut AcquisitionModel<'_>,
     x: f32,
@@ -26,6 +31,8 @@ fn sample(
 ) {
     assert!(m.ingest_batch([x, 90., 95., 80., 30., 700., 13.8, 1.], at));
 }
+/// Returns widget-rule `i`'s currently eligible peak from `m` at milliseconds
+/// `now`, or `None` for expired/unqualified state; panics for an invalid rule index.
 fn peak(
     m: &AcquisitionModel<'_>,
     i: usize,
@@ -33,6 +40,8 @@ fn peak(
 ) -> Option<f32> {
     m.snapshot().peak_at(RuleIndex::new(i).unwrap(), now)
 }
+/// Coalesced raw extrema preserve each widget's duration/selection, expire via publication and clear on transport
+/// failure.
 #[test]
 fn raw_extremes_survive_coalescing_with_independent_durations() {
     let c = config();
@@ -60,6 +69,7 @@ fn raw_extremes_survive_coalescing_with_independent_durations() {
     m.mark_fault(SensorId::Boost, Quality::TransportError, 260);
     assert_eq!(peak(&m, 0, 260), None);
 }
+/// Duplicate samples, reset, stale time and clock reversal cannot retain or extend expired peak markers.
 #[test]
 fn repeats_invalids_staleness_and_reset_cannot_extend_markers() {
     let c = config();
@@ -79,6 +89,7 @@ fn repeats_invalids_staleness_and_reset_cannot_extend_markers() {
     assert_eq!(peak(&m, 0, 1100), None);
 }
 
+/// An accepted but already stale delayed sample contributes no valid peak-mask bit.
 #[test]
 fn delayed_stale_sample_never_publishes_a_valid_peak_marker() {
     use dashboard_host_validation::samples::{Quantity, Sample, Source};

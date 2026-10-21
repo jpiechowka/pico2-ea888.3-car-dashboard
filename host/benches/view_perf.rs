@@ -1,3 +1,4 @@
+//! Configured full/retained renderer workloads with geometry, smoothing and graph-history variants.
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion};
@@ -10,6 +11,8 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Registers all gauge styles and default/wide layouts with Criterion `c`, plus advanced/geometry workloads.
+/// Validates fixture configs and both retained buffers before measuring; invalid fixtures or pixel mismatch panic.
 pub fn benchmarks(c: &mut Criterion) {
     orientation(c);
     advanced(c);
@@ -145,6 +148,8 @@ pub fn benchmarks(c: &mut Criterion) {
 
 // The complete timed path prepares eight filters once, uses the same readings
 // for keys and drawing, then computes physical-buffer damage. Setup is excluded.
+/// Registers eight-gauge smoothed/banded updates with `c`, including prepared readings, both draws and damage planning.
+/// Moving/subpixel prechecks require all gauges to change or no visible change respectively; setup is untimed.
 fn advanced(c: &mut Criterion) {
     use dashboard_host_validation::display::damage::DamagePlan;
     for (kind, moving) in [GaugeKind::Circular, GaugeKind::Horizontal]
@@ -255,6 +260,8 @@ fn advanced(c: &mut Criterion) {
     }
 }
 
+/// Registers retained versus rebuilt-history preview paths with `c`; only the rebuilt variant includes acquisition
+/// replay. Both paths prepare appearance and alternate physical buffers using the same 118-second fixture time.
 fn graph_retention(c: &mut Criterion) {
     let config = validate(default_config()).unwrap();
     let reconstruct = || {
@@ -309,6 +316,8 @@ fn graph_retention(c: &mut Criterion) {
     }
 }
 
+/// Registers full/idle-retained/one-cell work for both geometries with `c` using a 30-sample Criterion group.
+/// Uses one-second warmup and two-second measurement periods; displayed FPS is a fixed synthetic scene input.
 fn orientation(c: &mut Criterion) {
     use dashboard_config::{Geometry, Orientation};
     let mut group = c.benchmark_group("orientation");

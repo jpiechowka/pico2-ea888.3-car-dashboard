@@ -1,5 +1,7 @@
+//! Backlight divider/duty arithmetic at supported clocks; host calculations are not measured PWM.
 use dashboard_host_validation::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
 
+/// Checks actual integer divider and achieved frequency, preserving fractional-MHz profile differences.
 #[test]
 fn actual_clock_profiles_preserve_divider_policy_and_truthful_frequency() {
     for (clock_hz, expected_divider, expected_hz) in [
@@ -18,6 +20,7 @@ fn actual_clock_profiles_preserve_divider_policy_and_truthful_frequency() {
     }
 }
 
+/// Zero/full brightness map to zero/always-high compare, all percent steps increase duty and excess values clamp.
 #[test]
 fn backlight_is_truly_off_and_remains_monotonic() {
     assert_eq!(brightness_compare(0), 0);
@@ -31,6 +34,7 @@ fn backlight_is_truly_off_and_remains_monotonic() {
     assert_eq!(brightness_compare(255), PWM_TOP + 1);
 }
 
+/// Calculated one-percent pulses remain at least 1000ns and frequency at most 150kHz for the enumerated clocks.
 #[test]
 fn supported_pwm_pulses_meet_driver_minimum_on_time() {
     for clock_hz in [

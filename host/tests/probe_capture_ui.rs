@@ -1,7 +1,11 @@
+//! Capture UI gestures and affine operation fences across cancellation, recovery, timeout and generation exhaustion.
+
 use dashboard_core::discovery::capture_ui::*;
 use dashboard_core::discovery::names::SavedIdentity;
 use dashboard_core::discovery::{Payload, Peer};
 
+/// Returns a named random-address fixture repeating `byte` in all address positions; no stable-address admission is
+/// implied.
 fn identity(byte: u8) -> SavedIdentity {
     SavedIdentity {
         peer: Peer {
@@ -12,12 +16,15 @@ fn identity(byte: u8) -> SavedIdentity {
     }
 }
 
+/// Returns save-ready live context for revision 7.
 fn context() -> Context {
     Context {
         save: SaveAvailability::Ready,
         revision: 7,
     }
 }
+/// Opens `ui` with a two-second X hold and completes its directory refresh with `slots` and no identities.
+/// Consumes the release at 2001ms; unexpected action/state/completion panics.
 fn open(
     ui: &mut CaptureUi,
     slots: [Slot; 4],
@@ -36,6 +43,7 @@ fn open(
     assert_eq!(ui.input(Input::XUp, 2001, context()), None);
 }
 
+/// Hold opens slots once; a short X action occurs on release, and signed extreme turns wrap within four slots.
 #[test]
 fn hold_opens_slots_once_and_short_x_only_fires_on_release() {
     let mut ui = CaptureUi::new();
@@ -51,6 +59,8 @@ fn hold_opens_slots_once_and_short_x_only_fires_on_release() {
     assert_eq!(ui.selected(), 3);
 }
 
+/// Overwrite confirmation is fenced to the live revision, and only its exact pending operation can publish the new
+/// generation.
 #[test]
 fn save_requires_current_revision_and_explicit_overwrite_then_stale_results_fail() {
     let mut ui = CaptureUi::new();
@@ -95,6 +105,8 @@ fn save_requires_current_revision_and_explicit_overwrite_then_stale_results_fail
     assert!(!ui.complete(id, Completion::Failed(UiError::Storage)));
 }
 
+/// Empty/no-peer/busy/timeout paths never erase; timed-out save completion updates storage identity while retaining the
+/// error screen.
 #[test]
 fn empty_missing_busy_timeout_and_recovery_never_erase_implicitly() {
     let mut ui = CaptureUi::new();
@@ -132,6 +144,8 @@ fn empty_missing_busy_timeout_and_recovery_never_erase_implicitly() {
     assert_eq!(ui.slots()[0], Slot::Saved { generation: 1 });
 }
 
+/// Corrupt/unsupported slots require explicit Reset; wrong completion types and navigation cannot release outstanding
+/// I/O ownership.
 #[test]
 fn damaged_or_unknown_schema_needs_erase_confirmation_and_busy_io_stays_fenced() {
     for slot in [Slot::Corrupt, Slot::Unsupported] {
@@ -160,6 +174,7 @@ fn damaged_or_unknown_schema_needs_erase_confirmation_and_busy_io_stays_fenced()
     assert_eq!(ui.screen(), Screen::Error(UiError::Unavailable));
 }
 
+/// Release recognizes a hold even without ticks, and overwrite confirmation expires at its fixed deadline.
 #[test]
 fn held_release_without_ticks_is_consumed_and_confirmation_expires() {
     let mut ui = CaptureUi::new();
@@ -181,6 +196,7 @@ fn held_release_without_ticks_is_consumed_and_confirmation_expires() {
     assert_eq!(ui.screen(), Screen::Error(UiError::Timeout));
 }
 
+/// Back consumes a pending X gesture so its later release cannot open slots or forward a live click.
 #[test]
 fn back_cancels_the_pending_x_gesture_without_opening_slots_or_forwarding_a_click() {
     let mut ui = CaptureUi::new();
@@ -191,6 +207,8 @@ fn back_cancels_the_pending_x_gesture_without_opening_slots_or_forwarding_a_clic
     assert_eq!(ui.pending(), None);
 }
 
+/// Abandoned completion updates its original slot; invalid generation/page counts preserve ownership and maximum page
+/// navigation wraps safely.
 #[test]
 fn abandoned_results_keep_original_slot_and_reject_wrong_operation_or_empty_page_count() {
     let mut ui = CaptureUi::new();
@@ -234,6 +252,7 @@ fn abandoned_results_keep_original_slot_and_reject_wrong_operation_or_empty_page
     assert_eq!(ui.page(), 0);
 }
 
+/// Producer-debounced short/hold semantics prevent release bounce from creating an inspection or duplicate hold action.
 #[test]
 fn semantic_x_uses_producer_hold_and_cannot_inspect_from_release_bounce() {
     use dashboard_core::input_model::DeferredButton;
@@ -278,6 +297,7 @@ fn semantic_x_uses_producer_hold_and_cannot_inspect_from_release_bounce() {
     };
 }
 
+/// Loaded pages wrap, Back cancels confirmations, and reversed gesture time produces an explicit Clock error.
 #[test]
 fn loading_pages_back_confirmation_cancel_and_clock_reversal_are_bounded() {
     let mut ui = CaptureUi::new();
@@ -299,6 +319,8 @@ fn loading_pages_back_confirmation_cancel_and_clock_reversal_are_bounded() {
     assert_eq!(ui.screen(), Screen::Error(UiError::Clock));
 }
 
+/// Opens `ui` using semantic XHold and completes all four entries with `slot` plus distinct named identities.
+/// Panics unless the refresh action and completion match.
 fn named_directory(
     ui: &mut CaptureUi,
     slot: Slot,
@@ -320,6 +342,7 @@ fn named_directory(
     ));
 }
 
+/// Refresh keeps names only for readable slots; stale IDs and wrong operation results preserve the previous directory.
 #[test]
 fn listing_keeps_identity_only_for_readable_slots_and_ignores_stale_replies() {
     let mut ui = CaptureUi::new();
@@ -357,6 +380,7 @@ fn listing_keeps_identity_only_for_readable_slots_and_ignores_stale_replies() {
     assert_eq!(ui.identities(), &[Some(identity(8)), Some(identity(9)), None, None]);
 }
 
+/// Matching I/O failure clears only the original slot's identity, except refresh failure clears the whole directory.
 #[test]
 fn matching_io_failure_clears_only_affected_identity_and_refresh_failure_clears_directory() {
     for operation in [Operation::Load, Operation::Save, Operation::Reset, Operation::Refresh] {
@@ -404,6 +428,7 @@ fn matching_io_failure_clears_only_affected_identity_and_refresh_failure_clears_
     }
 }
 
+/// Recovery changes screens but retains I/O ownership; matching reset/save completion updates only its slot's name.
 #[test]
 fn reset_and_recovered_save_update_identity_only_when_the_owner_finishes() {
     let mut ui = CaptureUi::new();
@@ -447,6 +472,8 @@ fn reset_and_recovered_save_update_identity_only_when_the_owner_finishes() {
     assert_eq!(ui.identities(), &[Some(identity(5)), None, None, None]);
 }
 
+/// Timeout hides the unconfirmed slot identity without releasing its completion fence or dismissing the timeout on late
+/// success.
 #[test]
 fn timed_out_operation_hides_unconfirmed_identity_and_retains_its_completion_fence() {
     let mut ui = CaptureUi::new();
@@ -480,6 +507,8 @@ fn timed_out_operation_hides_unconfirmed_identity_and_retains_its_completion_fen
     );
 }
 
+/// A save reaching maximum generation stays readable and immediately switches replacement to explicit Reset without
+/// directory refresh.
 #[test]
 fn final_generation_save_stays_readable_and_requires_reset_without_refresh() {
     for (before, after, expected_screen) in [
@@ -542,6 +571,8 @@ fn final_generation_save_stays_readable_and_requires_reset_without_refresh() {
     }
 }
 
+/// Late maximum-generation save completes its original slot after Back/Recover/timeout without changing the current
+/// screen or other slots.
 #[test]
 fn hidden_final_generation_completion_updates_original_slot_and_keeps_screen() {
     for hide in 0..3 {

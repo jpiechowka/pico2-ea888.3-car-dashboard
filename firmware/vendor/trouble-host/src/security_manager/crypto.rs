@@ -1,3 +1,9 @@
+//! Bluetooth SMP AES-CMAC, legacy key derivation and P-256 agreement primitives.
+//!
+//! Integers and curve coordinates use numeric big-endian input to cryptographic functions;
+//! SMP packet helpers convert to little-endian wire order. See Bluetooth Core Vol 3, Part H
+//! ([Security Manager specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html)).
+//! LTK/IRK Display and Debug expose key material; secret-scalar/MacKey/DHKey formatters redact it.
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
@@ -13,34 +19,35 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::{Address, Error};
 
-/// LE Secure Connections Long Term Key.
+/// 128-bit LE encryption key, derived through Secure Connections or legacy key distribution.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
-pub struct LongTermKey(pub u128);
+pub struct LongTermKey(
+    /// Numeric key value; zero is representable and not rejected here.
+    pub u128,
+);
 
 impl LongTermKey {
-    /// Creates a Long Term Key from a `u128` value.
+    /// Returns a key containing numeric `k` unchanged, including zero.
     #[inline(always)]
     pub const fn new(k: u128) -> Self {
         Self(k)
     }
-    /// Creates a Long Term Key from a `[u8; 16]` value in little endian.
+    /// Returns the key decoded from little-endian wire bytes `k`, without validation.
     #[inline(always)]
     pub const fn from_le_bytes(k: [u8; 16]) -> Self {
         Self(u128::from_le_bytes(k))
     }
-    /// Creates a Long Term Key from a `[u8; 16]` value in little endian.
+    /// Returns the key's sixteen little-endian wire bytes.
     #[inline(always)]
     pub const fn to_le_bytes(self) -> [u8; 16] {
         self.0.to_le_bytes()
     }
 
-    /// Derives a Long Term Key from a 128-bit Encryption Root (ER) and 16-bit
-    /// Diversifier (DIV) ([Vol 3] Part H, Section B.2.2).
-    ///
-    ///   LTK = d1(ER, DIV, 0)
+    /// Returns `d1(er, div, 0)` for encryption root `er` and 16-bit diversifier `div`
+    /// (Vol 3, Part H, B.2.2); no entropy or root-key validation occurs.
     #[inline]
     pub fn from_encryption_root(er: u128, div: u16) -> Self {
         Self(d1(er, div, 0))
@@ -48,6 +55,7 @@ impl LongTermKey {
 }
 
 impl From<&LongTermKey> for u128 {
+    /// Returns `k`'s numeric key value without changing it.
     #[inline(always)]
     fn from(k: &LongTermKey) -> Self {
         k.0
@@ -55,6 +63,8 @@ impl From<&LongTermKey> for u128 {
 }
 
 impl core::fmt::Display for LongTermKey {
+    /// Writes the unredacted key to `f` as lowercase hex with at least 16 digits.
+    /// Returns the formatter's write result; avoid use in credential-safe diagnostics.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:016x}", self.0)
     }
@@ -62,6 +72,7 @@ impl core::fmt::Display for LongTermKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for LongTermKey {
+    /// Writes the unredacted numeric key to `fmt` as hexadecimal.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{:016x}", self.0)
     }
@@ -72,10 +83,13 @@ impl defmt::Format for LongTermKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
-pub struct IdentityResolvingKey(pub NonZeroU128);
+pub struct IdentityResolvingKey(
+    /// Nonzero numeric IRK; zero represents an unavailable key at external boundaries.
+    pub NonZeroU128,
+);
 
 impl IdentityResolvingKey {
-    /// Creates an Identity Resolving Key from a `u128` value.
+    /// Returns the IRK for numeric `k`, or None when `k` is zero.
     #[inline(always)]
     pub const fn new(k: u128) -> Option<Self> {
         match NonZeroU128::new(k) {
@@ -84,16 +98,14 @@ impl IdentityResolvingKey {
         }
     }
 
-    /// Creates an Identity Resolving Key from a `[u8; 16]` value in little endian.
+    /// Returns the IRK decoded from little-endian `k`, or None for sixteen zero bytes.
     #[inline(always)]
     pub const fn from_le_bytes(k: [u8; 16]) -> Option<Self> {
         Self::new(u128::from_le_bytes(k))
     }
 
-    /// Derives an Identity Resolving Key from a 128-bit Identity Root (IR)
-    /// ([Vol 3] Part H, Section B.2.3).
-    ///
-    ///   IRK = d1(IR, 1, 0)
+    /// Returns `d1(ir, 1, 0)` for identity root `ir` (Vol 3, Part H, B.2.3),
+    /// or None if that derived value is zero; the input root is not validated.
     #[inline]
     pub fn from_identity_root(ir: u128) -> Option<Self> {
         Self::new(d1(ir, 1, 0))
@@ -105,7 +117,7 @@ impl IdentityResolvingKey {
         self.0.get().to_le_bytes()
     }
 
-    /// Generates a resolvable private address using this key.
+    /// Draws up to four three-byte random parts from `rng`; Returns an RPA in BdAddr wire order.
     ///
     /// The generated address follows the format described in
     /// Bluetooth Core Specification [Vol 3] Part C, Section 10.8.2.
@@ -136,7 +148,9 @@ impl IdentityResolvingKey {
 
     /// Resolves a resolvable private address.
     ///
-    /// Returns true if the address was generated using this IRK.
+    /// Returns whether `address` has RPA type bits and its 24-bit hash matches this IRK.
+    /// This is hash-based resolution, not proof of origin; it does not validate the random-part
+    /// all-zero/all-one exclusions or an external HCI address-kind field.
     pub fn resolve_address(&self, address: &BdAddr) -> bool {
         // Extract prand (top 24 bits) and hash (bottom 24 bits)
         let mut prand = [0u8; 3];
@@ -159,9 +173,8 @@ impl IdentityResolvingKey {
         local_hash == address_hash
     }
 
-    /// Random address hash function `ah` as defined in
-    /// Bluetooth Core Specification [Vol 3] Part H, Section 2.2.2.
-    /// https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/security-manager-specification.html#UUID-03b4d5c9-160c-658a-7aa5-d0b2230d38f1
+    /// Returns ah(IRK, `r`): AES-encrypt the zero-padded big-endian 24-bit random value `r`
+    /// and retain the least-significant three bytes in big-endian order (Vol 3, Part H, §2.2.2).
     fn ah(&self, r: [u8; 3]) -> [u8; 3] {
         let mut r_prime = [0u8; 16];
         r_prime[13..].copy_from_slice(&r);
@@ -174,6 +187,7 @@ impl IdentityResolvingKey {
 }
 
 impl From<&IdentityResolvingKey> for u128 {
+    /// Returns `k`'s nonzero numeric IRK without changing it.
     #[inline(always)]
     fn from(k: &IdentityResolvingKey) -> Self {
         k.0.get()
@@ -181,6 +195,8 @@ impl From<&IdentityResolvingKey> for u128 {
 }
 
 impl core::fmt::Display for IdentityResolvingKey {
+    /// Writes the unredacted IRK to `f` as lowercase hex with at least 16 digits.
+    /// Returns the formatter's write result; avoid use in credential-safe diagnostics.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:016x}", self.0)
     }
@@ -188,48 +204,51 @@ impl core::fmt::Display for IdentityResolvingKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for IdentityResolvingKey {
+    /// Writes the unredacted numeric IRK to `fmt` as hexadecimal.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{:016x}", self.0)
     }
 }
 
-/// RFC-4493 AES-CMAC ([Vol 3] Part H, Section 2.2.5).
+/// [RFC4493 AES-CMAC](https://www.rfc-editor.org/info/rfc4493/) streaming state (Vol 3, Part H, §2.2.5).
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct AesCmac(cmac::Cmac<aes::Aes128>);
+pub struct AesCmac(
+    /// Keyed chaining state and buffered final block.
+    cmac::Cmac<aes::Aes128>,
+);
 
 impl AesCmac {
-    /// Creates new AES-CMAC state using key `k`.
+    /// Returns empty AES-CMAC state keyed by `k`'s big-endian 128-bit value.
     #[inline(always)]
     #[must_use]
     pub(super) fn new(k: &Key) -> Self {
         Self(digest::KeyInit::new(&k.0))
     }
 
-    /// Creates new AES-CMAC state using an all-zero key for GAP database hash
-    /// calculation ([Vol 3] Part G, Section 7.3.1).
+    /// Returns empty AES-CMAC state with the all-zero key for the GATT Database Hash
+    /// (Vol 3, Part G, §7.3.1); callers must serialize the specified attribute fields.
     #[inline(always)]
     #[must_use]
     pub fn db_hash() -> Self {
         Self::new(&Key::new(0))
     }
 
-    /// Updates CMAC state.
+    /// Appends all bytes from `b` to the authenticated message; Returns this same mutable state.
     #[inline(always)]
     pub fn update(&mut self, b: impl AsRef<[u8]>) -> &mut Self {
         digest::Update::update(&mut self.0, b.as_ref());
         self
     }
 
-    /// Computes the final MAC value.
+    /// Consumes this state; Returns the full 128-bit MAC interpreted as a big-endian integer.
     #[inline(always)]
     #[must_use]
     pub fn finalize(self) -> u128 {
         u128::from_be_bytes(*digest::FixedOutput::finalize_fixed(self.0).as_ref())
     }
 
-    /// Computes the final MAC value for use as a future key and resets the
-    /// state.
+    /// Returns the full MAC as a new key and resets message state while retaining the original key.
     #[inline(always)]
     pub(super) fn finalize_key(&mut self) -> Key {
         // Best effort to avoid leaving copies
@@ -243,14 +262,21 @@ impl AesCmac {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
 #[repr(transparent)]
-pub struct Check(pub u128);
+pub struct Check(
+    /// Full numeric f6 output; wire encoding is little-endian.
+    pub u128,
+);
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(super) struct Key(aes::cipher::Key<aes::Aes128>);
+/// Internal AES128 key in cipher-input byte order.
+pub(super) struct Key(
+    /// Sixteen big-endian key bytes.
+    aes::cipher::Key<aes::Aes128>,
+);
 
 impl Key {
-    /// Creates a key from a `u128` value.
+    /// Returns `k` encoded as sixteen big-endian AES key bytes, including zero unchanged.
     #[inline(always)]
     pub fn new(k: u128) -> Self {
         Self(k.to_be_bytes().into())
@@ -258,6 +284,7 @@ impl Key {
 }
 
 impl From<&Key> for u128 {
+    /// Returns `k` decoded as a big-endian numeric key.
     #[inline(always)]
     fn from(k: &Key) -> Self {
         Self::from_be_bytes(k.0.into())
@@ -268,10 +295,14 @@ impl From<&Key> for u128 {
 /// [`MacKey::f6`] function ([Vol 3] Part H, Section 2.2.8).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
-pub struct IoCap(pub(crate) [u8; 3]);
+pub struct IoCap(
+    /// AuthReq, OOB flag and I/O capability in f6 concatenation order.
+    pub(crate) [u8; 3],
+);
 
 impl IoCap {
-    /// Creates new `IoCap` parameter.
+    /// Returns the f6 triplet from raw `auth_req`, boolean `oob_data` and raw `io_cap`.
+    /// Reserved authentication/I/O values are preserved rather than validated.
     #[inline(always)]
     pub fn new(auth_req: u8, oob_data: bool, io_cap: u8) -> Self {
         Self([auth_req, u8::from(oob_data), io_cap])
@@ -283,9 +314,13 @@ impl IoCap {
 #[derive(Clone, Copy)]
 #[must_use]
 #[repr(transparent)]
-pub struct MacKey(Key);
+pub struct MacKey(
+    /// f5-derived AES-CMAC authentication key.
+    Key,
+);
 
 impl core::fmt::Debug for MacKey {
+    /// Writes a redacted key marker to `f`; Returns its write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("MacKey").field(&"***").finish()
     }
@@ -293,14 +328,16 @@ impl core::fmt::Debug for MacKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for MacKey {
+    /// Writes a redacted key marker to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "MacKey(***)");
     }
 }
 
 impl MacKey {
-    /// Generates LE Secure Connections check value
-    /// ([Vol 3] Part H, Section 2.2.8).
+    /// Returns f6 over ordered nonces `n1`/`n2`, model-specific 128-bit secret `r`,
+    /// sender feature triplet `io_cap` and ordered link addresses `a1`/`a2` (Vol 3, Part H, §2.2.8).
+    /// Caller must select initiator/responder ordering for the check being generated.
     #[inline]
     pub fn f6(&self, n1: Nonce, n2: Nonce, r: u128, io_cap: IoCap, a1: Address, a2: Address) -> Check {
         let mut m = AesCmac::new(&self.0);
@@ -318,14 +355,18 @@ impl MacKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
-pub struct Nonce(pub u128);
+pub struct Nonce(
+    /// Numeric nonce; direct construction permits zero for protocol placeholders.
+    pub u128,
+);
 
 impl Nonce {
-    /// Generates a new non-zero random nonce value from the OS CSPRNG.
+    /// Returns a nonce from sixteen `rng` bytes interpreted in native endian order.
+    /// Callers supply a cryptographically secure source; the RngCore bound alone does not enforce it.
     ///
     /// # Panics
     ///
-    /// Panics if the OS CSPRNG is broken.
+    /// Panics if `rng.fill_bytes` fails by panicking, or its sixteen output bytes are all zero.
     #[allow(clippy::new_without_default)]
     #[inline]
     pub fn new<T: RngCore>(rng: &mut T) -> Self {
@@ -336,8 +377,8 @@ impl Nonce {
         Self(n)
     }
 
-    /// Generates LE Secure Connections confirm value
-    /// ([Vol 3] Part H, Section 2.2.6).
+    /// Returns f4 keyed by this nonce over big-endian X coordinates `u`/`v` and final octet `z`.
+    /// `z` is zero for comparison/OOB or 0x80 plus the current passkey bit; no value validation occurs.
     #[inline]
     pub fn f4(&self, u: &PublicKeyX, v: &PublicKeyX, z: u8) -> Confirm {
         let mut m = AesCmac::new(&Key::new(self.0));
@@ -345,8 +386,8 @@ impl Nonce {
         Confirm(m.finalize())
     }
 
-    /// Generates LE Secure Connections numeric comparison value
-    /// ([Vol 3] Part H, Section 2.2.9).
+    /// Returns g2's low 32-bit CMAC value modulo 1000000, keyed by this initiator nonce.
+    /// `pkax`/`pkbx` are initiator/responder X coordinates and `nb` is the responder nonce.
     #[inline]
     pub fn g2(&self, pkax: &PublicKeyX, pkbx: &PublicKeyX, nb: &Self) -> NumCompare {
         let mut m = AesCmac::new(&Key::new(self.0));
@@ -363,7 +404,10 @@ impl Nonce {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[must_use]
 #[repr(transparent)]
-pub struct Confirm(pub u128);
+pub struct Confirm(
+    /// Full numeric f4 output; wire encoding is little-endian.
+    pub u128,
+);
 
 /// 6-digit LE Secure Connections numeric comparison value generated by
 /// [`Nonce::g2`].
@@ -371,23 +415,33 @@ pub struct Confirm(pub u128);
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[must_use]
 #[repr(transparent)]
-pub struct NumCompare(pub u32);
+pub struct NumCompare(
+    /// Decimal comparison value; g2 produces 0 through 999999, direct construction is unchecked.
+    pub u32,
+);
 
 /// P-256 elliptic curve secret key.
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
-pub struct SecretKey(p256::NonZeroScalar);
+pub struct SecretKey(
+    /// Valid nonzero scalar in the P-256 subgroup.
+    p256::NonZeroScalar,
+);
 
 /// P-256 elliptic curve secret key.
 #[cfg(feature = "security-p256-cortex-m4")]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
-pub struct SecretKey(p256_cortex_m4::SecretKey);
+pub struct SecretKey(
+    /// Cortex-M backend's validated private scalar.
+    p256_cortex_m4::SecretKey,
+);
 
 impl core::fmt::Debug for SecretKey {
+    /// Writes a redacted scalar marker to `f`; Returns its write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("SecretKey").field(&"***").finish()
     }
@@ -395,6 +449,7 @@ impl core::fmt::Debug for SecretKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for SecretKey {
+    /// Writes a redacted scalar marker to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "SecretKey(***)");
     }
@@ -402,13 +457,14 @@ impl defmt::Format for SecretKey {
 
 #[cfg(feature = "security-p256-cortex-m4")]
 impl SecretKey {
-    /// Generates a new random secret key.
+    /// Returns a valid random P-256 scalar drawn from `rng`; backend rejection sampling may retry.
+    /// Infallible RNG methods may panic on entropy-source failure.
     #[allow(clippy::new_without_default)]
     pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
         Self(p256_cortex_m4::SecretKey::random(rng))
     }
 
-    /// Computes the associated public key.
+    /// Returns this scalar's affine public point with both coordinates in big-endian order.
     pub fn public_key(&self) -> PublicKey {
         let pk = self.0.public_key();
         PublicKey {
@@ -417,9 +473,8 @@ impl SecretKey {
         }
     }
 
-    /// Computes a shared secret from the local secret key and remote public
-    /// key. Returns [`None`] if the public key is either invalid or derived
-    /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
+    /// Returns ECDH agreement with remote `pk`, or None for an invalid point, the Bluetooth
+    /// debug point or X-coordinate equality with `local_pk` (Vol 3, Part H, §2.3.5.6.1).
     ///
     /// `local_pk` must be the public key of `self`; passing it in avoids an
     /// expensive scalar multiplication to recompute it.
@@ -428,7 +483,7 @@ impl SecretKey {
         if pk.is_debug() {
             return None; // TODO: Compile-time option for debug-only mode
         }
-        if pk == *local_pk {
+        if pk.x == local_pk.x {
             return None;
         }
 
@@ -445,14 +500,16 @@ impl SecretKey {
 
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 impl SecretKey {
-    /// Generates a new random secret key.
+    /// Returns a valid random P-256 scalar drawn from `rng`; backend rejection sampling may retry.
+    /// Infallible RNG methods may panic on entropy-source failure.
     #[allow(clippy::new_without_default)]
     #[inline(never)]
     pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
         Self(p256::NonZeroScalar::random(rng))
     }
 
-    /// Computes the associated public key.
+    /// Returns this scalar's affine public point with both coordinates in big-endian order.
+    /// The unreachable branch assumes the backend preserves its nonzero-scalar invariant.
     #[inline(never)]
     pub fn public_key(&self) -> PublicKey {
         use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
@@ -467,9 +524,8 @@ impl SecretKey {
         }
     }
 
-    /// Computes a shared secret from the local secret key and remote public
-    /// key. Returns [`None`] if the public key is either invalid or derived
-    /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
+    /// Returns ECDH agreement with remote `pk`, or None for invalid `pk`/`local_pk`, the Bluetooth
+    /// debug peer point or X-coordinate equality with `local_pk` (Vol 3, Part H, §2.3.5.6.1).
     ///
     /// `local_pk` must be the public key of `self`; passing it in avoids an
     /// expensive scalar multiplication to recompute it.
@@ -477,7 +533,7 @@ impl SecretKey {
     #[inline(never)]
     pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
         use p256::elliptic_curve::sec1::FromEncodedPoint;
-        if pk.is_debug() {
+        if pk.is_debug() || pk.x == local_pk.x {
             return None; // TODO: Compile-time option for debug-only mode
         }
 
@@ -490,7 +546,7 @@ impl SecretKey {
         // https://github.com/RustCrypto/traits/issues/1227
         let rpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&rep));
         match (rpk, lpk) {
-            (Some(rpk), Some(lpk)) if rpk != lpk => Some(DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine()))),
+            (Some(rpk), Some(lpk)) if rpk != lpk => Some(DHKey(ecdh::diffie_hellman(self.0, rpk.as_affine()))),
             _ => None,
         }
     }
@@ -501,11 +557,15 @@ impl SecretKey {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[must_use]
 pub struct PublicKey {
+    /// Affine X coordinate in big-endian order; raw construction does not validate the point.
     pub x: PublicKeyX,
+    /// Affine Y coordinate in big-endian order; raw construction does not validate the point.
     pub y: Coord,
 }
 
 impl PublicKey {
+    /// Returns the point decoded from little-endian X then Y in `bytes`, without curve validation.
+    /// Panics unless `bytes` is exactly 64 bytes; DH-key derivation performs subsequent validation.
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut x = [0u8; 32];
         let mut y = [0u8; 32];
@@ -545,7 +605,10 @@ impl PublicKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
-pub struct Coord([u8; 256 / u8::BITS as usize]);
+pub struct Coord(
+    /// Thirty-two big-endian coordinate bytes.
+    [u8; 256 / u8::BITS as usize],
+);
 
 impl Coord {
     /// Returns the coordinate in big-endian byte order.
@@ -560,10 +623,13 @@ impl Coord {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[must_use]
 #[repr(transparent)]
-pub struct PublicKeyX(Coord);
+pub struct PublicKeyX(
+    /// Unvalidated big-endian affine X coordinate.
+    Coord,
+);
 
 impl PublicKeyX {
-    /// Creates the coordinate from a big-endian encoded byte array.
+    /// Returns an unvalidated X coordinate containing big-endian test bytes `x`.
     #[cfg(test)]
     #[inline]
     pub(super) const fn from_be_bytes(x: [u8; core::mem::size_of::<Self>()]) -> Self {
@@ -581,23 +647,31 @@ impl PublicKeyX {
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 #[must_use]
 #[repr(transparent)]
-pub struct DHKey(ecdh::SharedSecret);
+pub struct DHKey(
+    /// RustCrypto shared-point X coordinate, retained for f5.
+    ecdh::SharedSecret,
+);
 
 /// P-256 elliptic curve shared secret ([Vol 3] Part H, Section 2.3.5.6.1).
 #[cfg(feature = "security-p256-cortex-m4")]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
-pub struct DHKey([u8; 32]);
+pub struct DHKey(
+    /// Shared-point X coordinate in big-endian order.
+    [u8; 32],
+);
 
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 impl Clone for DHKey {
+    /// Returns a new shared-secret wrapper containing an independent copy of the same 32 bytes.
     fn clone(&self) -> Self {
         Self(ecdh::SharedSecret::from(*self.0.raw_secret_bytes()))
     }
 }
 
 impl core::fmt::Debug for DHKey {
+    /// Writes a redacted shared-secret marker to `f`; Returns its write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("DHKey").field(&"***").finish()
     }
@@ -605,26 +679,27 @@ impl core::fmt::Debug for DHKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for DHKey {
+    /// Writes a redacted shared-secret marker to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "DHKey(***)");
     }
 }
 
 impl DHKey {
-    /// Big-endian x-coordinate of the shared secret.
+    /// Returns a copy of the shared point's32-byte big-endian X coordinate.
     #[cfg(not(feature = "security-p256-cortex-m4"))]
     fn secret_bytes(&self) -> [u8; 32] {
         (*self.0.raw_secret_bytes()).into()
     }
 
-    /// Big-endian x-coordinate of the shared secret.
+    /// Returns a copy of the shared point's32-byte big-endian X coordinate.
     #[cfg(feature = "security-p256-cortex-m4")]
     fn secret_bytes(&self) -> [u8; 32] {
         self.0
     }
 
-    /// Generates LE Secure Connections `MacKey` and `LTK`
-    /// ([Vol 3] Part H, Section 2.2.7).
+    /// Returns f5's (MacKey, LTK), binding initiator `n1`/`a1` and responder `n2`/`a2`
+    /// to this shared secret (Vol 3, Part H, §2.2.7). Address values are actual link addresses.
     #[inline]
     pub fn f5(&self, n1: Nonce, n2: Nonce, a1: Address, a2: Address) -> (MacKey, LongTermKey) {
         let n1 = n1.0.to_be_bytes();
@@ -660,6 +735,9 @@ impl DHKey {
 /// - `preq`/`pres`: 7 bytes each in wire order (command code at index 0)
 /// - `iat`/`rat`: address type (0=public, 1=random)
 /// - `ia`/`ra`: 6-byte address in MSO order (reversed from BdAddr raw)
+/// - `k`: numeric 128-bit temporary key; `r`: numeric 128-bit random challenge.
+///
+/// Returns the full 128-bit confirm value; caller validates the type flags and feature bytes.
 pub(super) fn c1(
     k: u128,
     r: u128,
@@ -714,6 +792,7 @@ pub(super) fn c1(
 ///
 ///   s1(k, r1, r2) = e(k, r1' || r2')
 /// where r1' and r2' are the least significant 64 bits of r1 and r2.
+/// Returns the STK using temporary key `k`, responder random `r1` and initiator random `r2`.
 pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
     let r1_bytes = r1.to_be_bytes();
     let r2_bytes = r2.to_be_bytes();
@@ -735,6 +814,7 @@ pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
 ///   d1(k, d, r) = e(k, d')
 /// where d' = padding(96) || r || d, with the least significant octet of `d`
 /// becoming the least significant octet of `d'`.
+/// Returns the 128-bit diversified key using AES key `k`, low 16-bit diversifier `d` and next 16 bits `r`.
 pub(super) fn d1(k: u128, d: u16, r: u16) -> u128 {
     let mut d_prime = [0u8; 16];
     d_prime[12..14].copy_from_slice(&r.to_be_bytes());
@@ -746,7 +826,7 @@ pub(super) fn d1(k: u128, d: u16, r: u16) -> u128 {
     u128::from_be_bytes(d_prime)
 }
 
-/// Combines `hi` and `lo` values into a big-endian byte array.
+/// Returns big-endian high half `hi` followed by low half `lo`, converted into the test's requested type.
 #[allow(clippy::redundant_pub_crate)]
 #[cfg(test)]
 pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
@@ -759,6 +839,7 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unreadable_literal)]
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
+/// Bluetooth sample vectors, key admission and bounded RPA generation failure contracts.
 mod tests {
     use p256::elliptic_curve::rand_core::OsRng;
 
@@ -767,6 +848,7 @@ mod tests {
     use bt_hci::param::{AddrKind, BdAddr};
 
     #[test]
+    /// Crypto wrappers preserve the fixed 32/64-byte coordinate/key storage assumptions.
     fn sizes() {
         assert_eq!(core::mem::size_of::<Coord>(), 32);
         assert_eq!(core::mem::size_of::<PublicKey>(), 64);
@@ -892,6 +974,20 @@ mod tests {
         );
     }
 
+    /// Core Vol 3 Part H 2.3.5.6.1 rejects equal X even when the peer's valid Y is negated.
+    #[test]
+    fn dh_key_rejects_opposite_point_with_same_x() {
+        let local = secret_key(0, 1);
+        let opposite = SecretKey(-local.0);
+        let local_pk = local.public_key();
+        let opposite_pk = opposite.public_key();
+        assert_eq!(local_pk.x, opposite_pk.x);
+        assert_ne!(local_pk.y, opposite_pk.y);
+        assert!(!local_pk.is_debug());
+        assert!(!opposite_pk.is_debug());
+        assert!(local.dh_key(opposite_pk, &local_pk).is_none());
+    }
+
     /// Key generation function ([Vol 3] Part H, Section D.3).
     #[test]
     fn dh_key_f5() {
@@ -909,27 +1005,31 @@ mod tests {
     }
 
     #[inline]
+    /// Returns the valid scalar composed from `hi`/`lo`; panics for zero or out-of-range test vectors.
     fn secret_key(hi: u128, lo: u128) -> SecretKey {
         SecretKey(p256::NonZeroScalar::from_repr(u256(hi, lo)).unwrap())
     }
 
     #[inline]
+    /// Returns a shared-secret test wrapper from big-endian `hi`/`lo`, without curve derivation.
     fn shared_secret(hi: u128, lo: u128) -> DHKey {
         DHKey(ecdh::SharedSecret::from(u256::<p256::FieldBytes>(hi, lo)))
     }
 
     #[test]
+    /// Independent OS-generated keypairs can complete the remote-point validation/agreement path.
     fn testtest() {
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut OsRng);
         let pkb = skb.public_key();
 
-        let ska = SecretKey::new(&mut OsRng::default());
+        let ska = SecretKey::new(&mut OsRng);
         let pka = ska.public_key();
 
         let _dh_key = skb.dh_key(pka, &pkb).unwrap();
     }
 
     #[test]
+    /// A frozen little-endian public-key payload is admitted for ECDH with a generated local key.
     fn testtest2() {
         let bytes = [
             0x1eu8, 0x3b, 0x26, 0x40, 0x0e, 0xba, 0x72, 0x51, 0x81, 0xf9, 0x3d, 0x16, 0xb3, 0xc4, 0x11, 0x55, 0x3f,
@@ -938,7 +1038,7 @@ mod tests {
             0x71, 0xe4, 0x95, 0x17, 0x71, 0x98, 0x82, 0x8f, 0xf8, 0x79, 0x94,
         ];
 
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut OsRng);
         let pkb = skb.public_key();
 
         let pka = PublicKey::from_bytes(&bytes);
@@ -947,9 +1047,10 @@ mod tests {
     }
 
     #[test]
+    /// Two OS-random nonces differ; this is a probabilistic smoke check, not an entropy assessment.
     fn nonce() {
         // No fair dice rolls for us!
-        assert_ne!(Nonce::new(&mut OsRng::default()), Nonce::new(&mut OsRng::default()));
+        assert_ne!(Nonce::new(&mut OsRng), Nonce::new(&mut OsRng));
     }
 
     /// Confirm value generation function ([Vol 3] Part H, Section D.2).
@@ -999,6 +1100,7 @@ mod tests {
     }
 
     #[test]
+    /// Frozen wire-order public keys/nonces produce numeric comparison 991180 through g2.
     fn nonce_f4_test() {
         let ra = [
             0x11u8, 0x3a, 0x7a, 0x69, 0x11, 0xcd, 0x44, 0x15, 0x52, 0xf7, 0x47, 0xe8, 0x26, 0x67, 0x72, 0xca,
@@ -1040,6 +1142,7 @@ mod tests {
     }
 
     #[test]
+    /// Core ah sample maps big-endian random 0x708194 to hash 0x0dfbaa with the specified IRK.
     pub fn irk_test() {
         let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b).unwrap();
         let prand = [0x70, 0x81, 0x94];
@@ -1049,6 +1152,7 @@ mod tests {
     }
 
     #[test]
+    /// A frozen least-significant-byte-first RPA resolves under its corresponding IRK.
     pub fn rpa_test() {
         let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d).unwrap();
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
@@ -1057,18 +1161,28 @@ mod tests {
     }
 
     #[test]
+    /// Generation matches the Core wire fixture, resolves only under the expected tested key,
+    /// and rejects repeated all-zero/all-one random parts.
     fn generated_rpa_resolves_and_preserves_wire_order() {
-        struct FixedRandom([u8; 3]);
+        /// Repeats one three-byte draw to exercise RPA rejection and byte order.
+        struct FixedRandom(
+            /// Wire-order random-part bytes returned for every draw.
+            [u8; 3],
+        );
         impl RngCore for FixedRandom {
+            /// Panics if the implementation requests a word; no value is returned by this byte-only fixture.
             fn next_u32(&mut self) -> u32 {
                 panic!("only address bytes are requested")
             }
+            /// Panics if the implementation requests a double word; no value is returned.
             fn next_u64(&mut self) -> u64 {
                 panic!("only address bytes are requested")
             }
+            /// Copies the scripted draw into `dest`; panics unless its length is three.
             fn fill_bytes(&mut self, dest: &mut [u8]) {
                 dest.copy_from_slice(&self.0);
             }
+            /// Copies the scripted draw into `dest`; Returns Ok, or panics on non-three-byte requests.
             fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
                 self.fill_bytes(dest);
                 Ok(())
@@ -1096,21 +1210,30 @@ mod tests {
     }
 
     #[test]
+    /// Rejected random parts consume attempts and an RNG failure stops immediately without fallback.
     fn rpa_retries_invalid_random_parts_and_bounds_rng_failure() {
+        /// Scripted zero/ones/valid sequence followed by an optional entropy-source error.
         struct RandomStream {
+            /// Number of fallible byte requests, including failures.
             calls: usize,
+            /// Make the next request fail before writing any bytes.
             fail: bool,
         }
         impl RngCore for RandomStream {
+            /// Panics on a word request; no value is returned by this byte-only fixture.
             fn next_u32(&mut self) -> u32 {
                 unreachable!()
             }
+            /// Panics on a double-word request; no value is returned.
             fn next_u64(&mut self) -> u64 {
                 unreachable!()
             }
+            /// Panics on infallible byte access to require the entropy-error propagation path.
             fn fill_bytes(&mut self, _: &mut [u8]) {
                 panic!("use fallible RNG boundary")
             }
+            /// Increments attempts and fills three-byte `dest` from the script; Returns the injected
+            /// error before mutation when enabled, otherwise Ok. Panics on another destination size.
             fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
                 self.calls += 1;
                 if self.fail {

@@ -1,3 +1,6 @@
+//! Shared-renderer, candidate isolation and submitted-pixel ownership regressions.
+//! Host raster equality does not establish physical display timing or scanout.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::preview::*;
 use dashboard_core::alarms::{RuleIndex, Status};
@@ -10,6 +13,7 @@ use dashboard_core::samples::{DataMode, Quality, SensorId, Source};
 use dashboard_core::vehicle_status::VehicleStatus;
 
 #[test]
+/// Candidate widget positions read live sensor values without borrowing accepted rule peaks, latches or warning state.
 fn candidate_observation_readings_never_address_accepted_rule_peaks_or_warnings() {
     use dashboard_core::acquisition::AcquisitionModel;
     use dashboard_core::presentation::PresentationState;
@@ -65,6 +69,8 @@ fn candidate_observation_readings_never_address_accepted_rule_peaks_or_warnings(
 }
 
 #[test]
+/// Canvas failures preserve exact pending pixels and completion state; intervening rendering and replacement simulator
+/// ownership cannot consume them.
 fn canvas_failures_retry_exact_pending_bytes_and_never_complete_new_scratch() {
     use dashboard_configurator::event_adapters::{RenderIssue, complete_simulation_pixels, consume_simulation_pixels};
     use dashboard_configurator::simulator::ControlSimulator;
@@ -122,6 +128,7 @@ fn canvas_failures_retry_exact_pending_bytes_and_never_complete_new_scratch() {
 }
 
 #[test]
+/// A new simulator with equal configuration cannot consume pixels submitted by another owner.
 fn same_content_new_simulator_cannot_consume_previous_owners_pending_pixels() {
     use dashboard_configurator::event_adapters::consume_simulation_pixels;
     use dashboard_configurator::simulator::ControlSimulator;
@@ -146,6 +153,8 @@ fn same_content_new_simulator_cannot_consume_previous_owners_pending_pixels() {
 }
 
 #[test]
+/// Min/max acquisition retains raw extrema while a persistent preview uses its separate elapsed-time smoothing
+/// trajectory.
 fn scenario_minmax_retains_raw_extrema_while_elapsed_display_is_smoothed() {
     use dashboard_configurator::simulator::{ControlSimulator, Scenario, SimulationInput};
     let mut raw = default_config();
@@ -176,6 +185,8 @@ fn scenario_minmax_retains_raw_extrema_while_elapsed_display_is_smoothed() {
 }
 
 #[test]
+/// Page round trips match fresh rendering; invalid inspection borrows live samples without changing accepted
+/// acquisition or warning state.
 fn all_page_round_trips_equal_fresh_full_raster_and_inspection_reads_live_samples() {
     use dashboard_configurator::editor::{Editor, RawField};
     use dashboard_configurator::simulator::ControlSimulator;
@@ -212,6 +223,8 @@ fn all_page_round_trips_equal_fresh_full_raster_and_inspection_reads_live_sample
 }
 
 #[test]
+/// Candidate Off masks every diagnostic pixel; protected recovery restores inspection while accepted session, samples
+/// and pending frame remain unchanged.
 fn invalid_dashboard_off_masks_diagnostics_and_recovery_preserves_accepted_pending_pixels() {
     use dashboard_configurator::editor::{Editor, RawField};
     use dashboard_configurator::event_adapters::complete_simulation_pixels;
@@ -305,9 +318,12 @@ fn invalid_dashboard_off_masks_diagnostics_and_recovery_preserves_accepted_pendi
     assert_eq!(sim.completed_frame(), Some(token));
 }
 
+/// Returns the validated default configuration; panics if repository defaults fail validation.
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+/// Every simulator FPS header mode renders unavailable markers in both orientations rather than inventing device
+/// transfer measurements.
 fn simulator_fps_modes_show_unavailable_without_device_transfer_measurements() {
     use dashboard_configurator::editor::{Edit, Editor};
     use dashboard_configurator::simulator::ControlSimulator;
@@ -376,6 +392,8 @@ fn simulator_fps_modes_show_unavailable_without_device_transfer_measurements() {
 }
 
 #[test]
+/// Unapplied candidate rendering uses its own view membership, controls and time while preserving accepted acquisition
+/// and pending frame ownership.
 fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time() {
     use dashboard_configurator::simulator::ControlSimulator;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
@@ -500,6 +518,8 @@ fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time(
 }
 
 #[test]
+/// Debug rendering borrows supplied observations/control mappings and reuses the existing framebuffer with exact
+/// shared-page parity.
 fn borrowed_debug_data_and_actual_map_draw_into_existing_preview_without_simulator_submission() {
     use dashboard_core::debug_view::{DebugData, DebugPage};
     let mut map = dashboard_config::ControlMap::default();
@@ -520,6 +540,8 @@ fn borrowed_debug_data_and_actual_map_draw_into_existing_preview_without_simulat
 }
 
 #[test]
+/// Dense gauge bands/readouts match shared rendering for every kind; optionally writes PPM evidence into
+/// GAUGE_EVIDENCE_DIR, panicking on I/O failure.
 fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_parity() {
     for kind in GaugeKind::ALL {
         let mut raw = default_config();
@@ -584,6 +606,7 @@ fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_par
 }
 
 #[test]
+/// Appearance extrema expand across forward samples and reset when time/source changes establish a new trajectory.
 fn preview_observed_extrema_only_expand_until_rewind_or_sample_source_changes() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -624,6 +647,8 @@ fn preview_observed_extrema_only_expand_until_rewind_or_sample_source_changes() 
 }
 
 #[test]
+/// Appearance samples match the shared demo generator at actual rendered timestamps, including long durations and
+/// near-overflow inputs.
 fn browser_samples_match_the_firmware_demo_generator_at_the_actual_rendered_time() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -659,6 +684,8 @@ fn browser_samples_match_the_firmware_demo_generator_at_the_actual_rendered_time
 }
 
 #[test]
+/// Each stress sample set renders with shared-scene parity in both Boost units, including return to generated demo
+/// values.
 fn stress_sets_have_bounded_values_and_recover_to_the_shared_demo() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -682,6 +709,7 @@ fn stress_sets_have_bounded_values_and_recover_to_the_shared_demo() {
 }
 
 #[test]
+/// Big-endian RGB565 channels expand to expected eight-bit RGBA values with opaque alpha.
 fn rgb565_is_big_endian_and_expands_every_channel_to_full_rgba_range() {
     let words = [0xF800_u16, 0x07E0, 0x001F, 0, 0xFFFF, 0x4208, 0x028A];
     let source: Vec<u8> = words.into_iter().flat_map(u16::to_be_bytes).collect();
@@ -697,6 +725,7 @@ fn rgb565_is_big_endian_and_expands_every_channel_to_full_rgba_range() {
 }
 
 #[test]
+/// Malformed RGB565/RGBA lengths leave output untouched; empty-to-empty conversion succeeds.
 fn bad_conversion_lengths_reject_without_partial_writes() {
     for (input, output_len) in [(vec![0; 1], 4), (vec![0; 4], 7), (vec![0; 4], 9), (vec![0; 2], 0)] {
         let mut output = vec![77; output_len];
@@ -707,6 +736,7 @@ fn bad_conversion_lengths_reject_without_partial_writes() {
 }
 
 #[test]
+/// Preview reuses framebuffer allocations, produces opaque pixels and bounded synthetic histories with Demo provenance.
 fn preview_reuses_complete_buffers_and_populates_only_demo_histories() {
     let mut preview = Preview::new();
     let config = fixture();
@@ -752,6 +782,8 @@ fn preview_reuses_complete_buffers_and_populates_only_demo_histories() {
     }
 }
 
+/// Checks `preview` against a freshly drawn shared scene for `config`, view ID `view` and `options`, including RGBA
+/// conversion; panics on missing fixture observations or pixel mismatch.
 fn assert_exact_shared_scene(
     preview: &Preview,
     config: &ValidatedConfig,
@@ -795,6 +827,7 @@ fn assert_exact_shared_scene(
 }
 
 #[test]
+/// Appearance pixels match shared rendering across Boost units and warning blink phases.
 fn pixels_match_the_shared_renderer_for_both_units_and_warning_phases() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -820,6 +853,8 @@ fn pixels_match_the_shared_renderer_for_both_units_and_warning_phases() {
 }
 
 #[test]
+/// The PSI toggle changes only Boost tile pixels while canonical custom samples and acquisition snapshot remain
+/// unchanged.
 fn psi_only_changes_boost_presentation_and_custom_samples_remain_canonical() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -863,6 +898,8 @@ fn psi_only_changes_boost_presentation_and_custom_samples_remain_canonical() {
 }
 
 #[test]
+/// Unknown view, nonfinite/oversized samples and overflowing time fail without replacing either pixel buffer or
+/// snapshot metadata.
 fn invalid_view_samples_and_time_preserve_the_last_complete_preview() {
     let config = fixture();
     let mut preview = Preview::new();
@@ -911,6 +948,7 @@ fn invalid_view_samples_and_time_preserve_the_last_complete_preview() {
     assert_eq!(preview.rendered_at_ms(), time);
 }
 
+/// Returns four named Oil warning widgets occupying the top row; panics if fixture capacities are exceeded.
 fn warnings_config() -> Config {
     let mut config = default_config();
     config.widgets.clear();
@@ -932,6 +970,8 @@ fn warnings_config() -> Config {
 }
 
 #[test]
+/// Appearance warning demonstration compresses dwell using bounded synthetic observations without modifying accepted
+/// thresholds or timing.
 fn immediate_warning_demo_compresses_dwell_without_changing_the_export_document() {
     let mut config = warnings_config();
     for widget in &mut config.widgets {
@@ -969,6 +1009,7 @@ fn immediate_warning_demo_compresses_dwell_without_changing_the_export_document(
 }
 
 #[test]
+/// Warning pagination honors configured messages, list size, interval and current-view filtering.
 fn warning_pages_use_configured_messages_modes_intervals_and_scope() {
     let mut config = warnings_config();
     config.warnings.mode = WarningMode::ListThree;
@@ -1034,6 +1075,7 @@ fn warning_pages_use_configured_messages_modes_intervals_and_scope() {
 }
 
 #[test]
+/// Immediate warning demonstration still honors enabled rules, thresholds and the explicit synthetic load gate.
 fn warning_demo_preserves_threshold_enablement_and_synthetic_context_gates() {
     let mut config = default_config();
     for widget in &mut config.widgets {
@@ -1065,6 +1107,7 @@ fn warning_demo_preserves_threshold_enablement_and_synthetic_context_gates() {
 }
 
 #[test]
+/// Disabling/re-enabling warnings, rewinding time or replacing configuration restarts warning pagination.
 fn warning_toggle_rewind_and_document_replacement_restart_paging() {
     let config = validate(warnings_config()).unwrap();
     let mut preview = Preview::new();
@@ -1107,6 +1150,7 @@ fn warning_toggle_rewind_and_document_replacement_restart_paging() {
 }
 
 #[test]
+/// Removing all widgets clears stale pixels; mixed wide spans retain exact shared-scene parity.
 fn clearing_view_removes_old_pixels_and_wide_layout_uses_exact_shared_scene() {
     let mut preview = Preview::new();
     let config = fixture();
@@ -1148,6 +1192,8 @@ fn clearing_view_removes_old_pixels_and_wide_layout_uses_exact_shared_scene() {
 }
 
 #[test]
+/// Session-level cache exhaustion deduplication survives preview/simulator replacement and visible-history clearing; a
+/// new session reports anew.
 fn session_reporting_survives_replacement_failed_preview_and_clear() {
     use dashboard_configurator::cache_reporting::report;
     use dashboard_configurator::simulator::ControlSimulator;
@@ -1188,6 +1234,8 @@ fn session_reporting_survives_replacement_failed_preview_and_clear() {
 }
 
 #[test]
+/// Simulation rendering uses persistent acquisition and real configured dwell, ages missing samples without catch-up
+/// ingestion, and can return to Appearance.
 fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
     use dashboard_configurator::simulator::ControlSimulator;
     let mut raw = default_config();
@@ -1224,6 +1272,8 @@ fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
 }
 
 #[test]
+/// Every tested history duration uses 60 synthetic points plus one dwell observation with distinct graph identity and
+/// preserved sparse gaps.
 fn appearance_history_stays_fixed_work_for_every_duration_and_has_its_own_origin() {
     use dashboard_core::acquisition::AcquisitionModel;
     for seconds in [10, 30, 60, 120, 300, 600, 900, 137] {
@@ -1258,6 +1308,8 @@ fn appearance_history_stays_fixed_work_for_every_duration_and_has_its_own_origin
 }
 
 #[test]
+/// Appearance smoothing survives reconstruction, rejects invalid samples atomically, preserves equal-time output and
+/// resets on time reversal.
 fn appearance_smoothing_continues_across_synthetic_owners_and_rejection_is_atomic() {
     let mut raw = dashboard_config::default_config();
     raw.widgets[0].advanced.smoothing_ms = 1000;
@@ -1295,6 +1347,8 @@ fn appearance_smoothing_continues_across_synthetic_owners_and_rejection_is_atomi
 }
 
 #[test]
+/// Simulator restart, render-mode changes and immutable configuration replacement cannot inherit an old smoothing
+/// trajectory.
 fn simulation_owner_replacement_and_mode_config_view_reset_never_adopt_old_filters() {
     use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
     let mut raw = default_config();
@@ -1343,6 +1397,7 @@ fn simulation_owner_replacement_and_mode_config_view_reset_never_adopt_old_filte
 }
 
 #[test]
+/// Leaving and returning to Dashboard resets hidden widget smoothing even when no intermediate page was rendered.
 fn hidden_control_page_round_trip_without_intermediate_render_snaps_same_view() {
     use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
     use dashboard_core::pages::Page;
@@ -1373,6 +1428,7 @@ fn hidden_control_page_round_trip_without_intermediate_render_snaps_same_view() 
 }
 
 #[test]
+/// Leaving and returning to a view resets its smoothing even when intermediate view pixels were never rendered.
 fn hidden_view_round_trip_without_intermediate_render_snaps_original_widgets() {
     use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
     let mut raw = default_config();
@@ -1409,6 +1465,8 @@ fn hidden_view_round_trip_without_intermediate_render_snaps_original_widgets() {
 }
 
 #[test]
+/// Two view changes in one encoder batch reset smoothing while preserving sensor values, extrema, history and graph
+/// identity.
 fn same_batch_view_round_trip_snaps_existing_trajectory_without_changing_acquisition() {
     use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
     let mut raw = default_config();
@@ -1469,6 +1527,7 @@ fn same_batch_view_round_trip_snaps_existing_trajectory_without_changing_acquisi
 }
 
 #[test]
+/// Appearance and Simulation warning phases agree with the shared blink function at exact boundaries.
 fn shared_blink_boundaries_match_appearance_simulation_and_palette() {
     use dashboard_configurator::simulator::ControlSimulator;
     let mut raw = warnings_config();
@@ -1523,6 +1582,7 @@ fn shared_blink_boundaries_match_appearance_simulation_and_palette() {
 }
 
 #[test]
+/// Diagnostic warning palette selects the shared elapsed-time phase across boundaries and long skipped intervals.
 fn diagnostic_palette_uses_shared_phase_at_boundaries_and_long_skip() {
     use dashboard_configurator::diagnostic::Draft;
     use dashboard_configurator::editor::EditorError;
@@ -1560,6 +1620,7 @@ fn diagnostic_palette_uses_shared_phase_at_boundaries_and_long_skip() {
 }
 
 #[test]
+/// At feedback expiry the next simulation preparation immediately selects an eligible warning page.
 fn simulation_feedback_expiry_selects_warning_in_the_same_preparation() {
     use dashboard_configurator::simulator::ControlSimulator;
     let mut raw = warnings_config();

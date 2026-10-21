@@ -3,6 +3,9 @@ use dashboard_core::ble::termination::{normal_reason, reason_label};
 use dashboard_core::discovery::capture::CaptureMetadata;
 use serde_json::{Value, json};
 
+/// Returns a versioned termination assessment derived from immutable metadata `m`.
+/// Distinguishes unobserved/local-error/unconfirmed/conflicting/missing/normal/abnormal evidence;
+/// clean eligibility also requires link and end time, but does not certify complete inspection.
 pub(super) fn termination(m: &CaptureMetadata) -> Value {
     let reason = m.disconnect_reason;
     let consistent = m

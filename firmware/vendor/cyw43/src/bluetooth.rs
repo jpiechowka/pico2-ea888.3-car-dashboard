@@ -1,3 +1,6 @@
+//! Bounded HCI queues over the radio's two 4096-byte shared-memory rings.
+//! Queue handles stay on one serialized executor (Cell/RefCell and NoopRawMutex); physical bus access belongs to Runner.
+//! Transport faults latch until state reinitialization. Canceling ring transactions can corrupt protocol progress.
 use core::cell::{Cell, RefCell};
 use core::convert::Infallible;
 use core::future::Future;
@@ -17,13 +20,18 @@ pub use crate::spi::SpiBusCyw43;
 use crate::util::round_up;
 use crate::{CHIP, util};
 
+/// Stable backing storage for four packets in each direction and self-referential channel metadata.
 pub(crate) struct BtState {
+    /// Controller-to-host packet slots, including HCI indicator bytes.
     rx: [BtPacketBuf; 4],
+    /// Host-to-controller packet slots, including HCI indicators and initialized word padding.
     tx: [BtPacketBuf; 4],
+    /// Metadata initialized only while the returned handles retain the exclusive state borrow.
     inner: MaybeUninit<BtStateInnre<'static>>,
 }
 
 impl BtState {
+    /// Returns zeroed packet storage with uninitialized channel metadata; performs no radio operations.
     pub const fn new() -> Self {
         Self {
             rx: [const { BtPacketBuf::new() }; 4],
@@ -33,43 +41,61 @@ impl BtState {
     }
 }
 
+/// Channel metadata borrowing packet arrays in its enclosing BtState.
 struct BtStateInnre<'d> {
+    /// Permanent software transport fault observed by all handles until reconstruction.
     faulted: Cell<bool>,
+    /// Controller-to-host queue with affine producer/consumer completion calls.
     rx: zerocopy_channel::Channel<'d, NoopRawMutex, BtPacketBuf>,
+    /// Host-to-controller queue with affine producer/consumer completion calls.
     tx: zerocopy_channel::Channel<'d, NoopRawMutex, BtPacketBuf>,
 }
 
-/// Bluetooth driver.
+/// Packet-oriented HCI endpoint borrowing fixed queues; Runner must be polled concurrently on the same executor.
+/// Writes serialize through an async mutex; concurrent reads panic through RefCell, so use one reader.
 pub struct BtDriver<'d> {
+    /// Shared latched fault; reads and writes return BrokenPipe once set.
     faulted: &'d Cell<bool>,
+    /// Single-reader queue endpoint; borrow is retained while waiting for a packet.
     rx: RefCell<zerocopy_channel::Receiver<'d, NoopRawMutex, BtPacketBuf>>,
+    /// Serialized packet writers; mutex and queue waits may be canceled before publication.
     tx: Mutex<NoopRawMutex, zerocopy_channel::Sender<'d, NoopRawMutex, BtPacketBuf>>,
 }
 
+/// Radio-side HCI queue/ring owner; all methods run under the enclosing bus runner's exclusive ownership.
 pub(crate) struct BtRunner<'d> {
+    /// Host packets awaiting a completed ring write and interrupt toggle.
     pub(crate) tx_chan: zerocopy_channel::Receiver<'d, NoopRawMutex, BtPacketBuf>,
+    /// Controller packets published only after ring consumption is acknowledged.
     rx_chan: zerocopy_channel::Sender<'d, NoopRawMutex, BtPacketBuf>,
 
     // Bluetooth circular buffers
+    /// Firmware-published ring/register base, zero until initialization and otherwise trusted.
     addr: u32,
+    /// Next host TX byte offset, four-byte aligned and modulo 4096.
     h2b_write_pointer: u32,
+    /// Next host RX byte offset, four-byte aligned and modulo 4096.
     b2h_read_pointer: u32,
+    /// Shared terminal fault latch; faulted ring work returns without touching the bus.
     faulted: &'d Cell<bool>,
 }
 
 // HCI command <= 3 + 255 bytes, event <= 2 + 255, linked ACL <= 4 + 251.
 // The largest rounded payload (260) plus indicator (1) fits 272. The GSPI
 // ring header is separate. Larger packets fail explicitly, never truncate.
+/// Per-slot byte capacity including HCI indicator and rounded payload: 272 for Bluetooth-only, otherwise 1024.
 const BT_HCI_MTU: usize = if cfg!(feature = "bluetooth-only") { 272 } else { 1024 };
 
-/// Represents a packet of size MTU.
+/// One initialized HCI packet slot; ring header is separate from this buffer.
 pub(crate) struct BtPacketBuf {
+    /// Meaningful prefix length including one indicator byte; zero is the fault wake sentinel.
     pub(crate) len: usize,
+    /// Fixed storage; TX explicitly zeroes bytes between logical and rounded payload end before transfer.
     pub(crate) buf: [u8; BT_HCI_MTU],
 }
 
 impl BtPacketBuf {
-    /// Create a new packet buffer.
+    /// Returns an empty slot with every storage byte initialized to zero.
     pub const fn new() -> Self {
         Self {
             len: 0,
@@ -78,6 +104,8 @@ impl BtPacketBuf {
     }
 }
 
+/// Initializes queues in `state` and returns exclusive ring-owner and host-transport handles.
+/// The borrow prevents moving/reusing backing arrays while self references exist; old metadata is never reused afterward.
 pub(crate) fn new<'d>(state: &'d mut BtState) -> (BtRunner<'d>, BtDriver<'d>) {
     // safety: this is a self-referential struct, however:
     // - it can't move while the `'d` borrow is active.
@@ -112,6 +140,8 @@ pub(crate) fn new<'d>(state: &'d mut BtState) -> (BtRunner<'d>, BtDriver<'d>) {
 }
 
 impl<'a> BtRunner<'a> {
+    /// Wakes Bluetooth through `bus`, uploads patch `firmware`, initializes rings and announces host readiness.
+    /// Returns Err for invalid patch format; readiness/awake exhaustion or zero ring base panics. Cancellation leaves partial state.
     pub(crate) async fn init_bluetooth(&mut self, bus: &mut impl Bus, firmware: &[u8]) -> Result<(), ()> {
         trace!("init_bluetooth");
         bus.bp_write32(CHIP.bluetooth_base_address + BT2WLAN_PWRUP_ADDR, BT2WLAN_PWRUP_WAKE)
@@ -126,6 +156,9 @@ impl<'a> BtRunner<'a> {
         Ok(())
     }
 
+    /// Validates all `firmware` records before writing through `bus`; returns Err without writes for invalid records.
+    /// Uses a 260-byte scratch array and read-modify-write for neighboring partial words; no readback verification.
+    /// Valid upload cancellation can leave a written prefix and must not be retried as an atomic operation.
     pub(crate) async fn upload_bluetooth_firmware(&mut self, bus: &mut impl Bus, firmware: &[u8]) -> Result<(), ()> {
         let mut firmware = crate::bluetooth_firmware::Firmware::new(firmware, CHIP.bluetooth_base_address)?;
         // A u8-length record can need three prefix bytes plus end rounding.
@@ -149,6 +182,8 @@ impl<'a> BtRunner<'a> {
         Ok(())
     }
 
+    /// Polls firmware-ready through `bus` up to 300 times with 1 ms waits; panics if all attempts fail.
+    /// Bus operations can stall, so this is not a 300 ms wall-clock deadline.
     pub(crate) async fn wait_bt_ready(&mut self, bus: &mut impl Bus) {
         trace!("wait_bt_ready");
         let mut success = false;
@@ -164,6 +199,7 @@ impl<'a> BtRunner<'a> {
         assert!(success == true);
     }
 
+    /// Polls awake state through `bus` up to 300 times with 1 ms waits; panics on exhaustion, with no bus-call deadline.
     pub(crate) async fn wait_bt_awake(&mut self, bus: &mut impl Bus) {
         trace!("wait_bt_awake");
         let mut success = false;
@@ -179,6 +215,7 @@ impl<'a> BtRunner<'a> {
         assert!(success == true);
     }
 
+    /// Sets the host software-ready bit via read-modify-write through `bus`; preserves other observed control bits.
     pub(crate) async fn bt_set_host_ready(&mut self, bus: &mut impl Bus) {
         trace!("bt_set_host_ready");
         let old_val = bus.bp_read32(HOST_CTRL_REG_ADDR).await;
@@ -189,6 +226,7 @@ impl<'a> BtRunner<'a> {
 
     // TODO: use this
     #[allow(dead_code)]
+    /// Sets or clears the host wake request according to `awake` through `bus`; does not itself await an awake acknowledgment.
     pub(crate) async fn bt_set_awake(&mut self, bus: &mut impl Bus, awake: bool) {
         trace!("bt_set_awake");
         let old_val = bus.bp_read32(HOST_CTRL_REG_ADDR).await;
@@ -201,6 +239,7 @@ impl<'a> BtRunner<'a> {
         bus.bp_write32(HOST_CTRL_REG_ADDR, new_val).await;
     }
 
+    /// Toggles the host data-valid interrupt bit through `bus` after completed ring publication/consumption.
     pub(crate) async fn bt_toggle_intr(&mut self, bus: &mut impl Bus) {
         trace!("bt_toggle_intr");
         let old_val = bus.bp_read32(HOST_CTRL_REG_ADDR).await;
@@ -211,6 +250,7 @@ impl<'a> BtRunner<'a> {
 
     // TODO: use this
     #[allow(dead_code)]
+    /// Sets the host data-valid interrupt bit through `bus`; unlike toggle, repeated calls can leave the same level.
     pub(crate) async fn bt_set_intr(&mut self, bus: &mut impl Bus) {
         trace!("bt_set_intr");
         let old_val = bus.bp_read32(HOST_CTRL_REG_ADDR).await;
@@ -218,6 +258,8 @@ impl<'a> BtRunner<'a> {
         bus.bp_write32(HOST_CTRL_REG_ADDR, new_val).await;
     }
 
+    /// Reads the ring base through `bus`, panics if zero, then resets all four shared producer/consumer offsets.
+    /// Assumes a freshly initialized firmware session; does not reconcile already queued device packets.
     pub(crate) async fn init_bt_buffers(&mut self, bus: &mut impl Bus) {
         trace!("init_bt_buffers");
         self.addr = bus.bp_read32(WLAN_RAM_BASE_REG_ADDR).await;
@@ -229,12 +271,15 @@ impl<'a> BtRunner<'a> {
         bus.bp_write32(self.addr + BTSDIO_OFFSET_BT2HOST_OUT, 0).await;
     }
 
+    /// Requests wake through `bus` and waits for awake acknowledgment; does not release the request afterward.
     async fn bt_bus_request(&mut self, bus: &mut impl Bus) {
         // TODO: CYW43_THREAD_ENTER mutex?
         self.bt_set_awake(bus, true).await;
         self.wait_bt_awake(bus).await;
     }
 
+    /// Latches terminal failure, drains TX to wake writers, and publishes an empty RX wake sentinel if space exists.
+    /// Does not advance or repair device rings; subsequent ring service stops until state reconstruction.
     fn fail_transport(&mut self) {
         self.faulted.set(true);
         // Wake blocked writers, and wake a reader even when no packet arrived.
@@ -247,6 +292,10 @@ impl<'a> BtRunner<'a> {
         }
     }
 
+    /// Attempts the queued HCI packet through `bus`; returns without consumption if ring space is insufficient or already faulted.
+    /// Requires a nonempty valid queued packet (otherwise panics). Invalid peer pointers latch fault.
+    /// Header, payload, producer pointer and interrupt publish in order; only then is the queue consumed.
+    /// Cancellation after progress can desynchronize local/device pointers and must not be used to park the owner.
     pub(crate) async fn hci_write(&mut self, bus: &mut impl Bus) {
         if self.faulted.get() {
             return;
@@ -255,7 +304,7 @@ impl<'a> BtRunner<'a> {
 
         // NOTE(unwrap): we only call this when we do have a packet in the queue.
         let buf = self.tx_chan.try_receive().unwrap();
-        debug!("HCI tx: {:02x}", crate::fmt::Bytes(&buf.buf[..buf.len]));
+        debug!("HCI TX: type {}, {} bytes", buf.buf[0], buf.len);
 
         let len = buf.len as u32 - 1; // len doesn't include hci type byte
         let rounded_len = round_up(len, 4);
@@ -315,6 +364,8 @@ impl<'a> BtRunner<'a> {
         self.tx_chan.receive_done();
     }
 
+    /// Returns whether the Bluetooth mailbox bit was observed through `bus`, clearing that bit when set.
+    /// Ring service also polls without this bit to retry packets retained during host-queue backpressure.
     async fn bt_has_work(&mut self, bus: &mut impl Bus) -> bool {
         let int_status = bus.bp_read32(CHIP.sdiod_core_base_address + SDIO_INT_STATUS).await;
         if int_status & I_HMB_FC_CHANGE != 0 {
@@ -328,6 +379,9 @@ impl<'a> BtRunner<'a> {
         return false;
     }
 
+    /// Polls/drains at most four HCI ring packets through `bus`, even without a new IRQ; never waits for host queue capacity.
+    /// Full queues retain device data for retry. Invalid pointer/length/truncated ring data latch terminal fault.
+    /// Copies rounded storage but publishes only indicator plus logical payload. Cancellation can leave partial consumption.
     pub(crate) async fn handle_irq(&mut self, bus: &mut impl Bus) {
         if !self.faulted.get() {
             // Retry a pending ring even after the IRQ was cleared while the
@@ -386,7 +440,7 @@ impl<'a> BtRunner<'a> {
                     .await;
 
                 buf.len = 1 + len as usize;
-                debug!("HCI rx: {:02x}", crate::fmt::Bytes(&buf.buf[..buf.len]));
+                debug!("HCI RX: type {}, {} bytes", buf.buf[0], buf.len);
 
                 self.rx_chan.send_done();
 
@@ -400,11 +454,15 @@ impl<'a> BtRunner<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum Error {
-    /// I/O error.
-    Io(ErrorKind),
+    /// Transport fault, invalid framing/capacity or serialization failure, classified for bt-hci.
+    Io(
+        #[doc = "BrokenPipe for latched transport failure; InvalidInput/Data for capacity/framing; Other for serialization."]
+         ErrorKind,
+    ),
 }
 
 impl From<ReadHciError<Infallible>> for Error {
+    /// Maps decoding error `e` to input/data/pipe classification; returns the transport wrapper without recovery.
     fn from(e: ReadHciError<Infallible>) -> Self {
         match e {
             ReadHciError::BufferTooSmall => Error::Io(ErrorKind::InvalidInput),
@@ -415,6 +473,7 @@ impl From<ReadHciError<Infallible>> for Error {
 }
 
 impl core::fmt::Display for Error {
+    /// Writes Debug classification to `f`; returns formatting success or the sink error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self, f)
     }
@@ -423,10 +482,12 @@ impl core::fmt::Display for Error {
 impl core::error::Error for Error {}
 
 impl<'d> embedded_io_async::ErrorType for BtDriver<'d> {
+    /// Bounded framing and terminal ring-fault errors exposed through HCI transport.
     type Error = Error;
 }
 
 impl embedded_io_async::Error for Error {
+    /// Returns the stored I/O classification unchanged.
     fn kind(&self) -> ErrorKind {
         match self {
             Self::Io(e) => *e,
@@ -435,6 +496,9 @@ impl embedded_io_async::Error for Error {
 }
 
 impl<'d> bt_hci_transport::Transport for BtDriver<'d> {
+    /// Returns a future decoding one complete packet into `rx`; the returned P may borrow those bytes.
+    /// Concurrent reads panic. Cancellation while waiting consumes nothing; ready decoding consumes even malformed packets.
+    /// Capacity/framing errors map to InvalidInput/Data, terminal fault to BrokenPipe; trailing bytes are rejected.
     fn read<'a, P: bt_hci_transport::PacketToHost<'a>>(
         &self,
         rx: &'a mut [u8],
@@ -460,7 +524,9 @@ impl<'d> bt_hci_transport::Transport for BtDriver<'d> {
         }
     }
 
-    /// Write a complete HCI packet from the tx buffer
+    /// Returns a future serializing `val` into a queued slot, or InvalidInput if its reported size exceeds rounded capacity.
+    /// Writers serialize; canceling mutex/queue waits publishes nothing. Ok means queued, not delivered to the controller.
+    /// Faults return BrokenPipe; serialization errors return Other without publishing the partial slot.
     fn write<T: PacketToController>(&self, val: &T) -> impl Future<Output = Result<(), Self::Error>> {
         async {
             // Indicator + rounded payload must fit even on the largest packet.
@@ -488,16 +554,19 @@ impl<'d> bt_hci_transport::Transport for BtDriver<'d> {
     }
 }
 
+/// Returns whether byte `pointer` is four-byte aligned and below the fixed 4096-byte ring capacity.
 fn valid_ring_pointer(pointer: u32) -> bool {
     pointer < BTSDIO_FWBUF_SIZE && pointer % 4 == 0
 }
 
 #[cfg(test)]
 impl BtDriver<'_> {
+    /// Returns the latched transport state for host regressions without bus access.
     pub(crate) fn test_faulted(&self) -> bool {
         self.faulted.get()
     }
 
+    /// Queues one five-byte fixture; panics if the writer mutex or a free slot is unavailable.
     pub(crate) fn queue_test_packet(&self) {
         let mut tx = self.tx.try_lock().unwrap();
         let buf = tx.try_send().unwrap();
@@ -512,6 +581,7 @@ impl BtDriver<'_> {
 mod ring_tests;
 
 #[cfg(test)]
+/// Packet-capacity, fault wakeup, ring-boundary and patch-upload regressions without hardware.
 mod tests {
     extern crate std;
     use embassy_futures::block_on;
@@ -520,7 +590,45 @@ mod tests {
     use crate::regression_tests::MockBus;
     use bt_hci_transport::Transport;
 
+    /// Dropped pending reads release the RefCell borrow; dropped full-queue writes neither consume nor publish slots.
     #[test]
+    fn pending_transport_cancellation_preserves_queue_ownership() {
+        use core::{
+            pin::pin,
+            task::{Context, Waker},
+        };
+        let mut state = BtState::new();
+        let (mut runner, driver) = new(&mut state);
+        let mut rx = [0u8; 259];
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut read = pin!(driver.read::<bt_hci::ControllerToHostPacket<'_>>(&mut rx));
+            assert!(read.as_mut().poll(&mut cx).is_pending());
+        }
+        let packet = runner.rx_chan.try_send().unwrap();
+        packet.len = 3;
+        packet.buf[..3].copy_from_slice(&[4, 0xff, 0]);
+        runner.rx_chan.send_done();
+        assert!(block_on(driver.read::<bt_hci::ControllerToHostPacket<'_>>(&mut rx)).is_ok());
+        for _ in 0..4 {
+            driver.queue_test_packet();
+        }
+        let command = bt_hci::cmd::controller_baseband::Reset::new();
+        {
+            let mut write = pin!(driver.write(&command));
+            assert!(write.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(runner.tx_chan.len(), 4);
+        for _ in 0..4 {
+            runner.tx_chan.receive_done();
+        }
+        block_on(driver.write(&command)).unwrap();
+        assert_eq!(runner.tx_chan.len(), 1);
+        assert_eq!(runner.tx_chan.try_receive().unwrap().len, 4);
+    }
+
+    #[test]
+    /// Largest supported event, linked ACL and command fit the small mode and retain exact logical lengths.
     fn maximum_hci_event_and_linked_acl_fit_bluetooth_only_buffers() {
         let mut state = BtState::new();
         let (mut runner, driver) = new(&mut state);
@@ -554,6 +662,7 @@ mod tests {
     }
 
     #[test]
+    /// Malformed input is consumed and a terminal ring fault wakes both blocked serialized writers and the reader.
     fn malformed_hci_is_consumed_and_fault_wakes_blocked_transport() {
         use core::{
             pin::pin,
@@ -595,6 +704,7 @@ mod tests {
     }
 
     #[test]
+    /// Oversized packet admission fails before publishing a TX slot.
     fn oversized_tx_is_rejected_without_publishing_or_panicking() {
         let mut state = BtState::new();
         let (mut runner, driver) = new(&mut state);
@@ -613,6 +723,7 @@ mod tests {
     }
 
     #[test]
+    /// Invalid pointer, zero/huge payload and incomplete ring records latch fault without consuming device data.
     fn invalid_ring_pointers_and_packet_lengths_fault_without_advancing() {
         for (pointer, length) in [
             (1, 4),
@@ -645,6 +756,7 @@ mod tests {
     }
 
     #[test]
+    /// Maximum fitting payload and header wrap preserve the indicator and unrounded packet length.
     fn maximum_packet_and_ring_wrap_preserve_exact_length() {
         for (start, end, length) in [(0, BT_HCI_MTU as u32, (BT_HCI_MTU - 4) as u32), (4092, 4, 1)] {
             let mut state = BtState::new();
@@ -666,6 +778,7 @@ mod tests {
     }
 
     #[test]
+    /// Host queue backpressure retains the ring packet and later polling delivers it without a new IRQ edge.
     fn full_host_queue_retains_ring_then_retries_without_new_irq() {
         let mut state = BtState::new();
         let (mut runner, driver) = new(&mut state);
@@ -687,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    /// Maximum 255-byte patch record plus three prefix bytes fits the 260-byte word-alignment scratch.
     fn firmware_record_alignment_handles_largest_record() {
         let mut state = BtState::new();
         let (mut runner, _) = new(&mut state);
@@ -698,6 +812,7 @@ mod tests {
     }
 
     #[test]
+    /// Truncated patch headers/records return errors without panic or device writes.
     fn firmware_rejects_truncation_without_panicking_or_writing() {
         for firmware in [&[][..], &[255], &[1, 0], &[1, 0, 1, 4, 0, 0, 0, 1]] {
             let mut state = BtState::new();
@@ -712,6 +827,7 @@ mod tests {
     }
 
     #[test]
+    /// A malformed later patch record prevents writes of earlier otherwise-valid records.
     fn firmware_validates_later_records_before_any_write() {
         let mut state = BtState::new();
         let (mut runner, _) = new(&mut state);
@@ -723,6 +839,7 @@ mod tests {
     }
 
     #[test]
+    /// Every start alignment and short/maximum record preserves bytes on both sides of the intended patch.
     fn firmware_upload_preserves_both_neighbouring_word_fragments() {
         for offset in 0..4u8 {
             for len in [1, 2, 3, 4, 254, 255u8] {

@@ -5,20 +5,26 @@ use embedded_graphics::prelude::RgbColor;
 use crate::colors::BLACK;
 use crate::render::CELL_COUNT;
 
+/// Fixed decorative color fade duration in monotonic milliseconds.
 const COLOR_TRANSITION_DURATION_MS: u32 = 300;
 
+/// Returns warning blink phase for `elapsed_ms`: on for the first200ms of each400ms cycle.
 pub const fn blink_on(elapsed_ms: u64) -> bool { (elapsed_ms / 200).is_multiple_of(2) }
 
 /// Shared motion preference. Explicit warning blink has an independent clock.
 #[derive(Clone, Copy, Debug)]
 pub struct MotionPolicy {
+    /// True disables decorative transitions and numeric smoothing, not explicit warning blinking.
     reduced: bool,
 }
 impl MotionPolicy {
+    /// Returns policy for the user's `reduced` motion preference.
     pub const fn new(reduced: bool) -> Self { Self { reduced } }
 
+    /// Returns whether decorative trajectories may animate instead of snapping.
     pub const fn decorative(self) -> bool { !self.reduced }
 
+    /// Returns `configured` smoothing milliseconds when motion is enabled, otherwise zero.
     pub const fn smoothing_ms(
         self,
         configured: u16,
@@ -27,15 +33,21 @@ impl MotionPolicy {
     }
 }
 
+/// One RGB565 trajectory, interpolated from a fixed origin to avoid per-frame quantization drift.
 #[derive(Clone, Copy)]
 struct Transition {
+    /// Quantized color at the most recent target change.
     from: Rgb565,
+    /// Last evaluated quantized output color.
     current: Rgb565,
+    /// Requested destination color.
     target: Rgb565,
+    /// Target-change time in monotonic milliseconds.
     started_ms: u64,
 }
 
 impl Transition {
+    /// Stationary black trajectory at time zero.
     const IDLE: Self = Self {
         from: BLACK,
         current: BLACK,
@@ -43,6 +55,9 @@ impl Transition {
         started_ms: 0,
     };
 
+    /// Evaluates at `now_ms` from the fixed origin, clamping elapsed to0..=300ms.
+    /// Returns whether quantized output changed; RGB channels round once with widened
+    /// arithmetic. Caller normally rejects time reversal before reaching this helper.
     fn advance(
         &mut self,
         now_ms: u64,
@@ -70,12 +85,16 @@ impl Transition {
     }
 }
 
+/// Eight bounded decorative fades driven by elapsed time, never rendered frame count.
 pub struct ColorTransition {
+    /// Independent cell trajectories in visible-slot order.
     cells: [Transition; CELL_COUNT],
+    /// Last admitted shared update/target time; None before the first operation.
     last_update_ms: Option<u64>,
 }
 
 impl ColorTransition {
+    /// Returns eight stationary black cells with no accepted clock observation.
     pub const fn new() -> Self {
         Self {
             cells: [Transition::IDLE; CELL_COUNT],
@@ -83,6 +102,8 @@ impl ColorTransition {
         }
     }
 
+    /// Returns true after accepting nondecreasing `now_ms` milliseconds; reversal
+    /// returns false without lowering the retained clock.
     fn accept_time(
         &mut self,
         now_ms: u64,
@@ -94,6 +115,9 @@ impl ColorTransition {
         true
     }
 
+    /// Retargets visible `cell_idx` to `target` at monotonic `now_ms`. Returns true
+    /// only for a changed target with valid slot/time, first evaluating the old path
+    /// at this instant. Invalid slot/reversal rejects; unchanged target still admits time.
     pub fn set_target(
         &mut self,
         cell_idx: usize,
@@ -116,6 +140,8 @@ impl ColorTransition {
         true
     }
 
+    /// Returns last evaluated color for `cell_idx`, or BLACK for an out-of-range slot;
+    /// does not advance the trajectory.
     pub fn get_current(
         &self,
         cell_idx: usize,
@@ -125,6 +151,8 @@ impl ColorTransition {
 
     /// Decorative transitions snap under reduced motion. Warning blink is not
     /// routed through this policy, including configured LED adapters.
+    /// `now_ms` is monotonic milliseconds and `policy` selects animate/snap. Returns
+    /// the eight-bit changed-cell mask; reversed time yields zero without mutation.
     pub fn update_with_policy(
         &mut self,
         now_ms: u64,
@@ -148,6 +176,8 @@ impl ColorTransition {
         changed
     }
 
+    /// Evaluates all fades at monotonic `now_ms` milliseconds and returns a changed-
+    /// cell bitmask. Reversal returns zero unchanged; stalls of300ms or more finish trajectories.
     pub fn update(
         &mut self,
         now_ms: u64,
@@ -166,5 +196,6 @@ impl ColorTransition {
 }
 
 impl Default for ColorTransition {
+    /// Returns stationary black cells, as new.
     fn default() -> Self { Self::new() }
 }

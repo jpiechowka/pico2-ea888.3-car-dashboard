@@ -10,20 +10,34 @@ use super::{Phase, StartupProfile, StartupStatus, StartupTheme};
 use crate::display::St7789Renderer;
 use crate::vehicle_status::VehicleStatus;
 
+/// Dark blue-black RGB565 outline/background ink.
 const INK: Rgb565 = Rgb565::new(1, 3, 5);
+/// Warm off-white RGB565 status text.
 const WHITE: Rgb565 = Rgb565::new(29, 60, 28);
+/// Gold RGB565 highlights and decorative indicators.
 const GOLD: Rgb565 = Rgb565::new(31, 43, 5);
+/// Cyan RGB565 status accent and illustrated droplets.
 const CYAN: Rgb565 = Rgb565::new(3, 53, 28);
+/// Blue RGB565 character fill.
 const BLUE: Rgb565 = Rgb565::new(3, 19, 31);
+/// Red RGB565 artwork accent, unrelated to live warning evaluation.
 const RED: Rgb565 = Rgb565::new(29, 7, 5);
 
 #[derive(Clone, Copy)]
+/// Caller-owned initialization facts displayed without initiating acquisition or I/O.
 pub struct StartupFacts {
+    /// Already classified acquisition/adapter state; demo is explicitly labeled synthetic.
     pub vehicle: VehicleStatus,
+    /// Configuration admission succeeded rather than requiring fallback.
     pub config_ok: bool,
+    /// Persistent preferences were loaded instead of defaults.
     pub settings_loaded: bool,
+    /// Configured source count; displayed as selection evidence, never ECU qualification.
     pub configured_sources: u8,
 }
+/// Fills `d` with color `c` at landscape-reference (`x`, `y`) and size (`w`, `h`) pixels.
+/// Portrait scales dimensions/coordinates by 3/4 and adds a 60-pixel vertical offset;
+/// height has a one-pixel minimum there. Inputs are bounded scene literals; target clips edges.
 fn rect(
     d: &mut St7789Renderer<'_>,
     x: i32,
@@ -42,6 +56,8 @@ fn rect(
     .into_styled(PrimitiveStyle::with_fill(c))
     .draw(d);
 }
+/// Draws color `c` from reference endpoints `a` to `b` into `d`; `width` is an
+/// unscaled target-pixel stroke. Endpoints follow portrait coordinate mapping.
 fn line(
     d: &mut St7789Renderer<'_>,
     a: (i32, i32),
@@ -53,6 +69,8 @@ fn line(
         .into_styled(PrimitiveStyle::with_stroke(c, width))
         .draw(d);
 }
+/// Fills a circle of `diameter` reference pixels at top-left (`x`, `y`) in color `c`
+/// into `d`. Portrait scales its center and diameter together to keep concentric rings aligned.
 fn disk(
     d: &mut St7789Renderer<'_>,
     x: i32,
@@ -78,6 +96,8 @@ fn disk(
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d);
 }
+/// Fills the reference-coordinate triangle `a`, `b`, `c` in `color` into `d`,
+/// applying the shared portrait coordinate mapping and framebuffer clipping.
 fn tri(
     d: &mut St7789Renderer<'_>,
     a: (i32, i32),
@@ -93,6 +113,9 @@ fn tri(
     .into_styled(PrimitiveStyle::with_fill(color))
     .draw(d);
 }
+/// Centers `value` at reference baseline `y` in `color` on `d`; `big` selects
+/// 10x20 rather than 6x10 glyphs. Portrait maps the baseline and splits the exact
+/// skip/recovery hint onto two fixed rows. Fonts are not geometrically scaled.
 fn text(
     d: &mut St7789Renderer<'_>,
     value: &str,
@@ -122,6 +145,10 @@ fn text(
     )
     .draw(d);
 }
+/// Returns an integer triangular offset for time `t` and nonzero even `period`
+/// in milliseconds, spanning `-amplitude..=amplitude` reference pixels.
+/// Private callers use small positive `amplitude` and period >=2; other values
+/// can divide by zero, overflow, or exceed the stated range for odd periods.
 fn wave(
     t: u32,
     period: u32,
@@ -132,6 +159,11 @@ fn wave(
     (if p < half { p } else { period as i32 - p }) * amplitude * 2 / half - amplitude
 }
 
+/// Clears and draws startup `phase` directly into `d` using `profile` and supplied
+/// status `facts`. `elapsed` is phase-relative milliseconds; splash loops every
+/// 2000 ms or freezes at 1999 ms, while `reduced_motion` fixes its artwork at 1200 ms.
+/// Dashboard only clears the buffer. Custom theme draws an unavailable label here;
+/// callers use the asset decoder separately. No transfer, waiting or acquisition occurs.
 pub fn draw(
     d: &mut St7789Renderer<'_>,
     phase: Phase,
@@ -214,13 +246,16 @@ pub fn draw(
     text(d, "TAP TO SKIP  /  HOLD Y TO RECOVER", 231, INK, false);
 }
 
+/// Returns whether `d` uses the 240x320 logical portrait framebuffer geometry.
 fn portrait(d: &St7789Renderer<'_>) -> bool { d.geometry() == dashboard_config::Geometry::Portrait }
+/// Returns bounded reference coordinate `x` mapped into `d`: portrait uses integer `3*x/4`.
 fn px(
     d: &St7789Renderer<'_>,
     x: i32,
 ) -> i32 {
     if portrait(d) { x * 3 / 4 } else { x }
 }
+/// Returns bounded reference coordinate `y` mapped into `d`: portrait uses integer `3*y/4 + 60`.
 fn py(
     d: &St7789Renderer<'_>,
     y: i32,
@@ -228,13 +263,20 @@ fn py(
     if portrait(d) { y * 3 / 4 + 60 } else { y }
 }
 
+/// Full-white artwork background/occlusion color.
 const PAPER: Rgb565 = Rgb565::WHITE;
+/// Pale gray-green RGB565 metal highlights and smoke.
 const MIST: Rgb565 = Rgb565::new(27, 56, 28);
+/// Midtone RGB565 metal surfaces and text.
 const STEEL: Rgb565 = Rgb565::new(16, 35, 19);
+/// Brown RGB565 worn panels and accent strokes.
 const RUST: Rgb565 = Rgb565::new(22, 19, 8);
 
 // Sparse vector strokes keep headlines crisp at both native geometries without
 // storing raster artwork or allocating an intermediate surface.
+/// Centers sparse vector glyphs from ASCII `value` in `color` into `d`, with
+/// bounded reference `top`/`height` pixels. Unknown bytes advance as blank glyphs;
+/// caller supplies short scene literals so coordinate arithmetic remains bounded.
 fn headline(
     d: &mut St7789Renderer<'_>,
     value: &str,
@@ -379,6 +421,9 @@ fn headline(
     }
 }
 
+/// Scan-fills a concave five-point star in `color` on `d`, centered at reference
+/// (`x`, `y`) with positive bounded `radius` pixels. Uses at most ten crossings per
+/// row; no intermediate image or heap allocation is needed.
 fn star(
     d: &mut St7789Renderer<'_>,
     x: i32,
@@ -386,6 +431,7 @@ fn star(
     radius: i32,
     color: Rgb565,
 ) {
+    /// Alternating outer/inner star vertices in hundredths of the requested radius.
     const POINTS: [(i32, i32); 10] = [
         (0, -100),
         (22, -31),
@@ -422,6 +468,8 @@ fn star(
         }
     }
 }
+/// Draws the cheat-code headline and progressively filled five stars into `d`
+/// at bounded cycle time `t` in `0..2000` milliseconds.
 fn aezakmi(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -440,6 +488,8 @@ fn aezakmi(
     text(d, "CHEAT CODE ACCEPTED", 205, INK, false);
 }
 
+/// Draws the turbo volute, rotating seven-blade illustration and airflow into `d`
+/// at cycle time `t` in `0..2000` milliseconds; no measured turbo state is used.
 fn turbo(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -456,6 +506,7 @@ fn turbo(
     disk(d, 117, 80, 86, PAPER);
     disk(d, 121, 84, 78, INK);
     disk(d, 125, 88, 70, STEEL);
+    /// Sixteen reference-pixel offsets around the illustrated compressor hub.
     const ROTOR: [(i32, i32); 16] = [
         (0, -30),
         (11, -28),
@@ -502,6 +553,8 @@ fn turbo(
     }
     text(d, "MORE AIR. MORE QUESTIONABLE DECISIONS.", 207, INK, false);
 }
+/// Draws the blue running character and bounded foot/body motion into `d`
+/// at cycle time `t` in `0..2000` milliseconds.
 fn sanic(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -552,6 +605,8 @@ fn sanic(
         line(d, (x + 2, 207), (x + 32, 207), 3, INK);
     }
 }
+/// Draws BOOST BRO artwork and an unnumbered decorative pressure dial into `d`
+/// at cycle time `t` in `0..2000` milliseconds; the needle is not telemetry.
 fn boost(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -571,6 +626,8 @@ fn boost(
     line(d, (36, 184), (112, 184), 2, MIST);
     line(d, (208, 184), (284, 184), 2, MIST);
 }
+/// Draws the worn hatchback, rotating wheels and moving road dashes into `d`
+/// at cycle time `t` in `0..2000` milliseconds.
 fn lambo(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -616,6 +673,8 @@ fn lambo(
     }
 }
 
+/// Draws three independently phased smoke wisps into `d` around bounded reference
+/// (`x`, `y`) pixels using cycle time `t` in `0..2000` milliseconds.
 fn smoke(
     d: &mut St7789Renderer<'_>,
     x: i32,
@@ -631,6 +690,7 @@ fn smoke(
         disk(d, sx + 4, y - rise - 3, 11 + i as u32 * 3, PAPER);
     }
 }
+/// Draws the fixed decorative skull into `d` with reference top-left (`x`, `y`) pixels.
 fn skull(
     d: &mut St7789Renderer<'_>,
     x: i32,
@@ -645,6 +705,8 @@ fn skull(
         line(d, (x + dx, y + 19), (x + dx, y + 23), 1, INK);
     }
 }
+/// Draws the swinging incense burner, linked chains and smoke into `d`
+/// at cycle time `t` in `0..2000` milliseconds.
 fn machine_spirit(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -692,6 +754,7 @@ fn machine_spirit(
     rect(d, cx - 10, 199, 20, 4, GOLD);
     text(d, "HAVE YOU TRIED MORE INCENSE?", 215, INK, false);
 }
+/// Draws left-aligned 6x10 `value` text in `color` into `d` at reference baseline (`x`, `y`) pixels.
 fn label_at(
     d: &mut St7789Renderer<'_>,
     value: &str,
@@ -706,6 +769,8 @@ fn label_at(
     )
     .draw(d);
 }
+/// Draws the illustrated priest, fictional terminal and blinking artwork lamps into
+/// `d` at cycle time `t` in `0..2000` milliseconds; text is unrelated to runtime diagnostics.
 fn ritual_diagnostics(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -760,6 +825,8 @@ fn ritual_diagnostics(
     rect(d, 244, 179, 28, 4, INK);
     text(d, "PRAISE THE OMNISSIAH", 215, INK, false);
 }
+/// Draws the red vehicle, driver, wheel rotation and exhaust flame into `d`
+/// at cycle time `t` in `0..2000` milliseconds.
 fn red_goes_fasta(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -821,11 +888,15 @@ fn red_goes_fasta(
     text(d, "MORE DAKKA. LESS TRACTION.", 215, INK, false);
 }
 
+/// Draws the robed character and levitating compressor artwork into `d`
+/// at cycle time `t` in `0..2000` milliseconds.
 fn boost_padawan(
     d: &mut St7789Renderer<'_>,
     t: u32,
 ) {
+    /// RGB565 green character skin and decorative motion marks.
     const SAGE: Rgb565 = Rgb565::new(15, 39, 10);
+    /// RGB565 pale robe fabric.
     const ROBE: Rgb565 = Rgb565::new(27, 49, 20);
     headline(d, "MORE BOOST", 25, 26, INK);
     text(d, "YOU NEED, YOUNG PADAWAN.", 72, INK, false);
@@ -901,6 +972,8 @@ fn boost_padawan(
     text(d, "THE SPOOL IS STRONG WITH THIS ONE", 215, INK, false);
 }
 
+/// Draws uneven character line art, moving drool and a small spinning turbo into
+/// `d` at cycle time `t` in `0..2000` milliseconds.
 fn turbo_brainlet(
     d: &mut St7789Renderer<'_>,
     t: u32,
@@ -993,6 +1066,7 @@ fn turbo_brainlet(
     disk(d, 205, 126 + bob, 48, INK);
     disk(d, 208, 129 + bob, 42, MIST);
     disk(d, 213, 134 + bob, 32, INK);
+    /// Eight reference-pixel blade endpoints around the small compressor hub.
     const DIRECTIONS: [(i32, i32); 8] = [(0, -13), (9, -9), (13, 0), (9, 9), (0, 13), (-9, 9), (-13, 0), (-9, -9)];
     for blade in 0..4 {
         let n = (blade * 2 + (t / 85) as usize) % 8;

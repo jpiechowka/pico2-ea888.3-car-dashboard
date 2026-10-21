@@ -2,19 +2,32 @@
 use super::*;
 
 #[derive(Clone, Copy)]
+/// Typed widget setting family routed through one validated update adapter.
 enum Setting {
+    /// Primary unit/readout, synchronized with the legacy AFR display flag.
     Readout,
+    /// Optional fixed boost companion unit.
     Secondary,
+    /// Peak marker selection: off, maximum or minimum.
     Peak,
+    /// Reference marker mode, retaining its stored manual value.
     Reference,
+    /// Warning ordering priority, independent of qualification.
     Priority,
 }
 
+/// Returns `setting`'s selector for widget `id` in `ui` with visible `label`.
+/// Readouts filter by channel; inactive marker/secondary options remain repairable
+/// in invalid drafts. Panics if the selected widget is absent at component creation.
 #[component]
 fn WidgetChoice(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
+    /// Visible selector label and field-registry binding label.
     label: &'static str,
+    /// Advanced widget setting family read and updated by this selector.
     setting: Setting,
 ) -> impl IntoView {
     let channel = ui.widget(id).expect("selected widget").channel;
@@ -97,11 +110,18 @@ fn WidgetChoice(
     }
 }
 
+/// Returns a preset selector for raw `field` in `ui` with `label` and value/label
+/// `options`. Unknown current text selects Custom, which focuses/selects the raw input
+/// without changing it; preset values use current raw repair authority.
 #[component]
 fn Preset(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Raw parser target receiving preset text or focus for custom repair.
     field: RawField,
+    /// Visible preset selector label.
     label: &'static str,
+    /// Ordered serialized text and display-label pairs; Custom is appended automatically.
     options: Vec<(String, String)>,
 ) -> impl IntoView {
     let known = options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
@@ -115,9 +135,13 @@ fn Preset(
     })/> }
 }
 
+/// Returns readout and smoothing controls for widget `id` in `ui`, retaining canonical
+/// thresholds/history while changing presentation. Panics if the widget is absent on mount.
 #[component]
 pub fn DisplayControls(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
     let channel = ui.widget(id).expect("selected widget").channel;
@@ -135,9 +159,13 @@ pub fn DisplayControls(
     }
 }
 
+/// Returns marker/reference/band controls for widget `id` in `ui`; inactive values
+/// remain retained and bounded for repair, and manual references are not ECU targets.
 #[component]
 pub fn GaugeControls(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
     view! {
@@ -151,9 +179,14 @@ pub fn GaugeControls(
     }
 }
 
+/// Returns up to three band editors for widget `id` in `ui`. Add proposes the next
+/// channel-domain third from the last maximum and applies only a valid bounded Band;
+/// removal and raw repairs use shared reducer validation without silently dropping bands.
 #[component]
 fn BandControls(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
     view! {
@@ -180,9 +213,14 @@ fn BandControls(
     }
 }
 
+/// Returns window, priority, latch and snooze controls for widget `id` in `ui`.
+/// Invalid drafts expose high-bound repair fields; shared validation requires reachable
+/// onboard acknowledgement and canonical thresholds independent of presentation units.
 #[component]
 pub fn WarningControls(
+    /// Shared candidate editor and guarded widget/raw repair adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
     view! {

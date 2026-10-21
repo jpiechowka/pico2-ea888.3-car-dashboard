@@ -1,9 +1,12 @@
+//! BLE editor admission and synthetic adapter-parser regressions; no radio or ECU traffic.
+
 use dashboard_configurator::ble::*;
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::field_registry::*;
 
 #[test]
+/// Only six colon-separated hexadecimal octets parse, with uppercase display and no whitespace/sign substitutions.
 fn address_is_strict_display_order() {
     let address = [0xC1, 2, 3, 4, 5, 6];
     assert_eq!(parse_address("c1:02:03:04:05:06"), Some(address));
@@ -21,6 +24,7 @@ fn address_is_strict_display_order() {
     }
 }
 #[test]
+/// Enabling without a valid peer retains an invalid draft; address repair admits one undoable configuration.
 fn rejected_enable_is_repairable_and_one_undo_transaction() {
     let mut editor = Editor::default();
     let original = editor.export_binary().unwrap();
@@ -54,6 +58,7 @@ fn rejected_enable_is_repairable_and_one_undo_transaction() {
     assert_eq!(editor.export_binary().unwrap(), accepted);
 }
 #[test]
+/// Repairing a peer or disabling BLE cannot silently discard a separate invalid timing draft.
 fn malformed_peer_and_timing_survive_other_repairs_and_disable() {
     let mut e = Editor::default();
     let initial = e.accepted_config_key();
@@ -77,6 +82,7 @@ fn malformed_peer_and_timing_survive_other_repairs_and_disable() {
     assert_eq!(e.preview().config().ble.poll_gap_ms, 10);
 }
 #[test]
+/// BLE fields are registry-searchable and complete projects preserve profile, peer address/type and settings.
 fn ble_fields_are_searchable_and_project_round_trip_preserves_selection() {
     let mut e = Editor::default();
     let ble = BleSettings {
@@ -98,6 +104,7 @@ fn ble_fields_are_searchable_and_project_round_trip_preserves_selection() {
     assert_eq!(decode(decoded.dashboard_bytes()).unwrap().config().ble, ble);
 }
 
+/// Returns a synthetic enabled simulator for `profile` with a fixed random-static peer; creates no radio connection.
 fn simulator(profile: BleProfile) -> dashboard_configurator::ble_simulator::BleSimulator {
     dashboard_configurator::ble_simulator::BleSimulator::new(BleSettings {
         enabled: true,
@@ -110,6 +117,8 @@ fn simulator(profile: BleProfile) -> dashboard_configurator::ble_simulator::BleS
     })
 }
 #[test]
+/// MC+/CX reach adapter-ready while TestPeer is synthetic-ready; fragmented replies share the parser and latency
+/// accounting.
 fn simulator_uses_profile_gate_and_fragmented_shared_parser() {
     use dashboard_core::ble::link::LinkState;
     for (profile, state) in [
@@ -130,6 +139,7 @@ fn simulator_uses_profile_gate_and_fragmented_shared_parser() {
     }
 }
 #[test]
+/// Notification loss/timeout disconnect and retire streams; old epochs cannot finish a newly active transaction.
 fn simulator_faults_retire_stream_and_old_epochs_cannot_complete_new_work() {
     use dashboard_core::ble::session::Error;
     let mut sim = simulator(BleProfile::TestPeer);
@@ -153,6 +163,7 @@ fn simulator_faults_retire_stream_and_old_epochs_cannot_complete_new_work() {
     assert!(!sim.connected());
 }
 #[test]
+/// Disabled default settings deny synthetic connection without incrementing completed transactions.
 fn simulator_disabled_default_never_starts_a_session() {
     let mut sim = dashboard_configurator::ble_simulator::BleSimulator::new(BleSettings::DEFAULT);
     assert!(sim.connect().is_err());

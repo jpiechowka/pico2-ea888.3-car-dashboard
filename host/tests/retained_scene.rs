@@ -1,3 +1,5 @@
+//! Retained framebuffer/cache parity against complete renders across timed state, navigation and identity changes.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
@@ -6,6 +8,7 @@ use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Debug/Logs repaint arbitrary prior buffers, preserve footer counters and leave no diagnostic glyphs on Dashboard.
 #[test]
 fn diagnostic_screens_clear_both_prior_histories_and_logs_hints_preserve_counters() {
     use dashboard_host_validation::debug_view::{DebugData, DebugLine, DebugPage};
@@ -91,6 +94,7 @@ fn diagnostic_screens_clear_both_prior_histories_and_logs_hints_preserve_counter
     }
 }
 
+/// Extreme/shortened boost text stays within its cell and erases all previously longer glyphs.
 #[test]
 fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     let mut model = AcquisitionModel::demo();
@@ -136,6 +140,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     assert!(frame.0 == clean.0, "long glyphs must not survive a shorter value");
 }
 
+/// Peak/trend deadlines dirty the oil cell with an unchanged snapshot and preserve full-render parity.
 #[test]
 fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     let mut model = AcquisitionModel::demo();
@@ -173,6 +178,7 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     }
 }
 
+/// Both buffer caches ignore rounded-away precision but dirty boost for a unit change; invalid buffer IDs fail open.
 #[test]
 fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     let mut model = AcquisitionModel::demo();
@@ -224,6 +230,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     assert!(cache.prepare(99, &scene).clear); // invalid caller fails open
 }
 
+/// Replays 240 changing frames through both retained buffers and sparse panel patches, comparing every completed image.
 #[test]
 fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_change() {
     let mut model = AcquisitionModel::demo();
@@ -309,6 +316,7 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
     }
 }
 
+/// Publicly constructed snapshots without origin proof force all eight cells dirty on every physical buffer.
 #[test]
 fn public_untracked_snapshots_force_each_physical_buffer_dirty() {
     use dashboard_host_validation::acquisition::DashboardSnapshot;
@@ -353,6 +361,8 @@ fn public_untracked_snapshots_force_each_physical_buffer_dirty() {
     }
 }
 
+/// Independent histories, reassigned channels, changed configuration and statistics reset cannot reuse stale raster
+/// identity.
 #[test]
 fn identities_cover_independent_histories_channel_reassignment_and_config_republication() {
     use dashboard_host_validation::configured_scene::Layout;

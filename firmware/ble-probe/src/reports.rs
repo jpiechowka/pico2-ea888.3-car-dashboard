@@ -3,6 +3,12 @@ use bt_hci::param::{AddrKind, LeAdvEventKind, LeAdvReport, LeAdvReports};
 use bt_hci::{FromHciBytes, FromHciBytesError};
 use dashboard_core::discovery::{Advertisement, Event, Peer, ReportKind, ScanErrorKind, ScanFailure};
 
+/// Decodes counted legacy HCI `reports` for optional scan `revision` at
+/// boot-relative `at_ms`. None ignores the batch. Calls `on_report` for admitted
+/// public/random connectable/directed/scan-response records, converting address
+/// byte order and copying bounded raw payload evidence. Calls `on_error` once at
+/// the first malformed record, preserving the valid prefix and numeric cursor
+/// evidence; it never guesses past a corrupt record or retains borrowed bytes.
 pub fn parse_reports(
     revision: Option<u32>,
     reports: LeAdvReports<'_>,
@@ -64,18 +70,23 @@ pub fn parse_reports(
 }
 
 #[cfg(not(test))]
+/// Core0 HCI callback adapter whose current generation enables report admission.
 pub struct Reports {
+    /// Active scan revision; None suppresses reports outside an acknowledged scan.
     revision: core::cell::Cell<Option<u32>>,
 }
 
 #[cfg(not(test))]
 impl Reports {
+    /// Returns a report sink with scanning disabled until set_revision supplies a token.
     pub fn new() -> Self {
         Self {
             revision: core::cell::Cell::new(None),
         }
     }
 
+    /// Sets scan `revision`, or None before stopping/cleaning up the old scan.
+    /// The field is core0-only; owned events carry the token across cores.
     pub fn set_revision(
         &self,
         revision: Option<u32>,
@@ -86,6 +97,8 @@ impl Reports {
 
 #[cfg(not(test))]
 impl trouble_host::prelude::EventHandler for Reports {
+    /// Parses borrowed `reports` under the active revision, queues bounded owned
+    /// events, and records malformed-batch counters/faults without blocking on UI.
     fn on_adv_report_data(
         &self,
         reports: LeAdvReports<'_>,

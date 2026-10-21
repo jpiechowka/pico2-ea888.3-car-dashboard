@@ -7,28 +7,31 @@ use crate::codec::{Decode, Encode, Error};
 
 /// Not a byte writer. It is just a cursor to track where a byte slice is being written.
 pub struct WriteCursor<'d> {
+    /// Current committed/read byte position, bounded by backing slice length.
     pos: usize,
+    /// Exclusive destination storage; uncommitted bytes may contain previous data.
     data: &'d mut [u8],
 }
 
 impl<'d> WriteCursor<'d> {
-    /// Creates a new write cursor at the beginning of the data.
+    /// Returns a cursor at offset zero over exclusive `data`, without clearing bytes.
     pub fn new(data: &'d mut [u8]) -> Self {
         Self { pos: 0, data }
     }
 
-    /// Rewinds the cursor back to the beginning of the buffer.
+    /// Resets the committed position to zero without clearing backing bytes.
     pub fn reset(&mut self) {
         self.pos = 0;
     }
 
-    /// Moves the cursor back to the specified position from the start. This can only rewind the cursor.
+    /// Rewinds to absolute byte `npos`, clamping forward requests to the current position.
     pub fn truncate(&mut self, npos: usize) {
         self.pos = self.pos.min(npos);
     }
 
     /// Split the remaining writable bytes into two cursors. The parent position
     /// is unchanged; commit the combined written length after both are dropped.
+    /// Returns cursors for the next `nbytes` and remaining tail, or InsufficientSpace without change.
     pub fn split(&mut self, nbytes: usize) -> Result<(WriteCursor<'_>, WriteCursor<'_>), Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
@@ -41,7 +44,7 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
-    /// Append byte slice
+    /// Appends `data` and advances on success; returns InsufficientSpace without writing if it cannot fit.
     pub fn append(&mut self, data: &[u8]) -> Result<(), Error> {
         if self.available() < data.len() {
             Err(Error::InsufficientSpace)
@@ -52,7 +55,8 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
-    /// Write fixed sized type
+    /// Encodes owned `data` into exactly its reported size and returns success after advancing.
+    /// Short capacity does not write; encoder errors retain position but may have modified bytes.
     pub fn write<E: Encode>(&mut self, data: E) -> Result<(), Error> {
         if self.available() < data.size() {
             Err(Error::InsufficientSpace)
@@ -63,7 +67,8 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
-    /// Write fixed sized type
+    /// Serializes borrowed HCI `data` and returns success after advancing by its reported size.
+    /// Any HCI write failure maps to InsufficientSpace; bytes can change while position stays fixed.
     pub fn write_hci<E: WriteHci>(&mut self, data: &E) -> Result<(), Error> {
         if self.available() < data.size() {
             Err(Error::InsufficientSpace)
@@ -75,6 +80,8 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
+    /// Encodes borrowed `data` and returns success after advancing by its size.
+    /// Capacity/codec failure leaves position unchanged; codec failure may leave partial bytes.
     pub fn write_ref<E: Encode>(&mut self, data: &E) -> Result<(), Error> {
         if self.available() < data.size() {
             Err(Error::InsufficientSpace)
@@ -85,12 +92,13 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
-    /// Obtain a mutable slice of the remaining writable buffer, be sure to [commit] bytes written.
+    /// Returns uncommitted writable bytes; call [`Self::commit`] to advance after writing.
     pub fn write_buf(&mut self) -> &mut [u8] {
         &mut self.data[self.pos..]
     }
 
-    /// Commits the specified length to the buffer, data may be written there through the [write_buf] method.
+    /// Advances by `len` bytes written through [`Self::write_buf`], without validating their contents.
+    /// Returns InsufficientSpace without advancing when the requested count exceeds remaining capacity.
     pub fn commit(&mut self, len: usize) -> Result<(), Error> {
         if self.available() < len {
             Err(Error::InsufficientSpace)
@@ -119,16 +127,22 @@ impl<'d> WriteCursor<'d> {
 #[derive(Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
+/// Borrowed source cursor; decoders must report a consumed size within their supplied input.
 pub struct ReadCursor<'d> {
+    /// Current committed/read byte position, bounded by backing slice length.
     pos: usize,
+    /// Immutable source storage retained for borrowed decoded values.
     data: &'d [u8],
 }
 
 impl<'d> ReadCursor<'d> {
+    /// Returns a cursor at offset zero over `data`.
     pub fn new(data: &'d [u8]) -> Self {
         Self { pos: 0, data }
     }
 
+    /// Returns the next decoded value and advances by its reported size; codec error retains position.
+    /// A decoder violating its size contract can make later cursor operations panic.
     pub fn read<T: Decode<'d>>(&mut self) -> Result<T, Error> {
         let src = &self.data[self.pos..];
         let val = T::decode(src)?;
@@ -136,6 +150,7 @@ impl<'d> ReadCursor<'d> {
         Ok(val)
     }
 
+    /// Returns the next `nbytes` and advances, or InsufficientSpace without changing position.
     pub fn slice(&mut self, nbytes: usize) -> Result<&'d [u8], Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
@@ -146,18 +161,23 @@ impl<'d> ReadCursor<'d> {
         }
     }
 
+    /// Returns unread byte count, assuming the decoder size contract has held.
     pub fn available(&self) -> usize {
         self.data.len() - self.pos
     }
 
+    /// Returns the number of bytes consumed since creation/reset.
     pub fn len(&self) -> usize {
         self.pos
     }
 
+    /// Consumes the cursor and returns the unread suffix, including an empty suffix at end.
     pub fn remaining(self) -> &'d [u8] {
         &self.data[self.pos..]
     }
 
+    /// Consumes the cursor and returns only the next `nbytes`, or InsufficientSpace.
+    /// Any remaining tail is not included in the returned slice.
     pub fn consume(self, nbytes: usize) -> Result<&'d [u8], Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
@@ -166,16 +186,19 @@ impl<'d> ReadCursor<'d> {
         }
     }
 
+    /// Rewinds to the original source start; previously returned borrows remain valid.
     pub fn reset(&mut self) {
         self.pos = 0;
     }
 }
 
 #[cfg(test)]
+/// Regression coverage for split borrowing, capacity admission and explicit parent commit.
 mod tests {
     use super::*;
 
     #[test]
+    /// Split writes preserve the old prefix and require explicit combined parent commit.
     fn split_preserves_written_prefix_and_parent_position() {
         let mut bytes = [0; 6];
         let mut cursor = WriteCursor::new(&mut bytes);
@@ -189,6 +212,7 @@ mod tests {
     }
 
     #[test]
+    /// Oversized and empty splits preserve the bounded parent cursor.
     fn split_checks_remaining_capacity_without_changing_cursor() {
         let mut bytes = [0; 3];
         let mut cursor = WriteCursor::new(&mut bytes);

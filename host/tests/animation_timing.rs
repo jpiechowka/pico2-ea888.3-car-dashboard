@@ -1,7 +1,9 @@
+//! Elapsed-time animation invariants across repaint cadence, stalls and long uptimes.
 use dashboard_host_validation::animations::{ColorTransition, blink_on};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 
+/// Different repaint steps reach identical midpoint/end colours at the same 150/300ms elapsed times.
 #[test]
 fn fade_is_identical_at_equal_elapsed_time_for_fast_slow_and_stalled_paints() {
     for step in [1, 7, 14, 17, 25, 50, 150, 300] {
@@ -20,6 +22,7 @@ fn fade_is_identical_at_equal_elapsed_time_for_fast_slow_and_stalled_paints() {
     }
 }
 
+/// Idle time precedes the new transition; repeating its target cannot extend the 300ms deadline.
 #[test]
 fn idle_time_is_not_charged_to_new_target_and_same_target_does_not_restart() {
     let mut fade = ColorTransition::new();
@@ -35,6 +38,7 @@ fn idle_time_is_not_charged_to_new_target_and_same_target_does_not_restart() {
     assert_eq!(fade.update(10_300), 0);
 }
 
+/// Retargeting samples the old mathematical trajectory even without paints; other cells retain their own origin.
 #[test]
 fn retarget_evaluates_original_trajectory_and_cells_keep_separate_start_times() {
     let mut fade = ColorTransition::new();
@@ -52,6 +56,7 @@ fn retarget_evaluates_original_trajectory_and_cells_keep_separate_start_times() 
     assert_eq!(fade.get_current(1), Rgb565::GREEN);
 }
 
+/// Backward timestamps leave colour/target unchanged; large forward gaps complete without replay or wrap.
 #[test]
 fn old_clocks_cannot_retarget_or_rewind_and_long_stalls_finish_the_fade() {
     let mut fade = ColorTransition::new();
@@ -68,6 +73,7 @@ fn old_clocks_cannot_retarget_or_rewind_and_long_stalls_finish_the_fade() {
     assert_eq!(fade.get_current(1), Rgb565::WHITE);
 }
 
+/// Checks inclusive/exclusive 200ms blink boundaries and phase arithmetic beyond u32 uptime.
 #[test]
 fn blink_keeps_exact_phase_across_u32_uptime_and_skipped_frames() {
     for base in [0, 4_294_967_200] {
@@ -81,6 +87,7 @@ fn blink_keeps_exact_phase_across_u32_uptime_and_skipped_frames() {
     assert!(blink_on(u64::MAX));
 }
 
+/// Ten-millisecond synthetic steps remain distinct after long uptimes and all channels retain finite nominal bounds.
 #[test]
 fn demo_does_not_freeze_acquisition_steps_after_days_of_uptime() {
     use dashboard_host_validation::demo;
@@ -112,6 +119,7 @@ fn demo_does_not_freeze_acquisition_steps_after_days_of_uptime() {
     }
 }
 
+/// Reduced motion immediately completes decorative colour/smoothing while warning blink remains time-driven.
 #[test]
 fn reduced_motion_snaps_decorative_fades_without_disabling_warning_blink() {
     use dashboard_host_validation::animations::MotionPolicy;

@@ -1,3 +1,5 @@
+//! Cache identity exhaustion reporting and non-reuse across sources, channels and resets.
+/// Actual firmware one-shot reporting adapter compiled on the host.
 #[path = "../../firmware/pico2/src/cache_reporting.rs"]
 mod firmware_reporting;
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
@@ -8,6 +10,7 @@ use dashboard_host_validation::cache_diagnostics::{
 };
 use dashboard_host_validation::view_config::Channel;
 
+/// Each cause consumes one reporting opportunity across acquisition replacement/reset until reporter restart.
 #[test]
 fn reporting_lifetime_consumes_failed_sink_attempts_once_per_cause() {
     let mut seen = CacheExhaustionSeen::default();
@@ -50,6 +53,8 @@ fn reporting_lifetime_consumes_failed_sink_attempts_once_per_cause() {
     );
 }
 
+/// Equal values never alias independent source/channel histories; duplicate ingestion preserves identity and reset
+/// changes it.
 #[test]
 fn independent_origins_and_reset_do_not_reuse_graph_identity() {
     let mut first = AcquisitionModel::demo();
@@ -75,6 +80,7 @@ fn independent_origins_and_reset_do_not_reuse_graph_identity() {
     assert_eq!(DashboardSnapshot::EMPTY.sensors[0].graph_cache_identity(), None);
 }
 
+/// Two issuer and eight channel causes have distinct bits and fit the existing 40-byte firmware log budget.
 #[test]
 fn all_cause_messages_fit_the_existing_firmware_log_and_have_ten_distinct_bits() {
     let causes = [Cause::ConfigIssuer, Cause::AcquisitionIssuer]

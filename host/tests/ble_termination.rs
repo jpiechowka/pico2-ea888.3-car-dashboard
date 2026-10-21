@@ -1,8 +1,10 @@
+//! BLE teardown classification and exact bounded disconnect logs across all HCI reason bytes.
 use dashboard_core::ble::link::{LinkFault, closed_fault, log_disconnect};
 use dashboard_core::ble::termination::normal_reason;
 use dashboard_core::logging::{Level, LogStore};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
+/// Only intentional maintenance with normal 0x13/0x16 teardown and no ingress fault suppresses transport failure.
 #[test]
 fn only_normal_terminal_reasons_can_admit_intentional_maintenance() {
     for reason in (0..=u8::MAX).map(Some).chain([None]) {
@@ -29,6 +31,7 @@ fn only_normal_terminal_reasons_can_admit_intentional_maintenance() {
     }
 }
 
+/// Specific operation failures survive every maintenance, disconnect-reason and local-ingress combination.
 #[test]
 fn maintenance_and_normal_teardown_never_erase_a_specific_operation_failure() {
     for fault in [
@@ -51,6 +54,7 @@ fn maintenance_and_normal_teardown_never_erase_a_specific_operation_failure() {
     }
 }
 
+/// All reason bytes/unknown values and maximal epochs fit complete logs with appropriate severity and timestamp.
 #[test]
 fn termination_log_retains_raw_reason_unknown_and_epoch_without_truncation() {
     let store = LogStore::<CriticalSectionRawMutex>::new();

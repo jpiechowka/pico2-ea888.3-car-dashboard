@@ -1,6 +1,9 @@
+//! Control-map repair and synthetic callback/input authority regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
+/// Asserts `editor` cannot export JSON/binary or begin persistence while its draft is inadmissible.
 fn assert_exports_blocked(editor: &mut Editor) {
     assert!(editor.export_json().is_err());
     assert!(editor.export_binary().is_err());
@@ -8,6 +11,7 @@ fn assert_exports_blocked(editor: &mut Editor) {
 }
 
 #[test]
+/// Unreachable screen routes stay inspectable and block export until repaired back to accepted bytes.
 fn broken_routes_remain_editable_until_repaired() {
     let mut editor = Editor::new(default_config()).unwrap();
     let accepted = editor.export_binary().unwrap();
@@ -23,6 +27,7 @@ fn broken_routes_remain_editable_until_repaired() {
 }
 
 #[test]
+/// Hold-time repairs retain rejected bindings, retire old tokens and publish the repaired map as one undoable edit.
 fn hold_repairs_preserve_rejected_bindings_and_stale_tokens_are_blocked() {
     let mut editor = Editor::new(default_config()).unwrap();
     let mut map = editor.editing_config().controls;
@@ -54,6 +59,7 @@ fn hold_repairs_preserve_rejected_bindings_and_stale_tokens_are_blocked() {
 }
 
 #[test]
+/// Illegal dwell, reserved Y hold, screen actions and unreachable routes remain repairable but cannot serialize.
 fn every_rejected_control_kind_can_be_repaired_and_never_serialized() {
     let mut maps = Vec::new();
     let mut map = ControlMap {
@@ -90,6 +96,7 @@ fn every_rejected_control_kind_can_be_repaired_and_never_serialized() {
 }
 
 #[test]
+/// Map/hold repairs preserve unrelated raw warning failures; final repair admits all changes in one history step.
 fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers() {
     let mut editor = Editor::default();
     editor
@@ -154,6 +161,7 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
 }
 
 #[test]
+/// Repair can add existing fields to a rejected map, while missing IDs leave its draft unchanged.
 fn rejected_map_allows_new_existing_fields_but_rejects_missing_targets() {
     let mut editor = Editor::default();
     editor
@@ -190,6 +198,7 @@ fn rejected_map_allows_new_existing_fields_but_rejects_missing_targets() {
 }
 
 #[test]
+/// Repairing warning text or hold time preserves separate invalid map/fuel settings until those are repaired.
 fn retained_raw_repair_does_not_drop_another_rejected_setting() {
     let mut editor = Editor::default();
     editor
@@ -240,6 +249,7 @@ fn retained_raw_repair_does_not_drop_another_rejected_setting() {
 }
 
 #[test]
+/// Frozen v1/v2 imports acquire current default controls; undo restores the pre-import customized map.
 fn historical_imports_receive_default_controls_in_the_editor() {
     for bytes in [
         include_bytes!("../../crates/dashboard-config/tests/fixtures/v1-default.json").as_slice(),
@@ -259,6 +269,7 @@ fn historical_imports_receive_default_controls_in_the_editor() {
     }
 }
 #[test]
+/// Callback ownership rejects another source, retired generations and absent source identity, while recapture works.
 fn callback_lifecycle_retires_hidden_cleanup_and_source_changed_work() {
     use dashboard_configurator::simulator::CallbackGate;
     let mut gate = CallbackGate::new();
@@ -279,6 +290,7 @@ fn callback_lifecycle_retires_hidden_cleanup_and_source_changed_work() {
 }
 
 #[test]
+/// Actual accepted editor identity invalidates a callback even before its reactive simulator source updates.
 fn callback_admission_rejects_changed_editor_before_reactive_source_sync() {
     use dashboard_configurator::editor::{Edit, Editor};
     use dashboard_configurator::simulator::{CallbackGate, ControlSimulator};
@@ -295,6 +307,7 @@ fn callback_admission_rejects_changed_editor_before_reactive_source_sync() {
 }
 
 #[test]
+/// Over-byte-limit visible text blocks prior admitted channel/reset values until explicitly repaired.
 fn rejected_visible_utf8_text_cannot_dispatch_previous_channel_or_reset_value() {
     use dashboard_configurator::config::*;
     use dashboard_configurator::simulator::{BoundedText, ControlSimulator};
@@ -332,6 +345,7 @@ fn rejected_visible_utf8_text_cannot_dispatch_previous_channel_or_reset_value() 
 }
 
 #[test]
+/// Scenario time follows active elapsed milliseconds across callback frequencies and excludes paused intervals.
 fn scenario_active_elapsed_clock_does_not_count_callbacks_or_hidden_interval() {
     use dashboard_configurator::config::*;
     use dashboard_configurator::simulator::{ControlSimulator, Scenario};

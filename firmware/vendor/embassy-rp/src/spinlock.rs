@@ -1,6 +1,11 @@
+//! Affine SIO hardware-spinlock guards; lock numbering must be coordinated across all users.
 use crate::pac;
 
-pub struct Spinlock<const N: usize>(core::marker::PhantomData<()>)
+/// Owned claim of hardware lock `N`; drop releases it. Valid hardware indices are 0..32.
+pub struct Spinlock<const N: usize>(
+    /// Zero-sized ownership witness; no protected data is stored here.
+    core::marker::PhantomData<()>,
+)
 where
     Spinlock<N>: SpinlockValid;
 
@@ -34,12 +39,14 @@ impl<const N: usize> Drop for Spinlock<N>
 where
     Spinlock<N>: SpinlockValid,
 {
+    /// Releases this guard's hardware claim.
     fn drop(&mut self) {
         // This is safe because we own the object, and hence hold the lock.
         unsafe { Self::release() }
     }
 }
 
+/// Marks one of the 32 hardware lock indices; callers must still respect subsystem reservations.
 pub trait SpinlockValid {}
 impl SpinlockValid for Spinlock<0> {}
 impl SpinlockValid for Spinlock<1> {}

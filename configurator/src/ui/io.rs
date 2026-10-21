@@ -1,3 +1,4 @@
+//! Browser local storage, preset lock ownership and bounded file import/download adapters.
 use dashboard_configurator::event_adapters::{
     ImportFailure,
     TransferFailure,
@@ -10,8 +11,11 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 use super::*;
 
+/// Legacy localStorage dashboard envelope key, superseded by complete-project IDB storage.
 pub const STORAGE_KEY: &str = "ea888-view-studio-v1";
 
+/// Returns quota/permission/unavailable classification for native `error`; unknown
+/// exceptions remain unavailable instead of being treated as empty storage.
 pub(super) fn storage_error(error: JsValue) -> StorageFailure {
     match error.dyn_ref::<web_sys::DomException>().map(|e| e.name()).as_deref() {
         Some("QuotaExceededError") => StorageFailure::Quota,
@@ -20,6 +24,8 @@ pub(super) fn storage_error(error: JsValue) -> StorageFailure {
     }
 }
 
+/// Returns origin localStorage, preserving permission/quota classification and treating
+/// missing window/storage as unavailable. Access may fail even when the API exists.
 pub(super) fn storage() -> Result<web_sys::Storage, StorageFailure> {
     web_sys::window()
         .ok_or(StorageFailure::Unavailable)?
@@ -28,6 +34,8 @@ pub(super) fn storage() -> Result<web_sys::Storage, StorageFailure> {
         .ok_or(StorageFailure::Unavailable)
 }
 
+/// Returns `input` text only within `limit` UTF-8 bytes, first bounding UTF-16 code units
+/// to avoid copying an arbitrarily large JS string. Reflection/type/size failure returns None.
 pub(super) fn bounded_input(
     input: &web_sys::HtmlInputElement,
     limit: u32,
@@ -43,6 +51,9 @@ pub(super) fn bounded_input(
     let text = value.as_string()?;
     (text.len() <= limit as usize).then_some(text)
 }
+/// Returns current preset JSON, None for a missing key, or a classified storage error.
+/// Oversized JS/UTF-8 values become a bounded oversize marker for model rejection; no
+/// unbounded JS string is copied wholesale into the preset model.
 fn preset_observation() -> Result<Option<String>, StorageFailure> {
     let storage = storage()?;
     // Read as a JS string first so oversized cross-tab records are never copied
@@ -70,6 +81,8 @@ fn preset_observation() -> Result<Option<String>, StorageFailure> {
     }
     Ok(Some(text))
 }
+/// Returns restored in-memory presets plus read status, distinguishing unavailable,
+/// corrupt and exhausted storage from a valid empty store; never overwrites saved bytes.
 pub(super) fn restore_presets() -> (PresetStore, Result<(), StorageIssue>) {
     let observation = preset_observation();
     let failure = observation.as_ref().err().copied();
@@ -82,6 +95,8 @@ pub(super) fn restore_presets() -> (PresetStore, Result<(), StorageIssue>) {
     };
     (store, result)
 }
+/// Publishes `ui`'s settled preset status as a read outcome when `reading`, otherwise
+/// as a write outcome. Dirty/saving and old write failures during reads are ignored.
 pub(super) fn report_preset_status(
     ui: Ui,
     reading: bool,
@@ -109,6 +124,8 @@ pub(super) fn report_preset_status(
         }
     }
 }
+/// Rereads actual stored presets into `ui`'s observation model and reports read status;
+/// conflicts preserve local edits rather than trusting possibly delayed storage-event values.
 pub(super) fn presets_changed(ui: Ui) {
     let current = preset_observation();
     if let Err(failure) = current.as_ref() {
@@ -117,6 +134,8 @@ pub(super) fn presets_changed(ui: Ui) {
     let _ = ui.presets.try_update(|store| store.observe(current));
     report_preset_status(ui, true);
 }
+/// Explicitly attempts reload of stored presets into `ui`, retaining model-defined
+/// failure behavior and reporting read/error state without writing storage.
 pub(super) fn reload_presets(ui: Ui) {
     let observation = preset_observation();
     let mut attempt = None;
@@ -131,6 +150,10 @@ pub(super) fn reload_presets(ui: Ui) {
     }
 }
 
+/// Returns legacy restored editor, notice, observed saved envelope and read status.
+/// Invalid/unavailable data falls back to defaults without overwriting storage. Migrates
+/// a bounded separate startup profile only when the envelope has no startup property.
+/// Legacy getItem reads allocate the browser string before codec bounds are checked.
 pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
     let (mut editor, mut notice, saved, status) =
         match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
@@ -185,8 +208,12 @@ pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
     #[wasm_bindgen::prelude::wasm_bindgen(extends=js_sys::Object)]
+    /// Narrow caught binding to navigator.locks while web-sys gates the typed API.
     type DraftLocks;
     #[wasm_bindgen::prelude::wasm_bindgen(method,catch,js_name=request)]
+    /// Returns the lock-request Promise from manager `this` for `name`, with native
+    /// `options` (including abort signal) and `callback` invoked while held; synchronous
+    /// Web Locks exceptions are returned. Caller retains callback until settlement.
     fn request_preset_lock(
         this: &DraftLocks,
         name: &str,
@@ -194,11 +221,14 @@ extern "C" {
         callback: &js_sys::Function,
     ) -> Result<js_sys::Promise, JsValue>;
 }
+/// Returns a native AbortController created through reflection, or its JS failure.
 fn preset_abort() -> Result<js_sys::Object, JsValue> {
     let constructor =
         js_sys::Reflect::get(&js_sys::global(), &"AbortController".into())?.dyn_into::<js_sys::Function>()?;
     js_sys::Reflect::construct(&constructor, &js_sys::Array::new())?.dyn_into()
 }
+/// Invalidates preset-save authority in `ui` and aborts any queued lock request;
+/// native abort lookup/call failures are ignored and the controller slot is cleared.
 pub(super) fn cancel_presets(ui: Ui) {
     let _ = ui.presets.try_update(PresetStore::cancel);
     if let Some(Some(controller)) = ui.preset_abort.try_get_value()
@@ -210,6 +240,11 @@ pub(super) fn cancel_presets(ui: Ui) {
     let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
 }
 
+/// Captures `ui`'s preset write, using `replace` for explicit observed-record replacement.
+/// One queued writer holds callback ownership until Web Lock settlement; cancellation
+/// invalidates its token and aborts acquisition. Inside the lock it rereads/checks the
+/// saved base before localStorage setItem. Failures retain memory presets and report status;
+/// this path has no acquisition timeout, so callers may cancel a blocked write explicitly.
 pub(super) fn save_presets(
     ui: Ui,
     replace: bool,
@@ -313,6 +348,8 @@ pub(super) fn save_presets(
         drop(callback);
     });
 }
+/// Serializes `ui`'s memory presets and starts a JSON download; serialization/download
+/// failures emit notices without changing memory or saved state.
 pub(super) fn export_presets(ui: Ui) {
     match ui.presets.with_untracked(PresetStore::export) {
         Ok(text) => {
@@ -327,6 +364,9 @@ pub(super) fn export_presets(ui: Ui) {
         }
     }
 }
+/// Reads bounded preset `file` into `ui`'s memory store only while its captured version
+/// remains current. One file read is admitted at a time; stale completions are ignored.
+/// Browser/size/schema failures preserve the old list; success still requires explicit save.
 pub(super) fn import_presets(
     ui: Ui,
     file: web_sys::File,
@@ -384,6 +424,7 @@ pub(super) fn import_presets(
     });
 }
 
+/// Emits bounded import classification for `result` through `ui`, without including file payloads.
 fn preset_import_notice(
     ui: Ui,
     result: Result<(), PresetError>,
@@ -409,6 +450,8 @@ fn preset_import_notice(
     });
 }
 
+/// Marks `ui` conflicted, emits a read/write outcome selected by `reading`, and offers
+/// export or explicit replacement without mutating current editor values.
 fn conflict(
     ui: Ui,
     reading: bool,
@@ -426,6 +469,8 @@ fn conflict(
     );
 }
 
+/// Before complete-project storage is ready, compares actual legacy bytes with `ui`
+/// observations and reports conflict/failure. After readiness, legacy events are ignored.
 pub fn storage_changed(ui: Ui) {
     if ui.project_store.ready.get_untracked() {
         return;
@@ -438,6 +483,8 @@ pub fn storage_changed(ui: Ui) {
     }
 }
 
+/// Delegates `ui`'s complete-project save with explicit overwrite authority `replace`;
+/// serialization, coalescing and transaction acknowledgement belong to project_io.
 pub fn save(
     ui: Ui,
     replace: bool,
@@ -445,6 +492,11 @@ pub fn save(
     super::project_io::save(ui, replace);
 }
 
+/// Starts a browser download in `ui` named `name`, with MIME `mime` and copied `bytes`.
+/// Returns success after anchor activation and cleanup scheduling, not disk persistence.
+/// At most 16 live URLs are retained; DOM/Blob/URL/timer failures return JS errors.
+/// URLs revoke after two seconds or owner disposal; timer failure revokes immediately
+/// even though the browser download may already have started.
 pub(super) fn download(
     ui: Ui,
     name: &str,
@@ -504,11 +556,15 @@ pub(super) fn download(
     result
 }
 
+/// Shared object-URL owner with idempotent revocation across timers and UI teardown.
 struct DownloadUrl {
+    /// Browser-created blob URL, never a filesystem path.
     url: String,
+    /// Ensures native revocation is attempted at most once.
     revoked: std::cell::Cell<bool>,
 }
 impl DownloadUrl {
+    /// Marks revoked and attempts native URL release once, ignoring browser errors.
     fn revoke(&self) {
         if !self.revoked.replace(true) {
             let _ = web_sys::Url::revoke_object_url(&self.url);
@@ -516,17 +572,24 @@ impl DownloadUrl {
     }
 }
 impl Drop for DownloadUrl {
+    /// Releases the URL if no earlier timer/disposal path did so.
     fn drop(&mut self) { self.revoke(); }
 }
 #[derive(Default)]
-pub(super) struct Downloads(Vec<std::rc::Rc<DownloadUrl>>);
+/// UI-owned bounded pool whose teardown revokes URLs even while timer clones survive.
+pub(super) struct Downloads(
+    /// At most 16 active download URL owners.
+    Vec<std::rc::Rc<DownloadUrl>>,
+);
 impl Drop for Downloads {
+    /// Revokes every retained URL before dropping the pool.
     fn drop(&mut self) {
         for url in &self.0 {
             url.revoke();
         }
     }
 }
+/// Revokes `owned` and removes its exact Rc identity from `ui`'s pool; disposed pool is ignored.
 fn release_download(
     ui: Ui,
     owned: &std::rc::Rc<DownloadUrl>,
@@ -537,6 +600,9 @@ fn release_download(
         .try_update_value(|pool| pool.0.retain(|url| !std::rc::Rc::ptr_eq(url, owned)));
 }
 
+/// Exports `ui`'s admitted dashboard as JSON when `json`, otherwise binary EAV.
+/// Startup/artwork are omitted and the notice says so. Readiness/codec/download failures
+/// preserve state and report an event; success records host timing and initiated download.
 pub fn export(
     ui: Ui,
     json: bool,
@@ -604,6 +670,11 @@ pub fn export(
     }
 }
 
+/// Reads `file` for `ui` after metadata size/readiness admission and captures an import
+/// token. EAVP extension grants the project byte bound; other names use the JSON bound
+/// before magic/extension format detection. A single materialization lease bounds source
+/// copies. Read/decode/backing failures retain accepted state; stale completions cannot
+/// publish. Complete project originals are externalized before reducer publication.
 fn import_file(
     ui: Ui,
     file: web_sys::File,
@@ -720,6 +791,9 @@ fn import_file(
     });
 }
 
+/// Admits `bytes` of `format` into `ui` using exact import `token`; returns reducer
+/// success and reports bounded diagnostics. Stale/invalid data cannot replace accepted
+/// state; successful configuration import emits grouped accepted-field feedback.
 fn complete_import(
     ui: Ui,
     token: ImportToken,
@@ -739,8 +813,14 @@ fn complete_import(
     success
 }
 
+/// Returns `ui`'s complete/dashboard export, bounded import and retained JSON controls.
+/// Readiness locks snapshots while repairs remain in the JSON editor; file input is
+/// cleared after selection so the same file can be retried. No I/O starts on render.
 #[component]
-pub fn Files(ui: Ui) -> impl IntoView {
+pub fn Files(
+    /// Shared accepted project, persistence state and guarded import/export operations.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Studio project files"</h3><p>"Keep a complete project to preserve dashboard views, startup settings and original artwork. Only the converted animation enters firmware."</p>
 

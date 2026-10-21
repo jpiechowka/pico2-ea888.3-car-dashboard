@@ -1,7 +1,11 @@
+//! Editor transaction, repair, identity, migration and serialization regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+/// Accepted configuration identity advances on canonical transitions, including undo/redo back to old bytes, and is
+/// unique to its editor owner.
 fn accepted_configuration_key_tracks_canonical_transitions_instead_of_current_content() {
     let mut editor = Editor::default();
     let first = editor.accepted_config_key();
@@ -24,6 +28,8 @@ fn accepted_configuration_key_tracks_canonical_transitions_instead_of_current_co
 }
 
 #[test]
+/// Selection, rejected/discarded drafts and equal-content imports can advance editor revisions without changing
+/// accepted configuration identity.
 fn accepted_configuration_key_ignores_selection_noop_import_and_repaired_draft_activity() {
     let mut editor = Editor::default();
     let first = editor.accepted_config_key();
@@ -61,6 +67,8 @@ fn accepted_configuration_key_ignores_selection_noop_import_and_repaired_draft_a
 }
 
 #[test]
+/// JSON import preserves negative zero and changes canonical configuration identity despite floating-point numeric
+/// equality.
 fn signed_zero_import_changes_configuration_key_and_keeps_canonical_bytes() {
     let mut editor = Editor::default();
     let before = editor.accepted_config_key();
@@ -81,6 +89,8 @@ fn signed_zero_import_changes_configuration_key_and_keeps_canonical_bytes() {
 }
 
 #[test]
+/// Read-only inspection leaves active pointer/import ownership intact and snapshot admission reports that actual
+/// blocker.
 fn snapshot_admission_reports_actual_pointer_and_import_blockers() {
     let mut editor = Editor::default();
     let mut invalid = default_config();
@@ -107,6 +117,8 @@ fn snapshot_admission_reports_actual_pointer_and_import_blockers() {
 }
 
 #[test]
+/// Graph repair controls remain available through style changes or graph disabling; full repair commits the accumulated
+/// draft once.
 fn review_widget_repair_visibility_keeps_graph_fields_across_style_and_graph_disable() {
     let fields = [WidgetField::GraphMinimum, WidgetField::GraphMaximum];
     let mut c = default_config();
@@ -152,6 +164,7 @@ fn review_widget_repair_visibility_keeps_graph_fields_across_style_and_graph_dis
 }
 
 #[test]
+/// Typed invalid gauge, graph and warning values expose the correct repair controls even without retained raw text.
 fn review_widget_repair_visibility_reveals_inactive_typed_errors_without_raw_text() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -198,6 +211,7 @@ fn review_widget_repair_visibility_reveals_inactive_typed_errors_without_raw_tex
 }
 
 #[test]
+/// Disabling a warning cannot hide its invalid raw timing; repairing the value admits the combined edit once.
 fn review_disabling_warning_keeps_its_retained_raw_fields_repairable() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -227,6 +241,8 @@ fn review_disabling_warning_keeps_its_retained_raw_fields_repairable() {
 }
 
 #[test]
+/// Battery window-to-direct warning transitions restore correct hysteresis polarity, clear unused high bounds and
+/// remain individually undoable.
 fn review_battery_window_restores_both_direct_polarities_atomically() {
     for window in [LimitMode::OutsideWindow, LimitMode::InsideWindow] {
         for direct in [LimitMode::High, LimitMode::Low] {
@@ -280,6 +296,8 @@ fn review_battery_window_restores_both_direct_polarities_atomically() {
 }
 
 #[test]
+/// Fixed-range raw errors prevent switching their parent to Auto until repaired, without advancing revision on rejected
+/// parent changes.
 fn review_fixed_graph_raw_fields_keep_their_parent_and_repair_path() {
     for (field, text) in [(WidgetField::GraphMinimum, "-0.4"), (WidgetField::GraphMaximum, "4.4")] {
         let mut c = default_config();
@@ -338,6 +356,8 @@ fn review_fixed_graph_raw_fields_keep_their_parent_and_repair_path() {
 }
 
 #[test]
+/// Fuel variant changes cannot remove retained invalid fields; all pending repairs commit together and retire old
+/// callbacks.
 fn review_fuel_raw_fields_keep_their_variant_and_commit_complete_repairs_once() {
     let mut common = Blend::illustrative();
     common.density_reference = DensityReference::CommonCelsius(20.);
@@ -414,6 +434,7 @@ fn review_fuel_raw_fields_keep_their_variant_and_commit_complete_repairs_once() 
 }
 
 #[test]
+/// Typing into a nonexistent band field fails before creating raw state or advancing revision.
 fn raw_band_targets_must_exist_before_accepting_the_keystroke() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -435,6 +456,8 @@ fn raw_band_targets_must_exist_before_accepting_the_keystroke() {
 }
 
 #[test]
+/// Band deletion remaps remaining raw fields, timing repairs preserve combined edits, and accepted global changes
+/// retire async work.
 fn advanced_raw_fields_globals_and_band_removal_preserve_atomic_history() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -541,6 +564,7 @@ fn advanced_raw_fields_globals_and_band_removal_preserve_atomic_history() {
 }
 
 #[test]
+/// A fourth band is rejected atomically; view duplication copies accepted advanced settings under fresh widget IDs.
 fn fourth_band_rejection_does_not_mutate_widget_or_editor_and_duplicates_copy_settings() {
     let mut e = Editor::default();
     let mut w = e.preview().config().widgets[0].clone();
@@ -572,6 +596,7 @@ fn fourth_band_rejection_does_not_mutate_widget_or_editor_and_duplicates_copy_se
 }
 
 #[test]
+/// Window mode presets and return to direct thresholds each form one reversible transaction with unused bounds cleared.
 fn advanced_window_mode_presets_switch_and_undo_as_one_operation() {
     let mut e = Editor::default();
     let original = e.preview().clone();
@@ -602,6 +627,7 @@ fn advanced_window_mode_presets_switch_and_undo_as_one_operation() {
 }
 
 #[test]
+/// Typed repairs can resolve retained advanced errors while unrelated raw text remains intact until repaired.
 fn advanced_rejected_widget_repairs_atomically_without_losing_raw_text() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -645,6 +671,7 @@ fn advanced_rejected_widget_repairs_atomically_without_losing_raw_text() {
 }
 
 #[test]
+/// A retained latch error accepts numeric repair and commits once controls provide a reachable acknowledgment route.
 fn typed_warning_failure_can_be_repaired_with_a_new_numeric_field() {
     let mut e = Editor::default();
     e.select(Selection {
@@ -670,6 +697,7 @@ fn typed_warning_failure_can_be_repaired_with_a_new_numeric_field() {
 }
 
 #[test]
+/// The frozen v1 saved envelope migrates its schema while retaining custom label and widget selection.
 fn saved_v1_migrates_layout_labels_and_selection_without_changing_boot_view() {
     let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../crates/dashboard-config/tests/fixtures/v1-default.json"
@@ -688,6 +716,7 @@ fn saved_v1_migrates_layout_labels_and_selection_without_changing_boot_view() {
 }
 
 #[test]
+/// Nonfinite gauge limits remain diagnostic-only until a valid raw repair restores export.
 fn invalid_gauge_limits_are_visible_repairable_and_never_exported() {
     let mut editor = Editor::default();
     editor
@@ -714,6 +743,8 @@ fn invalid_gauge_limits_are_visible_repairable_and_never_exported() {
 }
 
 #[test]
+/// High/Low transitions swap trigger and clear thresholds reversibly; an unsupported lambda mode preserves accepted
+/// state.
 fn warning_direction_changes_preserve_hysteresis_and_undo_atomically() {
     let mut editor = Editor::default();
     for id in [1, 3, 5, 8] {
@@ -768,12 +799,14 @@ fn warning_direction_changes_preserve_hysteresis_and_undo_atomically() {
     assert_eq!(editor.preview(), &before);
 }
 
+/// Returns a validated default editor with no widgets; panics if the fixture configuration is rejected.
 fn empty() -> Editor {
     let mut config = default_config();
     config.widgets.clear();
     Editor::new(config).unwrap()
 }
 
+/// Returns a placement with zero-based cell `column` and `row` and requested `span`, without validating bounds.
 fn placement(
     column: u8,
     row: u8,
@@ -782,6 +815,8 @@ fn placement(
     Placement { column, row, span }
 }
 
+/// Adds an Oil widget to the selected view in `editor` at cell `column`/`row` with `span`; returns its selected ID and
+/// panics on failed admission.
 fn add(
     editor: &mut Editor,
     column: u8,
@@ -799,6 +834,8 @@ fn add(
 }
 
 #[test]
+/// Invalid placement retains a repairable draft and retires callbacks while preserving accepted bytes/history; discard
+/// restores accepted selection.
 fn rejected_move_and_resize_preserve_document_but_retire_callbacks_and_block_export() {
     let mut editor = empty();
     let first = add(&mut editor, 0, 0, Span::OneByOne);
@@ -869,6 +906,8 @@ fn rejected_move_and_resize_preserve_document_but_retire_callbacks_and_block_exp
 }
 
 #[test]
+/// Duplication preserves content under fresh IDs, and deletion repairs boot/selection references without allowing the
+/// last view to disappear.
 fn duplicate_and_delete_preserve_fields_assign_new_ids_and_repair_boot_and_selection() {
     let mut editor = empty();
     let widget = add(&mut editor, 0, 0, Span::TwoByOne);
@@ -927,6 +966,7 @@ fn duplicate_and_delete_preserve_fields_assign_new_ids_and_repair_boot_and_selec
 }
 
 #[test]
+/// Maximum view/widget capacity round-trips; further duplication fails without revision or identity changes.
 fn capacity_failure_is_atomic_and_ids_do_not_renumber_existing_objects() {
     let mut editor = Editor::default();
     for n in 2..=8 {
@@ -962,6 +1002,7 @@ fn capacity_failure_is_atomic_and_ids_do_not_renumber_existing_objects() {
 }
 
 #[test]
+/// View ordering determines wrapped selection after deletion and is restored through history.
 fn ordered_views_wrap_selection_on_delete_and_reordering_is_undoable() {
     let mut editor = empty();
     editor.apply(Edit::AddView { name: "Second".into() }).unwrap();
@@ -982,6 +1023,7 @@ fn ordered_views_wrap_selection_on_delete_and_reordering_is_undoable() {
 }
 
 #[test]
+/// History retains the latest 32 edits, and a new accepted branch clears redo availability.
 fn undo_is_bounded_and_a_new_accepted_edit_discards_redo() {
     let mut editor = empty();
     for n in 1..=40 {
@@ -1009,6 +1051,8 @@ fn undo_is_bounded_and_a_new_accepted_edit_discards_redo() {
 }
 
 #[test]
+/// Missing IDs and invalid typed values cannot replace accepted configuration; valid fuel input updates the canonical
+/// ratio.
 fn selection_and_typed_edits_reject_dangling_ids_and_invalid_values() {
     let mut editor = Editor::default();
     assert_eq!(
@@ -1052,6 +1096,8 @@ fn selection_and_typed_edits_reject_dangling_ids_and_invalid_values() {
 }
 
 #[test]
+/// An incomplete numeric field blocks conflicting actions and export while preserving accepted state; valid completion
+/// creates one undo entry.
 fn partial_numeric_text_is_retained_without_replacing_preview_or_allowing_export() {
     let mut editor = Editor::default();
     editor
@@ -1100,6 +1146,7 @@ fn partial_numeric_text_is_retained_without_replacing_preview_or_allowing_export
 }
 
 #[test]
+/// Hysteresis fields admit together once consistent, and explicit raw discard retires delayed field events.
 fn interdependent_invalid_fields_commit_together_and_explicit_discard_cancels_old_events() {
     let mut editor = Editor::default();
     editor
@@ -1148,6 +1195,8 @@ fn interdependent_invalid_fields_commit_together_and_explicit_discard_cancels_ol
 }
 
 #[test]
+/// Nonfinite fuel text stays invalid; stale selection authority, mismatched widget targets and oversize raw text are
+/// rejected.
 fn raw_nonfinite_values_and_fields_from_old_selections_cannot_enter_exports() {
     let mut editor = Editor::default();
     editor
@@ -1192,6 +1241,8 @@ fn raw_nonfinite_values_and_fields_from_old_selections_cannot_enter_exports() {
 }
 
 #[test]
+/// Pointer completion requires the current session and original pointer ID, consumes successful ownership once and
+/// rejects replay.
 fn pointer_commit_requires_current_request_original_pointer_and_revision() {
     let mut editor = empty();
     let widget = add(&mut editor, 0, 0, Span::OneByOne);
@@ -1221,6 +1272,8 @@ fn pointer_commit_requires_current_request_original_pointer_and_revision() {
 }
 
 #[test]
+/// Rejected drops retain diagnostic candidates; cancellation retires pointer authority and successful library drops add
+/// the requested channel.
 fn pointer_cancel_and_rejected_drop_do_not_modify_the_document() {
     let mut editor = empty();
     let widget = add(&mut editor, 0, 0, Span::OneByOne);
@@ -1255,6 +1308,7 @@ fn pointer_cancel_and_rejected_drop_do_not_modify_the_document() {
 }
 
 #[test]
+/// Accepted edits, history changes and invalid raw input retire pointer sessions and prevent delayed drops.
 fn edits_view_changes_undo_and_raw_input_retire_existing_pointer_transactions() {
     let mut editor = empty();
     let widget = add(&mut editor, 0, 0, Span::OneByOne);
@@ -1302,6 +1356,7 @@ fn edits_view_changes_undo_and_raw_input_retire_existing_pointer_transactions() 
 }
 
 #[test]
+/// Import replacement is one undoable edit; importing equal content still retires previously captured field callbacks.
 fn imported_replacement_is_one_undoable_transaction_and_cancels_same_document_field_events() {
     let mut editor = empty();
     let before = editor.preview().clone();
@@ -1327,6 +1382,7 @@ fn imported_replacement_is_one_undoable_transaction_and_cancels_same_document_fi
 }
 
 #[test]
+/// Supersession, accepted/raw edits and cancellation retire import handles before their completion can replace state.
 fn older_or_edited_import_requests_cannot_replace_current_state() {
     let mut editor = empty();
     let bytes = Editor::default().export_binary().unwrap();
@@ -1368,6 +1424,7 @@ fn older_or_edited_import_requests_cannot_replace_current_state() {
 }
 
 #[test]
+/// Malformed JSON and corrupt/oversized binary imports preserve accepted configuration, revision and history.
 fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
@@ -1408,6 +1465,8 @@ fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
 }
 
 #[test]
+/// Save success requires acknowledgment; storage failures retain the last saved revision while valid exports remain
+/// usable.
 fn persistence_requires_success_acknowledgment_and_failed_storage_keeps_exports_usable() {
     let mut editor = Editor::default();
     assert_eq!(editor.save_status(), SaveStatus::Dirty);
@@ -1447,6 +1506,7 @@ fn persistence_requires_success_acknowledgment_and_failed_storage_keeps_exports_
 }
 
 #[test]
+/// Stale successful writes cannot mark newer state saved; raw draft admission remains invalid after late completion.
 fn late_save_acknowledgments_never_mark_newer_edits_or_requests_saved() {
     let mut editor = Editor::default();
     let old_revision = editor.revision();
@@ -1481,6 +1541,8 @@ fn late_save_acknowledgments_never_mark_newer_edits_or_requests_saved() {
 }
 
 #[test]
+/// Saving waits for pointer completion/cancel, then persists final selection; rejected placement additionally requires
+/// repair or discard.
 fn pointer_selection_save_waits_for_noop_cancel_rejection_or_successful_move() {
     for outcome in 0..4 {
         let mut editor = empty();
@@ -1543,6 +1605,8 @@ fn pointer_selection_save_waits_for_noop_cancel_rejection_or_successful_move() {
 }
 
 #[test]
+/// Saved envelopes retain independent selection and boot view, reset history, and reject corrupt
+/// identity/schema/length/trailing data.
 fn saved_envelope_restores_selection_separately_from_boot_view_and_rejects_corruption() {
     let mut editor = empty();
     editor
@@ -1590,6 +1654,7 @@ fn saved_envelope_restores_selection_separately_from_boot_view_and_rejects_corru
 }
 
 #[test]
+/// Field, pointer, import and save handles cannot cross editor instances even when local counters align.
 fn replacing_editor_instance_cannot_reuse_tokens_from_an_older_instance() {
     let mut old = Editor::default();
     let mut replacement = Editor::default();
@@ -1628,6 +1693,7 @@ fn replacing_editor_instance_cannot_reuse_tokens_from_an_older_instance() {
 }
 
 #[test]
+/// Typed inspector callbacks require current selection authority before mutating global settings.
 fn typed_inspector_callbacks_must_still_belong_to_the_current_selection() {
     let mut editor = Editor::default();
     let old = editor.field_token();
@@ -1650,6 +1716,8 @@ fn typed_inspector_callbacks_must_still_belong_to_the_current_selection() {
     assert_eq!(editor.preview().stoich(), 14.0);
 }
 
+/// Checks JSON, binary, firmware decoder and saved-envelope round trips for `editor`; starts a save and panics on any
+/// mismatch or rejected fixture.
 fn round_trip(editor: &mut Editor) {
     let json = editor.export_json().unwrap();
     let binary = editor.export_binary().unwrap();
@@ -1674,6 +1742,8 @@ fn round_trip(editor: &mut Editor) {
 }
 
 #[test]
+/// Display flag combinations, fuel assumptions, presentation modes and supported spans survive
+/// editor/decoder/persistence round trips.
 fn every_display_option_fuel_variant_warning_mode_and_span_round_trips() {
     let mut editor = Editor::default();
     editor.apply(Edit::AddView { name: "Wide".into() }).unwrap();
@@ -1752,6 +1822,8 @@ fn every_display_option_fuel_variant_warning_mode_and_span_round_trips() {
 }
 
 #[test]
+/// Every catalogue definition and supported route survives serialization with valid polling choices; this does not
+/// qualify ECU access.
 fn every_catalogue_source_and_route_survives_editor_and_firmware_round_trips() {
     let mut editor = Editor::default();
     for id in DEFINITIONS {
@@ -1781,6 +1853,7 @@ fn every_catalogue_source_and_route_survives_editor_and_firmware_round_trips() {
 }
 
 #[test]
+/// Representative widget, fuel, source and global raw fields update their exact canonical targets and units.
 fn all_raw_inspector_targets_apply_to_the_correct_field() {
     let mut editor = Editor::default();
     editor
@@ -1894,6 +1967,7 @@ fn all_raw_inspector_targets_apply_to_the_correct_field() {
 }
 
 #[test]
+/// Cross-view movement selects the moved widget, and ordering/movement undo restores prior placement and selection.
 fn widget_order_and_cross_view_moves_keep_selection_and_undo_coherent() {
     let mut editor = Editor::default();
     editor.apply(Edit::AddView { name: "Other".into() }).unwrap();
@@ -1930,6 +2004,7 @@ fn widget_order_and_cross_view_moves_keep_selection_and_undo_coherent() {
 }
 
 #[test]
+/// Deleting another view repairs a boot reference while retaining a surviving selected widget.
 fn deleting_an_unselected_view_preserves_a_surviving_widget_selection() {
     let mut editor = Editor::default();
     editor
@@ -1957,6 +2032,8 @@ fn deleting_an_unselected_view_preserves_a_surviving_widget_selection() {
 }
 
 #[test]
+/// An acknowledged older write makes newer content visibly dirty; successful retry restores saved status and duplicate
+/// acknowledgment is harmless.
 fn an_actual_older_write_after_a_newer_success_cannot_leave_a_false_saved_indicator() {
     let mut editor = Editor::default();
     let old_revision = editor.revision();
@@ -1990,6 +2067,8 @@ fn an_actual_older_write_after_a_newer_success_cannot_leave_a_false_saved_indica
 }
 
 #[test]
+/// Prepared-save authority expires on newer save requests or raw edits, allowing adapters to reject stale writes before
+/// storage access.
 fn storage_adapter_can_check_a_prepared_write_before_touching_storage() {
     let mut editor = Editor::default();
     let old = editor.begin_save().unwrap();
@@ -2004,6 +2083,8 @@ fn storage_adapter_can_check_a_prepared_write_before_touching_storage() {
 }
 
 #[test]
+/// Binary import retains the negative-zero fuel payload byte-for-byte instead of treating numeric equality as no
+/// change.
 fn importing_signed_zero_preserves_its_canonical_payload_instead_of_treating_it_as_a_noop() {
     let mut config = default_config();
     config.fuel = Fuel::EthanolBlend(Blend::illustrative());
@@ -2025,6 +2106,8 @@ fn importing_signed_zero_preserves_its_canonical_payload_instead_of_treating_it_
 }
 
 #[test]
+/// Boundary decimal rounding and signed zero yield identical f32 bits and binary payloads through raw, JSON and
+/// saved-state paths.
 fn decimal_raw_json_and_saved_inputs_preserve_the_same_device_value() {
     let mut config = default_config();
     config.fuel = Fuel::EthanolBlend(Blend {
@@ -2072,6 +2155,7 @@ fn decimal_raw_json_and_saved_inputs_preserve_the_same_device_value() {
 }
 
 #[test]
+/// Raw and JSON decimal parsing reject endpoints that round to the same f32, preserving accepted bytes and history.
 fn decimal_raw_and_json_graph_bounds_reject_the_same_equal_endpoints() {
     let mut config = default_config();
     let id = config.widgets[0].id;
@@ -2117,6 +2201,8 @@ fn decimal_raw_and_json_graph_bounds_reject_the_same_equal_endpoints() {
 }
 
 #[test]
+/// Colour repair preserves rejected text, retires stale callbacks, quantizes to RGB565 and round-trips one reversible
+/// accepted change.
 fn colour_raw_edits_are_repairable_atomic_quantized_and_retire_callbacks() {
     let mut editor = Editor::default();
     editor
@@ -2175,6 +2261,8 @@ fn colour_raw_edits_are_repairable_atomic_quantized_and_retire_callbacks() {
 }
 
 #[test]
+/// A light palette can be repaired across all contrast-dependent roles without discarding the draft, then reused by
+/// every gauge kind.
 fn light_background_can_be_repaired_across_all_roles_without_discarding_edits() {
     let mut editor = Editor::default();
     editor
@@ -2229,6 +2317,7 @@ fn light_background_can_be_repaired_across_all_roles_without_discarding_edits() 
 }
 
 #[test]
+/// Frozen v2 saved state supplies current control defaults while preserving gauge limits, palette and selection.
 fn saved_v2_migrates_controls_and_preserves_gauge_colours_and_selection() {
     let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../crates/dashboard-config/tests/fixtures/v2-default.json"
@@ -2247,6 +2336,8 @@ fn saved_v2_migrates_controls_and_preserves_gauge_colours_and_selection() {
 }
 
 #[test]
+/// Advanced appearance, warnings, controls and history use ordinary current-schema save/export paths; the frozen v3
+/// envelope still migrates.
 fn v4_full_schema_editor_save_export_and_restore_use_normal_apis() {
     let mut c = default_config();
     c.history_seconds = [900; 8];

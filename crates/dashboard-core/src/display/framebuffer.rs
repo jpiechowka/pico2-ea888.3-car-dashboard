@@ -6,34 +6,47 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::RawU16;
 use embedded_graphics::prelude::*;
 
+/// Landscape width in pixels; portrait swaps the logical axes.
 pub const WIDTH: usize = 320;
+/// Landscape height in pixels; both geometries contain 76,800 pixels.
 pub const HEIGHT: usize = 240;
+/// Complete RGB565 allocation size, 153,600 bytes in either orientation.
 pub const FRAME_BYTES: usize = WIDTH * HEIGHT * 2;
 
-/// A framebuffer always has the complete panel size and DMA-safe alignment.
+/// A framebuffer always has the complete panel size and four-byte alignment.
 /// Mutation requires an exclusive borrow. It is intentionally neither Copy nor Clone.
 #[repr(align(4))]
 #[derive(PartialEq, Eq)]
-pub struct FrameBuffer([u8; FRAME_BYTES]);
+pub struct FrameBuffer(
+    /// Row-major RGB565 bytes, most significant byte first per pixel.
+    [u8; FRAME_BYTES],
+);
 
 impl FrameBuffer {
+    /// Returns a full black frame; allocation placement is the caller's responsibility.
     pub const fn new() -> Self { Self([0; FRAME_BYTES]) }
 }
 
 impl Default for FrameBuffer {
+    /// Returns zeroed pixel storage, equivalent to [`Self::new`].
     fn default() -> Self { Self::new() }
 }
 
 impl Deref for FrameBuffer {
+    /// Fixed-size wire-order byte array, without geometry metadata.
     type Target = [u8; FRAME_BYTES];
 
+    /// Returns shared access to all panel bytes.
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl DerefMut for FrameBuffer {
+    /// Returns exclusive access to all bytes; callers preserve RGB565/geometry meaning.
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
 
+/// Returns whether nonempty `area` fits embedded-graphics' signed intermediate
+/// coordinate arithmetic. This checks representability, not panel intersection.
 fn representable_rectangle(area: &embedded_graphics::primitives::Rectangle) -> bool {
     // embedded-graphics first adds size, then subtracts one for the inclusive
     // bottom-right corner. That intermediate must also fit in i32.
@@ -47,14 +60,20 @@ fn representable_rectangle(area: &embedded_graphics::primitives::Rectangle) -> b
         && area.top_left.y.checked_add(height).is_some()
 }
 
+/// Clipped software drawing into one exclusive frame; no SPI or panel I/O.
 pub struct St7789Renderer<'a> {
+    /// Complete destination in panel byte order.
     framebuffer: &'a mut FrameBuffer,
+    /// Logical dimensions/stride; inversion is applied by panel addressing.
     geometry: Geometry,
 }
 
 impl<'a> St7789Renderer<'a> {
+    /// Returns a landscape drawing view borrowing `framebuffer`; preserves its pixels.
     pub fn new(framebuffer: &'a mut FrameBuffer) -> Self { Self::with_geometry(framebuffer, Geometry::Landscape) }
 
+    /// Returns a drawing view over `framebuffer` using `geometry` for bounds and
+    /// row stride; does not rotate or clear existing bytes.
     pub fn with_geometry(
         framebuffer: &'a mut FrameBuffer,
         geometry: Geometry,
@@ -62,9 +81,11 @@ impl<'a> St7789Renderer<'a> {
         Self { framebuffer, geometry }
     }
 
+    /// Returns the logical geometry used by all drawing and row access.
     pub const fn geometry(&self) -> Geometry { self.geometry }
 
-    /// Bounded RGB565 row for validated startup assets, in panel byte order.
+    /// Returns mutable RGB565 bytes for zero-based `row`, or `None` outside the
+    /// current height. Exactly twice the logical width, in panel byte order.
     pub fn row_bytes_mut(
         &mut self,
         row: usize,
@@ -76,6 +97,7 @@ impl<'a> St7789Renderer<'a> {
         self.framebuffer.get_mut(row * stride..(row + 1) * stride)
     }
 
+    /// Fills every pixel with `color`, writing repeated big-endian RGB565 pairs.
     pub fn clear_buffer(
         &mut self,
         color: Rgb565,
@@ -90,6 +112,8 @@ impl<'a> St7789Renderer<'a> {
     }
 
     #[inline]
+    /// Writes `color` at signed pixel coordinates `x`, `y`; silently ignores
+    /// coordinates outside the current geometry without narrowing them first.
     fn set_pixel(
         &mut self,
         x: i32,
@@ -107,13 +131,18 @@ impl<'a> St7789Renderer<'a> {
 }
 
 impl OriginDimensions for St7789Renderer<'_> {
+    /// Returns logical pixel dimensions, 320x240 or 240x320.
     fn size(&self) -> Size { Size::new(self.geometry.width().into(), self.geometry.height().into()) }
 }
 
 impl DrawTarget for St7789Renderer<'_> {
+    /// Native 5/6/5-bit RGB color, serialized most significant byte first.
     type Color = Rgb565;
+    /// Drawing itself cannot fail; invalid/outside rectangles are ignored.
     type Error = core::convert::Infallible;
 
+    /// Consumes all `pixels`, drawing in-bounds coordinates and clipping others.
+    /// Returns success; work is proportional to the iterator, which must terminate.
     fn draw_iter<I>(
         &mut self,
         pixels: I,
@@ -127,6 +156,10 @@ impl DrawTarget for St7789Renderer<'_> {
         Ok(())
     }
 
+    /// Maps row-major `colors` onto `area` before clipping to panel bounds.
+    /// Returns success, retaining partial writes if colors end early. Invalid or
+    /// wholly off-screen rectangles consume no colors; hidden leading pixels are
+    /// skipped to preserve source alignment. Huge clipped prefixes may be costly.
     fn fill_contiguous<I>(
         &mut self,
         area: &embedded_graphics::primitives::Rectangle,
@@ -180,6 +213,8 @@ impl DrawTarget for St7789Renderer<'_> {
         Ok(())
     }
 
+    /// Fills the visible intersection of `area` with `color`. Returns success;
+    /// empty/unrepresentable rectangles are ignored and work is panel-bounded.
     fn fill_solid(
         &mut self,
         area: &embedded_graphics::primitives::Rectangle,
@@ -222,6 +257,7 @@ impl DrawTarget for St7789Renderer<'_> {
         Ok(())
     }
 
+    /// Fills the whole frame with `color` and returns success; no panel I/O occurs.
     fn clear(
         &mut self,
         color: Self::Color,

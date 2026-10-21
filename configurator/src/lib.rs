@@ -32,33 +32,60 @@
 //! and `accepted_config_key` tracks canonical configuration transitions for the
 //! persistent acquisition owner. They are distinct identities.
 
+/// Bounded reusable appearance snapshots, preview sessions and explicit preset persistence.
 pub mod appearance_presets;
+/// Raw conversion-number drafts and bounded option admission.
 pub mod artwork_draft;
+/// Prototype adapter/profile configuration with ECU requests disabled.
 pub mod ble;
+/// Synthetic BLE fixture state distinct from real adapter/vehicle data.
 pub mod ble_simulator;
+/// Normalized firmware options and command/artifact presentation.
 pub mod build_flash;
+/// Once-per-cause cache identity exhaustion reporting.
 pub mod cache_reporting;
+/// Inspectable rejected configuration projection and affected-field context.
 pub mod diagnostic;
+/// Offline documentary evidence with current source-catalogue bindings.
 pub mod ecu_reference;
+/// Accepted projects, revisioned drafts, undo/redo and mutation authority.
 pub mod editor;
+/// Transition-based contextual diagnostics for editor and runtime adapters.
 pub mod event_adapters;
+/// Bounded severity/category event storage and filtering.
 pub mod events;
+/// Stable field descriptors, candidate-position targets and guarded repair lookup.
 pub mod field_registry;
+/// Checked callback leases and bounded scheduler ownership.
 pub mod frame_callbacks;
+/// Shared-grid hit testing, placement and drag thresholds.
 pub mod geometry;
+/// Validated helper sessions, frozen build inputs and explicit flash authorization.
 pub mod helper_client;
+/// Bounded structural comparison of serialized configuration projections.
 pub mod json_diff;
+/// Retained raw JSON, parse identities and read-only candidate inspection.
 pub mod json_draft;
+/// Shared orientation repacking and display-selection helpers.
 pub mod orientation;
+/// Shared Rust rendering with admitted/diagnostic/synthetic pixel ownership.
 pub mod preview;
+/// Cached accepted-project resource estimates and build artifact identity.
 pub mod resources;
+/// Private producer bridge feeding shared acquisition state.
 mod simulation;
+/// Persistent synthetic controls, acquisition and completed-display state.
 pub mod simulator;
+/// Monotonic playback and bounded interaction measurement ownership.
 pub mod timing;
+/// Revision-bound overlap recovery and widget context actions.
 pub mod widget_actions;
+/// Workspace/group preferences and checked command availability.
 pub mod workspace;
 
 pub use dashboard_config as config;
 
+/// Publication identity gating canvas interaction after successful drawing.
 pub mod canvas_frame;
+/// Bounded browser-to-helper diagnostic batches and acknowledgment.
 pub mod diagnostic_relay;

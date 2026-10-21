@@ -101,3 +101,38 @@ Native regressions cover both Bluetooth configurations, valid upload addresses
 and padding, malformed records and unknown event/status values. Independent
 decoding compared every old/new firmware record and rejected all 13,134 proper
 truncations. See the [full-code audit](../../../docs/validation/full-code-audit-2026-10-20.md).
+
+## Rust contract audit (2026-10-21)
+
+All retained source paths now describe inputs, returned values, partial effects,
+cancellation, ownership and hardware assumptions. The documentation review also
+identified these narrow corrections:
+
+- SDIO transfers use logical slice lengths rather than the padded size of an
+  aligned dynamically sized value. Backplane tails use initialized 1024-byte
+  scratch storage; a canceled read can discard its in-flight scratch and a write
+  can already have delivered a prefix. Pico 2 W uses the separate SPI path.
+- Wi-Fi scan parameters explicitly store their two zero tail bytes instead of
+  transmuting implicit C-layout padding into initialized wire bytes. Layout remains
+  76 bytes. The selected Bluetooth-only images do not perform Wi-Fi scans.
+- SDPCM credit recovery wraps its eight-bit sequence addition at 254/255.
+- Join result admission checks the full 32-bit event status before converting to
+  the existing eight-bit public failure type; 256/262 cannot alias success states.
+- IOCTL, SDPCM, Ethernet/BDC and HCI diagnostics retain metadata rather than raw
+  payload dumps. Optional firmware-console strings and explicitly formatted
+  credential option structs are not covered by a universal redaction guarantee.
+- Canceling scan startup drops the host subscription guard and its pending IOCTL
+  ownership. Successful startup transfers subscription cleanup to `Scanner`.
+  Neither path sends a firmware scan-abort command.
+- Firmware/NVRAM placement is checked before bus initialization: rounding,
+  subtraction, RAM bounds, overlap and the 16-bit word count cannot silently wrap.
+  Valid pinned image addresses are unchanged. Public initialization still panics
+  on a rejected image or bus initialization error.
+- The `log` IRQ formatter strips the correct four-character `IRQ_` prefix.
+
+Actual future, wire-layout, logging and in-memory bus regressions accompany these
+changes. Enable `bluetooth-only,log` to run the payload-redaction checks; the
+commands above without `log` do not exercise that logger. These checks do not
+establish hardware timing or diagnose the photographed watchdog/disconnect events.
+See the [Rust documentation policy](../../../docs/validation/rust-documentation.md)
+and the exact feature routes in CI.

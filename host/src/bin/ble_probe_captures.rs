@@ -9,6 +9,7 @@ use dashboard_core::discovery::capture_store::PAYLOAD_MAX;
 use dashboard_core::discovery::capture_wire::{FrameStatus, Request, parse_list_payload};
 use dashboard_host_validation::probe_captures::*;
 
+/// CLI syntax and evidence-only restrictions displayed for help or invalid commands.
 const HELP: &str = "BLE probe saved captures (normal firmware USB, not BOOTSEL)\n\n  ble_probe_captures ports\n  \
                     ble_probe_captures list [--port COMx]\n  ble_probe_captures export SLOT NEW_DIRECTORY [--port \
                     COMx]\n  ble_probe_captures decode CAPTURE.blecap NEW_DIRECTORY\n\nSLOT is 1..4. NEW_DIRECTORY \
@@ -17,6 +18,9 @@ const HELP: &str = "BLE probe saved captures (normal firmware USB, not BOOTSEL)\
                     in JSON/text. JSON includes derived evidence hints for a future Studio importer; it is not a \
                     connection profile.\nNo save, erase, pairing, adapter connection or ECU commands are \
                     supported.\nIf Windows shows a generic USB Serial Device name, select its COM port explicitly.\n";
+/// Selects optional `explicit` port, opens CDC with 250 ms I/O timeouts, asserts DTR and sends `request`.
+/// Returns validated replies within a five-second exchange budget or enumeration/open/DTR/protocol errors.
+/// Only List/Get are supported; this performs real USB I/O and closes the port when finished.
 fn transaction(
     request: Request,
     explicit: Option<&str>,
@@ -33,6 +37,9 @@ fn transaction(
         .map_err(|e| format!("set CDC DTR: {e}"))?;
     exchange(port.as_mut(), request, Duration::from_secs(5))
 }
+/// Dispatches CLI `args` without the executable name and prints help, ports, list or artifact information.
+/// Returns Ok on success or descriptive argument/I/O/admission errors. Export/list access USB; decode is offline.
+/// Publication failures may retain a new partial directory; existing output paths are never overwritten.
 fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() || matches!(args[0].as_str(), "--help" | "-h" | "help") {
         println!("{HELP}");
@@ -108,6 +115,8 @@ fn run(args: &[String]) -> Result<(), String> {
         _ => Err(format!("invalid arguments\n{HELP}")),
     }
 }
+/// Prints derived ASCII artifact labels and full content identity from `published`, never raw BLE names.
+/// Standard-output failure panics through println.
 fn print_artifacts(published: &PublishedCapture) {
     // Only derived ASCII labels reach the terminal, never the raw BLE name.
     println!("Capture ID: {}", published.capture_id);
@@ -116,6 +125,7 @@ fn print_artifacts(published: &PublishedCapture) {
     }
     println!("  COMPLETE");
 }
+/// Returns None for empty `args`, the borrowed nonempty port for exactly `--port NAME`, or a syntax error.
 fn port_argument(args: &[String]) -> Result<Option<&str>, String> {
     match args {
         [] => Ok(None),
@@ -123,6 +133,8 @@ fn port_argument(args: &[String]) -> Result<Option<&str>, String> {
         _ => Err("expected optional --port COMx".into()),
     }
 }
+/// Dispatches process arguments; reports operational errors to stderr and exits with status 1.
+/// Successful commands return normally; output-stream failure may panic.
 fn main() {
     if let Err(error) = run(&env::args().skip(1).collect::<Vec<_>>()) {
         eprintln!("Capture export failed: {error}");

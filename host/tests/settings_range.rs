@@ -1,5 +1,7 @@
+//! Settings flash address admission against its exact reserved two-sector window.
 use dashboard_host_validation::settings::region::{BASE, Range};
 
+/// Exhausts every journal offset for read/program/erase and rejects empty, overflow and escaping ranges.
 #[test]
 fn every_journal_byte_is_confined_and_program_erase_alignment_is_checked() {
     for offset in 0..=8192 {

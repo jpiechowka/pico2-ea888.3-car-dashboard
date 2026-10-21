@@ -1,7 +1,10 @@
+//! Canonical-to-display conversions and immutable prepared filters, with numeric and retained-pixel oracles.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::configured_scene::widget_text;
 use dashboard_host_validation::view_config::*;
 
+/// Fixed kPa/bar units ignore the physical pressure toggle; absolute Fahrenheit applies its affine offset.
 #[test]
 fn configured_readout_uses_affine_temperature_and_fixed_pressure_units() {
     let mut raw = default_config();
@@ -32,6 +35,8 @@ fn configured_readout_uses_affine_temperature_and_fixed_pressure_units() {
 
 use dashboard_host_validation::presentation::{PresentationState, Unit, smoothing_alpha};
 
+/// A same-batch view round trip retains its sticky change effect so the prepared filter resets despite ending on the
+/// original view.
 #[test]
 fn accepted_same_batch_view_round_trip_resets_the_prepared_filter() {
     use dashboard_core::control_session::ControlSession;
@@ -108,6 +113,8 @@ fn accepted_same_batch_view_round_trip_resets_the_prepared_filter() {
     assert_eq!(actual, Some(1.));
 }
 
+/// Conversion bases distinguish absolute/difference temperatures and keep bounded text or explicit unavailable markers
+/// at extremes.
 #[test]
 fn conversion_basis_and_display_domain_are_bounded_and_fail_closed() {
     assert_eq!(Unit::Fahrenheit.value(0., 14.7), 32.);
@@ -148,6 +155,7 @@ fn conversion_basis_and_display_domain_are_bounded_and_fail_closed() {
     assert_eq!(line, "--");
 }
 
+/// Samples the full 0..=16 normalized exponential domain against f64 exp, bounding absolute alpha error to 0.001.
 #[test]
 fn dense_exponential_domain_stays_within_display_tolerance() {
     // Accepted absolute alpha error 0.001: <=0.1% of a target step.
@@ -163,13 +171,17 @@ fn dense_exponential_domain_stays_within_display_tolerance() {
     eprintln!("dense alpha max absolute error={worst}");
 }
 
+/// Returns validated defaults with a 1000ms boost filter; invalid fixture admission panics.
 fn smooth_config() -> ValidatedConfig {
     let mut raw = default_config();
     raw.widgets[0].advanced.smoothing_ms = 1000;
     validate(raw).unwrap()
 }
+/// Returns canonical sensor-order values with `boost` in bar and fixed finite companion readings.
 fn values(boost: f32) -> [f32; 8] { [boost, 90., 80., 80., 30., 600., 12., 1.] }
 
+/// Duplicate preparation cannot advance filtering; clock reversal, staleness, view/owner changes and reset discard
+/// prior filter state.
 #[test]
 fn visible_filter_advances_once_and_resets_for_time_stale_owner_view_and_statistics() {
     let cfg = smooth_config();
@@ -251,6 +263,7 @@ fn visible_filter_advances_once_and_resets_for_time_stale_owner_view_and_statist
     );
 }
 
+/// Irregular targets follow an independent f64 elapsed-time filter while raw snapshot values retain exact input bits.
 #[test]
 fn irregular_changing_targets_and_raw_statistics_have_independent_trajectories() {
     let cfg = smooth_config();
@@ -292,6 +305,7 @@ fn irregular_changing_targets_and_raw_statistics_have_independent_trajectories()
     }
 }
 
+/// Text, gauge and both retained buffer keys consume the same frozen filter result without repeated advancement.
 #[test]
 fn prepared_text_gauge_and_retained_keys_share_one_filter_epoch() {
     use dashboard_host_validation::configured_scene::Layout;
@@ -345,6 +359,7 @@ fn prepared_text_gauge_and_retained_keys_share_one_filter_epoch() {
     assert_eq!(scene.configured_text(0).unwrap()[0], "9.516");
 }
 
+/// Readout/span/gauge combinations show AFR assumptions only when AFR is visible and hide stale secondary statistics.
 #[test]
 fn all_readout_modes_obey_capabilities_and_keep_afr_assumptions_visible_only_with_afr() {
     let base = default_config();
@@ -399,6 +414,7 @@ fn all_readout_modes_obey_capabilities_and_keep_afr_assumptions_visible_only_wit
     }
 }
 
+/// Fixed pressure units ignore toggles and suppress duplicate secondary units; FollowBoost exposes bar only beside PSI.
 #[test]
 fn duplicate_secondary_is_omitted_and_fixed_pressure_ignores_toggle() {
     let base = default_config();
@@ -427,6 +443,8 @@ fn duplicate_secondary_is_omitted_and_fixed_pressure_ignores_toggle() {
     );
 }
 
+/// Disabled smoothing/reduced motion expose exact raw values while warnings, extrema, averages and held peaks remain
+/// canonical.
 #[test]
 fn smoothing_off_reduced_motion_and_raw_warning_extrema_peak_paths_remain_canonical() {
     use dashboard_host_validation::alarms::RuleIndex;
@@ -478,6 +496,7 @@ fn smoothing_off_reduced_motion_and_raw_warning_extrema_peak_paths_remain_canoni
     }
 }
 
+/// Step response stays monotonic/bounded; long stalls and extreme elapsed time snap without overflow.
 #[test]
 fn step_response_is_monotonic_bounded_and_stalls_snap_without_overflow() {
     let cfg = smooth_config();
@@ -511,6 +530,8 @@ fn step_response_is_monotonic_bounded_and_stalls_snap_without_overflow() {
     assert_eq!(smoothing_alpha(0, 0), 1.);
 }
 
+/// Untracked snapshot identity and source mismatch prevent adopting another owner's filtered state; valid recovery
+/// snaps.
 #[test]
 fn identity_exhaustion_and_source_changes_cannot_reuse_filtered_value() {
     use dashboard_host_validation::acquisition::DashboardSnapshot;
@@ -550,6 +571,7 @@ fn identity_exhaustion_and_source_changes_cannot_reuse_filtered_value() {
     );
 }
 
+/// Secondary-only rounded changes and fuel-label changes invalidate both buffers and retain full-render pixel equality.
 #[test]
 fn converted_secondary_and_fuel_only_changes_repair_both_prepared_framebuffers() {
     use dashboard_host_validation::configured_scene::Layout;
@@ -612,6 +634,7 @@ fn converted_secondary_and_fuel_only_changes_repair_both_prepared_framebuffers()
     }
 }
 
+/// Duplicate timestamps retain signed-zero bits, and a long stall returns the target's exact representation.
 #[test]
 fn duplicate_time_preserves_signed_zero_and_long_stall_snaps_exact_target_bits() {
     let cfg = smooth_config();
@@ -651,6 +674,7 @@ fn duplicate_time_preserves_signed_zero_and_long_stall_snaps_exact_target_bits()
     );
 }
 
+/// Independent endpoint/negative-rounding strings fit every widget span after unit conversion.
 #[test]
 fn transformed_domain_endpoints_and_sign_rounding_have_explicit_text_oracles() {
     use dashboard_host_validation::presentation::format_value;

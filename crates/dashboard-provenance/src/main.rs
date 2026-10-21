@@ -1,7 +1,11 @@
+//! Command-line adapter for fixed vendor checks and bounded manifest-on-stdin tree verification.
 use std::io::Read;
 use std::path::Path;
 
 use dashboard_provenance::{MANIFEST_LIMIT, check_hal, check_radio, verify_tree};
+/// Parse exact OS-argument command shapes and return a verification/help message or diagnostic.
+/// Tree mode reads at most MANIFEST_LIMIT + 1 stdin bytes; HAL archives are optional, radio checks
+/// use local trees only. Unknown/missing/reordered options fail; no network fetch or extraction occurs.
 fn run() -> Result<String, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let usage = "usage: dashboard-provenance hal --vendor-root PATH [--archive FILE] | radio --vendor-root PATH | \
@@ -25,6 +29,7 @@ fn run() -> Result<String, String> {
         _ => Err(usage.into()),
     }
 }
+/// Print successful verification/help to stdout; print prefixed failure to stderr and exit with 1.
 fn main() {
     match run() {
         Ok(message) => println!("{message}"),

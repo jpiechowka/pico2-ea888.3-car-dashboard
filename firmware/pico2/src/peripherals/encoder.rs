@@ -23,6 +23,10 @@ pub static ENCODER_CONNECTED: AtomicBool = AtomicBool::new(false);
 ///
 /// This task runs on Core 0 and should be spawned after display init
 /// is complete so encoder events don't fire during boot.
+/// Owns `i2c` indefinitely. Errors clear queued input and retry after 200 ms;
+/// success waits 20 ms after I/O, so 50 Hz is an upper scheduling target.
+/// Maintenance resumes reinitialize the device and consume unobserved motion.
+/// Never cancel live I2C: stalled hardware remains owned until watchdog recovery.
 #[embassy_executor::task]
 pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
     // Small delay to let the seesaw boot after power-up

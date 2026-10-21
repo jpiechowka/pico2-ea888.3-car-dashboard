@@ -1,3 +1,4 @@
+//! Diagnostic availability, coherent publication, register-derived rates and bounded formatting.
 use dashboard_host_validation::cpu_math::{CycleWindow, checked_segment};
 use dashboard_host_validation::diagnostic_values::{
     FrameWorkObservation,
@@ -8,6 +9,7 @@ use dashboard_host_validation::diagnostic_values::{
     work_text,
 };
 
+/// Work/cycle observations share publication and expiry; wider valid work can outlive u32 cycle display capacity.
 #[test]
 fn frame_work_and_cycles_share_publication_and_expiry() {
     let mut published = FrameWorkObservation::EMPTY;
@@ -38,6 +40,7 @@ fn frame_work_and_cycles_share_publication_and_expiry() {
     assert_eq!(wide.cycles(0), None);
 }
 
+/// Exhausts prescaler admission and checks integer-Hz register calculations, fractional-MHz inputs and zero outputs.
 #[test]
 fn spi_register_rate_rejects_unknown_dividers_and_keeps_fractional_profiles() {
     assert_eq!(spi_clock_hz(150_000_000, 2, 1), Some(37_500_000));
@@ -56,6 +59,7 @@ fn spi_register_rate_rejects_unknown_dividers_and_keeps_fractional_profiles() {
 }
 use dashboard_host_validation::display::telemetry::CompletionRate;
 
+/// Valid zero work differs from absent/future/stale data; retained stack observations do not expire with work.
 #[test]
 fn observations_distinguish_absent_zero_stale_and_future() {
     assert_eq!(WorkObservation::EMPTY.work(0), None);
@@ -76,6 +80,7 @@ fn observations_distinguish_absent_zero_stale_and_future() {
     assert_eq!(work_text(Some(1001)).as_str(), "--");
 }
 
+/// Completion rate requires a whole first window, expires after two seconds and resets validity on clock reversal.
 #[test]
 fn rates_have_first_window_reset_and_freshness_validity() {
     let mut meter = CompletionRate::new(0, 0);
@@ -95,6 +100,7 @@ fn rates_have_first_window_reset_and_freshness_validity() {
     assert!(meter.latest(2_000_000).is_none());
 }
 
+/// KiB conversion rounds both sides upward while rejecting used-over-total, zero and unsupported capacities.
 #[test]
 fn memory_rounding_preserves_order_and_rejects_invalid_bounds() {
     for (bytes, expected) in [(0, 0), (1, 1), (1023, 1), (1024, 1), (1025, 2), (66568, 66)] {
@@ -106,6 +112,7 @@ fn memory_rounding_preserves_order_and_rejects_invalid_bounds() {
     assert_eq!(memory_kib(524288, 524288), Some((512, 512)));
 }
 
+/// Nonfinite/negative/missing rates stay unavailable; valid zero and bounded decimal rounding remain distinct.
 #[test]
 fn rates_reject_invalid_values_and_bound_conversion() {
     for value in [None, Some(-1.0), Some(f32::NAN), Some(f32::INFINITY)] {
@@ -116,6 +123,7 @@ fn rates_reject_invalid_values_and_bound_conversion() {
     assert_eq!(rate_text(Some(f32::MAX)).as_str(), ">999");
 }
 
+/// One-wrap segments are admitted within the time/cycle bound; invalid/overflow input poisons only its current window.
 #[test]
 fn invalid_cycles_poison_only_the_current_window_and_do_not_become_idle() {
     let hz = 150_000_000;

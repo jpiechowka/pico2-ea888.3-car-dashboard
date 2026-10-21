@@ -9,28 +9,50 @@ use dashboard_core::warning_state::{WarningCommand, WarningFeedback, WarningRequ
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 
+/// Captured startup presentation replay sharing acquisition but retaining only converted artwork.
 pub(crate) struct StartupReplay {
+    /// Captured timings, orientations, theme and warning policy.
     pub(crate) profile: dashboard_core::startup::StartupProfile,
+    /// Completion-driven shared startup phase machine.
     pub(crate) state: dashboard_core::startup::Startup,
+    /// Immutable converted pixels; absent for procedural themes, no original source payload.
     pub(crate) artwork: Option<dashboard_config::startup_asset::OwnedAsset>,
 }
+/// Single-thread browser acquisition/control owner, with capacity-one warning handoff and completed-scene LED state.
 pub(crate) struct Simulation {
+    /// Optional captured startup replay; completed replay retains its exit evidence.
     pub(crate) startup: Option<StartupReplay>,
+    /// Shared configured synthetic acquisition, statistics and qualified warning state.
     pub(crate) model: OwnedAcquisitionModel,
+    /// Accepted controls/page/view/backlight session.
     pub(crate) session: ControlSession,
+    /// Monotonic retained simulation milliseconds, not browser wall time.
     pub(crate) now_ms: u64,
+    /// Warning-page ordering/dwell paused outside visible Dashboard warning presentation.
     pager: WarningPager,
+    /// Logical RGB duty driven by completed scene and current backlight.
     pub(crate) led: LedController,
+    /// Submitted/completed scene identities used for warning acknowledgement and LED visibility.
     pub(crate) presented: PresentedLed,
+    /// Checked warning command issuer and pending/result correlation.
     pub(crate) requests: WarningRequests,
+    /// Single-thread capacity-one producer handoff; no blocking sends/receives.
     queue: Channel<NoopRawMutex, WarningCommand, 1>,
+    /// Blink origin in simulation milliseconds.
     start_ms: u64,
+    /// True requires explicit accepted-pixel completion instead of summary-only backlight completion.
     pub(crate) render_transport: bool,
+    /// Last prepared page/view pair for continuity invalidation.
     visible: (dashboard_core::pages::Page, u8),
+    /// Checked presentation continuity epoch; None permanently disables cache continuity after overflow.
     pub(crate) presentation_epoch: Option<u64>,
+    /// Current eligible warning page, absent during startup, feedback or non-Dashboard pages.
     pub(crate) warning: Option<WarningPage>,
 }
 impl Simulation {
+    /// Returns a new shared synthetic owner for `config` at `now_ms` milliseconds, without startup replay or initial
+    /// samples. Starts Dashboard controls, empty warning handoff and epoch zero; actual canvas completion remains
+    /// caller-managed.
     pub(crate) fn new(
         config: ValidatedConfig,
         now_ms: u64,
@@ -55,12 +77,17 @@ impl Simulation {
         }
     }
 
+    /// Returns the retained validated configuration; panics if the configured-model construction invariant is broken.
     pub(crate) fn configuration(&self) -> &ValidatedConfig {
         self.model
             .configuration()
             .expect("simulation always has a configuration")
     }
 
+    /// Processes at most one canonical Channel::ALL `values` batch and one queued warning command at `now_ms`
+    /// milliseconds, then ticks shared state and prepares presentation. None advances timers/results without
+    /// inventing samples. Backdated sample admission follows the shared gate; retained time never decreases and no
+    /// elapsed-proportional replay runs.
     pub(crate) fn advance_to(
         &mut self,
         now_ms: u64,
@@ -82,6 +109,9 @@ impl Simulation {
         self.prepare(false);
     }
 
+    /// Captures `project` startup/profile and converted artwork, resets controls/paging and retires pending
+    /// presentation. Caller must ensure the project's dashboard matches this owner. Acquisition/history/warning
+    /// episodes remain intact; checked continuity exhaustion becomes None rather than recycling identity.
     pub(crate) fn replay_startup(
         &mut self,
         project: &dashboard_config_tools::project::Project,
@@ -100,8 +130,11 @@ impl Simulation {
         self.prepare(false);
     }
 
+    /// Returns whether a captured replay remains in an active startup phase.
     pub(crate) fn startup_active(&self) -> bool { self.startup.as_ref().is_some_and(|s| s.state.active()) }
 
+    /// Advances captured startup at `now` milliseconds using current qualified attention and no injected global fault.
+    /// Phase changes retire continuity; this does not acknowledge a pending frame or advance acquisition.
     fn advance_startup(
         &mut self,
         now: u64,
@@ -124,6 +157,9 @@ impl Simulation {
         }
     }
 
+    /// Prepares warning paging and LED state at retained time; sticky `view_changed` also retires same-batch round-trip
+    /// continuity. Startup, button feedback and non-Dashboard pages pause warning paging. Epoch overflow
+    /// permanently disables continuity.
     pub(crate) fn prepare(
         &mut self,
         view_changed: bool,
@@ -156,6 +192,8 @@ impl Simulation {
         self.update_led();
     }
 
+    /// Updates logical RGB duty from last completed scene, backlight, reduced-motion policy and retained time; no
+    /// hardware I/O.
     pub(crate) fn update_led(&mut self) {
         let config = self.model.configuration().expect("simulation config").config();
         self.led.update(
@@ -167,10 +205,14 @@ impl Simulation {
         );
     }
 
+    /// Returns the shared blink phase at saturating elapsed milliseconds since this owner's origin.
     pub(crate) fn blink_on(&self) -> bool {
         dashboard_core::animations::blink_on(self.now_ms.saturating_sub(self.start_ms))
     }
 
+    /// Requests acknowledgement only for the completed visible warning identity, publishes immediate request feedback
+    /// and retries handoff. A full queue retains the pending request for retry; this does not directly mutate
+    /// acquisition warning state.
     pub(crate) fn request_acknowledgment(&mut self) {
         let result = self.requests.request_presented(self.presented.warning());
         self.session
@@ -178,18 +220,24 @@ impl Simulation {
         self.retry();
     }
 
+    /// Tries to enqueue the same pending warning command without blocking; a full queue leaves ownership pending for
+    /// later retry.
     pub(crate) fn retry(&self) {
         if let Some(command) = self.requests.pending() {
             let _ = self.queue.try_send(command);
         }
     }
 
+    /// Consumes a matching published warning-command result and updates control feedback at retained time; unrelated
+    /// results do nothing.
     pub(crate) fn observe_result(&mut self) {
         if let Some(feedback) = self.requests.observe(&self.model.snapshot()) {
             self.session.warning_feedback(feedback, self.now_ms);
         }
     }
 
+    /// Returns immutable current scene metadata, with startup warning-LED policy while replay is active; does not mark
+    /// it completed.
     pub(crate) fn scene(&self) -> PresentedScene {
         let overlay = dashboard_core::dashboard::Overlay::configured_for_page(
             self.session.page(),
@@ -211,15 +259,18 @@ impl Simulation {
         }
     }
 
+    /// Returns one coherent acquisition publication, including sample quality, statistics and warning command result.
     pub(crate) fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }
 }
 
 #[cfg(test)]
+/// Presentation continuity remains permanently unavailable after identity exhaustion.
 mod tests {
     use dashboard_core::pages::Page;
 
     use super::*;
     #[test]
+    /// Visibility changes at MAX retire continuity to None and subsequent changes never recycle an old epoch.
     fn exhausted_visibility_epoch_never_recycles_old_continuity() {
         let mut simulation = Simulation::new(
             dashboard_config::validate(dashboard_config::default_config()).unwrap(),
@@ -235,11 +286,14 @@ mod tests {
 }
 
 #[cfg(test)]
+/// Shared warning handoff ordering, retry identity and episode-sensitive acknowledgement regressions.
 mod warning_transport_tests {
     use dashboard_core::status_led::PresentedWarning;
 
     use super::*;
     #[test]
+    /// A full one-slot queue retains command identity; result publication needs no sample and duplicate delivery is
+    /// idempotent.
     fn capacity_one_queue_keeps_identity_and_publishes_result_without_samples() {
         let mut raw = dashboard_config::default_config();
         raw.widgets.truncate(1);
@@ -277,6 +331,8 @@ mod warning_transport_tests {
         assert_eq!(s.snapshot().publication_revision(), after.publication_revision());
     }
     #[test]
+    /// Delayed acknowledgement accepts only the old still-current episode while a new warning episode remains
+    /// unsnoozed.
     fn new_episode_command_and_snooze_deadline_publish_coherent_state() {
         use dashboard_core::alarms::RuleIndex;
         let mut raw = dashboard_config::default_config();

@@ -1,3 +1,5 @@
+//! Independent clock tables, rational boundaries and serialized recipe contracts.
+
 use dashboard_build_profiles::{
     ClockError,
     ClockSelection,
@@ -10,9 +12,13 @@ use dashboard_build_profiles::{
     resolve,
 };
 
+/// Expected `(reference, feedback, first post, second post)` PLL dividers.
 type PllFields = (u8, u16, u8, u8);
+/// Expected SPI `(CPSDVSR, SCR)` registers, not the effective second divisor.
 type SpiFields = (u8, u8);
+/// Profile ID, requested CPU/SPI Hz, voltage, PLL, actual CPU/SPI Hz and SPI registers.
 type ProfileCase = (ProfileId, u32, u32, Voltage, PllFields, u32, u32, SpiFields);
+/// Every accepted compatibility alias retains its profile and is globally unique.
 #[test]
 fn exact_all_eight_alias_sets_are_globally_unique() {
     let expected: &[&[&str]] = &[
@@ -43,6 +49,7 @@ fn exact_all_eight_alias_sets_are_globally_unique() {
     assert_eq!(all.len(), 28);
 }
 
+/// Every named selection round-trips its exact external snake-case identity.
 #[cfg(feature = "serde")]
 #[test]
 fn every_named_selection_has_an_exact_serde_roundtrip() {
@@ -62,6 +69,7 @@ fn every_named_selection_has_an_exact_serde_roundtrip() {
         assert_eq!(serde_json::from_str::<ClockSelection>(&expected).unwrap(), selected);
     }
 }
+/// Independently calculated register/frequency expectations, including failed legacy rounding.
 const CASES: &[ProfileCase] = &[
     (
         ProfileId::Stock,
@@ -145,6 +153,7 @@ const CASES: &[ProfileCase] = &[
     ),
 ];
 
+/// Return a 1.30 V custom request using `cpu_hz` and upper-bound `spi_max_hz` in Hz.
 fn custom(
     cpu_hz: u32,
     spi_max_hz: u32,
@@ -156,6 +165,7 @@ fn custom(
     })
 }
 
+/// Named requests resolve to the frozen register table; only legacy 290 is rounded.
 #[test]
 fn named_profiles_match_independent_clock_table() {
     for &(id, cpu_request, spi_request, voltage, pll, cpu_actual, spi_actual, spi_div) in CASES {
@@ -176,6 +186,7 @@ fn named_profiles_match_independent_clock_table() {
     }
 }
 
+/// Catalogue order, aliases, warnings and observations remain aligned with profile IDs.
 #[test]
 fn catalogue_has_exact_ids_and_compatibility_metadata() {
     let profiles = catalogue();
@@ -208,6 +219,7 @@ fn catalogue_has_exact_ids_and_compatibility_metadata() {
     assert_eq!(profiles[7].feature, "cpu300-spi75-1v30");
 }
 
+/// Candidate/overclock profiles require Expert; stock and timing reference do not.
 #[test]
 fn named_expert_policy_matches_accepted_workspace_contract() {
     let expected = [
@@ -227,6 +239,7 @@ fn named_expert_policy_matches_accepted_workspace_contract() {
     }
 }
 
+/// Exact custom 290 MHz uses REFDIV=2 and must not inherit named legacy rounding.
 #[test]
 fn exact_custom_290_uses_second_reference_divider_without_legacy_observation() {
     let r = resolve(custom(290_000_000, 72_500_000)).unwrap();
@@ -241,6 +254,7 @@ fn exact_custom_290_uses_second_reference_divider_without_legacy_observation() {
     assert!(!r.legacy_rounding);
 }
 
+/// Admission range alone cannot make an unrepresentable CPU request valid.
 #[test]
 fn rejects_in_range_unrepresentable_clocks_without_rounding() {
     for cpu in [12_000_000, 290_000_001, 290_399_999] {
@@ -248,6 +262,7 @@ fn rejects_in_range_unrepresentable_clocks_without_rounding() {
     }
 }
 
+/// A 69 MHz SPI cap at 280 MHz resolves below 47 MHz; each neighbor has a replayable request.
 #[test]
 fn spi_ceil_quantization_and_reproducible_neighbors() {
     let r = resolve(custom(280_000_000, 69_000_000)).unwrap();
@@ -276,6 +291,7 @@ fn spi_ceil_quantization_and_reproducible_neighbors() {
     );
 }
 
+/// Rational comparison rejects a rate above the cap even when its floored Hz matches.
 #[test]
 fn a_fractional_rate_above_request_stays_above_even_when_display_floor_matches() {
     let r = resolve(custom(140_000_000, 23_333_333)).unwrap();
@@ -287,6 +303,7 @@ fn a_fractional_rate_above_request_stays_above_even_when_display_floor_matches()
     assert_eq!(resolve(custom(140_000_000, above.request_hz)).unwrap().scr, 2);
 }
 
+/// Zero, one-beyond bounds and a rate above peripheral/2 fail with the appropriate category.
 #[test]
 fn rejects_public_input_bounds() {
     for cpu in [0, 11_999_999, 300_000_001, u32::MAX] {
@@ -301,6 +318,7 @@ fn rejects_public_input_bounds() {
     );
 }
 
+/// Sampled exact PLLs and both SPI neighbors satisfy independent rational equations.
 #[test]
 fn rational_pll_and_spi_invariants_hold_for_sample_grid() {
     for cpu in [
@@ -347,6 +365,7 @@ fn rational_pll_and_spi_invariants_hold_for_sample_grid() {
     }
 }
 
+/// Typed JSON rejects unsupported voltages, extra fields, unknown IDs and integer overflow.
 #[cfg(feature = "serde")]
 #[test]
 fn optional_serde_accepts_only_typed_voltages_and_exact_shapes() {

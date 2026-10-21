@@ -357,12 +357,19 @@ def firmware_package(output: str) -> str:
 
 
 def verify_clock_literals(source: bytes, options: Mapping[str, object]) -> None:
-    """Check fixed generated syntax/values, without resolving any clock policy."""
+    """Check fixed generated syntax/values, allowing complete outer-doc lines.
+
+    Only LF-terminated ``/// `` lines from the generator are ignored before
+    reading declarations. Other comments, attributes or executable syntax remain
+    errors; the caller separately verifies the complete original bytes/hash.
+    This does not resolve clock policy or parse arbitrary Rust.
+    """
     text = source.decode("utf-8")
     expected_header = "// Generated from dashboard-build-profiles; do not edit.\n"
     if not text.startswith(expected_header):
         raise ValueError("unknown generated clock source schema")
     text = text[len(expected_header) :]
+    text = re.sub(r"(?m)^/// [^\r\n]*\n", "", text)
     scalar_pattern = r"pub const (\w+): (u32|u8|bool) = ([0-9]+|true|false);\n"
     matches = re.findall(scalar_pattern, text)
     scalars = {name: (kind, value) for name, kind, value in matches}

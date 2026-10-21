@@ -4,22 +4,27 @@ use wasm_bindgen::JsValue;
 use super::browser_tests::tick;
 use super::*;
 
+/// Returns success when `ok` holds, otherwise a JavaScript error containing `message`.
 fn check(
     ok: bool,
     message: &str,
 ) -> Result<(), JsValue> {
     if ok { Ok(()) } else { Err(message.into()) }
 }
+/// Returns the browser document; panics if the browser harness has no window or document.
 fn doc() -> web_sys::Document { web_sys::window().unwrap().document().unwrap() }
+/// Returns the mounted element named `id`, or a missing-element error.
 fn by_id(id: &str) -> Result<web_sys::Element, JsValue> {
     doc()
         .get_element_by_id(id)
         .ok_or_else(|| format!("missing {id}").into())
 }
+/// Clicks the mounted HTML element named `id`; returns lookup or element-type errors.
 fn click_id(id: &str) -> Result<(), JsValue> {
     by_id(id)?.dyn_into::<web_sys::HtmlElement>()?.click();
     Ok(())
 }
+/// Returns the first button whose trimmed text equals `text`, or a DOM lookup/type/missing-button error.
 fn button(text: &str) -> Result<web_sys::HtmlElement, JsValue> {
     let nodes = doc().query_selector_all("button")?;
     for index in 0..nodes.length() {
@@ -30,11 +35,14 @@ fn button(text: &str) -> Result<web_sys::HtmlElement, JsValue> {
     }
     Err(format!("missing button {text}").into())
 }
+/// Returns the root-owned input for registry `key`, or a missing-element/type error.
 fn input(key: FieldKey) -> Result<web_sys::HtmlInputElement, JsValue> {
     by_id(&Registry::dom_id(key, TargetOwner::Root))?
         .dyn_into()
         .map_err(Into::into)
 }
+/// Types `value` into the enabled root input for `key`, blurs it and yields for rendering; returns DOM or
+/// disabled-control errors.
 async fn text(
     key: FieldKey,
     value: &str,
@@ -48,6 +56,8 @@ async fn text(
     tick().await;
     Ok(())
 }
+/// Selects `value` in the enabled root select for `key`, dispatches change and yields; returns DOM or disabled-control
+/// errors.
 async fn choice(
     key: FieldKey,
     value: &str,
@@ -59,12 +69,14 @@ async fn choice(
     tick().await;
     Ok(())
 }
+/// Returns current synthetic diagnostics text, empty when absent; panics if the fixture panel is not mounted.
 fn fixture_text() -> String {
     by_id("studio-ble-simulation")
         .unwrap()
         .text_content()
         .unwrap_or_default()
 }
+/// Clicks the enabled button matching `text` and yields for rendering; returns missing/disabled/type errors.
 async fn click(text: &str) -> Result<(), JsValue> {
     let button = button(text)?;
     check(!button.has_attribute("disabled"), &format!("button disabled: {text}"))?;
@@ -72,6 +84,8 @@ async fn click(text: &str) -> Result<(), JsValue> {
     tick().await;
     Ok(())
 }
+/// Returns success when `element` has positive width inside the horizontal viewport, allowing one CSS pixel rounding;
+/// otherwise returns bounds diagnostics. Panics without a document root.
 fn fits_viewport(element: &web_sys::Element) -> Result<(), JsValue> {
     let width = doc().document_element().unwrap().client_width() as f64;
     let bounds = element.get_bounding_client_rect();
@@ -85,6 +99,8 @@ fn fits_viewport(element: &web_sys::Element) -> Result<(), JsValue> {
         ),
     )
 }
+/// Exercises mounted `ui` BLE repair, undo/redo, stale focus, synthetic replies and JSON gating. Returns the first
+/// DOM/assertion error; mutates the test editor and synthetic fixture only, with no radio or vehicle traffic.
 pub(super) async fn run(ui: Ui) -> Result<(), JsValue> {
     click_id("studio-tab-device")?;
     tick().await;

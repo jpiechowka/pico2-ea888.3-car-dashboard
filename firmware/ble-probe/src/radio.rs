@@ -36,23 +36,40 @@ use trouble_host::prelude::*;
 
 use crate::bridge;
 use crate::errors::failure_reason;
+/// External HCI controller with five command slots over the retained CYW BT driver.
 type RadioController = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
+/// Compile-time bounded Trouble packet pool used by this image.
 type Pool = DefaultPacketPool;
+/// Borrowed host stack with one admitted connection and bounded channels.
 type RadioStack<'a> = Stack<'a, RadioController, Pool>;
+/// GATT inventory client with at most 24 cached services.
 type Client<'a> = GattClient<'a, RadioController, Pool, 24>;
+/// True only inside a completed CYW transaction boundary, including parked time.
 static BUS_IDLE: AtomicBool = AtomicBool::new(false);
+/// Returns whether the retained bus owner is at its quiescent maintenance hook;
+/// callers still require the shared hardware/IRQ checks before flash mutation.
 pub fn bus_idle() -> bool { BUS_IDLE.load(Ordering::SeqCst) }
+/// Uninitialized core0 tokens for the Pico 2 W internal wireless bus.
 pub struct Resources {
+    /// PIO0 token; this owner takes SM0 and IRQ0.
     pub pio: Peri<'static, PIO0>,
+    /// DMA1 reserved for radio bus transfers, distinct from display DMA0.
     pub dma: Peri<'static, DMA_CH1>,
+    /// GP23 wireless enable, initially driven low.
     pub power: Peri<'static, PIN_23>,
+    /// GP24 bidirectional wireless data, never a non-W VBUS input.
     pub data: Peri<'static, PIN_24>,
+    /// GP25 active-low wireless chip select, initially high.
     pub cs: Peri<'static, PIN_25>,
+    /// GP29 wireless clock/shared VSYS pin; no concurrent ADC use.
     pub clock: Peri<'static, PIN_29>,
 }
 // Keep the radio poll path separate from executor/metrics frames. Borrowing the
 // pinned owner avoids constructing or moving its large future at this boundary.
 #[inline(never)]
+/// Polls already-pinned `future` with `cx` and returns its unchanged Poll.
+/// The non-inlined boundary preserves named stack admission without moving or
+/// materializing another large radio owner future.
 pub fn poll_owner<F: Future>(
     future: Pin<&mut F>,
     cx: &mut Context<'_>,
@@ -60,6 +77,8 @@ pub fn poll_owner<F: Future>(
     future.poll(cx)
 }
 use crate::reports::Reports;
+/// Logs and reliably queues `phase`/`error` under `revision`; queue backpressure
+/// may suspend publication but does not itself change the hardware operation.
 async fn state(
     revision: u32,
     phase: RadioPhase,
@@ -93,17 +112,25 @@ async fn state(
     }
     bridge::emit_event(Event::State { revision, phase, error }).await;
 }
+/// Waits until the UI operation no longer has `revision`, checking every 10 ms.
+/// This is generation cancellation evidence, not a radio cleanup acknowledgement.
 async fn changed(revision: u32) {
     while bridge::request().revision == revision {
         Timer::after_millis(10).await;
     }
 }
+/// Never returns: latches fatal radio state for `error`, publishes it, then waits forever.
+/// Clears ready and preserves the outer CYW owner until independent watchdog reset.
 async fn fault(error: ProbeError) -> ! {
     bridge::RADIO_FATAL.store(true, Ordering::Release);
     bridge::RADIO_READY.store(false, Ordering::Release);
     state(bridge::request().revision, RadioPhase::Fault, error).await;
     core::future::pending().await
 }
+/// Consumes core0 radio `resources`, initializes CYW and joins the permanent bus
+/// runner with host work. Never returns/cancels DMA; fatal host outcomes retain
+/// this bus owner. Boundary hooks publish progress and park only after completed
+/// PIO/DMA transactions. Invalid clock admission waits for watchdog recovery.
 pub async fn run(resources: Resources) -> ! {
     let power = Output::new(resources.power, Level::Low);
     let cs = Output::new(resources.cs, Level::High);
@@ -126,6 +153,7 @@ pub async fn run(resources: Resources) -> ! {
         resources.clock,
         embassy_rp::dma::Channel::new(resources.dma, crate::Irqs),
     );
+    /// One-time CYW protocol/ring state, retained with the permanent runner.
     static RADIO: StaticCell<cyw43::State> = StaticCell::new();
     // Neither initialization nor the DMA-owning runner may be canceled.
     let (_wifi, driver, _control, runner) = cyw43::new_with_bluetooth(
@@ -148,7 +176,11 @@ pub async fn run(resources: Resources) -> ! {
     join(bus, protocol).await;
     unreachable!()
 }
+/// Never returns: builds the bounded no-pairing host around `driver` and runs operation
+/// supervision forever. A stopped HCI runner records active inspection failure
+/// and incomplete cleanup before fatal recovery; no automatic host restart.
 async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
+    /// Single host resource pool with one connection and two L2CAP channels.
     static RESOURCES: StaticCell<HostResources<Pool, 1, 2>> = StaticCell::new();
     let stack = trouble_host::new(
         ExternalController::<_, 5>::new(driver),
@@ -183,6 +215,10 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
         Either::Second(never) => never,
     }
 }
+/// Waits up to five seconds for `stack` connections to become idle, publishes
+/// terminal evidence for `revision` from optional `connection`, then clears
+/// `active_inspection`. A missed acknowledgement enters nonreturning fatal state;
+/// queued disconnect alone is not completion and cleanup never starts another peer.
 async fn cleanup(
     stack: &RadioStack<'_>,
     revision: u32,
@@ -211,6 +247,10 @@ async fn cleanup(
         fault(ProbeError::Cleanup).await;
     }
 }
+/// Never returns: runs latest explicit UI operations on `stack`, setting `reports` only during
+/// an acknowledged scan and tracking `active_inspection` for host-failure evidence.
+/// Startup requires ReadBdAddr within ten seconds; scan start/stop and cleanup
+/// have deadlines. Inspections run once per generation and never auto-retry.
 async fn operations(
     stack: &RadioStack<'_>,
     reports: &Reports,
@@ -264,6 +304,8 @@ async fn operations(
         }
     }
 }
+/// Logs bounded `failure` context and reliably publishes it under `revision`;
+/// retained partial inventory is left intact and no retry/security escalation occurs.
 async fn failed(
     revision: u32,
     failure: InspectionFailure,
@@ -280,6 +322,8 @@ async fn failed(
     );
     bridge::emit_event(Event::Failure { revision, failure }).await;
 }
+/// Publishes retained local/controller termination evidence from `connection`
+/// under `revision` before cleanup, preserving it even if later cleanup stalls.
 async fn failure_context(
     connection: &Connection<'_, Pool>,
     revision: u32,
@@ -290,6 +334,8 @@ async fn failure_context(
     })
     .await;
 }
+/// Returns currently retained local failure and controller disconnect reason from
+/// `connection`; absence stays unavailable and no new HCI/ATT request is issued.
 fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureContext {
     ConnectionFailureContext {
         local_error: connection
@@ -298,6 +344,11 @@ fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureCon
         disconnect_reason: connection.disconnect_reason().map(|code| code.into_inner()),
     }
 }
+/// Connects `central` only to selected `peer` for `request` on `stack`, with
+/// `active_inspection` retained until acknowledged cleanup. Eight-second connect
+/// and 30-second inventory bounds race generation change; losing futures drop
+/// before cleanup. Rejects peer mismatch and always disconnects after inventory.
+/// Valid partial results remain evidence; completion does not imply proprietary access.
 async fn inspect_peer(
     stack: &RadioStack<'_>,
     central: &mut Central<'_, RadioController, Pool>,
@@ -452,6 +503,7 @@ async fn inspect_peer(
         }
     }
 }
+/// Returns a static bounded stage label for `error` without formatting payload data.
 fn error_label(error: ProbeError) -> &'static str {
     match error {
         ProbeError::None => "none",
@@ -466,12 +518,16 @@ fn error_label(error: ProbeError) -> &'static str {
         ProbeError::InvalidPeer => "invalid-peer",
     }
 }
+/// Returns elapsed milliseconds since monotonic `started`, saturated to u32::MAX.
 fn elapsed_ms(started: Instant) -> u32 {
     Instant::now()
         .duration_since(started)
         .as_millis()
         .min(u64::from(u32::MAX)) as u32
 }
+/// Awaits `future` for three seconds and returns its value or mapped failure
+/// carrying `stage` and elapsed milliseconds. Timeout drops the ATT future;
+/// enclosing inspection must clean up this bearer rather than issuing another request.
 async fn att<T, E>(
     stage: FailureStage,
     future: impl Future<Output = Result<T, BleHostError<E>>>,
@@ -488,6 +544,11 @@ async fn att<T, E>(
     })
 }
 
+/// Starts a GATT client on `stack`/`connection` while connection events remain
+/// polled, then enumerates under `revision`. `connected_at_ms`/`connect_elapsed_ms`
+/// retain pre-publication timing; `mtu_ready` latches only after client startup.
+/// Returns capacity-limited flag or stage failure; drops losing work before the
+/// caller requests disconnect. No pairing or proprietary values are requested.
 async fn inspect(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
@@ -522,6 +583,9 @@ async fn inspect(
     )
     .await
 }
+/// Publishes local `connection` parameters under `revision`, retaining supplied
+/// `connected_at_ms`/`connect_elapsed_ms`. `mtu_ready` controls whether ATT MTU is
+/// available; timing fields saturate to u32 microseconds and issue no radio request.
 async fn link_info(
     connection: &Connection<'_, Pool>,
     revision: u32,
@@ -543,6 +607,9 @@ async fn link_info(
     })
     .await;
 }
+/// Consumes events from `connection`, rejects parameter-change requests through
+/// `stack`, and returns the first disconnect or event-operation failure. Runs
+/// during MTU startup as well as inventory; does not request pairing.
 async fn connection_events(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
@@ -566,6 +633,8 @@ async fn connection_events(
 }
 
 impl crate::inventory::ServiceRecord for ServiceHandle {
+    /// Returns copied inclusive service bounds and validated UUID; unsupported
+    /// UUID bytes return InvalidValue without a new ATT operation.
     fn snapshot(&self) -> Result<Service, FailureReason> {
         let range = self.handle_range();
         let uuid = ProbeUuid::from_wire(self.uuid().as_raw()).ok_or(FailureReason::InvalidValue)?;
@@ -577,8 +646,11 @@ impl crate::inventory::ServiceRecord for ServiceHandle {
     }
 }
 impl crate::inventory::InventoryClient for Client<'_> {
+    /// Locked-client service handle retaining bounded range/UUID metadata.
     type Service = ServiceHandle;
 
+    /// Replaces `output` only after complete locked-client discovery succeeds.
+    /// Returns mapped host failure, preserving prior output on error.
     async fn services(
         &self,
         output: &mut Vec<ServiceHandle, 24>,
@@ -592,6 +664,9 @@ impl crate::inventory::InventoryClient for Client<'_> {
         }
     }
 
+    /// Enumerates `uuid` in inclusive `start`..=`end` through the locked client,
+    /// invoking `callback` on ordered validated tuples. Returns callback-break
+    /// Some or normal None, preserving exact bounded host failure classification.
     async fn read_by_type(
         &self,
         start: u16,
@@ -604,6 +679,9 @@ impl crate::inventory::InventoryClient for Client<'_> {
             .map_err(failure_reason)
     }
 
+    /// Enumerates inclusive `start`..=`end`, invoking `callback` for each
+    /// validated handle/UUID. Returns Some on callback break, None at normal end,
+    /// or a mapped host error; accepted callback prefixes are not rolled back.
     async fn find_information(
         &self,
         start: u16,
@@ -615,6 +693,8 @@ impl crate::inventory::InventoryClient for Client<'_> {
             .map_err(failure_reason)
     }
 
+    /// Reads `handle` into `bytes`; returns copied count no greater than its
+    /// capacity or mapped host failure. Locked-client blobs preserve bounded copies.
     async fn read_handle(
         &self,
         handle: u16,

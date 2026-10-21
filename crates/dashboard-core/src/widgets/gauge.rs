@@ -15,9 +15,13 @@ use crate::ui::{LEFT_ALIGNED, RIGHT_ALIGNED};
 use crate::widgets::value_text::draw_fitted_value;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Current indicator, scale and optional held peak, all expressed in the same display units.
 pub struct Reading {
+    /// Lower scale bound, including configured or automatically expanded raw extrema.
     pub min: f32,
+    /// Upper scale bound; indicator admission requires a finite positive span.
     pub max: f32,
+    /// Current display value; absent/nonfinite hides the indicator without fabricating zero.
     pub value: Option<f32>,
     /// Converted producer-owned held peak; no renderer history.
     pub peak: Option<f32>,
@@ -28,12 +32,17 @@ pub struct Reading {
 /// Current text, quality, palette and warning state belong to the cell key.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct RasterKey {
+    /// Unquantized lower bound, retained for endpoint text and decorations.
     min: f32,
+    /// Unquantized upper bound, retained for endpoint text and decorations.
     max: f32,
+    /// Current indicator quantized to `0..=1024`, or unavailable.
     level: Option<u16>,
+    /// In-range peak marker quantized to `0..=1024`, or absent/out of range.
     peak: Option<u16>,
 }
 impl Reading {
+    /// Returns the exact dynamic scale plus quantized indicator/peak dependencies for retained drawing.
     pub(crate) fn raster_key(self) -> RasterKey {
         RasterKey {
             min: self.min,
@@ -43,6 +52,9 @@ impl Reading {
         }
     }
 
+    /// Returns canonical-unit reading for `widget` from coherent `snapshot` at
+    /// freshness clock `now` milliseconds. Scale uses raw extrema and configured
+    /// range policy; unavailable current data stays `None`, and no peak is supplied.
     pub fn new(
         widget: &Widget,
         snapshot: &DashboardSnapshot,
@@ -60,6 +72,9 @@ impl Reading {
     }
 
     /// Transform current and bounds together; raw extrema still set the scale.
+    /// Returns display-unit reading for `widget` using `snapshot` extrema, supplied
+    /// canonical `value`/`peak`, conversion `unit` and AFR stoichiometric assumption
+    /// `stoich`. No freshness check is repeated for supplied values; caller owns qualification.
     pub fn presented(
         widget: &Widget,
         snapshot: &DashboardSnapshot,
@@ -79,6 +94,8 @@ impl Reading {
     }
 
     /// Markers outside the visible scale are omitted, never saturated.
+    /// Returns the `0..=1024` quantized position of `value` in this reading's units,
+    /// or `None` for out-of-range/nonfinite values or invalid scale.
     pub fn marker_level(
         self,
         value: f32,
@@ -93,6 +110,8 @@ impl Reading {
         .level()
     }
 
+    /// Returns current value quantized/rounded to `0..=1024`, clamping outside
+    /// the scale. Missing/nonfinite values or a nonfinite/nonpositive span return `None`.
     pub fn level(self) -> Option<u16> {
         let value = self.value.filter(|v| v.is_finite())?;
         let span = self.max - self.min;
@@ -103,6 +122,7 @@ impl Reading {
     }
 }
 
+/// Unit-circle samples scaled by 1024, increasing clockwise in screen coordinates from the right.
 const CIRCLE: [(i32, i32); 64] = [
     (1024, 0),
     (1019, 100),
@@ -169,6 +189,9 @@ const CIRCLE: [(i32, i32); 64] = [
     (1004, -200),
     (1019, -100),
 ];
+/// Returns a point about bounded panel `center` at `radius` pixels and angular
+/// `step` in 1/1024 of a 1/64-turn sample. Wraps turns and linearly interpolates
+/// adjacent fixed samples; caller bounds radius/center to avoid integer overflow.
 fn polar(
     center: Point,
     radius: i32,
@@ -182,6 +205,7 @@ fn polar(
     let y = a.1 + (b.1 - a.1) * fraction / 1024;
     center + Point::new(x * radius / 1024, y * radius / 1024)
 }
+/// Draws from `a` to `b` on `display` in `color` with pixel `width`, discarding target errors.
 fn line<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     a: Point,
@@ -194,6 +218,7 @@ fn line<D: DrawTarget<Color = Rgb565>>(
         .draw(display)
         .ok();
 }
+/// Fills nonempty `rect` on `display` in `color`; zero dimensions are inert and target errors discarded.
 fn fill<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     rect: Rectangle,
@@ -206,6 +231,10 @@ fn fill<D: DrawTarget<Color = Rgb565>>(
 
 /// Geometry is capped before iterator construction, independently of clipping.
 /// Numeric text has its own reserved lane and never shares pixels with the scale.
+/// Draws `kind` into clipped `bounds` on `display` using `reading`, primary `text`
+/// and `colors` ordered value/accent/track/ticks. `psi` converts endpoint labels
+/// from bar only; it does not convert the reading's indicator scale. No decorations
+/// are supplied. See [`draw_decorated`] for admission and fallback behavior.
 pub fn draw<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     kind: GaugeKind,
@@ -232,18 +261,30 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
 /// Immutable settings are borrowed for this synchronous draw, never retained.
 #[derive(Clone, Copy)]
 pub struct Decorations<'a> {
+    /// Immutable canonical bands/reference settings; borrowed only during drawing.
     pub settings: &'a AdvancedDisplay,
+    /// Conversion from canonical bands/reference to the reading's display units.
     pub unit: Unit,
+    /// AFR conversion assumption; not a measured fuel composition or ECU target.
     pub stoich: f32,
+    /// Held-peak marker color, drawn after reference so coincident peaks remain visible.
     pub peak_color: Rgb565,
 }
 
 /// Transient palette and borrowed decorations for one synchronous draw.
 pub struct Paint<'a> {
+    /// Value, current accent, background track and tick/endpoint RGB565 colors.
     pub colors: (Rgb565, Rgb565, Rgb565, Rgb565),
+    /// Optional canonical bands/reference and peak palette; numeric gauges ignore this decoration set.
     pub decorations: Option<Decorations<'a>>,
 }
 
+/// Draws `kind` into bounded/clipped `bounds` on `display`, using `reading`,
+/// primary `text`, legacy endpoint-only bar-to-PSI flag `psi` and transient `paint`.
+/// Invalid coordinates/small bounds draw nothing; dimensions cap at 156x198
+/// except exact width236 for portrait-wide cells. Unfittable primary text becomes
+/// `FIT!`; unavailable values hide indicators. Out-of-range markers are omitted,
+/// bands intersect the scale, and target errors are discarded without propagation.
 pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     kind: GaugeKind,
@@ -567,10 +608,13 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
         .ok();
     }
 }
+/// Returns the RGB565 color encoded in `band` without altering its bits.
 fn band_color(band: &dashboard_config::Band) -> Rgb565 {
     embedded_graphics::pixelcolor::raw::RawU16::new(band.color.0).into()
 }
 
+/// Converts canonical `band` using decorations `d`, intersects it with `reading`,
+/// and returns quantized low/high positions; empty or invalid intersections return `None`.
 fn band_levels(
     reading: Reading,
     d: Decorations<'_>,
@@ -584,6 +628,9 @@ fn band_levels(
     Some((reading.marker_level(lo)?, reading.marker_level(hi)?))
 }
 
+/// Returns finite `value` formatted to the greatest precision up to three decimals
+/// fitting `width` pixels in FONT_4X6, removing trailing zeros and normalizing -0.
+/// Returns `--` when invalid/unfittable; that fallback itself needs eight pixels.
 fn endpoint(
     value: f32,
     width: u32,
@@ -613,8 +660,13 @@ fn endpoint(
 }
 
 /// Exact complete-value lane used by gauge rendering and fit diagnostics.
+/// Returns the bounded primary-value rectangle for `bounds`, or `None` when
+/// coordinates/dimensions fail the same admission as gauge drawing.
 pub fn value_lane(bounds: Rectangle) -> Option<Rectangle> { regions(bounds).map(|(_, _, value, _)| value) }
 
+/// Returns capped bounds, graphic lane, complete-value lane and max integer scale
+/// for `bounds`. Coordinates outside `-320..=320`, width<20 or height<28 return
+/// `None`; ordinary width caps156, exact236 is retained, and height caps198.
 fn regions(bounds: Rectangle) -> Option<(Rectangle, Rectangle, Rectangle, u32)> {
     if !(-320..=320).contains(&bounds.top_left.x) || !(-320..=320).contains(&bounds.top_left.y) {
         return None;
@@ -657,8 +709,10 @@ fn regions(bounds: Rectangle) -> Option<(Rectangle, Rectangle, Rectangle, u32)> 
 }
 
 #[cfg(test)]
+/// Endpoint precision, sign normalization and bounded-width regressions.
 mod tests {
     #[test]
+    /// Confirms narrow-scale precision is retained while extreme finite labels still fit their lanes.
     fn compact_endpoint_labels_distinguish_narrow_scales_and_fit_extremes() {
         assert_eq!(super::endpoint(1.230, 36), "1.23");
         assert_eq!(super::endpoint(1.234, 36), "1.234");

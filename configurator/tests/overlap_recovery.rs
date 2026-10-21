@@ -1,6 +1,9 @@
+//! Retained layout repair, candidate targeting and undo/persistence authority regressions.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
+/// Returns a placement at zero-based `column`/`row` with `span`; does not validate the footprint.
 fn placement(
     column: u8,
     row: u8,
@@ -9,6 +12,7 @@ fn placement(
     Placement { column, row, span }
 }
 
+/// Returns adjacent Boost/IAT widgets with deterministic IDs and free cells for repair; invalid fixture panics.
 fn pair() -> Editor {
     let mut config = default_config();
     config.widgets.clear();
@@ -23,6 +27,7 @@ fn pair() -> Editor {
     Editor::new(config).unwrap()
 }
 
+/// Creates a rejected 2×2 resize in `editor` and asserts its specific overlap failure.
 fn overlap(editor: &mut Editor) {
     assert!(matches!(
         editor.apply(Edit::ResizeWidget {
@@ -37,6 +42,8 @@ fn overlap(editor: &mut Editor) {
 }
 
 #[test]
+/// Indexed raw repair changes its exact retained owner without changing selection; oversize/stale/semantic-only targets
+/// fail.
 fn guarded_raw_repair_of_another_retained_owner_preserves_inspection_selection() {
     let mut editor = pair();
     overlap(&mut editor);
@@ -114,6 +121,7 @@ fn guarded_raw_repair_of_another_retained_owner_preserves_inspection_selection()
 }
 
 #[test]
+/// Placement selects the moved widget even on retained overlap; undo/discard restore the previous selection.
 fn placing_a_focused_widget_selects_it_and_undo_restores_previous_selection() {
     let mut editor = pair();
     editor
@@ -161,6 +169,8 @@ fn placing_a_focused_widget_selects_it_and_undo_restores_previous_selection() {
 }
 
 #[test]
+/// Dragging the covered widget admits the original rejected resize in one history step and retires old
+/// field/save/pointer tokens.
 fn drag_repairs_visible_overlap_without_losing_rejected_resize() {
     let mut editor = pair();
     let before = editor.export_binary().unwrap();
@@ -194,6 +204,8 @@ fn drag_repairs_visible_overlap_without_losing_rejected_resize() {
 }
 
 #[test]
+/// Partial repairs retain candidate movement without accepted publication; final deletion admits one combined history
+/// entry.
 fn multiple_collisions_can_be_repaired_in_steps_with_export_blocked_between_them() {
     let mut editor = pair();
     editor
@@ -227,6 +239,8 @@ fn multiple_collisions_can_be_repaired_in_steps_with_export_blocked_between_them
 }
 
 #[test]
+/// New overlapping candidate widgets remain selectable and cancellable while library additions/export stay blocked;
+/// discard retires pointers.
 fn rejected_new_widget_is_selectable_movable_and_cancellable() {
     let mut editor = pair();
     let before = editor.export_binary().unwrap();
@@ -263,6 +277,7 @@ fn rejected_new_widget_is_selectable_movable_and_cancellable() {
 }
 
 #[test]
+/// Raw view-name changes survive multiple rejected resize repairs and enter accepted history only with valid layout.
 fn invalid_resize_preserves_new_field_edits_until_atomic_layout_repair() {
     let mut editor = pair();
     overlap(&mut editor);

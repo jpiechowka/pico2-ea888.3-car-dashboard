@@ -1,4 +1,5 @@
-//! Exact firmware raster export: cargo run --example configured_preview -- out.ppm [config.eav] [view-id]
+//! Shared-renderer synthetic raster export: `cargo run --example configured_preview -- out.ppm [config.eav] [view-id]`.
+//! Displayed FPS values are fixture inputs, not hardware observations.
 use std::io::Write;
 
 use dashboard_host_validation::acquisition::AcquisitionModel;
@@ -10,6 +11,9 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::{decode, default_config, validate};
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Loads optional configuration/view CLI arguments and writes a P6 snapshot after 60 synthetic samples.
+/// Missing arguments, invalid config/view and I/O failures panic. Config/view admission precedes opening
+/// the output, so rejected input preserves it; later write failure may leave a partial replacement file.
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     assert!(!args.is_empty(), "expected output.ppm [config.eav] [view-id]");

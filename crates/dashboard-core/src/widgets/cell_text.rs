@@ -5,9 +5,14 @@ use heapless::String;
 
 use crate::thresholds::BAR_TO_PSI;
 
+/// Six visible text lanes, each bounded to 16 UTF-8 bytes; unused lanes are empty.
 pub type CellText = [String<16>; 6];
+/// Returns six empty owned text lanes without allocation.
 fn empty() -> CellText { core::array::from_fn(|_| String::new()) }
 
+/// Returns legacy current/alternate-unit/maximum text for `value` and `maximum`
+/// in relative bar; `psi` chooses PSI primary with one decimal, otherwise bar
+/// with two. Inputs are not qualified here; oversized formatting retains a bounded prefix.
 pub fn boost(
     value: f32,
     maximum: f32,
@@ -25,11 +30,15 @@ pub fn boost(
     }
     text
 }
+/// Returns lambda-ratio `value` to three decimals, gasoline-equivalent AFR and
+/// explicit 14.7 reference text. AFR outside `0.01..=999.99` (including nonfinite)
+/// becomes `--`; the lambda lane itself is not validated here.
 pub fn lambda(value: f32) -> CellText {
     let mut text = empty();
     let _ = write!(text[0], "{value:.3}");
     // A display convention, not the measured stoichiometry of the fuel in the
     // tank. E5 is an upper ethanol-content label, not an exact composition.
+    /// Assumed gasoline stoichiometric mass ratio, never a measured fuel/ECU target.
     const GASOLINE_EQUIVALENT_SCALE: f32 = 14.7;
     let afr = value * GASOLINE_EQUIVALENT_SCALE;
     if (0.01..=999.99).contains(&afr) {
@@ -40,6 +49,8 @@ pub fn lambda(value: f32) -> CellText {
     let _ = write!(text[2], "EQ {GASOLINE_EQUIVALENT_SCALE:.1}");
     text
 }
+/// Returns current `value`, `minimum` and `maximum` volts to one decimal with V
+/// suffixes. Caller supplies qualified values; formatting failure leaves bounded prefixes.
 pub fn battery(
     value: f32,
     minimum: f32,
@@ -51,6 +62,9 @@ pub fn battery(
     let _ = write!(text[2], "MAX {maximum:.1}V");
     text
 }
+/// Returns current `value`, optional `average` and `maximum` degrees Celsius
+/// rounded to whole degrees; `None` leaves the average lane empty. No qualification
+/// occurs here, and oversized formatting keeps only the successful bounded prefix.
 pub fn temperature(
     value: f32,
     maximum: f32,

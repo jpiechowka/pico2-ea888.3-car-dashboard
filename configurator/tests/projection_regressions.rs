@@ -1,3 +1,5 @@
+//! Independent shared-render composition checks for accepted and inspection projections.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::Editor;
 use dashboard_configurator::preview::Preview;
@@ -10,6 +12,9 @@ use dashboard_core::display::pipeline::{BufferId, FrameToken};
 use dashboard_core::display::{FrameBuffer, St7789Renderer};
 use embedded_graphics::prelude::DrawTarget;
 
+/// Returns independently composed Debug framebuffer for `sim`, using display inspection
+/// session when `inspection` and candidate config when `candidate`. Candidate requires
+/// a live inspection proof; absent proof or impossible drawing failure panics.
 fn debug_pixels(
     sim: &ControlSimulator,
     inspection: bool,
@@ -51,6 +56,7 @@ fn debug_pixels(
 }
 
 #[test]
+/// Debug output matches independent shared rendering through brightness feedback, expiry, off and restore.
 fn accepted_debug_composes_rotation_toggle_and_expired_feedback() {
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     sim.tap(ButtonId::Y);
@@ -84,6 +90,8 @@ fn accepted_debug_composes_rotation_toggle_and_expired_feedback() {
 }
 
 #[test]
+/// Candidate/invalid Debug controls alter only inspection pixels, preserving accepted pending bytes,
+/// clock/source/completion/LED metadata and denying physical-frame acknowledgment.
 fn inspection_debug_overlay_preserves_accepted_pending_bytes_and_metadata() {
     let mut editor = Editor::default();
     let mut sim = ControlSimulator::new(editor.preview().clone());
@@ -164,6 +172,7 @@ fn inspection_debug_overlay_preserves_accepted_pending_bytes_and_metadata() {
 }
 
 #[test]
+/// Candidate Logs history remains separate; invalid JSON and Discard restore accepted pixels and scroll anchor.
 fn accepted_logs_keep_history_anchor_during_invalid_json_and_discard() {
     let mut editor = Editor::default();
     let mut sim = ControlSimulator::new(editor.preview().clone());

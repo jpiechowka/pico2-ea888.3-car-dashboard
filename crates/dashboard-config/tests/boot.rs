@@ -1,6 +1,8 @@
+//! Whole-document boot publication and fault-preserving fallback.
 use dashboard_config::*;
 
 #[test]
+/// A valid boot publishes its whole document; truncation publishes reviewed demo-only defaults plus a fault.
 fn startup_loads_one_whole_document_or_persists_the_default_fault() {
     let mut config = default_config();
     config.views[0].name = "Track".try_into().unwrap();

@@ -1,5 +1,7 @@
+//! Target benchmark admission/restoration and deterministic workload oracles, without timing hardware.
 use dashboard_host_validation::microbench::{self, Budget, Counter, Error, Measurement, SUITE_US, Timebase, TimerPort};
 
+/// Returns an independent running 12MHz reference divided to 1MHz, with both debug-pause bits initially set.
 fn timer() -> Timebase {
     Timebase {
         paused: false,
@@ -11,15 +13,23 @@ fn timer() -> Timebase {
         debug_pause: 6,
     }
 }
+/// In-memory timer port with readback-failure injection for pause-bit ownership tests.
 struct Port {
+    /// Current register-derived timer configuration returned by readback.
     state: Timebase,
+    /// Requested debug-pause writes in order, including deliberately ignored writes.
     writes: Vec<u32>,
+    /// Ignore writes of zero so clearing debug pause fails verification.
     fail_clear: bool,
+    /// Ignore writes of six so restoring the initial debug-pause bits fails.
     fail_restore: bool,
 }
 impl TimerPort for Port {
+    /// Returns the current synthetic timer register snapshot.
     fn read(&self) -> Timebase { self.state }
 
+    /// Records `value` and applies it to debug-pause bits unless the matching
+    /// clear/restore failure flag is set; no real timer is touched.
     fn write_debug_pause(
         &mut self,
         value: u32,
@@ -30,6 +40,7 @@ impl TimerPort for Port {
         }
     }
 }
+/// Returns the normal timer fixture with no injected failures and an empty write log.
 fn port() -> Port {
     Port {
         state: timer(),
@@ -38,6 +49,8 @@ fn port() -> Port {
         fail_restore: false,
     }
 }
+/// Returns a synthetic enabled DWT sample at wall microseconds `us` with raw
+/// wrapping `cycles`, TRCENA set and no unavailable/locked control bits.
 fn counter(
     us: u64,
     cycles: u32,
@@ -50,6 +63,8 @@ fn counter(
     }
 }
 
+/// Admits one counter wrap and valid clock bounds, rejecting stalled/regressed wall time and impossible/unavailable
+/// cycles.
 #[test]
 fn raw_cycle_wrap_is_valid_but_missing_or_impossible_counters_are_explicit_errors() {
     assert_eq!(
@@ -98,6 +113,7 @@ fn raw_cycle_wrap_is_valid_but_missing_or_impossible_counters_are_explicit_error
     assert!(Measurement::check(counter(u64::MAX - SUITE_US, 1), counter(u64::MAX, 100), 150_000_000).is_ok());
 }
 
+/// Success/error normal returns restore debug-pause bits; invalid initial/readback/end-state timers fail closed.
 #[test]
 fn every_normal_exit_restores_debug_pause_and_failed_timebases_never_run() {
     for fail in [false, true] {
@@ -148,6 +164,7 @@ fn every_normal_exit_restores_debug_pause_and_failed_timebases_never_run() {
     assert_eq!(p.state.debug_pause, 6);
 }
 
+/// Operation/count/time limits, overlaps and clock reversal permanently close the current suite's admission.
 #[test]
 fn total_budget_operation_cap_and_regressed_clocks_close_admission() {
     let mut b = Budget::new(10);
@@ -172,6 +189,7 @@ fn total_budget_operation_cap_and_regressed_clocks_close_admission() {
     assert_eq!(Budget::new(0).admit(0, 0), Err(Error::Budget));
 }
 
+/// Every bounded production kernel matches an independent framebuffer/history oracle and its frozen checksum.
 #[test]
 fn target_workloads_match_reference_pixels_and_history_after_every_bounded_batch() {
     use dashboard_host_validation::display::FrameBuffer;
@@ -181,14 +199,23 @@ fn target_workloads_match_reference_pixels_and_history_after_every_bounded_batch
     use embedded_graphics::pixelcolor::Rgb565;
     use embedded_graphics::prelude::*;
     use embedded_graphics::primitives::Rectangle;
-    struct Reference(Vec<u16>);
+    /// Independent pixel-wise landscape target; avoids production packed-fill implementations.
+    struct Reference(
+        /// Row-major packed RGB565 values, exactly 320x240 entries.
+        Vec<u16>,
+    );
     impl OriginDimensions for Reference {
+        /// Returns the landscape dimensions used by the fixed target kernels.
         fn size(&self) -> Size { Size::new(320, 240) }
     }
     impl DrawTarget for Reference {
+        /// Native panel colour encoding.
         type Color = Rgb565;
+        /// Coordinate clipping and fixed storage have no recoverable draw failure.
         type Error = core::convert::Infallible;
 
+        /// Writes in-panel `pixels` and ignores others. Returns `Ok(())`;
+        /// construction must provide the full 76800-entry backing vector.
         fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
             &mut self,
             pixels: I,

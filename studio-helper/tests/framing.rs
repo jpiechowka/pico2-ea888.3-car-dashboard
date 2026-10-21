@@ -1,5 +1,8 @@
+//! Streaming log redaction, UTF-8 reconstruction and bounded escape/framing regressions.
+
 use dashboard_helper_protocol::Error;
 #[test]
+/// A newly registered nonce is redacted after prior text; intermediate escape syntax never reaches output.
 fn late_delegation_secret_registration_and_escape_intermediates() {
     let mut f = StreamFramer::new(&[&"a".repeat(64)]).unwrap();
     let mut out = String::new();
@@ -12,6 +15,8 @@ fn late_delegation_secret_registration_and_escape_intermediates() {
     assert_eq!(frame(&[b"a\x1b(Bz"], &[]).0, "az");
 }
 use studio_helper::jobs::logs::StreamFramer;
+/// Returns concatenated framed `chunks` and per-record progress flags after redacting
+/// `secrets`; asserts each output/retention bound and panics on invalid fixture input.
 fn frame(
     chunks: &[&[u8]],
     secrets: &[&str],
@@ -36,6 +41,7 @@ fn frame(
     (texts.concat(), progress)
 }
 #[test]
+/// Every secret split and ANSI-interleaved reconstruction is redacted; duplicate/excess secret sets fail.
 fn fragmented_three_secrets_and_escape_reconstruction_never_reach_sinks() {
     let a = "a".repeat(64);
     let b = format!("{}b", "a".repeat(63));
@@ -59,6 +65,8 @@ fn fragmented_three_secrets_and_escape_reconstruction_never_reach_sinks() {
     assert!(StreamFramer::new(&[&a, &b, &c, &"d".repeat(64)]).is_err());
 }
 #[test]
+/// Split Unicode survives; malformed tails replace, CR progress stays distinct, long streams
+/// remain bounded and post-finish/oversize chunks are rejected.
 fn utf8_malformed_cr_and_endless_output_stay_bounded() {
     let bytes = "界😀é".as_bytes();
     for split in 0..=bytes.len() {

@@ -1,18 +1,30 @@
+//! Four-slot journal fault injection and payload admission: committed-generation recovery, unknown-copy protection and
+//! explicit reset.
+
 use dashboard_core::discovery::capture_store as journal;
 use embassy_futures::block_on;
 use journal::*;
 
+/// Reserved-range NOR model with operation-index failures, torn prefixes and silent mutation failures.
 #[derive(Clone)]
 struct Flash {
+    /// Complete four-slot reservation, addressed relative to FLASH_OFFSET.
     bytes: Vec<u8>,
+    /// Read/erase/program calls whose failure point has been checked.
     calls: usize,
+    /// Zero-based call to fail once; none disables injected failure.
     fail_at: Option<usize>,
+    /// Erase/program attempts, including failed or silent ones.
     writes: usize,
+    /// Prefix bytes changed by an injected failed erase/program, clamped to operation size.
     tear: usize,
+    /// Return successful erase without changing bytes.
     silent_erase: bool,
+    /// Return successful program without changing bytes unless the call is the injected failure.
     silent_program: bool,
 }
 impl Flash {
+    /// Returns erased four-slot storage with zero counters and no fault injection.
     fn new() -> Self {
         Self {
             bytes: vec![255; SLOT_BYTES * usize::from(SLOT_COUNT)],
@@ -25,6 +37,8 @@ impl Flash {
         }
     }
 
+    /// Returns reservation-relative index for absolute `offset` and `length`; panics below/outside the reservation or
+    /// on overflow.
     fn index(
         offset: u32,
         length: usize,
@@ -37,6 +51,7 @@ impl Flash {
         index
     }
 
+    /// Advances the operation counter and returns whether its previous value matches the injected failure index.
     fn fails(&mut self) -> bool {
         let fails = self.fail_at == Some(self.calls);
         self.calls += 1;
@@ -44,8 +59,11 @@ impl Flash {
     }
 }
 impl Storage for Flash {
+    /// Injected storage failure; assertion failures instead identify broken caller range/alignment/NOR contracts.
     type Error = ();
 
+    /// Copies at most one page from absolute `offset` into `bytes`; returns injected failure before mutation.
+    /// Invalid size/range panics, and each call advances the operation count.
     async fn read(
         &mut self,
         offset: u32,
@@ -60,6 +78,8 @@ impl Storage for Flash {
         Ok(())
     }
 
+    /// Erases aligned sector `offset`, or its configured torn prefix on failure; returns the injected status.
+    /// Counts the write attempt; silent-success mode leaves bytes unchanged, and invalid bounds/alignment panic.
     async fn erase_sector(
         &mut self,
         offset: u32,
@@ -77,6 +97,9 @@ impl Storage for Flash {
         Ok(())
     }
 
+    /// AND-programs `bytes` at aligned `offset`, retaining a torn prefix on failure; returns injected status.
+    /// Counts attempts; silent-success mode leaves bytes unchanged. Invalid ranges/alignment or zero-to-one programming
+    /// panic.
     async fn program_page(
         &mut self,
         offset: u32,
@@ -100,12 +123,15 @@ impl Storage for Flash {
 
 // Keep envelope checksums valid while testing semantic rejection. CRC itself has
 // separate published check vectors and a frozen independently generated fixture.
+/// Repairs `page` checksum over its protected bytes 0..32 and 36..256; panics if shorter than one page.
 fn fix_page_crc(page: &mut [u8]) {
     let mut protected = page[..32].to_vec();
     protected.extend_from_slice(&page[36..256]);
     page[32..36].copy_from_slice(&crc32(&protected).to_le_bytes());
 }
 
+/// Rewrites `flash` slot `slot`/`copy` generation to `generation`, repairing header and linked commit CRCs.
+/// Bypasses NOR semantics for corruption/admission tests; invalid indices panic.
 fn set_generation(
     flash: &mut Flash,
     slot: usize,
@@ -122,6 +148,7 @@ fn set_generation(
     fix_page_crc(&mut flash.bytes[end..end + PAGE_BYTES]);
 }
 
+/// Every byte mutation in the newest header/payload/commit rejects that copy and loads the previous committed bytes.
 #[test]
 fn corrupted_newest_header_payload_or_commit_falls_back_to_previous() {
     block_on(async {
@@ -145,6 +172,7 @@ fn corrupted_newest_header_payload_or_commit_falls_back_to_previous() {
     });
 }
 
+/// A valid-CRC future journal schema remains reported and blocks replacement without any byte mutation.
 #[test]
 fn unknown_schema_is_reported_and_never_overwritten_even_with_valid_other_copy() {
     block_on(async {
@@ -166,6 +194,7 @@ fn unknown_schema_is_reported_and_never_overwritten_even_with_valid_other_copy()
     });
 }
 
+/// Equal generations are ambiguous; maximum generation stays readable but refuses replacement without mutation.
 #[test]
 fn equal_generations_and_overflow_are_refused_without_mutation() {
     block_on(async {
@@ -192,6 +221,7 @@ fn equal_generations_and_overflow_are_refused_without_mutation() {
     });
 }
 
+/// Nonerased garbage is Corrupt, not Empty, and neither load nor save silently formats a slot lacking a valid copy.
 #[test]
 fn garbage_is_not_empty_and_no_valid_copy_never_autoformats() {
     block_on(async {
@@ -206,6 +236,7 @@ fn garbage_is_not_empty_and_no_valid_copy_never_autoformats() {
     });
 }
 
+/// Readback verification catches silent erase/program failures and retains the previous committed generation.
 #[test]
 fn silent_erase_and_program_failures_never_commit_unverified_data() {
     block_on(async {
@@ -223,6 +254,8 @@ fn silent_erase_and_program_failures_never_commit_unverified_data() {
     });
 }
 
+/// CRC-repaired metadata mutations, old commits and relocated copies cannot escape slot/copy/generation/length/payload
+/// binding.
 #[test]
 fn metadata_and_commit_are_bound_to_slot_copy_generation_length_and_payload() {
     block_on(async {
@@ -262,6 +295,7 @@ fn metadata_and_commit_are_bound_to_slot_copy_generation_length_and_payload() {
     });
 }
 
+/// Explicit reset repairs only its selected damaged slot and restarts generation 1; invalid slots issue no writes.
 #[test]
 fn explicit_reset_recovers_damaged_slot_and_preserves_other_slots() {
     block_on(async {
@@ -289,6 +323,7 @@ fn explicit_reset_recovers_damaged_slot_and_preserves_other_slots() {
     });
 }
 
+/// Every reset I/O cut/torn erase preserves other slots and needs a fresh explicit reset call to finish.
 #[test]
 fn interrupted_explicit_reset_is_local_and_repeat_requires_another_call() {
     block_on(async {
@@ -316,6 +351,7 @@ fn interrupted_explicit_reset_is_local_and_repeat_requires_another_call() {
     });
 }
 
+/// Header/commit bytes and erased padding match an independently packed Python/zlib fixture.
 #[test]
 fn canonical_envelopes_match_independent_python_zlib_fixture() {
     block_on(async {
@@ -344,6 +380,7 @@ fn canonical_envelopes_match_independent_python_zlib_fixture() {
     });
 }
 
+/// CRC32 matches the standard ISO-HDLC check vector plus empty and independent sentence vectors.
 #[test]
 fn crc_matches_published_iso_hdlc_check_and_empty_vector() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
@@ -351,6 +388,7 @@ fn crc_matches_published_iso_hdlc_check_and_empty_vector() {
     assert_eq!(crc32(b"The quick brown fox jumps over the lazy dog"), 0x414FA339);
 }
 
+/// Four slots independently alternate copies and load the newest exact payload after replacement.
 #[test]
 fn four_slots_keep_independent_payloads_across_alternating_commits() {
     block_on(async {
@@ -373,6 +411,8 @@ fn four_slots_keep_independent_payloads_across_alternating_commits() {
     });
 }
 
+/// Exhaustive operation cuts and representative torn prefixes always recover the previous or fully committed new
+/// generation.
 #[test]
 fn every_storage_failure_or_torn_mutation_keeps_a_committed_generation() {
     block_on(async {
@@ -403,6 +443,7 @@ fn every_storage_failure_or_torn_mutation_keeps_a_committed_generation() {
     });
 }
 
+/// Invalid slots/lengths and short destinations issue no writes; the exact maximum payload round-trips.
 #[test]
 fn rejects_invalid_slots_lengths_and_short_destination_without_writes() {
     block_on(async {
@@ -427,6 +468,8 @@ fn rejects_invalid_slots_lengths_and_short_destination_without_writes() {
 #[path = "../../firmware/ble-probe/src/capture_admission.rs"]
 mod admission;
 use dashboard_core::discovery::{capture, capture_ui as ui, *};
+/// Returns a valid pending-inspection capture at 12ms with synthetic stock build identity; fixture admission/capacity
+/// failure panics.
 fn evidence() -> Vec<u8> {
     let mut p = Probe::new();
     p.catalog.observe(Advertisement::new(
@@ -457,6 +500,8 @@ fn evidence() -> Vec<u8> {
     out.truncate(n);
     out
 }
+/// Future payload schema in either copy blocks save, while admission loads the supported sibling independently of raw
+/// newest selection.
 #[test]
 fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
     block_on(async {
@@ -501,6 +546,7 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
         }
     });
 }
+/// Future/malformed payloads require explicit reset and cannot be replaced merely by setting overwrite true.
 #[test]
 fn future_or_malformed_payload_requires_reset_without_mutation() {
     block_on(async {
@@ -533,6 +579,7 @@ fn future_or_malformed_payload_requires_reset_without_mutation() {
         }
     });
 }
+/// Every admission read failure prevents all storage mutation before overwrite can begin.
 #[test]
 fn payload_admission_read_failures_never_mutate() {
     block_on(async {
@@ -557,6 +604,7 @@ fn payload_admission_read_failures_never_mutate() {
         }
     });
 }
+/// Save rechecks emptiness immediately; a now-occupied slot requires explicit overwrite before generation 2 can commit.
 #[test]
 fn admitted_save_rechecks_empty_and_accepts_explicit_overwrite() {
     block_on(async {
@@ -588,6 +636,7 @@ fn admitted_save_rechecks_empty_and_accepts_explicit_overwrite() {
         );
     });
 }
+/// Copy reads reject forged slot/copy/generation/length metadata and prefixes exceeding one page.
 #[test]
 fn checked_copy_reads_reject_forged_metadata_and_oversized_prefix() {
     block_on(async {
@@ -611,6 +660,7 @@ fn checked_copy_reads_reject_forged_metadata_and_oversized_prefix() {
         assert!(read_prefix(&mut flash, meta, &mut [0; 257]).await.is_err());
     });
 }
+/// Malformed inactive payload protects both copies from replacement while the supported current copy remains readable.
 #[test]
 fn malformed_inactive_payload_blocks_save_without_hiding_current_copy() {
     block_on(async {

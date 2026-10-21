@@ -24,15 +24,26 @@
 //! ```
 
 pub use dashboard_core::*;
+/// Read-only host capture export, source assessment and disabled Studio handoff hints.
 pub mod probe_captures;
 pub use display::framebuffer as renderer;
 pub use renderer::FRAME_BYTES;
 
-pub struct AlignedFrame(pub renderer::FrameBuffer);
+/// Heap-ownable wrapper around the production aligned 153600-byte RGB565 frame.
+pub struct AlignedFrame(
+    /// Raw panel-order bytes; geometry comes from the renderer using the buffer.
+    pub renderer::FrameBuffer,
+);
 
 impl AlignedFrame {
+    /// Returns a zeroed production framebuffer on the host heap; allocation
+    /// failure follows the standard allocator's failure behavior.
     pub fn boxed() -> Box<Self> { Box::new(Self(renderer::FrameBuffer::new())) }
 
+    /// Returns packed RGB565 at landscape pixel (`x`, `y`) using 320-pixel stride.
+    /// Callers require `x < 320`, `y < 240`; this helper does not validate axes
+    /// independently and panics if the resulting byte index is out of bounds
+    /// or checked arithmetic overflows. Portrait callers must use their stride.
     pub fn pixel(
         &self,
         x: usize,

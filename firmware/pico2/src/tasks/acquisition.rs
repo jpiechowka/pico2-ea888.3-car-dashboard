@@ -1,3 +1,4 @@
+//! Core1 source owner, bounded sample publication and maintenance-aware liveness.
 use core::sync::atomic::Ordering;
 
 #[cfg(not(feature = "longan-rx12"))]
@@ -18,24 +19,32 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::log_info;
 use crate::tasks::CORE1_OBSERVATION;
 
+/// Latest coherent sample/statistics/reset-ack snapshot; intermediate publications coalesce.
 pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
 // Only the newest requested generation matters. The acquisition owner echoes
 // its acknowledgement in the same snapshot as the reset statistics.
+/// Capacity-one explicit warning acknowledgement command; producer retries identical pending requests.
 pub static WARNING_COMMANDS: Channel<CriticalSectionRawMutex, dashboard_pico2::warning_state::WarningCommand, 1> =
     Channel::new();
+/// Latest requested reset generation; newer requests replace earlier unconsumed ones.
 pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 #[cfg(feature = "longan-rx12")]
+/// Latest optional wired transport state; independent from measurement freshness.
 pub static VEHICLE_LINK: Watch<CriticalSectionRawMutex, LinkSnapshot, 1> = Watch::new();
 #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+/// Latest diagnostic export sequence, publication milliseconds and bounded session telemetry.
 pub static VEHICLE_DIAGNOSTICS: Watch<
     CriticalSectionRawMutex,
     (u64, u64, dashboard_pico2::diagnostics::session::Telemetry),
     1,
 > = Watch::new();
 
+/// Immutable shared configuration and optional uninitialized core1 UART tokens.
 pub struct Resources {
+    /// Boot-admitted config whose immutable storage outlives both cores.
     pub configuration: &'static dashboard_pico2::view_config::ValidatedConfig,
     #[cfg(feature = "longan-rx12")]
+    /// UART/pin ownership moved to core1 before constructing its IRQ-bound driver.
     pub uart: crate::drivers::longan::Resources,
 }
 
@@ -44,6 +53,9 @@ pub struct Resources {
 // of the async poll. Review every linked caller-plus-constructor frame.
 #[cfg(feature = "longan-rx12")]
 #[inline(never)]
+/// Consumes `resources` on core1 and returns the prepared wired-source owner.
+/// Panics on invalid profile or wrong hardware context; the non-inlined boundary
+/// avoids retaining a large fallible constructor carrier in every async poll.
 fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::longan::HardwarePort> {
     Vehicle::prepare_configured(
         crate::drivers::longan::HardwarePort::new(resources.uart),
@@ -59,6 +71,8 @@ fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::
 // This boundary also covers the historical unavailable acquisition backend.
 #[cfg(not(feature = "longan-rx12"))]
 #[inline(never)]
+/// Consumes `resources` and returns demo-configured acquisition only for demo;
+/// all other builds retain unavailable vehicle channels with the configured responder.
 fn configured_model(resources: Resources) -> AcquisitionModel<'static> {
     if cfg!(feature = "demo") {
         AcquisitionModel::demo_configured(resources.configuration)
@@ -73,6 +87,9 @@ fn configured_model(resources: Resources) -> AcquisitionModel<'static> {
 // Publication owns the by-value Watch copies in a separate call frame. Keeping
 // them in the async poll also reserves them during Vehicle construction.
 #[inline(never)]
+/// Publishes `model` through `sender` only when its identity differs from
+/// `previous`, or identity is unavailable. Updates `previous` after the coherent
+/// copy; separating the call frame avoids carrying snapshot copies during construction.
 fn publish_snapshot(
     #[cfg(feature = "longan-rx12")] model: &Vehicle<'_, crate::drivers::longan::HardwarePort>,
     #[cfg(not(feature = "longan-rx12"))] model: &AcquisitionModel<'_>,
@@ -88,6 +105,12 @@ fn publish_snapshot(
 }
 
 #[embassy_executor::task]
+/// Owns source `resources` indefinitely on core1. `start_time` anchors demo
+/// animation; `stack_bottom` and `stack_top` bound stack observations. Publishes
+/// samples/statistics coherently, acknowledges reset generations, and bounds normal
+/// publication to 100 Hz. Maintenance drains wired commands before parking, keeps
+/// IRQs available and resumes through fresh protocol qualification. No catch-up
+/// burst or live ECU qualification is inferred; invalid stack/profile invariants panic.
 pub async fn acquisition_task(
     start_time: Instant,
     stack_bottom: u32,

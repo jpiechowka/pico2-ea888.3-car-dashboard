@@ -1,9 +1,13 @@
+//! Command availability, deferred focus and exact field-owner navigation contracts.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::simulator::ControlSimulator;
 use dashboard_configurator::workspace::*;
 
 #[test]
+/// Pending JSON and replaced editor ownership reject captured commands without changing draft/history; valid
+/// post-discard command resumes.
 fn commands_recheck_owner_readiness_and_leave_rejected_state_unchanged() {
     let mut editor = Editor::new(default_config()).unwrap();
     let mut workspace = WorkspaceState::default();
@@ -43,6 +47,7 @@ fn commands_recheck_owner_readiness_and_leave_rejected_state_unchanged() {
 }
 
 #[test]
+/// A captured duplicate cannot retarget after its widget is deleted, preserving current content/history.
 fn captured_duplicate_cannot_follow_deleted_widget_or_changed_selection() {
     let mut editor = Editor::new(default_config()).unwrap();
     let mut workspace = WorkspaceState::default();
@@ -58,6 +63,8 @@ fn captured_duplicate_cannot_follow_deleted_widget_or_changed_selection() {
 }
 
 #[test]
+/// Commands use actual duplicate/undo reducers and deny exports/history during import or pointer ownership with
+/// specific reasons.
 fn duplicate_and_export_use_real_reducers_and_capacity_reasons() {
     let mut config = default_config();
     let widget = config.widgets[0].clone();
@@ -107,6 +114,8 @@ fn duplicate_and_export_use_real_reducers_and_capacity_reasons() {
 }
 
 #[test]
+/// Find expands the relevant workspace group for retained repair without changing editor identity, selection or raw
+/// content.
 fn find_opens_hidden_group_without_accepting_raw_or_changing_selection() {
     use dashboard_configurator::field_registry::*;
     let mut editor = Editor::new(default_config()).unwrap();
@@ -148,6 +157,8 @@ fn find_opens_hidden_group_without_accepting_raw_or_changing_selection() {
 }
 
 #[test]
+/// Open JSON routes to the existing transaction and Diagnostics without applying pending text or changing accepted
+/// history.
 fn open_json_command_reuses_the_owned_clean_or_pending_draft() {
     let mut editor = Editor::default();
     let mut workspace = WorkspaceState::default();
@@ -174,6 +185,8 @@ fn open_json_command_reuses_the_owned_clean_or_pending_draft() {
 }
 
 #[test]
+/// Palette/undo shortcuts respect composition, editable-native undo, repeated/modifier input and reserved browser
+/// commands.
 fn shortcuts_preserve_ime_editable_undo_and_browser_commands() {
     let shortcut =
         |key: &str, editable, composing| shortcut_action(key, true, false, false, false, composing, editable);
@@ -194,6 +207,8 @@ fn shortcuts_preserve_ime_editable_undo_and_browser_commands() {
 }
 
 #[test]
+/// Cancellation and superseding focus requests invalidate older request identities; this case exercises ordinary
+/// generations.
 fn focus_requests_are_retired_on_close_supersession_and_exhaustion() {
     let mut requests = FocusRequests::default();
     let first = requests.issue().unwrap();
@@ -207,6 +222,8 @@ fn focus_requests_are_retired_on_close_supersession_and_exhaustion() {
 }
 
 #[test]
+/// Full widget grid and eight-view capacity provide specific reasons and reject duplicate commands without history
+/// changes.
 fn full_grid_and_view_capacity_reject_without_history_movement() {
     let mut config = default_config();
     let widget = config.widgets[0].clone();
@@ -253,6 +270,7 @@ fn full_grid_and_view_capacity_reject_without_history_movement() {
 }
 
 #[test]
+/// Recovery command routes to the same synthetic behavior as protected Y hold without editing the project.
 fn simulator_recovery_command_preserves_editor_and_matches_protected_y_hold() {
     let mut editor = Editor::new(default_config()).unwrap();
     let mut workspace = WorkspaceState::default();
@@ -289,6 +307,8 @@ fn simulator_recovery_command_preserves_editor_and_matches_protected_y_hold() {
 }
 
 #[test]
+/// Tab focus alone does not activate a workspace; activation/group opening preserves raw drafts, simulator clock and
+/// pending pixels.
 fn manual_focus_and_activation_are_distinct_and_preserve_editor_and_simulator() {
     let mut editor = Editor::new(default_config()).unwrap();
     editor
@@ -322,6 +342,8 @@ fn manual_focus_and_activation_are_distinct_and_preserve_editor_and_simulator() 
 }
 
 #[test]
+/// Unknown/duplicate/oversized preference records fall back safely; valid bounded preferences restore active groups and
+/// wrap focus.
 fn strict_preferences_and_bounds_use_safe_defaults() {
     for text in [
         "",
@@ -355,6 +377,8 @@ fn strict_preferences_and_bounds_use_safe_defaults() {
 }
 
 #[test]
+/// An exact object target can create a raw draft without selection changes; subsequent repair requires fresh
+/// retained-raw authority.
 fn located_raw_is_clean_exact_and_preserves_selection_then_requires_retained_repair() {
     let mut editor = Editor::new(default_config()).unwrap();
     let selection = editor.selection();
@@ -394,6 +418,8 @@ fn located_raw_is_clean_exact_and_preserves_selection_then_requires_retained_rep
 }
 
 #[test]
+/// Located widget/root targets cannot mutate another owner or bypass pending JSON; invalid indices leave editor stamp
+/// unchanged.
 fn located_object_cannot_authorize_another_owner_or_pending_json() {
     let mut editor = Editor::new(default_config()).unwrap();
     let stamp = editor.stamp();
@@ -427,6 +453,8 @@ fn located_object_cannot_authorize_another_owner_or_pending_json() {
 }
 
 #[test]
+/// Object/semantic/raw authority stays distinct; unavailable fields, oversized text, import, stale revision and another
+/// editor deny located writes.
 fn every_owner_kind_is_checked_and_nonobject_authority_cannot_create_raw_fields() {
     let mut editor = Editor::new(default_config()).unwrap();
     for owner in [
@@ -480,6 +508,7 @@ fn every_owner_kind_is_checked_and_nonobject_authority_cannot_create_raw_fields(
 }
 
 #[test]
+/// Located edits recheck pointer ownership, active field variants/band bounds and exact channel before mutation.
 fn located_raw_rechecks_pointer_and_fixed_variant_band_bounds() {
     let mut editor = Editor::new(default_config()).unwrap();
     let root = editor.object_inspection_target(InspectionOwner::Root).unwrap();

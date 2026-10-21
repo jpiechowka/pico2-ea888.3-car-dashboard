@@ -1,11 +1,15 @@
+//! Read-only capture USB command/framing admission with independent CRC fixture and fragmented input.
+
 use dashboard_core::discovery::capture_store;
 use dashboard_core::discovery::capture_wire::*;
+/// Feeds `bytes` through persistent `parser`; returns every complete request/error, preserving partial-line state.
 fn parse(
     parser: &mut RequestParser,
     bytes: &[u8],
 ) -> Vec<Result<Request, WireError>> {
     bytes.iter().filter_map(|&b| parser.feed(b)).collect()
 }
+/// Only LIST/GET 1..4 parse; line overflow discards the whole command and reset discards a partial prefix.
 #[test]
 fn only_list_and_numbered_get_are_accepted_and_overflow_discards_whole_line() {
     let mut p = RequestParser::new();
@@ -31,6 +35,7 @@ fn only_list_and_numbered_get_are_accepted_and_overflow_discards_whole_line() {
     p.reset();
     assert_eq!(parse(&mut p, b"1\n"), vec![Err(WireError::InvalidCommand)]);
 }
+/// Header and payload checks bind metadata/content; every truncated header and single-byte header mutation is rejected.
 #[test]
 fn frames_bind_slot_generation_kind_length_and_payload_and_reject_truncation() {
     let h = FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(2), 19, b"abc").unwrap();
@@ -51,6 +56,7 @@ fn frames_bind_slot_generation_kind_length_and_payload_and_reject_truncation() {
     assert!(FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(0), 0, b"a").is_err());
 }
 
+/// Independent Python struct/zlib bytes match encoding; valid CRC cannot bypass field semantics or the 8192-byte limit.
 #[test]
 fn frame_matches_independent_struct_zlib_fixture_and_enforces_semantics_after_crc() {
     // Independent Python struct.pack little-endian fields and zlib.crc32.
@@ -72,6 +78,8 @@ fn frame_matches_independent_struct_zlib_fixture_and_enforces_semantics_after_cr
     assert!(FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, &vec![0; 8192]).is_ok());
 }
 
+/// List/error/End combinations retain distinct slot/generation/payload semantics, including empty/oversized length
+/// rejection.
 #[test]
 fn list_and_error_frames_are_unambiguous_and_bound_payload_metadata() {
     let bytes = list_payload(8192, 0x12345678).unwrap();
@@ -98,6 +106,7 @@ fn list_and_error_frames_are_unambiguous_and_bound_payload_metadata() {
     assert!(parse_list_payload(&[0; 8]).is_err());
 }
 
+/// Exact line-size boundaries and all non-ASCII bytes reject safely; every split of a valid GET preserves one request.
 #[test]
 fn command_boundary_and_each_non_ascii_byte_never_create_a_request() {
     for n in [31, 32, 33] {

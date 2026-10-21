@@ -1,4 +1,7 @@
-//! ADC driver.
+//! ADC conversion and DMA sampling. Results are raw codes, not calibrated volts
+//! or temperature. The application must serialize board-shared analog pins.
+//! Conversion timing: <https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf>
+//! section 4.9; chip-specific channel counts are selected by Cargo features.
 use core::future::{Future, poll_fn};
 use core::marker::PhantomData;
 use core::mem;
@@ -14,6 +17,7 @@ use crate::pac::dma::vals::TreqSel;
 use crate::peripherals::{ADC, ADC_TEMP_SENSOR};
 use crate::{Peri, RegExt, dma, interrupt, pac, peripherals};
 
+/// Single ADC-ready waiter, protected by exclusive driver borrowing.
 static WAKER: AtomicWaker = AtomicWaker::new();
 
 /// ADC config.
@@ -21,19 +25,35 @@ static WAKER: AtomicWaker = AtomicWaker::new();
 #[derive(Default)]
 pub struct Config {}
 
+/// Owned analog pin or internal sensor; drop restores a fixed digital pad state or disables TS.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Source<'p> {
-    Pin(Peri<'p, AnyPin>),
-    TempSensor(Peri<'p, ADC_TEMP_SENSOR>),
+    /// External input whose digital input/output are disabled while owned.
+    Pin(
+        /// Exclusive analog pad ownership.
+        Peri<'p, AnyPin>,
+    ),
+    /// Internal sensor enabled until this source is dropped.
+    TempSensor(
+        /// Exclusive temperature-sensor token.
+        Peri<'p, ADC_TEMP_SENSOR>,
+    ),
 }
 
 /// ADC channel.
-pub struct Channel<'p>(Source<'p>);
+pub struct Channel<'p>(
+    /// Source ownership and drop cleanup.
+    Source<'p>,
+);
 
 impl<'p> Channel<'p> {
-    /// Create a new ADC channel from pin with the provided [Pull] configuration.
-    pub fn new_pin(pin: Peri<'p, impl AdcPin + 'p>, pull: Pull) -> Self {
+    /// Returns analog ownership of `pin` with `pull` enabled as requested; disables
+    /// digital input/output and clears RP235x pad isolation. Pulls affect measured voltage.
+    pub fn new_pin(
+        pin: Peri<'p, impl AdcPin + 'p>,
+        pull: Pull,
+    ) -> Self {
         pin.pad_ctrl().modify(|w| {
             #[cfg(feature = "_rp235x")]
             w.set_iso(false);
@@ -50,22 +70,28 @@ impl<'p> Channel<'p> {
         Self(Source::Pin(pin.into()))
     }
 
-    /// Create a new ADC channel for the internal temperature sensor.
+    /// Enables the sensor represented by `s` and returns its channel. Construct after
+    /// the ADC driver: driver initialization resets ADC registers, including TS enable.
     pub fn new_temp_sensor(s: Peri<'p, ADC_TEMP_SENSOR>) -> Self {
         let r = pac::ADC;
         r.cs().write_set(|w| w.set_ts_en(true));
         Self(Source::TempSensor(s))
     }
 
+    /// Returns the hardware AINSEL index for this owned pin or sensor.
     fn channel(&self) -> u8 {
         #[cfg(any(feature = "rp2040", feature = "rp235xa"))]
+        /// First GPIO number in this package's consecutive ADC input range.
         const CH_OFFSET: u8 = 26;
         #[cfg(feature = "rp235xb")]
+        /// First GPIO number in this package's consecutive ADC input range.
         const CH_OFFSET: u8 = 40;
 
         #[cfg(any(feature = "rp2040", feature = "rp235xa"))]
+        /// Dedicated internal sensor index following the external input channels.
         const TS_CHAN: u8 = 4;
         #[cfg(feature = "rp235xb")]
+        /// Dedicated internal sensor index following the external input channels.
         const TS_CHAN: u8 = 8;
 
         match &self.0 {
@@ -78,6 +104,8 @@ impl<'p> Channel<'p> {
 }
 
 impl<'p> Drop for Source<'p> {
+    /// Restores digital input/output with pull-down for a pin, or disables the sensor;
+    /// the original pad state is not restored.
     fn drop(&mut self) {
         match self {
             Source::Pin(p) => {
@@ -99,18 +127,17 @@ impl<'p> Drop for Source<'p> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
-pub struct Sample(u16);
+pub struct Sample(
+    /// FIFO code in low bits and conversion-error flag at bit 15.
+    u16,
+);
 
 impl Sample {
-    /// Sample is valid.
-    pub fn good(&self) -> bool {
-        self.0 < 0x8000
-    }
+    /// Returns true when bit 15 reports no conversion error; does not validate analog quality.
+    pub fn good(&self) -> bool { self.0 < 0x8000 }
 
-    /// Sample value.
-    pub fn value(&self) -> u16 {
-        self.0 & !0x8000
-    }
+    /// Returns the stored code with error bit 15 removed; hardware provides a 12-bit result.
+    pub fn value(&self) -> u16 { self.0 & !0x8000 }
 }
 
 /// ADC error.
@@ -134,25 +161,26 @@ impl Mode for Blocking {}
 
 /// ADC driver.
 pub struct Adc<'d, M: Mode> {
+    /// Retains exclusive ADC lifetime and selects blocking/async APIs.
     phantom: PhantomData<(&'d ADC, M)>,
 }
 
 impl<'d, M: Mode> Drop for Adc<'d, M> {
+    /// Disables the ADC and clears its control register; borrowed channel pads are separate.
     fn drop(&mut self) {
         let r = Self::regs();
         // disable ADC. leaving it enabled comes with a ~150µA static
-        // current draw. the temperature sensor has already been disabled
-        // by the temperature-reading methods, so we don't need to touch that.
+        // current draw. Writing CS also clears temperature-sensor enable.
         r.cs().write(|w| w.set_en(false));
     }
 }
 
 impl<'d, M: Mode> Adc<'d, M> {
+    /// Returns the ADC register block; shared only through exclusive driver ownership.
     #[inline]
-    fn regs() -> pac::adc::Adc {
-        pac::ADC
-    }
+    fn regs() -> pac::adc::Adc { pac::ADC }
 
+    /// Returns a reset mask containing only ADC.
     #[inline]
     fn reset() -> pac::resets::regs::Peripherals {
         let mut ret = pac::resets::regs::Peripherals::default();
@@ -160,6 +188,7 @@ impl<'d, M: Mode> Adc<'d, M> {
         ret
     }
 
+    /// Resets/enables ADC and waits until ready without a timeout; prior ADC configuration is lost.
     fn setup() {
         let reset = Self::reset();
         crate::reset::reset(reset);
@@ -171,8 +200,12 @@ impl<'d, M: Mode> Adc<'d, M> {
         while !r.cs().read().ready() {}
     }
 
-    /// Sample a value from a channel in blocking mode.
-    pub fn blocking_read(&mut self, ch: &mut Channel) -> Result<u16, Error> {
+    /// Starts one conversion of `ch` and returns a 12-bit raw code, or ConversionFailed.
+    /// Spins until ready with no timeout; input/channel ownership is retained throughout.
+    pub fn blocking_read(
+        &mut self,
+        ch: &mut Channel,
+    ) -> Result<u16, Error> {
         let r = Self::regs();
         r.cs().modify(|w| {
             w.set_ainsel(ch.channel());
@@ -188,7 +221,9 @@ impl<'d, M: Mode> Adc<'d, M> {
 }
 
 impl<'d> Adc<'d, Async> {
-    /// Create ADC driver in async mode.
+    /// Returns exclusive async ownership from `_inner`, resetting ADC and enabling
+    /// the IRQ proven by `_irq`. `_config` currently has no settings. Initialization
+    /// busy-waits without a timeout and clears any previously enabled temperature sensor.
     pub fn new(
         _inner: Peri<'d, ADC>,
         _irq: impl Binding<interrupt::typelevel::ADC_IRQ_FIFO, InterruptHandler>,
@@ -203,6 +238,8 @@ impl<'d> Adc<'d, Async> {
         Self { phantom: PhantomData }
     }
 
+    /// Returns a future that enables the ADC IRQ and registers the single waiter until
+    /// CS.READY is set. Cancellation does not disable the IRQ or stop a conversion.
     fn wait_for_ready() -> impl Future<Output = ()> {
         let r = Self::regs();
 
@@ -219,8 +256,12 @@ impl<'d> Adc<'d, Async> {
         })
     }
 
-    /// Sample a value from a channel until completed.
-    pub async fn read(&mut self, ch: &mut Channel<'_>) -> Result<u16, Error> {
+    /// Starts a conversion of `ch` and returns its raw 12-bit code, or ConversionFailed.
+    /// No timeout; cancellation leaves the started conversion/IRQ state in hardware.
+    pub async fn read(
+        &mut self,
+        ch: &mut Channel<'_>,
+    ) -> Result<u16, Error> {
         let r = Self::regs();
         r.cs().modify(|w| {
             w.set_ainsel(ch.channel());
@@ -236,6 +277,13 @@ impl<'d> Adc<'d, Async> {
 
     // Note for refactoring: we don't require the actual Channels here, just the channel numbers.
     // The public api is responsible for asserting ownership of the actual Channels.
+    /// Fills `buf` using `dma_ch` with the distinct `channels` in ascending hardware
+    /// index order. `fcs_err` embeds conversion failure in bit 15; byte words shift
+    /// samples down by four bits. `div` is the integer ADC period divider.
+    /// Returns ConversionFailed only after the full DMA completes if sticky error
+    /// was set. Cancellation aborts DMA, stops ADC and clears FIFO/DREQ/shift enable;
+    /// drop can busy-wait without timeout and a partial buffer remains.
+    /// Panics for empty `channels` before MMIO; indices must identify owned hardware channels.
     async fn read_many_inner<W: dma::Word>(
         &mut self,
         channels: impl Iterator<Item = u8>,
@@ -251,7 +299,7 @@ impl<'d> Adc<'d, Async> {
         for c in channels {
             rrobin |= 1 << c;
         }
-        let first_ch = rrobin.trailing_zeros() as u8;
+        let first_ch = first_channel(u16::from(rrobin));
         if rrobin.count_ones() == 1 {
             rrobin = 0;
         }
@@ -282,8 +330,10 @@ impl<'d> Adc<'d, Async> {
 
         // reset dma config on drop, regardless of whether it was a future being cancelled
         // or the method returning normally.
+        /// Stops ADC and removes DMA/FIFO settings on completion or cancellation.
         struct ResetDmaConfig;
         impl Drop for ResetDmaConfig {
+            /// Stops free-running conversions, waits for ready without timeout, then disables FIFO/DREQ/shift.
             fn drop(&mut self) {
                 pac::ADC.cs().write_clear(|w| w.set_start_many(true));
                 while !pac::ADC.cs().read().ready() {}
@@ -313,10 +363,17 @@ impl<'d> Adc<'d, Async> {
         }
     }
 
-    /// Sample multiple values from multiple channels using DMA.
-    /// Samples are stored in an interleaved fashion inside the buffer.
-    /// `div` is the integer part of the clock divider and can be calculated with `floor(48MHz / sample_rate * num_channels - 1)`
-    /// Any `div` value of less than 96 will have the same effect as setting it to 0
+    /// Fills `buf` through `dma` from the nonempty `ch` slice, ordered by ascending
+    /// hardware channel index (not slice order); duplicate indices are sampled once.
+    /// Panics for empty `ch` before accessing registers, including when `buf` is empty.
+    /// `div` sets integer period: max(96, div + 1) ADC clocks per conversion
+    /// with reset fractional divider. At 48 MHz, div 0..95 gives 500 ksample/s total.
+    /// Per-channel rate is total rate divided by the number of distinct channels.
+    /// Returns Ok after all writes, or ConversionFailed after completion; u16 holds
+    /// 12-bit codes and u8 holds their high eight bits, with no per-sample error flag.
+    /// Cancellation may leave a partial buffer, aborts DMA and stops ADC; cleanup
+    /// waits for ready without timeout. This does not detect FIFO data loss.
+    /// Empty `buf` still configures DMA and starts/stops ADC; it is not a hardware no-op.
     #[inline]
     pub async fn read_many_multichannel<S: AdcSample>(
         &mut self,
@@ -329,10 +386,16 @@ impl<'d> Adc<'d, Async> {
             .await
     }
 
-    /// Sample multiple values from multiple channels using DMA, with errors inlined in samples.
-    /// Samples are stored in an interleaved fashion inside the buffer.
-    /// `div` is the integer part of the clock divider and can be calculated with `floor(48MHz / sample_rate * num_channels - 1)`
-    /// Any `div` value of less than 96 will have the same effect as setting it to 0
+    /// Fills `buf` through `dma` from the nonempty `ch` slice, ordered by ascending
+    /// hardware channel index (not slice order); duplicate indices are sampled once.
+    /// Panics for empty `ch` before accessing registers, including when `buf` is empty.
+    /// `div` sets integer period: max(96, div + 1) ADC clocks per conversion
+    /// with reset fractional divider. At 48 MHz, div 0..95 gives 500 ksample/s total.
+    /// Per-channel rate is total rate divided by the number of distinct channels.
+    /// Conversion failures are carried in each Sample; overall sticky error is discarded.
+    /// Cancellation may leave a partial buffer, aborts DMA and stops ADC; cleanup
+    /// waits for ready without timeout. This does not detect FIFO data loss.
+    /// Empty `buf` still configures DMA and starts/stops ADC; it is not a hardware no-op.
     #[inline]
     pub async fn read_many_multichannel_raw(
         &mut self,
@@ -353,9 +416,14 @@ impl<'d> Adc<'d, Async> {
             .await;
     }
 
-    /// Sample multiple values from a channel using DMA.
-    /// `div` is the integer part of the clock divider and can be calculated with `floor(48MHz / sample_rate - 1)`
-    /// Any `div` value of less than 96 will have the same effect as setting it to 0
+    /// Fills `buf` through `dma` from `ch`, retaining channel and destination ownership.
+    /// `div` sets integer period: max(96, div + 1) ADC clocks per conversion
+    /// with reset fractional divider. At 48 MHz, div 0..95 gives 500 ksample/s total.
+    /// Returns Ok after all writes, or ConversionFailed after completion; u16 holds
+    /// 12-bit codes and u8 holds their high eight bits, with no per-sample error flag.
+    /// Cancellation may leave a partial buffer, aborts DMA and stops ADC; cleanup
+    /// waits for ready without timeout. This does not detect FIFO data loss.
+    /// Empty `buf` still configures DMA and starts/stops ADC; it is not a hardware no-op.
     #[inline]
     pub async fn read_many<S: AdcSample>(
         &mut self,
@@ -368,9 +436,13 @@ impl<'d> Adc<'d, Async> {
             .await
     }
 
-    /// Sample multiple values from a channel using DMA, with errors inlined in samples.
-    /// `div` is the integer part of the clock divider and can be calculated with `floor(48MHz / sample_rate - 1)`
-    /// Any `div` value of less than 96 will have the same effect as setting it to 0
+    /// Fills `buf` through `dma` from `ch`, retaining channel and destination ownership.
+    /// `div` sets integer period: max(96, div + 1) ADC clocks per conversion
+    /// with reset fractional divider. At 48 MHz, div 0..95 gives 500 ksample/s total.
+    /// Conversion failures are carried in each Sample; overall sticky error is discarded.
+    /// Cancellation may leave a partial buffer, aborts DMA and stops ADC; cleanup
+    /// waits for ready without timeout. This does not detect FIFO data loss.
+    /// Empty `buf` still configures DMA and starts/stops ADC; it is not a hardware no-op.
     #[inline]
     pub async fn read_many_raw(
         &mut self,
@@ -393,8 +465,12 @@ impl<'d> Adc<'d, Async> {
 }
 
 impl<'d> Adc<'d, Blocking> {
-    /// Create ADC driver in blocking mode.
-    pub fn new_blocking(_inner: Peri<'d, ADC>, _config: Config) -> Self {
+    /// Returns exclusive blocking ownership from `_inner`; `_config` has no settings.
+    /// Resets/enables ADC and waits without timeout, clearing prior sensor enable.
+    pub fn new_blocking(
+        _inner: Peri<'d, ADC>,
+        _config: Config,
+    ) -> Self {
         Self::setup();
 
         Self { phantom: PhantomData }
@@ -403,10 +479,14 @@ impl<'d> Adc<'d, Blocking> {
 
 /// Interrupt handler.
 pub struct InterruptHandler {
+    /// Prevents external construction of the type-level handler marker.
     _empty: (),
 }
 
 impl interrupt::typelevel::Handler<interrupt::typelevel::ADC_IRQ_FIFO> for InterruptHandler {
+    /// Disables ADC FIFO interrupt generation and wakes the registered reader.
+    /// # Safety
+    /// Invoke only as the bound ADC_IRQ_FIFO handler for the exclusively owned driver.
     unsafe fn on_interrupt() {
         let r = Adc::<Async>::regs();
         r.inte().write(|w| w.set_fifo(false));
@@ -414,7 +494,9 @@ impl interrupt::typelevel::Handler<interrupt::typelevel::ADC_IRQ_FIFO> for Inter
     }
 }
 
+/// Limits DMA sample element widths to the supported u8/u16 representations.
 trait SealedAdcSample: crate::dma::Word {}
+/// Restricts sources to package ADC pins and the internal temperature sensor.
 trait SealedAdcChannel {}
 
 /// ADC sample.
@@ -433,6 +515,7 @@ pub trait AdcChannel: SealedAdcChannel {}
 /// ADC pin.
 pub trait AdcPin: AdcChannel + gpio::Pin {}
 
+/// Associates a package ADC-capable pin with channel eligibility; mapping uses consecutive pin numbers.
 macro_rules! impl_pin {
     ($pin:ident, $channel:expr) => {
         impl SealedAdcChannel for peripherals::$pin {}
@@ -469,3 +552,28 @@ impl_pin!(PIN_47, 7);
 
 impl SealedAdcChannel for peripherals::ADC_TEMP_SENSOR {}
 impl AdcChannel for peripherals::ADC_TEMP_SENSOR {}
+
+/// Returns the lowest selected hardware channel in `mask`; callers build the mask
+/// only from owned ADC channels before accessing any registers. Panics for an empty mask.
+fn first_channel(mask: u16) -> u8 {
+    assert!(mask != 0, "at least one ADC channel is required");
+    mask.trailing_zeros() as u8
+}
+
+/// Pure channel admission checks; no peripheral accesses are performed.
+#[cfg(test)]
+mod channel_tests {
+    /// Empty selection must fail before reserved AINSEL can reach hardware.
+    #[test]
+    #[should_panic(expected = "at least one ADC channel")]
+    fn empty_selection_is_rejected() { super::first_channel(0); }
+
+    /// Lowest selected channel starts the ascending hardware round robin.
+    #[test]
+    fn selected_channel_order_is_hardware_order() {
+        for index in 0..=8 {
+            assert_eq!(super::first_channel(1 << index), index);
+        }
+        assert_eq!(super::first_channel((1 << 7) | (1 << 2)), 2);
+    }
+}

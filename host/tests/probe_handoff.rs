@@ -4,7 +4,9 @@ use dashboard_core::discovery::*;
 use dashboard_host_validation::probe_captures::decode_json;
 use serde_json::{Value, json};
 
+/// Returns short `short` UUID from its little-endian wire encoding; fixed-width decode failure panics.
 fn uuid(short: u16) -> Uuid { Uuid::from_wire(&short.to_le_bytes()).unwrap() }
+/// Returns a probe with `peer` advertised and explicit Inspect requested at 2ms; no radio traffic occurs.
 fn probe(peer: Peer) -> Probe {
     let mut p = Probe::new();
     p.catalog
@@ -12,12 +14,15 @@ fn probe(peer: Peer) -> Probe {
     p.input(Input::Click, 2);
     p
 }
+/// Returns the common explicitly selected public-address peer fixture.
 fn base() -> Probe {
     probe(Peer {
         address: [1, 2, 3, 4, 5, 6],
         random: false,
     })
 }
+/// Returns the exact encoded capture of `p` at 100ms with unavailable source identity and stock clock metadata.
+/// Panics if the fixture exceeds the 8192-byte buffer or violates capture admission.
 fn bytes(p: &Probe) -> Vec<u8> {
     let mut bytes = vec![0; 8192];
     let n = encode(
@@ -36,7 +41,10 @@ fn bytes(p: &Probe) -> Vec<u8> {
     bytes.truncate(n);
     bytes
 }
+/// Returns the JSON evidence projection of encoded `p`; fixture encoding/decoding failure panics.
 fn export(p: &Probe) -> Value { decode_json(&bytes(p)).unwrap() }
+/// Offers inclusive service range `start`..=`end` with UUID `id` to `p`'s inspection; admission result is intentionally
+/// ignored.
 fn service(
     p: &mut Probe,
     start: u16,
@@ -46,6 +54,8 @@ fn service(
     p.inspection
         .accept(InspectionItem::Service(Service { start, end, uuid: id }));
 }
+/// Offers `p` a characteristic for service `start`, declaration `declaration`, raw `props` and UUID `id`.
+/// Value handle is declaration+1; checked overflow panics and admission result is ignored.
 fn characteristic(
     p: &mut Probe,
     start: u16,
@@ -61,6 +71,7 @@ fn characteristic(
         uuid: id,
     }));
 }
+/// Offers `p` a CCCD at `handle`, attached to `characteristic_handle` in service `start`; admission result is ignored.
 fn descriptor(
     p: &mut Probe,
     start: u16,
@@ -75,6 +86,7 @@ fn descriptor(
     }));
 }
 
+/// UUID canonicalization equates Bluetooth-base aliases while retaining original wire width and bytes.
 #[test]
 fn uuid_normalization_preserves_original_width_bytes_and_base_aliases() {
     let mut p = base();
@@ -117,6 +129,7 @@ fn uuid_normalization_preserves_original_width_bytes_and_base_aliases() {
     );
 }
 
+/// All characteristic property bits remain distinct and never enable a connection profile automatically.
 #[test]
 fn properties_keep_write_request_command_notify_and_indicate_distinct() {
     let mut p = base();
@@ -144,6 +157,8 @@ fn properties_keep_write_request_command_notify_and_indicate_distinct() {
     assert!(v["connection_handoff"]["profile"].is_null());
 }
 
+/// Duplicate service/characteristic aliases retain separate record indices and cannot yield a silently selected
+/// endpoint.
 #[test]
 fn duplicate_services_and_characteristics_are_never_silently_selected() {
     let mut p = base();
@@ -166,6 +181,7 @@ fn duplicate_services_and_characteristics_are_never_silently_selected() {
     assert_eq!(endpoints[2]["cccd_record_indices"], json!([]));
 }
 
+/// Observed/missing/multiple CCCDs describe evidence only, with saved-handle reuse disabled.
 #[test]
 fn cccd_evidence_does_not_assume_a_writable_or_subscribed_endpoint() {
     let mut p = base();
@@ -184,6 +200,8 @@ fn cccd_evidence_does_not_assume_a_writable_or_subscribed_endpoint() {
     assert_eq!(v["connection_handoff"]["saved_handles_reusable"], false);
 }
 
+/// Shared address admission allows valid public/static candidates while private/reserved addresses remain blocked and
+/// disabled.
 #[test]
 fn address_candidates_use_shared_admission_and_do_not_make_private_peers_stable() {
     for (address, random, kind) in [
@@ -211,6 +229,8 @@ fn address_candidates_use_shared_admission_and_do_not_make_private_peers_stable(
     }
 }
 
+/// Useful endpoint rows cannot hide incomplete, omitted or malformed inventory; even complete evidence has no inferred
+/// profile.
 #[test]
 fn partial_omitted_or_malformed_inventory_is_explicit_even_with_useful_rows() {
     let mut p = base();
@@ -241,6 +261,7 @@ fn partial_omitted_or_malformed_inventory_is_explicit_even_with_useful_rows() {
     assert_eq!(export(&p)["connection_handoff"]["inventory_complete"], false);
 }
 
+/// Hash candidates require successful untruncated 16-byte evidence and still do not authorize saved-handle reuse.
 #[test]
 fn database_hash_candidates_exclude_failed_truncated_or_invalid_length_reads() {
     for (result, failure, len, truncated, expected) in [
@@ -270,6 +291,8 @@ fn database_hash_candidates_exclude_failed_truncated_or_invalid_length_reads() {
     }
 }
 
+/// Frozen schema 2 bytes retain their independent SHA256 and deterministic projection with unavailable newer hardware
+/// metadata.
 #[test]
 fn legacy_payload_gets_deterministic_projection_and_unknown_hardware_fields() {
     let fixture = include_str!("fixtures/ble-capture-v2-failure.hex");
@@ -298,6 +321,7 @@ fn legacy_payload_gets_deterministic_projection_and_unknown_hardware_fields() {
     assert!(decode_json(&b[..b.len() - 1]).is_err());
 }
 
+/// Same-service UUID aliases remain ambiguous even when characteristic write properties differ.
 #[test]
 fn repeated_characteristic_aliases_in_a_single_service_remain_ambiguous() {
     let mut p = base();
@@ -310,6 +334,7 @@ fn repeated_characteristic_aliases_in_a_single_service_remain_ambiguous() {
     assert!(e.iter().all(|v| v["uuid_pair_unique_in_capture"] == false));
 }
 
+/// Advertisement-only evidence creates neither endpoints, completed inventory, termination proof nor an enabled recipe.
 #[test]
 fn advertisement_only_handoff_cannot_become_a_completed_connection_recipe() {
     let mut p = Probe::new();
@@ -332,6 +357,8 @@ fn advertisement_only_handoff_cannot_become_a_completed_connection_recipe() {
     assert_eq!(v["inspection"]["termination_assessment"]["status"], "not_observed");
 }
 
+/// An old complete flag remains raw evidence while derived abnormal termination is reported without modifying encoded
+/// bytes.
 #[test]
 fn old_complete_flag_does_not_suppress_derived_abnormal_termination_assessment() {
     let mut p = base();
@@ -371,6 +398,8 @@ fn old_complete_flag_does_not_suppress_derived_abnormal_termination_assessment()
     assert_eq!(original, bytes(&p));
 }
 
+/// Derived teardown assessment distinguishes reason absence/conflict, local ingress faults and unconfirmed cleanup from
+/// normal end.
 #[test]
 fn termination_assessment_distinguishes_normal_missing_ingress_unconfirmed_and_conflicting_evidence() {
     for (reason, cleanup, local_error, context_reason, expected, acceptable) in [

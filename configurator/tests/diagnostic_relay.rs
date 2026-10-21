@@ -1,6 +1,8 @@
+//! Optional relay privacy, bounded admission and unsettled-generation ownership regressions.
 use dashboard_configurator::diagnostic_relay::*;
 use dashboard_configurator::events::*;
 use dashboard_configurator::workspace::Workspace;
+/// Returns a warning containing private local text so wire omission can be asserted explicitly.
 fn event() -> Event {
     let mut store = EventStore::default();
     let result = store
@@ -17,6 +19,7 @@ fn event() -> Event {
     store.get(result.seq).unwrap().clone()
 }
 #[test]
+/// Only opted-in metadata is dispatched, and uncertain old delivery never replays into a new connection.
 fn opt_in_context_omits_text_and_never_retries_uncertain_delivery() {
     let mut q = Queue::default();
     let event = event();
@@ -39,6 +42,7 @@ fn opt_in_context_omits_text_and_never_retries_uncertain_delivery() {
     assert!(q.begin().is_some());
 }
 #[test]
+/// Rolling rate and queue capacity stay bounded; disconnect discards unsent context.
 fn flood_is_bounded_and_disconnect_clears_queued_context() {
     let mut q = Queue::default();
     q.synchronize(Some(1), true);
@@ -58,6 +62,7 @@ fn flood_is_bounded_and_disconnect_clears_queued_context() {
 }
 
 #[test]
+/// Enable toggles preserve unsettled ownership and old acknowledgment cannot report new-generation success.
 fn toggle_retains_lease_and_old_ack_cannot_update_new_session_status() {
     let mut q = Queue::default();
     q.synchronize(Some(1), true);

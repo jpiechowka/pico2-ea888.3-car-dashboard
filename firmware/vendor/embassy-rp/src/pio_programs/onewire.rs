@@ -4,29 +4,49 @@ use crate::Peri;
 use crate::clocks::clk_sys_freq;
 use crate::gpio::Level;
 use crate::pio::{
-    Common, Config, Direction, Instance, LoadedProgram, Pin, PioPin, ShiftConfig, ShiftDirection, StateMachine,
+    Common,
+    Config,
+    Direction,
+    Instance,
+    LoadedProgram,
+    Pin,
+    PioPin,
+    ShiftConfig,
+    ShiftDirection,
+    StateMachine,
 };
 
-fn presence_sample(word: u32) -> bool {
-    (word >> 24) != 0xff
-}
+/// Returns whether the eight MSB-aligned samples in `word` contain any low level.
+/// Lower 24 bits are ignored; idle-high 0xff is not device presence.
+fn presence_sample(word: u32) -> bool { (word >> 24) != 0xFF }
 
+/// Returns the last-bit countdown for LSB-first `data`.
+/// Panics unless nonempty, final bit is zero and eight times byte length fits u32.
 fn pullup_counter(data: &[u8]) -> u32 {
-    assert!(data.last().is_some_and(|byte| byte & 0x80 == 0),
-        "strong pullup requires a nonempty command ending in a zero bit");
-    u32::try_from(data.len()).ok().and_then(|n| n.checked_mul(8))
-        .and_then(|n| n.checked_sub(1)).expect("OneWire command exceeds the bit counter")
+    assert!(
+        data.last().is_some_and(|byte| byte & 0x80 == 0),
+        "strong pullup requires a nonempty command ending in a zero bit"
+    );
+    u32::try_from(data.len())
+        .ok()
+        .and_then(|n| n.checked_mul(8))
+        .and_then(|n| n.checked_sub(1))
+        .expect("OneWire command exceeds the bit counter")
 }
 
 /// This struct represents a onewire driver program
 pub struct PioOneWireProgram<'a, PIO: Instance> {
+    /// Fixed-origin bus timing instructions.
     prg: LoadedProgram<'a, PIO>,
+    /// Entry point for reset pulse and presence sampling.
     reset_addr: u8,
+    /// Entry point waiting for the next outgoing bit.
     next_bit_addr: u8,
 }
 
 impl<'a, PIO: Instance> PioOneWireProgram<'a, PIO> {
-    /// Load the program into the given pio
+    /// Loads the OneWire program at origin zero through `common`; returns allocation and entry addresses.
+    /// Panics if its fixed instruction range is occupied.
     pub fn new(common: &mut Common<'a, PIO>) -> Self {
         let prg = pio::pio_asm!(
             r#"
@@ -101,17 +121,26 @@ impl<'a, PIO: Instance> PioOneWireProgram<'a, PIO> {
         }
     }
 }
-/// Pio backed OneWire driver
+/// PIO OneWire bus with direction-controlled open drain and optional actively driven strong pull-up.
+/// Requires a suitable external pull-up and compatible electrical loading; no CRC or device-specific admission.
+/// Canceled operations restore byte mode/release strong pull-up; start a new transaction with reset.
 pub struct PioOneWire<'d, PIO: Instance, const SM: usize> {
+    /// Owned bus state machine, normally waiting for output in byte mode.
     sm: StateMachine<'d, PIO, SM>,
+    /// Cached configuration, temporarily changed to one-bit search mode.
     cfg: Config<'d, PIO>,
+    /// Entry point for reset pulse and presence sampling.
     reset_addr: u8,
+    /// Entry point waiting for the next outgoing bit.
     next_bit_addr: u8,
+    /// Registered data pin restored to high impedance on cancellation.
     pin: Pin<'d, PIO>,
 }
 
 impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
-    /// Create a new instance the driver
+    /// Registers `pin` through `common`, configures `sm` with `program` and returns the running bus.
+    /// Uses nominal six-microsecond instruction cycles; divider truncation can shorten them.
+    /// Panics if the system clock cannot represent that divider; clock must remain unchanged.
     pub fn new(
         common: &mut Common<'d, PIO>,
         mut sm: StateMachine<'d, PIO, SM>,
@@ -157,10 +186,14 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         }
     }
 
-    /// Perform an initialization sequence, will return true if a presence pulse was detected from a device
+    /// Resets byte-mode state, emits the reset pulse and returns true if any presence sample is low.
+    /// False means all 32 samples stayed high, not a bus diagnostic. Cancellation restores idle byte mode.
     pub async fn reset(&mut self) -> bool {
         self.restore_after_search();
-        let mut guard = BusGuard { bus: self, active: true };
+        let mut guard = BusGuard {
+            bus: self,
+            active: true,
+        };
         // The state machine immediately starts running when jumping to this address
         unsafe {
             guard.bus.sm.exec_jmp(guard.bus.reset_addr);
@@ -178,9 +211,16 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         found
     }
 
-    /// Write bytes to the onewire bus
-    pub async fn write_bytes(&mut self, data: &[u8]) {
-        let mut guard = BusGuard { bus: self, active: true };
+    /// Sends LSB-first `data`, draining echo samples after each byte; empty input still resets the pull-up counter.
+    /// No timeout or device acknowledgment/CRC. Cancellation can expose a prefix, then restores byte mode.
+    pub async fn write_bytes(
+        &mut self,
+        data: &[u8],
+    ) {
+        let mut guard = BusGuard {
+            bus: self,
+            active: true,
+        };
         unsafe {
             guard.bus.sm.set_enable(false);
             guard.bus.sm.set_y(u32::MAX);
@@ -196,10 +236,19 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         guard.active = false;
     }
 
-    /// Write bytes to the onewire bus, then apply a strong pullup
-    pub async fn write_bytes_pullup(&mut self, data: &[u8], pullup_time: embassy_time::Duration) {
+    /// Sends LSB-first `data`, actively drives high for at least the timer wait `pullup_time`, then releases.
+    /// Panics before bus changes for empty input, final MSB set or bit-count overflow. A functioning
+    /// time driver is required. Cancellation releases strong pull-up and requires a new reset transaction.
+    pub async fn write_bytes_pullup(
+        &mut self,
+        data: &[u8],
+        pullup_time: embassy_time::Duration,
+    ) {
         let counter = pullup_counter(data);
-        let mut guard = BusGuard { bus: self, active: true };
+        let mut guard = BusGuard {
+            bus: self,
+            active: true,
+        };
         unsafe {
             guard.bus.sm.set_enable(false);
             guard.bus.sm.set_y(counter);
@@ -223,9 +272,16 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         guard.active = false;
     }
 
-    /// Read bytes from the onewire bus
-    pub async fn read_bytes(&mut self, data: &mut [u8]) {
-        let mut guard = BusGuard { bus: self, active: true };
+    /// Fills `data` with LSB-first samples by transmitting ones; empty input only resets the pull-up counter.
+    /// Cancellation preserves a written prefix and restores bus state. No CRC, presence check or timeout.
+    pub async fn read_bytes(
+        &mut self,
+        data: &mut [u8],
+    ) {
+        let mut guard = BusGuard {
+            bus: self,
+            active: true,
+        };
         unsafe {
             guard.bus.sm.set_enable(false);
             guard.bus.sm.set_y(u32::MAX);
@@ -234,14 +290,20 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         let (rx, tx) = guard.bus.sm.rx_tx();
         for b in data {
             // Write all 1's so that we can read what the device responds
-            tx.wait_push(0xff).await;
+            tx.wait_push(0xFF).await;
 
             *b = (rx.wait_pull().await >> 24) as u8;
         }
         guard.active = false;
     }
 
-    async fn search(&mut self, state: &mut PioOneWireSearch) -> Option<u64> {
+    /// Returns the next raw 64-bit ROM following `state` discrepancies, or None when no responder remains.
+    /// Each call resets the bus and issues Search ROM; CRC is not checked. Successful completion updates
+    /// `state`; cancellation does not commit a partial ROM and the guard restores byte mode.
+    async fn search(
+        &mut self,
+        state: &mut PioOneWireSearch,
+    ) -> Option<u64> {
         if !self.reset().await {
             // No device present, no use in searching
             state.finished = true;
@@ -250,7 +312,10 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         self.write_bytes(&[0xF0]).await; // 0xF0 is the search rom command
 
         self.prepare_search();
-        let guard = BusGuard { bus: self, active: true };
+        let guard = BusGuard {
+            bus: self,
+            active: true,
+        };
         let (rx, tx) = guard.bus.sm.rx_tx();
 
         let mut value = 0;
@@ -303,6 +368,7 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         Some(value)
     }
 
+    /// Switches FIFO thresholds to one-bit search mode and resumes at the bit entry point.
     fn prepare_search(&mut self) {
         self.cfg.shift_in.threshold = 1;
         self.cfg.shift_in.direction = ShiftDirection::Left;
@@ -318,6 +384,8 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
         self.sm.set_enable(true);
     }
 
+    /// Discards FIFOs/shift state, releases the pin, restores byte thresholds and disables strong pull-up counting.
+    /// Resumes at the data entry point; does not emit a reset pulse to attached devices.
     fn restore_after_search(&mut self) {
         self.cfg.shift_in.threshold = 8;
         self.cfg.shift_in.direction = ShiftDirection::Right;
@@ -341,14 +409,16 @@ impl<'d, PIO: Instance, const SM: usize> PioOneWire<'d, PIO, SM> {
     }
 }
 
-// Cancellation discards any partial command/search and releases strong pullup.
-// A caller must start a new bus transaction with reset after cancellation.
+/// Restores bus state after incomplete operations and every search, without undoing device-side effects.
 struct BusGuard<'a, 'd, PIO: Instance, const SM: usize> {
+    /// Exclusively borrowed bus to recover on drop.
     bus: &'a mut PioOneWire<'d, PIO, SM>,
+    /// True until normal byte/reset completion; searches deliberately leave recovery armed.
     active: bool,
 }
 
 impl<PIO: Instance, const SM: usize> Drop for BusGuard<'_, '_, PIO, SM> {
+    /// Restores byte mode/high impedance when cleanup remains armed.
     fn drop(&mut self) {
         if self.active {
             self.bus.restore_after_search();
@@ -357,21 +427,24 @@ impl<PIO: Instance, const SM: usize> Drop for BusGuard<'_, '_, PIO, SM> {
 }
 
 #[cfg(test)]
+/// Pure presence-sample and strong-pull-up command admission regressions.
 mod tests {
     extern crate std;
     use super::*;
 
+    /// Distinguishes all-high sampling from any observed presence-low bit.
     #[test]
     fn idle_high_is_not_presence_and_a_sampled_low_is_presence() {
-        assert!(!presence_sample(0xff00_0000));
-        assert!(presence_sample(0xfe00_0000));
+        assert!(!presence_sample(0xFF00_0000));
+        assert!(presence_sample(0xFE00_0000));
         assert!(presence_sample(0));
     }
 
+    /// Admits DS18B20-style final-zero commands and rejects empty/final-one input.
     #[test]
     fn pullup_requires_a_nonempty_command_ending_in_a_zero_bit() {
         assert_eq!(pullup_counter(&[0x44]), 7);
-        assert_eq!(pullup_counter(&[0xcc, 0x48]), 15);
+        assert_eq!(pullup_counter(&[0xCC, 0x48]), 15);
         assert!(std::panic::catch_unwind(|| pullup_counter(&[])).is_err());
         assert!(std::panic::catch_unwind(|| pullup_counter(&[0x80])).is_err());
     }
@@ -379,13 +452,16 @@ mod tests {
 
 /// Onewire search state
 pub struct PioOneWireSearch {
+    /// Last complete raw ROM, used to revisit earlier discrepancy branches.
     last_rom: u64,
+    /// One-based last zero branch (1..=64); zero means no remaining discrepancy.
     last_discrepancy: u8,
+    /// True after no presence/responders or the final ROM branch.
     finished: bool,
 }
 
 impl PioOneWireSearch {
-    /// Create a new Onewire search state
+    /// Returns a fresh search before its first bus reset, with no previous ROM or discrepancy.
     pub fn new() -> Self {
         Self {
             last_rom: 0,
@@ -394,13 +470,15 @@ impl PioOneWireSearch {
         }
     }
 
-    /// Search for the next address on the bus
-    pub async fn next<PIO: Instance, const SM: usize>(&mut self, pio: &mut PioOneWire<'_, PIO, SM>) -> Option<u64> {
+    /// Returns the next raw ROM using `pio`, or None without bus traffic if already finished.
+    /// Does not validate ROM CRC; cancellation leaves any previously completed search state available for retry.
+    pub async fn next<PIO: Instance, const SM: usize>(
+        &mut self,
+        pio: &mut PioOneWire<'_, PIO, SM>,
+    ) -> Option<u64> {
         if self.finished { None } else { pio.search(self).await }
     }
 
-    /// Is finished when all devices have been found
-    pub fn is_finished(&self) -> bool {
-        self.finished
-    }
+    /// Returns whether traversal stopped, including no presence or an invalid/nonresponding search branch.
+    pub fn is_finished(&self) -> bool { self.finished }
 }

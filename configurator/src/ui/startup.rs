@@ -6,10 +6,13 @@ use super::*;
 /// Scope both panel and worker feedback without a reactive reset racing publication.
 #[derive(Clone, Copy)]
 pub(super) struct ProjectMessage {
+    /// Current editor used to bind and filter feedback by accepted project identity.
     editor: RwSignal<Editor>,
+    /// Last project-bound message, hidden when its captured project is no longer current.
     value: RwSignal<dashboard_configurator::artwork_draft::ProjectFeedback>,
 }
 impl ProjectMessage {
+    /// Returns feedback ownership for `editor`, binding initial `text` to its current project.
     pub(super) fn new(
         editor: RwSignal<Editor>,
         text: String,
@@ -22,6 +25,7 @@ impl ProjectMessage {
         }
     }
 
+    /// Binds `text` to the current project; disposed editor/message signals are ignored.
     pub(super) fn set(
         self,
         text: String,
@@ -29,6 +33,7 @@ impl ProjectMessage {
         self.try_set(text);
     }
 
+    /// Binds `text` only if editor and message owners still exist; disposal is a no-op.
     pub(super) fn try_set(
         self,
         text: String,
@@ -41,16 +46,22 @@ impl ProjectMessage {
         }
     }
 
+    /// Returns the message only for its current project identity, otherwise an empty string.
     pub(super) fn get(self) -> String { self.editor.with(|e| self.value.with(|value| value.text(e).to_owned())) }
 }
 
 #[derive(Clone, Copy)]
+/// Startup UI projection and preview-only controls; accepted settings live in the editor.
 pub struct State {
+    /// Reactive accepted startup profile shared with complete-project history.
     pub profile: Signal<StartupProfile>,
+    /// Preview-only reduced-motion toggle, initially false; does not rewrite the profile.
     pub reduced: RwSignal<bool>,
+    /// Project-scoped panel and worker feedback.
     pub message: ProjectMessage,
 }
 impl State {
+    /// Returns startup projections for `editor`, preview defaults and project-bound guidance.
     pub fn new(editor: RwSignal<Editor>) -> Self {
         Self {
             profile: Signal::derive(move || editor.with(Editor::startup_profile)),
@@ -62,6 +73,8 @@ impl State {
         }
     }
 
+    /// Applies `f` to the current profile and submits it through `ui` as a project edit.
+    /// Reports accepted history semantics or the reducer error without silently changing artwork.
     fn edit(
         self,
         ui: Ui,
@@ -77,6 +90,8 @@ impl State {
         }
     }
 }
+/// Cancels `ui`'s placement/simulation callbacks and enters paused Startup inspection
+/// at zero milliseconds; this does not replay the full acquisition/control lifecycle.
 fn show(ui: Ui) {
     stage::cancel(ui);
     simulation::cancel(ui);
@@ -84,6 +99,8 @@ fn show(ui: Ui) {
     ui.sample_ms.set(0);
     ui.dock.mode.set(PreviewMode::Startup);
 }
+/// Returns `ui`'s retained original artwork and exact conversion recipe projected to
+/// worker options, or None without artwork/original bytes or reference. Access is read-only.
 fn retained_source(ui: Ui) -> Option<startup_artwork::RetainedSource> {
     use dashboard_config_tools::project as p;
     use dashboard_startup_tools as c;
@@ -129,6 +146,10 @@ fn retained_source(ui: Ui) -> Option<startup_artwork::RetainedSource> {
         })
     })
 }
+/// Converts worker `input` into a hashed version-two project recipe for `ui`, validates
+/// artwork, then externalizes its original under the retained materialization lease.
+/// Rechecks import authority before/after storage and calls finished with publication
+/// success; stale, invalid or failed backing admission cannot replace accepted artwork.
 fn accept_artwork(
     ui: Ui,
     input: startup_artwork::ArtworkImport,
@@ -222,10 +243,16 @@ fn accept_artwork(
         }
     }
 }
+/// Returns a draft timing input for `field` in `ui` with `label`; values remain text
+/// until explicit Apply. Bounds UTF-16/UTF-8 copying to 32 and feeds an invalid marker
+/// on overflow so the rejected draft stays visible and blocks snapshots.
 #[component]
 fn TimingInput(
+    /// Shared startup draft, artwork, history and synthetic playback state.
     ui: Ui,
+    /// Startup timing field and its shared numeric admission limits.
     field: StartupNumber,
+    /// Visible and accessible name for the raw timing input.
     label: &'static str,
 ) -> impl IntoView {
     view! {<label>{label}<input type="text" inputmode="numeric" maxlength="32" aria-label=label
@@ -237,8 +264,15 @@ fn TimingInput(
         ui.run(|e|e.set_startup_number(e.stamp(),field,&text));
     }/></label>}
 }
+/// Returns `ui`'s startup profile/artwork editor, transactional timing controls and
+/// preview/replay actions. Imports require exact 16-byte EASP metadata and current import
+/// authority; conversions retain originals before publication. Geometry mismatch stays
+/// visible and blocks save/export/build until repaired, without dropping artwork.
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+pub fn Panel(
+    /// Shared startup draft, artwork, history and synthetic playback state.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.startup;
     let retained = Signal::derive(move || retained_source(ui));
     let on_accept = Callback::new(move |input| accept_artwork(ui, input));
@@ -289,8 +323,14 @@ pub fn Panel(ui: Ui) -> impl IntoView {
         </div></details>
     }
 }
+/// Returns `ui`'s Startup inspection play/pause/seek controls and preview-only reduced
+/// motion. Seek timestamps are milliseconds; preview pixels/status do not establish
+/// physical display completion, LED timing or ECU qualification.
 #[component]
-pub fn Playback(ui: Ui) -> impl IntoView {
+pub fn Playback(
+    /// Shared startup draft, artwork, history and synthetic playback state.
+    ui: Ui
+) -> impl IntoView {
     view! {<div class="startup-playback" hidden=move ||ui.dock.mode.get()!=PreviewMode::Startup>
         <div class="preview-toolbar"><span>"STARTUP PREVIEW"</span><div>
             <button on:click=move |_|{if !ui.playing.get_untracked() && ui.sample_ms.get_untracked()>=ui.startup.profile.get_untracked().total_duration(){ui.sample_ms.set(0);}ui.playing.update(|p|*p = !*p);}>{move ||if ui.playing.get(){"Pause"}else{"Play"}}</button>

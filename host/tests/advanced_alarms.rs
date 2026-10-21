@@ -1,9 +1,14 @@
+//! Producer warning episodes, completed-page acknowledgment fences and stale-data latch behavior.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::{RuleIndex, Status};
 use dashboard_host_validation::samples::{Quality, SensorId};
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::warning_state::{RequestError, WarningCommand, WarningRequests};
+/// Returns the bounded rule index `i`; panics outside the 64-rule catalogue.
 fn index(i: usize) -> RuleIndex { RuleIndex::new(i).unwrap() }
+/// Returns one validated boost rule with 100ms on/off dwell, `latch` retention and `snooze` seconds.
+/// Installs reachable onboard acknowledgment; invalid fixture settings panic.
 fn config(
     latch: bool,
     snooze: u16,
@@ -21,6 +26,7 @@ fn config(
     c.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
     validate(c).unwrap()
 }
+/// Admits boost `x` in bar and fixed companion values into `m` at `at` milliseconds; panics on rejection.
 fn sample(
     m: &mut AcquisitionModel<'_>,
     x: f32,
@@ -28,6 +34,8 @@ fn sample(
 ) {
     assert!(m.ingest_batch([x, 90., 95., 80., 30., 700., 13.8, 1.], at));
 }
+/// Returns a rule-zero acknowledgment with `request_id`, fenced to `m`'s current run/event watermark.
+/// Panics if the fixture has exhausted its run identity.
 fn command(
     m: &AcquisitionModel<'_>,
     request_id: u64,
@@ -40,6 +48,7 @@ fn command(
         rules: 1,
     }
 }
+/// A fault preserves the latch; qualified clear and acknowledgment release it in either order.
 #[test]
 fn latch_clear_and_ack_work_in_both_orders_and_stale_never_clears() {
     for ack_first in [false, true] {
@@ -68,6 +77,7 @@ fn latch_clear_and_ack_work_in_both_orders_and_stale_never_clears() {
         assert!(!m.snapshot().warning_eligibility(index(0), 300).latched);
     }
 }
+/// Retries preserve snooze deadlines, while old events/runs/times cannot acknowledge a newer episode.
 #[test]
 fn commands_reject_newer_episodes_old_runs_and_replays_are_idempotent() {
     let c = config(true, 5);
@@ -113,6 +123,7 @@ fn commands_reject_newer_episodes_old_runs_and_replays_are_idempotent() {
     let replacement = AcquisitionModel::demo_configured(&c);
     assert_ne!(replacement.snapshot().warning_run_id(), m.snapshot().warning_run_id());
 }
+/// A requester owns one pending command and consumes only one matching producer result.
 #[test]
 fn requester_has_one_pending_command_and_requires_matching_result() {
     let c = config(true, 0);
@@ -135,6 +146,8 @@ fn requester_has_one_pending_command_and_requires_matching_result() {
     assert!(!requests.complete(result));
 }
 
+/// Statistics reset preserves acknowledgment state; a new critical episode cancels snooze without losing old
+/// acknowledgment.
 #[test]
 fn statistics_reset_preserves_unacknowledged_latch_and_new_event_cancels_every_snooze() {
     let mut c = config(true, 5).config().clone();
@@ -174,6 +187,7 @@ fn statistics_reset_preserves_unacknowledged_latch_and_new_event_cancels_every_s
     assert_eq!(result.rejected, 2);
     assert!(m.snapshot().warning_eligibility(index(1), 300).attention());
 }
+/// All 64 widget rules receive independent event serials and acknowledgment bits, including bit 63.
 #[test]
 fn all64_rules_and_rule63_commands_do_not_alias_channels() {
     let seed = config(true, 0).config().clone();
@@ -213,6 +227,7 @@ fn all64_rules_and_rule63_commands_do_not_alias_channels() {
     assert_eq!(result.rejected, 0);
     assert!(m.snapshot().warning_eligibility(index(63), 100).acknowledged);
 }
+/// Ticks cannot confirm clear dwell; an admitted clear sample or stale expiry hides an unlatched warning.
 #[test]
 fn nonlatched_clear_and_stale_stop_visibility_without_tick_confirming_clear() {
     let c = config(false, 0);
@@ -231,6 +246,7 @@ fn nonlatched_clear_and_stale_stop_visibility_without_tick_confirming_clear() {
     m.tick(1001);
     assert!(!m.snapshot().warning_eligibility(index(0), 1001).visible());
 }
+/// Snooze expiry saturates at the maximum millisecond timestamp and restores attention exactly there.
 #[test]
 fn snooze_saturates_at_maximum_clock_and_expiry_resumes_attention() {
     let c = config(true, 5);
@@ -244,6 +260,7 @@ fn snooze_saturates_at_maximum_clock_and_expiry_resumes_attention() {
     m.tick(u64::MAX);
     assert!(m.snapshot().warning_eligibility(index(0), u64::MAX).attention());
 }
+/// Cleared and stale latch labels preserve the underlying Normal versus Unavailable raw status.
 #[test]
 fn latch_cleared_label_and_stale_label_preserve_raw_status() {
     let c = config(true, 0);
@@ -259,6 +276,7 @@ fn latch_cleared_label_and_stale_label_preserve_raw_status() {
     assert_eq!(e.status, Status::Unavailable);
 }
 
+/// Remembered visibility after a transport fault does not bypass fresh activation dwell or its new event.
 #[test]
 fn remembered_latch_does_not_skip_raw_on_dwell_after_a_fault() {
     let c = config(true, 0);
@@ -274,6 +292,7 @@ fn remembered_latch_does_not_skip_raw_on_dwell_after_a_fault() {
     assert_eq!(m.snapshot().warning_event_serial(), 2);
 }
 
+/// Moving directly between low/high violations of one outside-window rule retains its event identity.
 #[test]
 fn outside_window_side_change_stays_in_same_episode() {
     let mut c = config(true, 0).config().clone();
@@ -293,6 +312,7 @@ fn outside_window_side_change_stays_in_same_episode() {
     assert_eq!(m.snapshot().warning_event_serial(), serial);
     assert_eq!(m.snapshot().rule_status_at(index(0), 300), Status::Active);
 }
+/// Battery/EGT windows require running/measured-manifold context before starting their 100ms dwell.
 #[test]
 fn contextual_windows_keep_running_and_measured_manifold_qualification() {
     use dashboard_host_validation::alarms::{Context, EgtLocation};
@@ -354,6 +374,7 @@ fn contextual_windows_keep_running_and_measured_manifold_qualification() {
     }
 }
 
+/// An exact command retry changes neither publication identity nor the original five-second snooze deadline.
 #[test]
 fn exact_transport_retry_does_not_mutate_publication_or_snooze_deadline() {
     let c = config(true, 5);
@@ -370,6 +391,7 @@ fn exact_transport_retry_does_not_mutate_publication_or_snooze_deadline() {
     assert!(!m.snapshot().warning_eligibility(index(0), 5100).snoozed);
 }
 
+/// Feedback appears once for the pending result; replacement acquisition runs reject and retire old requests.
 #[test]
 fn completed_page_request_waits_for_exact_current_run_result() {
     use dashboard_host_validation::status_led::PresentedWarning;
@@ -401,6 +423,7 @@ fn completed_page_request_waits_for_exact_current_run_result() {
     assert_eq!(requests.observe(&model.snapshot()), None);
 }
 
+/// A queued newer frame cannot expand the completed-page watermark used to acknowledge a reused rule bit.
 #[test]
 fn old_completed_page_cannot_ack_new_hidden_episode_with_same_bit() {
     use dashboard_host_validation::dashboard::Overlay;

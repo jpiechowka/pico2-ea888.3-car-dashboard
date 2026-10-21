@@ -1,3 +1,5 @@
+//! ATT ingress behavior when the GATT feature is disabled; uses a fake controller and no devices.
+
 use super::*;
 use crate::mock_controller::MockController;
 use crate::prelude::DefaultPacketPool;
@@ -8,6 +10,7 @@ use core::task::{Context, Waker};
 use embassy_futures::block_on;
 
 #[test]
+/// Commands/confirmations produce no response; unsupported read requests return ATT Request Not Supported with attribute handle zero and keep the link live.
 fn no_gatt_commands_and_confirmations_are_silent_but_requests_get_unsupported() {
     for att in [&[0x52, 1, 0, 42][..], &[0x1e][..], &[0x0a, 1, 0][..]] {
         let mut resources = crate::HostResources::<DefaultPacketPool, 1, 1>::new();

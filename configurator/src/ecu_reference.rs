@@ -1,17 +1,26 @@
 //! Offline documentary references. These strings never construct requests or decoders.
 use crate::config::{DefinitionId, OBD_REFERENCE, definition};
 
+/// Maximum retained query length in UTF-8 bytes; truncation preserves character boundaries.
 pub const MAX_QUERY_BYTES: usize = 256;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Offline documentary categories, independent of project configuration.
 pub enum Section {
+    /// Historical controller identity and family comparisons.
     Vehicle,
+    /// Measurement meanings, documentary requests and scaling.
     Signals,
+    /// Fuel assumptions, unit interpretation and display-limit boundaries.
     Units,
+    /// Evidence origins and transport context.
     Sources,
+    /// Future physical qualification and identity-evidence requirements.
     Validation,
+    /// Unresolved conflicts and missing measurement definitions.
     Questions,
 }
 impl Section {
+    /// Stable filter/menu order.
     pub const ALL: [Self; 6] = [
         Self::Vehicle,
         Self::Signals,
@@ -21,6 +30,7 @@ impl Section {
         Self::Questions,
     ];
 
+    /// Returns the visible filter label, also used as the browser option value.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Vehicle => "Vehicle",
@@ -33,15 +43,22 @@ impl Section {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Evidence/implementation category; no variant grants live qualification.
 pub enum Status {
+    /// Context without an executable measurement claim.
     Reference,
+    /// Generic decoder exists; responder/deployment qualification remains required.
     Implemented,
+    /// Family/source lead without an enabled qualified decoder.
     Candidate,
+    /// Conflicting definitions preserved without choosing an unqualified interpretation.
     Conflict,
 }
 impl Status {
+    /// Stable filter/menu order.
     pub const ALL: [Self; 4] = [Self::Reference, Self::Implemented, Self::Candidate, Self::Conflict];
 
+    /// Returns the visible filter label, also used as the browser option value.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Reference => "Reference only",
@@ -52,26 +69,43 @@ impl Status {
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Fixed documentary card; formulas and requests cannot start acquisition.
 pub struct Entry {
+    /// Unique stable selection key and generated Markdown anchor.
     pub id: &'static str,
+    /// Human-readable topic, possibly with documentary PID/DID spelling.
     pub title: &'static str,
+    /// Offline category filter.
     pub section: Section,
+    /// Evidence/implementation classification, separate from live qualification.
     pub status: Status,
+    /// Applicability and historical provenance boundary.
     pub scope: &'static str,
+    /// Meaning, unresolved conflicts and qualification caveats.
     pub detail: &'static str,
+    /// Physical quantity/unit labels, including unresolved alternatives.
     pub units: &'static str,
+    /// Documentary equation or conflict description; never evaluated.
     pub formula: &'static str,
+    /// Public evidence URLs, opened only on user navigation.
     pub references: &'static [&'static str],
+    /// Optional shipped-catalogue binding, not a configured source selection.
     pub definition: Option<DefinitionId>,
 }
 /// Text projection of the authoritative runtime catalogue, never a request constructor.
 pub struct BindingDetail {
+    /// Printable service/identifier bytes without CAN/ISO-TP framing, or unavailable text.
     pub request: String,
+    /// Debug name of the catalogue decoder, not executable code.
     pub decoder: String,
+    /// Catalogue reply shape and source interpretation.
     pub interpretation: &'static str,
+    /// Implementation limitation; never exact-controller qualification.
     pub availability: &'static str,
 }
 impl Entry {
+    /// Returns current catalogue text, or `None` without a definition binding.
+    /// Neither the card formula nor configured routes are executed.
     pub fn binding(&self) -> Option<BindingDetail> {
         use crate::config::{Access, UnavailableReason};
         let d = definition(self.definition?);
@@ -105,16 +139,25 @@ impl Entry {
     }
 }
 #[derive(Clone, Debug, Default)]
+/// Offline filter/selection state independent of project history and acquisition.
 pub struct ReferenceState {
+    /// At most 256 UTF-8 bytes; normalized only during search.
     query: String,
+    /// Whether the most recent query replacement discarded a suffix.
     pub truncated: bool,
+    /// Category restriction, or all categories when absent.
     pub section: Option<Section>,
+    /// Status restriction, or all statuses when absent.
     pub status: Option<Status>,
+    /// Valid index into nonempty ENTRIES; default selects the first card.
     selected: usize,
 }
 impl ReferenceState {
+    /// Returns retained, possibly truncated query text without normalization.
     pub fn query(&self) -> &str { &self.query }
 
+    /// Retains the longest UTF-8 prefix of `text` within 256 bytes and updates
+    /// truncation status; selected detail and category/status filters remain unchanged.
     pub fn set_query(
         &mut self,
         text: &str,
@@ -127,8 +170,12 @@ impl ReferenceState {
         self.truncated = end < text.len();
     }
 
+    /// Returns selected detail even when filtered out; panics only if the private
+    /// selection invariant or nonempty catalogue invariant is broken.
     pub fn selected(&self) -> &'static Entry { &ENTRIES[self.selected] }
 
+    /// Selects exact card `id`; returns false and preserves selection when unknown.
+    /// Filters remain unchanged and need not include the selected card.
     pub fn select(
         &mut self,
         id: &str,
@@ -141,6 +188,8 @@ impl ReferenceState {
         }
     }
 
+    /// Opens the first card bound to `id` and clears query/category/status filters.
+    /// Missing bindings preserve the previous selection but still clear filters.
     pub fn open_definition(
         &mut self,
         id: DefinitionId,
@@ -154,6 +203,9 @@ impl ReferenceState {
         self.truncated = false;
     }
 
+    /// Returns cards in declaration order matching all lowercased whitespace query
+    /// terms and optional filters. Empty queries match all filtered cards; selection
+    /// is unchanged. Search includes catalogue interpretation but not reference URLs.
     pub fn results(&self) -> Vec<&'static Entry> {
         let query = self.query.to_lowercase();
         ENTRIES
@@ -188,13 +240,22 @@ use crate::config::{
     SIMOS_DEFINITIONS_REFERENCE,
     SIMOS_REFERENCE,
 };
+/// Pinned SimosTools USA table used to retain family-definition conflicts.
 const TOOLS: &str = "https://github.com/Switchleg1/SimosTools/blob/f99771ceb0442c863601a84a282c6e67e6b311a8/app/src/main/java/com/app/simostools/PID/PIDList22-USA.csv";
+/// Historical SAE document mirror; not proof of the currently applicable annex.
 const HISTORICAL: &str = "https://www.autonerdz.com/yabbfiles/Attachments/1979v3.pdf";
+/// Pinned AndrOBD conversions used as implementation evidence, not ECU qualification.
 const ANDRO: &str = "https://github.com/fr3ts0n/AndrOBD/blob/2d4974f3095ee2594833b59372b39d175ea24d71/library/src/main/java/com/fr3ts0n/ecu/prot/obd/res/conversions.csv";
+/// [Linux ISO-TP documentation](https://www.kernel.org/doc/html/latest/networking/iso15765-2.html); transport context only.
 const KERNEL: &str = "https://www.kernel.org/doc/html/latest/networking/iso15765-2.html";
+/// [VCDS controller-map guidance](https://www.ross-tech.com/vcds/tour/controller-channels-map.php); no exact sensor definition.
 const ROSS: &str = "https://www.ross-tech.com/vcds/tour/controller-channels-map.php";
+/// Shared boundary for family evidence without current controller qualification.
 const FAMILY: &str = "Family evidence; exact current ECU/TCU unqualified";
+/// Shared boundary for generic OBD definitions without responder/deployment proof.
 const GENERIC: &str = "Generic OBD; selected responder capability and deployment qualification required";
+/// Constructs fixed Entry data from literal documentary text, category/status,
+/// evidence URLs and an optional catalogue binding; no formula becomes executable.
 macro_rules! card {
     (
         $id:literal,

@@ -1,6 +1,8 @@
+//! Real CLI entry-point verification and strict option-shape regression.
 use std::path::Path;
 use std::process::Command;
 #[test]
+/// HAL/radio commands verify the current checked-in tree; unknown/incomplete forms fail with stderr.
 fn cli_checks_real_sources_and_rejects_unknown_or_missing_options() {
     let exe = env!("CARGO_BIN_EXE_dashboard-provenance");
     let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/vendor");

@@ -3,33 +3,56 @@ use crate::config::*;
 use crate::editor::*;
 use crate::workspace::*;
 
+/// Object family over which a descriptor expands; indices refer to the inspected candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
+    /// One configuration-wide setting.
     Root,
+    /// One entry per candidate view, including duplicate IDs.
     View,
+    /// One entry per candidate widget, including duplicate IDs.
     Widget,
+    /// One entry per fixed acquisition channel.
     Channel,
+    /// One entry per retained widget band.
     Band,
+    /// Separate normal and warning patterns.
     Led,
+    /// Every onboard button on each control page.
     ButtonTap,
+    /// Ordinary holds, excluding the reserved Y recovery hold.
     ButtonHold,
+    /// One encoder binding per control page.
     Encoder,
 }
+/// Defines keys and descriptors together so every key has exactly one lookup row.
+/// Rows supply object scope, navigation destination, display label and search aliases;
+/// generated documentation carries the same binding metadata.
 macro_rules! registry {
     ($($key:ident, $scope:ident, $workspace:ident, $group:ident, $label:literal, $aliases:literal;)*) => {
+        /// Stable field identity independent of candidate position or DOM lifetime.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-        pub enum FieldKey { $($key,)* }
+        pub enum FieldKey { $(#[doc = concat!($label, ". Scope: `", stringify!($scope), "`; workspace/group: `", stringify!($workspace), "` / `", stringify!($group), "`. Resolve against current candidate before navigation or editing.")] $key,)* }
+        /// Ordered discovery rows; order also determines capped search result order.
         pub const DESCRIPTORS: &[Descriptor] = &[$(Descriptor { key:FieldKey::$key, scope:Scope::$scope, workspace:Workspace::$workspace, group:GroupId::$group, label:$label, aliases:$aliases, slug:stringify!($key) },)*];
     };
 }
+/// Static discovery/navigation metadata; neither validation proof nor edit authority.
 #[derive(Clone, Copy, Debug)]
 pub struct Descriptor {
+    /// Typed identity used by raw/semantic field mappings.
     pub key: FieldKey,
+    /// Candidate objects to enumerate for this setting.
     pub scope: Scope,
+    /// Workspace to activate before focusing the control.
     pub workspace: Workspace,
+    /// Disclosure group to expand before focus.
     pub group: GroupId,
+    /// Human-readable control description, never a CSS selector.
     pub label: &'static str,
+    /// Additional case-insensitive substring search terms.
     pub aliases: &'static str,
+    /// Compile-time key spelling used in a lowercased DOM suffix.
     slug: &'static str,
 }
 registry! {
@@ -146,18 +169,53 @@ registry! {
     LedBacklight, Root, Device, Indicator, "Allow warning indication with backlight off", "rgb policy";
 }
 
+/// Candidate-position owner; numeric IDs are deliberately insufficient for malformed drafts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetOwner {
+    /// Configuration-wide setting.
     Root,
-    View(usize),
-    Widget(usize),
-    Channel(Channel),
-    Band(usize, u8),
-    Led(bool),
-    Button(ControlPage, ButtonId),
-    Encoder(ControlPage),
+    /// Candidate view position.
+    View(
+        /// Zero-based candidate view index, not its stored ID.
+        usize,
+    ),
+    /// Candidate widget position.
+    Widget(
+        /// Zero-based candidate widget index, not its stored ID.
+        usize,
+    ),
+    /// Fixed acquisition channel settings.
+    Channel(
+        /// Channel whose source/history controls are addressed.
+        Channel,
+    ),
+    /// Band within a candidate widget.
+    Band(
+        /// Zero-based widget index.
+        usize,
+        /// Zero-based retained band index.
+        u8,
+    ),
+    /// One RGB pattern.
+    Led(
+        /// True selects warning; false selects normal operation.
+        bool,
+    ),
+    /// Physical button mapping on a control page.
+    Button(
+        /// Page whose mapping is edited.
+        ControlPage,
+        /// Physical button identity.
+        ButtonId,
+    ),
+    /// Encoder mapping on a control page.
+    Encoder(
+        /// Page whose rotation/click binding is edited.
+        ControlPage,
+    ),
 }
 impl TargetOwner {
+    /// Returns human context using zero-based object positions and one-based band numbers.
     pub fn display_label(self) -> String {
         match self {
             Self::Root => "Global settings".into(),
@@ -172,6 +230,7 @@ impl TargetOwner {
         }
     }
 
+    /// Returns the enclosing inspection object; LED/control subowners share root authority.
     fn inspection(self) -> InspectionOwner {
         match self {
             Self::View(index) => InspectionOwner::View { index },
@@ -181,6 +240,7 @@ impl TargetOwner {
         }
     }
 
+    /// Returns a label-independent ASCII DOM prefix from numeric positions and enum indices.
     fn prefix(self) -> String {
         match self {
             Self::Root => "root".into(),
@@ -194,29 +254,45 @@ impl TargetOwner {
         }
     }
 }
+/// Revision-bound inspection location, revalidated before focus or repair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldTarget {
+    /// Descriptor to resolve within the owner.
     key: FieldKey,
+    /// Candidate position/subobject captured with the inspection authority.
     owner: TargetOwner,
+    /// Editor-issued lineage and location proof; stale drafts invalidate it.
     inspection: InspectionTarget,
 }
 impl FieldTarget {
+    /// Returns the captured descriptor identity without checking freshness.
     pub fn key(self) -> FieldKey { self.key }
 
+    /// Returns the captured candidate owner without checking freshness.
     pub fn owner(self) -> TargetOwner { self.owner }
 
+    /// Returns the editor-issued inspection authority, which callers must revalidate.
     pub fn inspection(self) -> InspectionTarget { self.inspection }
 
+    /// Returns the captured DOM identifier; this does not establish that its control still exists.
     pub fn dom_id(&self) -> String { Registry::dom_id(self.key, self.owner) }
 }
+/// Whether the current variant renders an ordinary control; retained invalid values remain repairable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capability {
+    /// Current style/mode supports the control.
     Active,
-    Inactive(&'static str),
+    /// Stored value is inactive, with an explanation for the inspector.
+    Inactive(
+        /// Static explanation; not a mutation prohibition for retained repairs.
+        &'static str,
+    ),
 }
 impl Capability {
+    /// Returns whether the ordinary control applies to the current variant.
     pub fn is_active(self) -> bool { matches!(self, Self::Active) }
 
+    /// Returns the inactivity explanation, or `None` for an active control.
     pub fn reason(self) -> Option<&'static str> {
         match self {
             Self::Active => None,
@@ -224,25 +300,43 @@ impl Capability {
         }
     }
 }
+/// Discovery or lineage failure; no editor state is mutated by registry operations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegistryError {
+    /// Query exceeds 128 UTF-8 bytes.
     QueryTooLong,
+    /// Owner, scope, subindex or semantic field does not match an available control.
     Unavailable,
-    Editor(EditorError),
+    /// Editor rejected inspection authority or candidate access.
+    Editor(
+        /// Underlying stale/location/admission failure.
+        EditorError,
+    ),
 }
 impl From<EditorError> for RegistryError {
+    /// Returns `error` wrapped without changing its editor failure classification.
     fn from(error: EditorError) -> Self { Self::Editor(error) }
 }
+/// Deterministic bounded result page; omitted matches are counted, not retained.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResults {
+    /// First at most 40 matches in descriptor/owner enumeration order.
     pub results: Vec<FieldTarget>,
+    /// Matching entries beyond the retained result cap.
     pub omitted: usize,
 }
+/// Retained query whose failed replacement leaves the previous text intact.
 #[derive(Default)]
-pub struct SearchQuery(String);
+pub struct SearchQuery(
+    /// At most 128 UTF-8 bytes; default is empty.
+    String,
+);
 impl SearchQuery {
+    /// Returns the retained query without normalization.
     pub fn text(&self) -> &str { &self.0 }
 
+    /// Replaces the query with `text`; returns `QueryTooLong` above 128 UTF-8 bytes,
+    /// preserving the old query on error.
     pub fn set(
         &mut self,
         text: &str,
@@ -254,31 +348,55 @@ impl SearchQuery {
         Ok(())
     }
 }
+/// One bounded validation/raw diagnostic with optional navigation authority.
 #[derive(Clone, Debug)]
 pub struct ErrorTarget {
+    /// Exact read-only location when still representable by the editor.
     pub inspection: Option<InspectionTarget>,
+    /// Editable field navigation when semantic/raw provenance maps to a known control.
     pub field: Option<FieldTarget>,
+    /// Original JSON/list location, retained even without a control mapping.
     pub path: String,
+    /// Diagnostic code or raw-parser error label.
     pub label: String,
 }
+/// Freshly resolved navigation destination and current variant capability.
 #[derive(Clone, Debug)]
 pub struct ResolvedField {
+    /// Workspace containing the control.
     pub workspace: Workspace,
+    /// Disclosure group to expand.
     pub group: GroupId,
+    /// Numeric owner prefix plus static descriptor suffix.
     pub dom_id: String,
+    /// Whether the ordinary control applies; repairs may still be available.
     pub capability: Capability,
+    /// Current candidate location and editability metadata.
     pub inspection: ResolvedInspection,
 }
+/// Stateless mapping between schema fields, candidate locations and browser controls.
 pub struct Registry;
 
 /// Persistent control properties resolve their current DOM position on each
 /// render. This is a display binding, never edit or inspection authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldId {
-    Raw(RawField),
-    Widget { id: u16, key: FieldKey },
+    /// Raw field whose stable object ID is looked up on each render.
+    Raw(
+        /// Parser field, including any stable widget/view ID.
+        RawField,
+    ),
+    /// Typed widget control whose candidate position may change after reorder.
+    Widget {
+        /// Stored widget ID; duplicate or missing IDs do not resolve.
+        id: u16,
+        /// Descriptor required to have widget scope.
+        key: FieldKey,
+    },
 }
 impl FieldId {
+    /// Returns the current DOM ID in `editor`; missing/duplicate owners, wrong scopes
+    /// and absent bands return `Unavailable`. This supplies no editing authority.
     pub fn resolve(
         self,
         editor: &Editor,
@@ -310,6 +428,7 @@ impl FieldId {
         Ok(Registry::dom_id(key, owner))
     }
 
+    /// Returns the companion preset-control ID in `editor`, propagating binding failures.
     pub fn preset(
         self,
         editor: &Editor,
@@ -320,6 +439,8 @@ impl FieldId {
 impl Registry {
     /// Collect current report links without looking up a validation owner's ID.
     /// Unsupported fields retain their actual JSON/list provenance read-only.
+    /// Returns links from `editor`'s JSON candidate report in preference to its visual
+    /// draft report, or an empty list without either report; unresolved targets stay `None`.
     pub fn error_targets(editor: &Editor) -> Vec<ErrorTarget> {
         let visual = editor.diagnostic();
         let owned_report = visual.as_ref().map(|draft| draft.validation_report());
@@ -388,6 +509,7 @@ impl Registry {
 
     /// Canvas layout/hits use the ordinary editing layout, independently of
     /// any read-only inspected object. Reducers still check mutation authority.
+    /// Returns the first widget with `id` in `editor`'s editing layout, or `None` if absent.
     pub fn layout_widget(
         editor: &Editor,
         id: u16,
@@ -401,6 +523,7 @@ impl Registry {
     }
 
     /// Synchronous read-only candidate access. A Config is data, never validation proof.
+    /// Calls `read` with `editor`'s inspection candidate and returns its result unchanged.
     pub fn with_candidate<R>(
         editor: &Editor,
         read: impl FnOnce(&Config) -> R,
@@ -408,6 +531,8 @@ impl Registry {
         editor.with_inspection_config(read)
     }
 
+    /// Returns a target for retained raw row `index` in `editor` only when its current
+    /// owner equals `owner`. Missing/mismatched rows or invalid inspection authority error.
     pub fn retained_raw_target(
         editor: &Editor,
         index: usize,
@@ -426,6 +551,9 @@ impl Registry {
         Ok(target)
     }
 
+    /// Returns a target for `location` in `editor` after checking its mapped `key`,
+    /// exact `owner` indices and LED/band identity. Mismatches return `Unavailable`;
+    /// editor inspection failures propagate without changing selection or drafts.
     pub fn semantic_target(
         editor: &Editor,
         location: ValidationLocation,
@@ -475,6 +603,8 @@ impl Registry {
         Ok(target)
     }
 
+    /// Returns the representative control for validation `field`, or `None` when no
+    /// editable mapping exists. Compound range/order errors focus their first boundary.
     pub fn validation_key(field: Field) -> Option<FieldKey> {
         use FieldKey::*;
         Some(match field {
@@ -533,6 +663,8 @@ impl Registry {
         })
     }
 
+    /// Returns a clone at zero-based `index` in `editor`'s inspection candidate,
+    /// or `None` when absent; malformed candidate values are intentionally retained.
     pub fn candidate_widget(
         editor: &Editor,
         index: usize,
@@ -540,6 +672,8 @@ impl Registry {
         editor.with_inspection_config(|c| c.widgets.get(index).cloned())
     }
 
+    /// Returns the stored ID at candidate view `index` in `editor`, or `None` if absent.
+    /// The returned ID need not be unique in an invalid candidate.
     pub fn candidate_view_id(
         editor: &Editor,
         index: usize,
@@ -547,8 +681,10 @@ impl Registry {
         editor.with_inspection_config(|c| c.views.get(index).map(|v| v.id))
     }
 
+    /// Returns every descriptor in deterministic registry declaration order.
     pub fn descriptors() -> &'static [Descriptor] { DESCRIPTORS }
 
+    /// Returns the unique row for `key`; panics only if the generated key/table invariant is broken.
     pub fn descriptor(key: FieldKey) -> &'static Descriptor {
         DESCRIPTORS
             .iter()
@@ -556,6 +692,8 @@ impl Registry {
             .expect("enumerated registry key")
     }
 
+    /// Returns the ASCII DOM identifier for `key` and numeric `owner`, without checking
+    /// scope, candidate existence or control activity; labels never become selectors.
     pub fn dom_id(
         key: FieldKey,
         owner: TargetOwner,
@@ -567,6 +705,8 @@ impl Registry {
         )
     }
 
+    /// Returns fresh inspection authority for `key` at `owner` in `editor`, or errors
+    /// for inaccessible objects, mismatched scope, absent bands or the reserved Y hold.
     pub fn target(
         editor: &Editor,
         key: FieldKey,
@@ -581,6 +721,8 @@ impl Registry {
         Ok(target)
     }
 
+    /// Calls `visit` for each descriptor/owner in `config`, retaining duplicate object
+    /// IDs by position and excluding Y hold. Work follows schema-bounded object/band counts.
     fn visit(
         config: &Config,
         mut visit: impl FnMut(&Descriptor, TargetOwner),
@@ -633,6 +775,8 @@ impl Registry {
         }
     }
 
+    /// Returns all current targets in `editor` in declaration/owner order. Any resolution
+    /// failure discards the accumulated vector and returns the last observed error.
     pub fn targets(editor: &Editor) -> Result<Vec<FieldTarget>, RegistryError> {
         editor.with_inspection_config(|c| {
             let mut result = Vec::new();
@@ -647,6 +791,9 @@ impl Registry {
         })
     }
 
+    /// Returns at most 40 matches plus an exact omitted count for `query` in `editor`.
+    /// All lowercased whitespace tokens must occur in label/alias/object context; an empty
+    /// query matches everything. Rejects over 128 UTF-8 bytes and propagates target failures.
     pub fn search(
         editor: &Editor,
         query: &str,
@@ -685,6 +832,8 @@ impl Registry {
         })
     }
 
+    /// Returns current human context for `target` in `editor` after revalidating its
+    /// lineage/scope. Stale or unavailable targets error before candidate indexing.
     pub fn search_context(
         editor: &Editor,
         target: FieldTarget,
@@ -701,6 +850,9 @@ impl Registry {
         }))
     }
 
+    /// Returns current navigation/capability metadata for `target` in `editor`.
+    /// Rejects stale authority, owner/scope mismatch, absent bands and reserved Y holds;
+    /// inactive fields resolve with a reason and do not grant edit permission.
     pub fn resolve(
         editor: &Editor,
         target: FieldTarget,
@@ -804,6 +956,8 @@ impl Registry {
         })
     }
 
+    /// Returns whether `key` has an ordinary control for widget `w`'s channel, style,
+    /// span and option variants. Inactivity does not prevent repair of retained raw errors.
     pub fn widget_capability(
         key: FieldKey,
         w: &Widget,
@@ -835,6 +989,7 @@ impl Registry {
         }
     }
 
+    /// Returns the descriptor for parser `field`, discarding its object/band identity.
     pub fn raw_key(field: RawField) -> FieldKey {
         use FieldKey::*;
         match field {
@@ -928,6 +1083,8 @@ impl Registry {
         }
     }
 
+    /// Returns the candidate owner of raw `field` in `editor`; missing or duplicate
+    /// widget/view IDs yield `None`. Band indices are carried here, checked by resolution.
     pub fn raw_owner(
         editor: &Editor,
         field: RawField,

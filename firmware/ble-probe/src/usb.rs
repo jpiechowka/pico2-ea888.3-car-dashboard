@@ -16,13 +16,19 @@ use static_cell::StaticCell;
 
 use crate::storage;
 use crate::usb_session::{Epoch, Session};
+/// RP2350 USB device driver bound to the exclusive static peripheral token.
 type UsbDriver = Driver<'static, USB>;
+/// Static CDC-ACM endpoint/control state owned by the capture transport task.
 type Cdc = CdcAcmClass<'static, UsbDriver>;
+/// Non-wrapping USB configuration fence for the sole capture-task waiter.
 static SESSION: Session = Session::new();
+/// Core0 USB callbacks invalidating sessions synchronously on bus changes.
 struct Events;
 impl Handler for Events {
+    /// Invalidates the prior epoch on bus reset before further endpoint polling.
     fn reset(&mut self) { SESSION.change(false); }
 
+    /// Advances the epoch and sets `configured`; false also invalidates old I/O.
     fn configured(
         &mut self,
         configured: bool,
@@ -30,6 +36,8 @@ impl Handler for Events {
         SESSION.change(configured);
     }
 
+    /// Invalidates the session when `enabled` becomes false; enable alone does
+    /// not claim a configured endpoint session.
     fn enabled(
         &mut self,
         enabled: bool,
@@ -39,18 +47,31 @@ impl Handler for Events {
         }
     }
 }
+/// Consumes USB `peripheral` once and uses `spawner` to start device/CDC owners.
+/// Builds bounded descriptor/control storage and optional OTP chip-ID serial.
+/// Declares a 500 mA USB configuration request, not measured current. Panics on
+/// repeated static initialization, descriptor capacity or task-allocation failure.
 pub fn start(
     spawner: Spawner,
     peripheral: Peri<'static, USB>,
 ) {
+    /// One-time CDC control/endpoint state.
     static STATE: StaticCell<State<'static>> = StaticCell::new();
+    /// Bounded USB configuration descriptor workspace.
     static CONFIG: StaticCell<[u8; 256]> = StaticCell::new();
+    /// Bounded USB BOS descriptor workspace.
     static BOS: StaticCell<[u8; 256]> = StaticCell::new();
+    /// No Microsoft OS descriptor payload is supplied.
     static MSOS: StaticCell<[u8; 0]> = StaticCell::new();
+    /// Endpoint-zero control-transfer buffer, one full-speed 64-byte packet.
     static CONTROL: StaticCell<[u8; 64]> = StaticCell::new();
+    /// Sole static handler publishing session-generation transitions.
     static EVENTS: StaticCell<Events> = StaticCell::new();
+    /// Optional 16-character hexadecimal chip-ID serial storage.
     static SERIAL: StaticCell<heapless::String<16>> = StaticCell::new();
+    /// In-place device object avoids a large startup task-argument copy.
     static DEVICE: StaticCell<UsbDevice<'static, UsbDriver>> = StaticCell::new();
+    /// In-place CDC object transferred by exclusive reference to its task.
     static CDC: StaticCell<Cdc> = StaticCell::new();
     let serial = SERIAL.init_with(heapless::String::new);
     let serial = embassy_rp::otp::get_chipid().ok().and_then(|id| {
@@ -81,11 +102,18 @@ pub fn start(
     spawner.spawn(probe_usb_capture_task(cdc).unwrap());
 }
 #[embassy_executor::task]
+/// Runs exclusive `device` protocol/handler service forever with core0 work
+/// instrumentation; USB session callbacks remain on this same cooperative core.
 async fn probe_usb_device_task(device: &'static mut UsbDevice<'static, UsbDriver>) {
     crate::metrics::measure(0, pin!(device.run())).await;
 }
 #[embassy_executor::task]
+/// Owns `cdc` and its affine export buffer indefinitely. Parses bounded read-only
+/// requests per USB epoch; read inactivity resets parser after five seconds.
+/// Failed transmission waits for a fresh bus generation before any new response,
+/// preventing stale DPRAM bytes from being appended to a later session.
 async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
+    /// USB-only 8192-byte lease, separate from the UI capture allocation.
     static BYTES: StaticCell<storage::Buffer> = StaticCell::new();
     let mut bytes = Some(BYTES.init_with(|| [0; 8192]));
     crate::metrics::measure(
@@ -143,7 +171,10 @@ async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
     )
     .await;
 }
+/// Returns whether `epoch` still names the configured unexhausted USB session.
 fn same_session(epoch: Epoch) -> bool { SESSION.matches(epoch) }
+/// Returns the wire status for UI `error`; detailed hardware reasons collapse
+/// to StorageError and are never exposed as payload contents.
 fn status(error: UiError) -> FrameStatus {
     match error {
         UiError::Empty => FrameStatus::Empty,
@@ -153,6 +184,10 @@ fn status(error: UiError) -> FrameStatus {
         _ => FrameStatus::StorageError,
     }
 }
+/// Responds to parsed `request` on `cdc` under `epoch`, circulating `bytes` only
+/// through the read-only storage owner. Returns unit error for wire/session/encode
+/// failure; always reacquires a Get lease before endpoint transmission. Never
+/// cancel while waiting for storage, or the single affine exchange would be lost.
 async fn respond(
     cdc: &mut Cdc,
     epoch: Epoch,
@@ -230,6 +265,10 @@ async fn respond(
     }
     frame(cdc, epoch, FrameKind::End, FrameStatus::Ok, None, 0, &[]).await
 }
+/// Encodes `kind`, `status`, optional `slot`, `generation` and `payload` into a
+/// checked wire header then sends bounded packets on `cdc` for `epoch`. Returns
+/// unit error on invalid metadata or transport failure; earlier packets may have
+/// reached the host. Exact-64-byte nonempty payloads end with a zero-length packet.
 async fn frame(
     cdc: &mut Cdc,
     epoch: Epoch,
@@ -252,6 +291,10 @@ async fn frame(
     }
     Ok(())
 }
+/// Sends at most one endpoint packet from `bytes` through `cdc` while `epoch`
+/// matches, with a two-second deadline. Returns unit error for any timeout/session/
+/// endpoint failure; prior SRAM copy may leave DPRAM data until a USB reset.
+/// The locked endpoint waits before its synchronous copy and retains no DMA borrow.
 async fn packet(
     cdc: &mut Cdc,
     epoch: Epoch,

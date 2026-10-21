@@ -1,3 +1,4 @@
+//! Two-buffer rendering, exact damage admission and observed transfer telemetry.
 pub mod damage;
 pub mod framebuffer;
 pub mod pipeline;

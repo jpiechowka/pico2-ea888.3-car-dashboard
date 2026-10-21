@@ -9,15 +9,23 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::*;
 #[derive(Clone, Copy)]
+/// Mount-owned optional helper relay resources; one abortable request and deadline at a time.
 pub struct State {
+    /// Session-only explicit relay opt-in.
     enabled: RwSignal<bool>,
+    /// Pure bounded queue and dispatched-lease accounting.
     queue: StoredValue<Queue>,
+    /// Saturating reactive invalidation tick for nonreactive queue mutations.
     changed: RwSignal<u64>,
+    /// Abort controller for the current network request, retained until settlement.
     abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
+    /// Two-second deadline for the current request.
     timer: StoredValue<Option<TimeoutHandle>>,
+    /// Bounded static relay status text, never recursively added to the event store.
     message: RwSignal<&'static str>,
 }
 impl State {
+    /// Returns disabled relay state in the current Leptos owner; installation attaches lifecycle cleanup separately.
     pub fn new() -> Self {
         Self {
             enabled: RwSignal::new(false),
@@ -29,8 +37,11 @@ impl State {
         }
     }
 
+    /// Notifies reactive displays of queue changes, ignoring disposed owners and saturating the tick.
     fn changed(self) { let _ = self.changed.try_update(|n| *n = n.saturating_add(1)); }
 
+    /// Applies helper `epoch` and requested `enabled` state, aborting an in-flight network request on change.
+    /// Queue ownership remains until settlement; changed state updates bounded status text.
     fn synchronize(
         self,
         epoch: Option<u64>,
@@ -53,6 +64,8 @@ impl State {
         }
     }
 
+    /// Attaches `ui` helper/opt-in effects and mount cleanup; changes flush admitted queued work.
+    /// Cleanup aborts fetch, clears deadline and disables/discards queued events without claiming delivery.
     pub fn install(
         self,
         ui: Ui,
@@ -76,6 +89,8 @@ impl State {
         });
     }
 }
+/// Offers local `event` using `ui`'s accepted revision/workspace and current helper epoch, then attempts one flush.
+/// Queue policy admits only bounded allowlisted Warn/Error context; local message/subject text is not sent.
 pub fn offer(
     ui: Ui,
     event: &dashboard_configurator::events::Event,
@@ -91,6 +106,9 @@ pub fn offer(
     state.changed();
     flush(ui);
 }
+/// Starts at most one queued batch for `ui` with a two-second abort deadline.
+/// Setup/network/decode/timeout failures settle as dropped without retry. Completion updates current-generation
+/// status only, releases request resources, and starts the next batch; disposed owners stop publication.
 fn flush(ui: Ui) {
     let state = ui.relay;
     let mut prepared = None;
@@ -152,7 +170,11 @@ fn flush(ui: Ui) {
     });
 }
 #[component]
-pub fn Controls(ui: Ui) -> impl IntoView {
+/// Returns relay opt-in, disclosure and queue/admission/drop status controls for `ui`.
+pub fn Controls(
+    /// Persistent Studio owner containing relay state and helper connection.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.relay;
     view! {<div class="event-console">
         <label><input type="checkbox" prop:checked=move||state.enabled.get() on:change=move|event|state.enabled.set(event_target_checked(&event))/><span>"Forward Warn/Error context to local helper terminal (this session)"</span></label>

@@ -3,8 +3,14 @@ use dashboard_configurator::ecu_reference::{ReferenceState, Section, Status};
 
 use super::*;
 
+/// Returns the offline reference browser backed by `ui`'s retained reference state.
+/// Search/filter changes preserve selected detail; navigation changes no source, polling
+/// or warning setting, and evidence URLs are opened only when selected.
 #[component]
-pub fn ReferenceWorkspace(ui: Ui) -> impl IntoView {
+pub fn ReferenceWorkspace(
+    /// Shared workspace state used to present offline, unqualified ECU reference data.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.reference;
     view! {
         <div class="ecu-reference">

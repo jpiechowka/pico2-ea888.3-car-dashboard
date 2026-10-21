@@ -1,3 +1,4 @@
+//! Brightness controls tied to completed feedback and clear-frame presentation.
 use dashboard_host_validation::backlight::{Backlight, Brightness};
 use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
 use dashboard_host_validation::pages::Page;
@@ -5,6 +6,7 @@ use dashboard_host_validation::popup::Popup;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::settings::Settings;
 
+/// Returns a buffer-A fixture token with caller-selected `sequence` identity.
 fn frame(sequence: u64) -> FrameToken {
     FrameToken {
         buffer: BufferId::A,
@@ -12,6 +14,7 @@ fn frame(sequence: u64) -> FrameToken {
     }
 }
 
+/// Recovery from every shutdown phase restores Full and invalidates late popup/clear completions.
 #[test]
 fn recovery_wakes_every_off_phase_and_invalidates_old_completion() {
     for phase in 0..5 {
@@ -47,6 +50,7 @@ fn recovery_wakes_every_off_phase_and_invalidates_old_completion() {
     }
 }
 
+/// The two-second Off dwell starts at first popup completion, unaffected by render delay or later frames.
 #[test]
 fn off_countdown_starts_on_first_popup_completion_despite_render_delay() {
     let mut bl = Backlight::new();
@@ -69,6 +73,7 @@ fn off_countdown_starts_on_first_popup_completion_despite_render_delay() {
     assert_eq!(bl.compare(), 0);
 }
 
+/// Repeated identical Off feedback gets a fresh dwell from unchanged-frame acknowledgment.
 #[test]
 fn identical_off_popup_starts_a_fresh_dwell_without_a_new_transfer() {
     let mut bl = Backlight::new();
@@ -86,6 +91,7 @@ fn identical_off_popup_starts_a_fresh_dwell_without_a_new_transfer() {
     assert_eq!(bl.compare(), 0);
 }
 
+/// Every saved brightness boots Full while preserving units and FPS preferences.
 #[test]
 fn legacy_off_or_dim_settings_boot_full_and_keep_other_preferences() {
     for previous in 0..=100 {
@@ -98,6 +104,7 @@ fn legacy_off_or_dim_settings_boot_full_and_keep_other_preferences() {
     }
 }
 
+/// Dashboard clicks cycle exact Full/Dim/Off duties; shutdown requires the matching clear-frame lease.
 #[test]
 fn dashboard_click_cycles_exact_pwm_levels_and_ignores_rotation() {
     let mut bl = Backlight::new();
@@ -138,6 +145,7 @@ fn dashboard_click_cycles_exact_pwm_levels_and_ignores_rotation() {
     assert_eq!(bl.compare(), 10_000, "late completion cannot switch off again");
 }
 
+/// Coalesced clicks retain every modulo-three transition, keeping Off feedback lit at half duty.
 #[test]
 fn every_coalesced_dashboard_press_is_counted_modulo_three() {
     for (presses, wanted, duty) in [
@@ -158,6 +166,7 @@ fn every_coalesced_dashboard_press_is_counted_modulo_three() {
     }
 }
 
+/// A subsequent click cancels shutdown before or after clear submission despite late acknowledgments.
 #[test]
 fn dashboard_shutdown_can_be_cancelled_before_or_after_clear_submission() {
     for submitted in [false, true] {
@@ -177,6 +186,7 @@ fn dashboard_shutdown_can_be_cancelled_before_or_after_clear_submission() {
     }
 }
 
+/// Replaced feedback or navigation resolves pending Dashboard Off to Dim without blackout.
 #[test]
 fn page_change_or_replacement_cancels_dashboard_off_without_blackout() {
     for clearing in [false, true] {
@@ -196,6 +206,7 @@ fn page_change_or_replacement_cancels_dashboard_off_without_blackout() {
     }
 }
 
+/// An unchanged cleared presentation can finish shutdown only after popup expiry has armed it.
 #[test]
 fn unchanged_cleared_frame_can_finish_shutdown_without_dma() {
     let mut bl = Backlight::new();
@@ -209,6 +220,7 @@ fn unchanged_cleared_frame_can_finish_shutdown_without_dma() {
     assert_eq!(bl.compare(), 0);
 }
 
+/// Debug retains nonlinear percent PWM, 1.5-second toggle feedback and bounded extreme rotation.
 #[test]
 fn debug_keeps_legacy_rotation_toggle_and_short_popup() {
     let mut bl = Backlight::new();
@@ -233,6 +245,7 @@ fn debug_keeps_legacy_rotation_toggle_and_short_popup() {
     assert_eq!(bl.compare(), 10_000);
 }
 
+/// Logs ignore brightness controls; interrupted Debug toggles preserve the exact restore duty.
 #[test]
 fn logs_encoder_never_changes_backlight_and_debug_interruption_preserves_toggle() {
     let mut bl = Backlight::new();
@@ -248,6 +261,7 @@ fn logs_encoder_never_changes_backlight_and_debug_interruption_preserves_toggle(
     assert_eq!(bl.compare(), 5000, "Debug restores exact preset, without rounding duty");
 }
 
+/// Reversed popup time cancels pending Off safely; a dwell ending at u64::MAX still expires.
 #[test]
 fn regressed_popup_clock_keeps_light_on_and_deadline_handles_u64_end() {
     let mut bl = Backlight::new();

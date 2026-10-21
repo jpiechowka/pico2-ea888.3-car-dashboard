@@ -1,6 +1,10 @@
+//! Independent EASA fixtures covering structural, checksum, row and ownership admission.
 use dashboard_config::startup_asset::*;
+/// Return a one-frame v1 landscape fixture; `rle` chooses repeated red rows versus raw black pixels.
 fn asset(rle: bool) -> Vec<u8> { asset_in(rle, 320, 240, 1) }
 
+/// Return a checksummed one-frame fixture for `width`, `height` and `version`; `rle` selects row encoding. Requires
+/// nonzero width for RLE.
 fn asset_in(
     rle: bool,
     width: u16,
@@ -38,6 +42,7 @@ fn asset_in(
     b
 }
 #[test]
+/// Known CRC, synchronous/incremental admission and row traversal agree for raw and repeated-row fixtures.
 fn raw_rle_and_incremental_admission_agree() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     for rle in [false, true] {
@@ -64,6 +69,7 @@ fn raw_rle_and_incremental_admission_agree() {
     }
 }
 #[test]
+/// Every truncated prefix and targeted corrupted structure/pixel packet rejects, including repaired checksums.
 fn corrupt_and_truncated_assets_never_admit() {
     let bytes = asset(true);
     for n in 0..bytes.len() {
@@ -83,12 +89,14 @@ fn corrupt_and_truncated_assets_never_admit() {
     assert_eq!(Asset::parse(&bad).unwrap_err(), AssetError::Pixels);
 }
 
+/// Refresh the global checksum of complete `bytes`; panics if the fixed header is missing.
 fn refresh_global_crc(bytes: &mut [u8]) {
     let crc = asset_crc32(bytes).unwrap();
     bytes[28..32].copy_from_slice(&crc.to_le_bytes());
 }
 
 #[test]
+/// Both supported shapes decode all distinct row/column pixels with the correct stride in raw and RLE modes.
 fn portrait_asset_decodes_all_320_rows_with_240_pixel_stride() {
     use dashboard_config::Geometry;
     for rle in [false, true] {
@@ -129,6 +137,7 @@ fn portrait_asset_decodes_all_320_rows_with_240_pixel_stride() {
 }
 
 #[test]
+/// A global checksum failure remains latched through repeated step and finish attempts.
 fn checksum_failure_cannot_be_resumed_into_success() {
     let mut bytes = asset(true);
     bytes[28] ^= 1;
@@ -147,6 +156,7 @@ fn checksum_failure_cannot_be_resumed_into_success() {
 }
 
 #[test]
+/// Invalid dimensions, oversized row packets and frame-CRC failures reject permanently without bypass on retry.
 fn portrait_dimensions_rows_and_failed_admission_remain_bounded() {
     for (width, height, version) in [
         (240_u16, 320_u16, 1_u16),
@@ -186,6 +196,7 @@ fn portrait_dimensions_rows_and_failed_admission_remain_bounded() {
 }
 
 #[test]
+/// Repaired global checksums cannot hide invalid header/table limits, encodings, offsets or frame CRCs.
 fn checksummed_structural_errors_are_rejected_before_pixels() {
     // Repair the envelope checksum so these probe format admission, not CRC rejection.
     let cases: &[(usize, &[u8], AssetError)] = &[
@@ -220,6 +231,7 @@ fn checksummed_structural_errors_are_rejected_before_pixels() {
 }
 
 #[test]
+/// Incomplete validators cannot publish; wrong row capacity leaves cursor/output untouched and exhaustion is stable.
 fn admission_must_finish_and_row_output_must_have_exact_capacity() {
     let bytes = asset(true);
     let mut validator = Validator::new(&bytes).unwrap();
@@ -251,6 +263,7 @@ fn admission_must_finish_and_row_output_must_have_exact_capacity() {
 }
 
 #[test]
+/// Mixed literal/repeat packets reconstruct exact row endpoints and middle pixels across the whole frame.
 fn mixed_literal_and_repeat_packets_preserve_every_pixel() {
     let mut bytes = asset(true);
     bytes.truncate(52);
@@ -281,6 +294,8 @@ fn mixed_literal_and_repeat_packets_preserve_every_pixel() {
 }
 #[cfg(feature = "json")]
 #[test]
+/// Owned assets reject forged/truncated bytes, share immutable Arc storage and survive independent copy-on-write
+/// mutation.
 fn owned_asset_rejects_forged_bytes_and_shares_only_immutable_validated_storage() {
     use std::sync::Arc;
     for geometry in dashboard_config::Geometry::ALL {

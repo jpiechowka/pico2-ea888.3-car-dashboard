@@ -1,3 +1,7 @@
+//! Probe-only linker reservation and optional immutable source-identity generation.
+/// Copies memory.x into OUT_DIR and emits the optional 32-byte source digest.
+/// An absent BLE_PROBE_SOURCE_DIGEST emits zero bytes plus an unavailable flag;
+/// malformed hexadecimal, missing Cargo context and filesystem failures panic.
 fn main() {
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     std::fs::write(out.join("memory.x"), include_bytes!("memory.x")).unwrap();
@@ -18,8 +22,10 @@ fn main() {
     std::fs::write(
         out.join("probe_identity.rs"),
         format!(
-            "#[used]\n#[unsafe(no_mangle)]\n#[unsafe(link_section = \".probe_identity\")]\npub static \
-             BLE_PROBE_SOURCE_DIGEST: [u8;32] = {bytes:?};\npub const SOURCE_IDENTITY_AVAILABLE: bool = {};\n",
+            "/// Build-wrapper source SHA-256 bytes; all zero when identity is \
+             unavailable.\n#[used]\n#[unsafe(no_mangle)]\n#[unsafe(link_section = \".probe_identity\")]\npub static \
+             BLE_PROBE_SOURCE_DIGEST: [u8;32] = {bytes:?};\n/// Whether the build wrapper supplied a validated \
+             hexadecimal source digest.\npub const SOURCE_IDENTITY_AVAILABLE: bool = {};\n",
             digest.is_some()
         ),
     )

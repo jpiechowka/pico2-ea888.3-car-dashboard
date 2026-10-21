@@ -7,12 +7,13 @@
 //! - Via Cargo features: enable a feature like `<name>-<value>`. `name` must be in lowercase and
 //!   use dashes instead of underscores. For example. `l2cap-rx-queue-size-4`. Only a selection of values
 //!   is available, check `Cargo.toml` for the list.
-//! - Via environment variables at build time: set the variable named `TROUBLE_HOST_<value>`. For example
+//! - Via environment variables at build time: set the variable named `TROUBLE_HOST_<NAME>`. For example
 //!   `TROUBLE_HOST_L2CAP_RX_QUEUE_SIZE=1 cargo build`. You can also set them in the `[env]` section of `.cargo/config.toml`.
 //!   Any value can be set, unlike with Cargo features.
 //!
 //! Environment variables take precedence over Cargo features. If two Cargo features are enabled for the same setting
 //! with different values, compilation fails.
+/// Build-generated selected values; public wrappers below provide their contracts.
 mod raw {
     #![allow(unused)]
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
@@ -64,7 +65,7 @@ pub const DEFAULT_PACKET_POOL_SIZE: usize = raw::DEFAULT_PACKET_POOL_SIZE;
 /// Default: 251.
 pub const DEFAULT_PACKET_POOL_MTU: usize = raw::DEFAULT_PACKET_POOL_MTU;
 
-/// Default: 1.
+/// Maximum concurrent notification subscribers for a GATT client. Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 
 /// GATT notification queue size.
@@ -74,7 +75,8 @@ pub const GATT_CLIENT_NOTIFICATION_QUEUE_SIZE: usize = raw::GATT_CLIENT_NOTIFICA
 
 /// Payload capacity of each queued GATT client notification.
 ///
-/// Default: `min(PacketPool::MTU - 7, 512)` when `default-packet-pool-mtu-*` is enabled, else 512.
+/// Explicit default-pool MTU (feature or environment) yields `min(MTU.saturating_sub(7), 512)`;
+/// with neither override the capacity is 512, independent of the default pool MTU.
 pub const GATT_CLIENT_NOTIFICATION_MTU: usize = raw::GATT_CLIENT_NOTIFICATION_MTU;
 
 /// Maximum buffer size per connection for client-specific attribute values, such as CCCDs.

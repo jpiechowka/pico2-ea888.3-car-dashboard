@@ -1,3 +1,4 @@
+//! Configuration-bound sample admission, freshness, polling periods and warning run identity.
 use dashboard_config::*;
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::RuleIndex;
@@ -6,6 +7,8 @@ use dashboard_host_validation::diagnostics::client::TxAction;
 use dashboard_host_validation::diagnostics::session::Session;
 use dashboard_host_validation::samples::{Quality, Quantity, Sample, SampleError, SensorId, Source};
 
+/// Completes `tx` on `session` at `now` ms, then injects single-frame `data` from 0x7E8 one ms later.
+/// Uses transport epoch 1; panics for invalid tokens, rejected frames, payloads over seven bytes or time overflow.
 fn respond(
     session: &mut Session<'_>,
     tx: TxAction,
@@ -21,6 +24,7 @@ fn respond(
         .unwrap();
 }
 
+/// Statistics resets retain the exact immutable config and its shortened freshness/alarm deadline.
 #[test]
 fn immutable_configuration_survives_statistics_resets_and_limits_snapshot_freshness() {
     let mut config = default_config();
@@ -49,6 +53,7 @@ fn immutable_configuration_survives_statistics_resets_and_limits_snapshot_freshn
     assert_eq!(model.snapshot().quality(SensorId::Water, 1601), Quality::Stale);
 }
 
+/// Gaps beyond configured freshness restart alarm dwell instead of accumulating separated observations.
 #[test]
 fn tightened_freshness_breaks_alarm_dwell_across_measurement_gaps() {
     let mut config = default_config();
@@ -73,6 +78,7 @@ fn tightened_freshness_breaks_alarm_dwell_across_measurement_gaps() {
     );
 }
 
+/// Candidate, disabled and differently routed channels reject legacy live samples without publishing values.
 #[test]
 fn configured_candidates_disabled_and_other_routes_reject_old_live_sources() {
     for source in [
@@ -109,6 +115,7 @@ fn configured_candidates_disabled_and_other_routes_reject_old_live_sources() {
     }
 }
 
+/// Selected poll periods bound both successful and failed retries while configuration survives epoch/reset changes.
 #[test]
 fn selected_period_bounds_success_and_retry_admission_across_new_epochs() {
     let mut config = default_config();
@@ -134,6 +141,7 @@ fn selected_period_bounds_success_and_retry_admission_across_new_epochs() {
     assert!(core::ptr::eq(session.configuration().unwrap(), &config));
 }
 
+/// Disabled sources plus an unqualified lambda candidate produce no diagnostic discovery or sample queries.
 #[test]
 fn all_disabled_or_candidate_configuration_emits_no_diagnostic_queries() {
     let mut config = default_config();
@@ -148,6 +156,7 @@ fn all_disabled_or_candidate_configuration_emits_no_diagnostic_queries() {
     }
 }
 
+/// Rejected warning acknowledgment is published; communication epoch changes preserve warning run identity.
 #[test]
 fn session_warning_command_result_and_run_survive_communication_epoch() {
     use dashboard_host_validation::warning_state::WarningCommand;

@@ -1,4 +1,7 @@
 //! Bounded read-only inventory orchestration shared with native flow regressions.
+//! Procedures follow [GATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html)
+//! and [ATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/attribute-protocol--att-.html).
+//! A timeout abandons this connection: never reuse a bearer for an unknown old response.
 use core::future::Future;
 use core::ops::ControlFlow;
 use core::pin::pin;
@@ -31,18 +34,30 @@ use crate::errors::device_info_att_result;
 
 /// I/O boundary only; the production adapter calls the locked GATT procedures.
 pub trait ServiceRecord {
+    /// Returns a bounded service range/UUID snapshot or invalid-value evidence;
+    /// no new ATT transaction is issued by this conversion.
     fn snapshot(&self) -> Result<Service, FailureReason>;
 }
 impl ServiceRecord for Service {
+    /// Returns this already-decoded service unchanged; callers supply valid ranges.
     fn snapshot(&self) -> Result<Service, FailureReason> { Ok(*self) }
 }
+/// Narrow read-only GATT seam; production relies on the locked client's ordered,
+/// bounded callback and copied-length guarantees rather than raw ATT bytes.
 pub trait InventoryClient {
+    /// Service handle whose snapshot preserves admitted inclusive handle bounds.
     type Service: ServiceRecord;
     // Fill caller-owned storage; the timed wrapper returns only a small status.
+    /// Fills caller-owned `output` with at most 24 discovered primary services.
+    /// Returns failure instead of silently treating capacity exhaustion as complete.
     async fn services(
         &self,
         output: &mut Vec<Self::Service, 24>,
     ) -> Result<(), FailureReason>;
+    /// Enumerates `uuid` over inclusive `start`..=`end`, passing ordered, in-range,
+    /// nonzero handles and borrowed values to `callback`. Returns Some(()) when
+    /// callback breaks, None on normal exhaustion, or a transport/protocol error.
+    /// Callback bytes must not escape; valid prefixes may be delivered before error.
     async fn read_by_type(
         &self,
         start: u16,
@@ -50,24 +65,34 @@ pub trait InventoryClient {
         uuid: &Uuid,
         callback: impl FnMut(u16, &[u8]) -> ControlFlow<()>,
     ) -> Result<Option<()>, FailureReason>;
+    /// Enumerates inclusive `start`..=`end`, passing strictly increasing in-range
+    /// nonzero handle/UUID pairs to `callback`. Returns Some(()) for callback break,
+    /// None for normal exhaustion, or failure after any already accepted prefix.
     async fn find_information(
         &self,
         start: u16,
         end: u16,
         callback: impl FnMut(u16, Uuid) -> ControlFlow<()>,
     ) -> Result<Option<()>, FailureReason>;
+    /// Reads `handle` into bounded `bytes`, using blobs when needed. Returns the
+    /// copied prefix length, always at most bytes.len(), or an ATT/transport error;
+    /// a full buffer may be truncated and must not claim a complete value.
     async fn read_handle(
         &self,
         handle: u16,
         bytes: &mut [u8],
     ) -> Result<usize, FailureReason>;
 }
+/// Returns monotonic elapsed milliseconds since `started`, saturated to u32::MAX.
 fn elapsed_ms(started: Instant) -> u32 {
     Instant::now()
         .duration_since(started)
         .as_millis()
         .min(u64::from(u32::MAX)) as u32
 }
+/// Awaits `future` for at most three seconds and returns its value or a failure
+/// annotated with `stage` and saturated elapsed milliseconds. Timeout drops the
+/// ATT future; caller must abandon/clean up the whole connection before new work.
 async fn att<T>(
     stage: FailureStage,
     future: impl Future<Output = Result<T, FailureReason>>,
@@ -83,6 +108,14 @@ async fn att<T>(
         failure
     })
 }
+/// Enumerates with `client` and publishes owned evidence through awaited `emit`
+/// under `revision`. Returns true if capacity prevented a complete inventory,
+/// false after all stages, or the first protocol/timeout failure with context.
+/// Bounds are 24 services, 64 characteristics, 128 descriptors and 16 allowed
+/// reads of at most 64 bytes. Valid prefixes survive later failure. Only the
+/// standard read allowlist is queried; protected values never trigger pairing.
+/// Event backpressure is excluded from recorded operation duration but still
+/// consumes the caller's overall inspection deadline.
 pub async fn inventory(
     client: &impl InventoryClient,
     revision: u32,
@@ -307,6 +340,11 @@ pub async fn inventory(
     Ok(!(characteristics_complete && descriptors_complete && reads_complete))
 }
 
+/// Enumerates inclusive `range` using `client`, publishing through `emit` with
+/// `revision`, `service_start` and `characteristic_handle` provenance. Updates the
+/// shared `total` (caller invariant: <=128). Returns true on range exhaustion,
+/// false at the cap, or contextual failure; eight-row batches bound stack use.
+/// Terminal handle 0xffff ends normally without wrapping to zero.
 async fn descriptors(
     client: &impl InventoryClient,
     revision: u32,

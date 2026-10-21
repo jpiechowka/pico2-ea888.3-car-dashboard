@@ -1,7 +1,10 @@
+//! Orientation repacking, canvas geometry and retained-frame regression contracts.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+/// Default shape change repacks positions while preserving widget order/settings and exact complete-project undo.
 fn default_repack_preserves_order_settings_and_exact_history() {
     let mut editor = Editor::default();
     let original = editor
@@ -30,6 +33,7 @@ fn default_repack_preserves_order_settings_and_exact_history() {
 }
 
 #[test]
+/// Explicit landscape views ignore default portrait changes, and mounting inversion keeps placement unchanged.
 fn explicit_override_is_unchanged_and_flip_does_not_repack() {
     let mut editor = Editor::default();
     editor
@@ -51,6 +55,7 @@ fn explicit_override_is_unchanged_and_flip_does_not_repack() {
 }
 
 #[test]
+/// Portrait hit testing respects unequal integer row heights and excludes the bottom canvas edge.
 fn portrait_hit_testing_uses_exact_integer_row_edges() {
     use dashboard_configurator::geometry::*;
     let rect = ContentRect {
@@ -81,6 +86,8 @@ fn portrait_hit_testing_uses_exact_integer_row_edges() {
 }
 
 #[test]
+/// Mixed spans repack into all eight portrait cells while explicit views stay fixed and old pointer/field tokens
+/// expire.
 fn mixed_layout_repacking_is_complete_and_retains_overridden_views() {
     let mut raw = default_config();
     raw.widgets.clear();
@@ -158,6 +165,7 @@ fn mixed_layout_repacking_is_complete_and_retains_overridden_views() {
 }
 
 #[test]
+/// Every supported span multiset occupying at most eight cells can be repacked and validated in both shapes.
 fn every_admissible_span_multiset_fits_both_shapes() {
     for square in 0..=2 {
         for wide in 0..=4 {
@@ -206,6 +214,7 @@ fn every_admissible_span_multiset_fits_both_shapes() {
 }
 
 #[test]
+/// Rejected rendering preserves prior pixels/geometry until a successful portrait render publishes both.
 fn published_pixels_and_rejected_render_keep_their_own_geometry() {
     use dashboard_configurator::preview::{Preview, PreviewOptions};
     let mut e = Editor::default();
@@ -223,6 +232,7 @@ fn published_pixels_and_rejected_render_keep_their_own_geometry() {
 }
 
 #[test]
+/// Diagnostic rendering uses the rejected portrait candidate geometry so last-row widgets remain inspectable.
 fn invalid_portrait_draft_projects_candidate_geometry() {
     use dashboard_configurator::diagnostic::Draft;
     use dashboard_configurator::preview::{Preview, PreviewOptions};
@@ -243,6 +253,7 @@ fn invalid_portrait_draft_projects_candidate_geometry() {
 }
 
 #[test]
+/// A submitted portrait startup frame retains its bytes/shape across elapsed transition until exact completion.
 fn pending_pixels_keep_shape_through_startup_transition() {
     use dashboard_config_tools::project::Project;
     use dashboard_configurator::preview::Preview;
@@ -277,6 +288,7 @@ fn pending_pixels_keep_shape_through_startup_transition() {
 }
 
 #[test]
+/// Dashboard uses its view override while Debug/Logs inherit the device default during real synthetic navigation.
 fn debug_and_logs_inherit_default_while_dashboard_override_keeps_its_shape() {
     use dashboard_configurator::preview::Preview;
     use dashboard_configurator::simulator::ControlSimulator;
@@ -301,6 +313,7 @@ fn debug_and_logs_inherit_default_while_dashboard_override_keeps_its_shape() {
 }
 
 #[test]
+/// Portrait grab offsets survive CSS scaling and directional moves stop at the actual two-column/four-row edges.
 fn portrait_drag_anchor_survives_css_resize_and_uses_last_row() {
     use dashboard_configurator::geometry::*;
     use dashboard_configurator::widget_actions::Direction;
@@ -333,6 +346,7 @@ fn portrait_drag_anchor_survives_css_resize_and_uses_last_row() {
 }
 
 #[test]
+/// Duplicate widget identities deny repacking before any candidate placement changes.
 fn ambiguous_repack_inputs_are_rejected_without_mutation() {
     let before = default_config();
     let mut next = before.clone();
@@ -347,6 +361,8 @@ fn ambiguous_repack_inputs_are_rejected_without_mutation() {
 }
 
 #[test]
+/// Renamed invalid JSON candidate views remain visible in portrait inspection without changing accepted boot view or
+/// text.
 fn renamed_invalid_candidate_keeps_its_portrait_view_and_widgets() {
     use dashboard_configurator::diagnostic::Draft;
     use dashboard_configurator::preview::{Preview, PreviewOptions};

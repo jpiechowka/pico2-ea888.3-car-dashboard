@@ -12,24 +12,45 @@ use embassy_time::{Instant, Timer};
 
 use crate::bridge;
 
+/// Shared generation/phase barrier requiring UI, encoder and radio acknowledgement.
 static GATE: Mutex<CriticalSectionRawMutex, RefCell<Gate>> = Mutex::new(RefCell::new(Gate::with_radio(true)));
+/// Stops core1 from admitting another frame while core0 drains queued transfers.
 pub static FRAME_INHIBIT: AtomicBool = AtomicBool::new(false);
+/// Core1 acknowledged observing frame inhibition before acquiring another buffer.
 pub static UI_QUIET: AtomicBool = AtomicBool::new(false);
+/// Sole storage owner's request to the watchdog supervisor.
 pub enum HealthRequest {
+    /// Grant a finite ticket after ordinary health/display checks.
     Begin,
-    End(MaintenanceTicket),
+    /// Return the unique ticket after all owners resume.
+    End(
+        /// Move-only supervisor grant retained across mutation and restoration.
+        MaintenanceTicket,
+    ),
 }
+/// Supervisor acknowledgement paired with a storage-owner request.
 pub enum HealthReply {
-    Begun(MaintenanceTicket),
+    /// Exactly one entry feed occurred and mutation preparation may begin.
+    Begun(
+        /// Finite grant; feeds remain suspended while it is outstanding.
+        MaintenanceTicket,
+    ),
+    /// Matching ticket ended and ordinary progress policy resumes.
     Ended,
 }
+/// One outstanding request; another requester violates exclusive storage ownership.
 pub static HEALTH_REQUEST: Channel<CriticalSectionRawMutex, HealthRequest, 1> = Channel::new();
+/// One acknowledgement awaiting the storage task's receive.
 static HEALTH_REPLY: Channel<CriticalSectionRawMutex, HealthReply, 1> = Channel::new();
 
+/// Publishes supervisor `reply`; panics if an earlier acknowledgement is unconsumed.
 pub fn reply(reply: HealthReply) {
     assert!(HEALTH_REPLY.try_send(reply).is_ok());
 }
+/// Returns current Park/Resume generation or None outside the active barrier.
 fn command() -> Option<Command> { GATE.lock(|g| g.borrow().command()) }
+/// Records `success` for `owner` at exact `command` generation/phase; the shared
+/// gate checks stale, duplicate and failed acknowledgements.
 fn acknowledge(
     command: Command,
     owner: Owner,
@@ -39,12 +60,17 @@ fn acknowledge(
         g.borrow_mut().acknowledge(command, owner, success);
     });
 }
+/// Returns whether `request` still owns the write phase at current milliseconds;
+/// invalid timing may latch a shared gate failure instead of authorizing mutation.
 pub fn writing(request: Request) -> bool {
     GATE.lock(|g| g.borrow_mut().writing(request, Instant::now().as_millis()).is_ok())
 }
 
 /// The UI owner invokes this before taking a framebuffer; radio only after its
 /// complete PIO/DMA bus transaction; encoder only between complete I2C iterations.
+/// `owner` identifies the participant, `last` suppresses duplicate resumes, and
+/// `ready` checks its live hardware/interrupt preconditions. Parks until Resume,
+/// updates `last`, then acknowledges; do not cancel while the owner is parked.
 async fn boundary(
     owner: Owner,
     last: &mut Option<Request>,
@@ -74,26 +100,48 @@ async fn boundary(
     *last = Some(request);
     acknowledge(Command::Resume(request), owner, true);
 }
+/// Parks the core1 UI using `last` to suppress repeats; requires the core1 FIFO
+/// lockout IRQ to remain available. Call before taking a framebuffer.
 pub async fn ui_boundary(last: &mut Option<Request>) {
     boundary(Owner::Acquisition, last, flash_guard::core1_ready).await;
 }
+/// Parks the encoder between full I2C iterations, tracking resumed requests in
+/// `last`; admission requires unmasked IRQs and idle/empty I2C0.
 pub async fn input_boundary(last: &mut Option<Request>) {
     boundary(Owner::Input, last, || {
         flash_guard::interrupt_ready() && flash_guard::i2c_idle()
     })
     .await;
 }
+/// Parks radio after a complete bus transaction, tracking generations in `last`;
+/// its caller must retain bus ownership and supply only quiescent boundaries.
 pub async fn radio_boundary(last: &mut Option<Request>) {
     boundary(Owner::Radio, last, flash_guard::interrupt_ready).await;
 }
 
 #[derive(Debug)]
+/// Failed display drain, owner/deadline barrier, or synchronous flash operation.
 pub enum Error<E> {
+    /// Display/UI did not quiesce within the 400 ms preparation window.
     Drain,
-    Gate(dashboard_core::maintenance::Error),
-    Operation(E),
+    /// Shared phase, ownership or elapsed-time admission failure.
+    Gate(
+        /// Original barrier rejection, including post-operation expiry.
+        dashboard_core::maintenance::Error,
+    ),
+    /// Caller-specific flash mutation failure.
+    Operation(
+        /// Unmodified operation error after entering the write phase.
+        E,
+    ),
 }
 
+/// Drains display, acquires one watchdog ticket, parks owners, and invokes
+/// synchronous `operation` once with the admitted Request. Returns its result or
+/// admission error only after restoration and fresh owner progress; no mutation
+/// occurs on Drain. Post-write expiry supersedes an operation error. Never cancel:
+/// resume failure holds the ticket and awaits watchdog reset without feeding.
+/// Panics on overlapping admission or broken request/reply/generation invariants.
 pub async fn run<E>(operation: impl FnOnce(Request) -> Result<(), E>) -> Result<(), Error<E>> {
     assert!(
         !FRAME_INHIBIT.swap(true, Ordering::SeqCst),
@@ -159,6 +207,8 @@ pub async fn run<E>(operation: impl FnOnce(Request) -> Result<(), E>) -> Result<
     }
     result
 }
+/// Returns independent wrapping encoder/UI/button liveness sequences; each must
+/// change after restoration before another journal operation can request a ticket.
 fn progress() -> [u32; 3] {
     [
         bridge::ENCODER_PROGRESS.load(Ordering::Relaxed),

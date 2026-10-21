@@ -13,7 +13,10 @@ use dashboard_host_validation::vehicle_status::VehicleStatus;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Builds the configured_preview example once with matching outline features and returns its cached executable path.
+/// Honors CARGO_TARGET_DIR relative to the host manifest; spawn or unsuccessful build panics.
 fn executable() -> &'static PathBuf {
+    /// Process-wide successful example path shared by concurrently running tests.
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -33,6 +36,8 @@ fn executable() -> &'static PathBuf {
     })
 }
 
+/// Returns binary P6 bytes for RGB565 `frame` with header dimensions from `geometry`.
+/// Expands 5/6-bit channels by bit replication; caller must supply the frame's actual geometry.
 fn ppm(
     frame: &AlignedFrame,
     geometry: Geometry,
@@ -46,6 +51,8 @@ fn ppm(
     out
 }
 
+/// Executable output matches configured smoothing/peaks; invalid view selection preserves existing output bytes.
+/// Creates and removes process-specific temporary fixtures; I/O/build/child failures panic.
 #[test]
 fn published_snapshot_uses_bound_advanced_acquisition_and_prepared_readings() {
     let dir = std::env::temp_dir().join(format!("dashboard-preview-{}", std::process::id()));
@@ -109,6 +116,8 @@ fn published_snapshot_uses_bound_advanced_acquisition_and_prepared_readings() {
     std::fs::remove_dir(&dir).unwrap();
 }
 
+/// Device defaults and explicit view overrides produce exact shared-renderer geometry and PPM pixels.
+/// Creates and removes process-specific temporary fixtures; I/O/build/child failures panic.
 #[test]
 fn published_snapshot_resolves_selected_view_geometry() {
     let dir = std::env::temp_dir().join(format!("dashboard-preview-geometry-{}", std::process::id()));

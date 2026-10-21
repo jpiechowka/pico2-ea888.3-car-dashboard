@@ -1,3 +1,5 @@
+//! Exclusive radio bus owner: firmware boot, SDPCM credits, IOCTLs, Ethernet and optional Bluetooth service.
+//! Maintenance hooks run between complete transactions; canceling an in-flight runner is not a quiescence protocol.
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering::Relaxed;
 
@@ -15,16 +17,140 @@ use crate::structs::*;
 use crate::util::{aligned_mut, aligned_ref, slice8_mut, slice16_mut, try_until};
 use crate::{CHIP, Core, MTU, events};
 
+/// Checked chip-RAM placement for Wi-Fi at the RAM base and NVRAM below its final length word.
+struct FirmwareLayout {
+    /// Absolute address of the NVRAM payload, including reserved round-up space above it.
+    nvram_address: u32,
+    /// Absolute address of the final four-byte NVRAM length/complement word.
+    magic_address: u32,
+    /// Low 16 bits are NVRAM words; high 16 bits are their complement.
+    magic: u32,
+}
+
+/// Returns nonoverlapping placement of `wifi_len` and `nvram_len` bytes within `ram_size` at `base`.
+/// NVRAM reserves whole words; lengths, addresses and the 16-bit word count must fit, otherwise Err.
+/// Empty inputs remain permitted; this checks placement, not firmware validity or NVRAM termination.
+fn firmware_layout(wifi_len: usize, nvram_len: usize, base: u32, ram_size: u32) -> Result<FirmwareLayout, ()> {
+    let rounded = nvram_len.checked_add(3).ok_or(())? & !3;
+    let words = u16::try_from(rounded / 4).map_err(|_| ())?;
+    let tail_offset = ram_size.checked_sub(4).ok_or(())?;
+    let nvram_offset = tail_offset
+        .checked_sub(u32::try_from(rounded).map_err(|_| ())?)
+        .ok_or(())?;
+    if wifi_len > nvram_offset as usize {
+        return Err(());
+    }
+    let magic_address = base.checked_add(tail_offset).ok_or(())?;
+    magic_address.checked_add(3).ok_or(())?;
+    Ok(FirmwareLayout {
+        nvram_address: base.checked_add(nvram_offset).ok_or(())?,
+        magic_address,
+        magic: (u32::from(!words) << 16) | u32::from(words),
+    })
+}
+
 #[cfg(feature = "firmware-logs")]
+/// Host cursor and bounded line assembly for the firmware's assumed 1024-byte console ring.
 struct LogState {
+    /// Backplane address of the firmware log descriptor, discovered at initialization.
     addr: u32,
+    /// Next unread byte offset in 0..1024; wraps independently of the device producer.
     last_idx: usize,
+    /// Current log line; bytes beyond 256 before newline are dropped.
     buf: [u8; 256],
+    /// Initialized line prefix length, at most 256.
     buf_count: usize,
+}
+
+#[cfg(all(test, feature = "bluetooth"))]
+/// Credit-window wrap regressions using the production runner and inert transport.
+mod tests {
+    use super::*;
+    use crate::regression_tests::MockBus;
+
+    /// RAM edges, NVRAM word-count limits, rounded tails and address/usize overflow fail before writes.
+    #[test]
+    fn firmware_layout_bounds_and_length_magic() {
+        for (nvram, expected_reserved) in [(0, 0), (1, 4), (3, 4), (4, 4), (5, 8)] {
+            let layout = firmware_layout(32 - 4 - expected_reserved, nvram, 0x1000, 32).unwrap();
+            assert_eq!(layout.nvram_address, 0x1000 + 28 - expected_reserved as u32);
+            assert_eq!(layout.magic_address, 0x101c);
+            let words = expected_reserved as u32 / 4;
+            assert_eq!(layout.magic & 0xffff, words);
+            assert_eq!(layout.magic >> 16, (!words) & 0xffff);
+            assert!(firmware_layout(29 - expected_reserved, nvram, 0x1000, 32).is_err());
+        }
+        assert!(firmware_layout(0, 65535 * 4, 0, 512 * 1024).is_ok());
+        assert!(firmware_layout(0, 65535 * 4 + 1, 0, 512 * 1024).is_err());
+        for (wifi, nvram, base, ram) in [
+            (0, 0, 0, 0),
+            (0, 0, 0, 3),
+            (1, 0, 0, 4),
+            (0, 1, 0, 4),
+            (usize::MAX, 0, 0, 512 * 1024),
+            (0, usize::MAX, 0, 512 * 1024),
+            (0, 0, u32::MAX, 8),
+            (0, 0, u32::MAX, 4),
+        ] {
+            assert!(firmware_layout(wifi, nvram, base, ram).is_err());
+        }
+        let wifi = include_bytes!("../../cyw43-firmware/43439A0.bin");
+        let nvram = include_bytes!("../../cyw43-firmware/nvram_rp2040.bin");
+        let selected =
+            firmware_layout(wifi.len(), nvram.len(), CHIP.atcm_ram_base_address, CHIP.chip_ram_size).unwrap();
+        let rounded = (nvram.len() + 3) / 4 * 4;
+        assert_eq!(
+            selected.nvram_address,
+            CHIP.atcm_ram_base_address + CHIP.chip_ram_size - 4 - rounded as u32
+        );
+        assert_eq!(selected.magic, (!(rounded as u32 / 4) << 16) | (rounded as u32 / 4));
+        let empty = firmware_layout(0, 0, 0, 4).unwrap();
+        assert_eq!(
+            (empty.nvram_address, empty.magic_address, empty.magic),
+            (0, 0, 0xffff0000)
+        );
+    }
+
+    /// Recovery from invalid peer windows wraps at 255 while valid credit and unknown channels retain their rules.
+    #[test]
+    fn credit_recovery_wraps_at_sequence_boundary() {
+        let mut state = crate::State::new();
+        let (ch, _) = ch::new(&mut state.net.ch, ch::driver::HardwareAddress::Ethernet([0; 6]));
+        let mut runner = Runner::new(
+            ch,
+            MockBus::default(),
+            &state.ioctl_state,
+            &state.net.events,
+            &state.net.secure_network,
+            None,
+        );
+        for (seq, peer, expected) in [(253, 0, 0), (254, 128, 0), (255, 128, 1), (255, 0, 0), (255, 255, 255)] {
+            runner.sdpcm_seq = seq;
+            let mut header = SdpcmHeader {
+                len: 12,
+                len_inv: !12,
+                sequence: 0,
+                channel_and_flags: CHANNEL_TYPE_CONTROL,
+                next_length: 0,
+                header_length: 12,
+                wireless_flow_control: 0,
+                bus_data_credit: peer,
+                reserved: [0; 2],
+            };
+            runner.update_credit(&header);
+            assert_eq!(runner.sdpcm_seq_max, expected);
+            assert_eq!(runner.has_credit(), expected != seq);
+            header.channel_and_flags = 3;
+            header.bus_data_credit = 20;
+            runner.update_credit(&header);
+            assert_eq!(runner.sdpcm_seq_max, expected);
+        }
+    }
 }
 
 #[cfg(feature = "firmware-logs")]
 impl Default for LogState {
+    /// Returns empty host cursors; log_init must discover the descriptor before reads.
     fn default() -> Self {
         Self {
             addr: Default::default(),
@@ -35,64 +161,103 @@ impl Default for LogState {
     }
 }
 
+/// Transport-specific initialization, interrupt and packet-framing branch.
 pub(crate) enum BusType {
+    /// Half-duplex GSPI with status words and a shared interrupt/data pin.
     Spi,
+    /// SDIO function/mailbox protocol; current adapter polls rather than awaiting IRQ.
     Sdio,
 }
 
+/// Private common bus operations; implementations define transport failures and cancellation effects.
+/// Byte buffers must retain backing storage until awaited transfers complete. No method reports a transport Result.
 pub(crate) trait SealedBus {
+    /// Selects initialization and receive framing rules.
     const TYPE: BusType;
 
+    /// Initializes physical transport, using `bluetooth_enabled` for shared-pin interrupt configuration where relevant.
     async fn init(&mut self, bluetooth_enabled: bool);
+    /// Fills logical WLAN `buf` bytes; backing storage must include any SPI word rounding.
     async fn wlan_read(&mut self, buf: &mut Aligned<A4, [u8]>);
+    /// Sends logical WLAN `buf` bytes; SPI requires initialized backing through the last rounded word.
     async fn wlan_write(&mut self, buf: &Aligned<A4, [u8]>);
     #[allow(unused)]
+    /// Reads `data` from aligned backplane `addr`; partial writes and window state can remain on failure/cancel.
     async fn bp_read(&mut self, addr: u32, data: &mut [u8]);
+    /// Writes `data` at aligned backplane `addr`; completion is not readback verification.
     async fn bp_write(&mut self, addr: u32, data: &[u8]);
+    /// Returns the byte at backplane `addr`, with implementation-specific transport failure substitution/panic.
     async fn bp_read8(&mut self, addr: u32) -> u8;
+    /// Writes byte `val` at backplane `addr`.
     async fn bp_write8(&mut self, addr: u32, val: u8);
+    /// Returns the little-endian halfword at backplane `addr`.
     async fn bp_read16(&mut self, addr: u32) -> u16;
     #[allow(unused)]
+    /// Writes little-endian halfword `val` at backplane `addr`.
     async fn bp_write16(&mut self, addr: u32, val: u16);
     #[allow(unused)]
+    /// Returns the little-endian word at backplane `addr`.
     async fn bp_read32(&mut self, addr: u32) -> u32;
+    /// Writes little-endian word `val` at backplane `addr`.
     async fn bp_write32(&mut self, addr: u32, val: u32);
+    /// Returns a byte from bus function `func` and relative register `addr`.
     async fn read8(&mut self, func: u32, addr: u32) -> u8;
+    /// Writes byte `val` to bus function `func` and relative register `addr`.
     async fn write8(&mut self, func: u32, addr: u32, val: u8);
+    /// Returns a little-endian halfword from bus function `func` and relative register `addr`.
     async fn read16(&mut self, func: u32, addr: u32) -> u16;
+    /// Writes little-endian halfword `val` to bus function `func` and relative register `addr`.
     async fn write16(&mut self, func: u32, addr: u32, val: u16);
+    /// Returns a little-endian word from bus function `func` and relative register `addr`.
     async fn read32(&mut self, func: u32, addr: u32) -> u32;
     #[allow(unused)]
+    /// Writes little-endian word `val` to bus function `func` and relative register `addr`.
     async fn write32(&mut self, func: u32, addr: u32, val: u32);
     #[allow(dead_code)] // Bluetooth uses a bounded polling fallback.
+    /// Waits for transport wake/poll delay; this does not establish that a complete packet is available.
     async fn wait_for_event(&mut self);
 }
 
 #[allow(private_bounds)]
+/// Sealed bus bound accepted by Runner; only this crate's transport adapters can implement it.
 pub trait Bus: SealedBus {}
 impl<T: SealedBus> Bus for T {}
 
-/// Driver communicating with the WiFi chip.
+/// Permanent owner of radio bus transactions and firmware protocol state.
+/// Must be polled alongside Control/HCI consumers; cancellation may leave hardware or protocol work in flight.
 pub struct Runner<'a, BUS> {
+    /// Network RX/TX channel owner; bounded queues can drop incoming Ethernet frames when full.
     ch: ch::Runner<'a, MTU>,
+    /// Sole physical bus/window-cache owner.
     pub(crate) bus: BUS,
 
+    /// Shared single-request IOCTL state; Control's drop guard clears the raw pointer before its buffer expires.
     ioctl_state: &'a IoctlState,
+    /// Wrapping u16 identity of the most recently transmitted IOCTL.
     ioctl_id: u16,
+    /// Next outgoing SDPCM sequence, wrapping modulo 256.
     sdpcm_seq: u8,
+    /// Exclusive upper bound of the firmware-granted wrapping sequence window.
     sdpcm_seq_max: u8,
 
+    /// Host subscriptions and bounded event queue; immediate publish can overwrite queued events.
     events: &'a Events,
 
+    /// Control-published requirement for key exchange before marking the network up.
     secure_network: &'a AtomicBool,
+    /// Last accepted JOIN success, cleared on qualified link/authentication failures.
     join_ok: bool,
+    /// Last qualified supplicant/key-exchange success.
     key_exchange_ok: bool,
+    /// Last non-unsolicited authentication success; gates supplicant success.
     auth_ok: bool,
 
     #[cfg(feature = "firmware-logs")]
+    /// Optional bounded firmware console reader state.
     log: LogState,
 
     #[cfg(feature = "bluetooth")]
+    /// Bluetooth ring owner, absent for Wi-Fi-only initialization even when compiled in.
     pub(crate) bt: Option<crate::bluetooth::BtRunner<'a>>,
 }
 
@@ -100,6 +265,8 @@ impl<'a, BUS> Runner<'a, BUS>
 where
     BUS: Bus,
 {
+    /// Returns an uninitialized owner of `ch`/`bus`, borrowing `ioctl_state`, `events` and `secure_network`.
+    /// Optional `bt` owns HCI queues/rings; starts with one SDPCM transmit credit and no successful connection state.
     pub(crate) fn new(
         ch: ch::Runner<'a, MTU>,
         bus: BUS,
@@ -127,12 +294,22 @@ where
         }
     }
 
+    /// Loads `wifi_fw` and `nvram`, optionally validates/loads `bt_fw`, then starts firmware cores and transport queues.
+    /// Returns Err for invalid image placement, Bluetooth records or exhausted ALP/F2 polls; hardware/assertion failures can panic.
+    /// HT-clock waits have no deadline, and each bus operation can stall. Canceling leaves partially initialized hardware.
+    /// Rejects image overlap, out-of-RAM placement and unrepresentable NVRAM word count before bus initialization.
     pub(crate) async fn init(
         &mut self,
         wifi_fw: &Aligned<A4, [u8]>,
         nvram: &Aligned<A4, [u8]>,
         bt_fw: Option<&[u8]>,
     ) -> Result<(), ()> {
+        let layout = firmware_layout(
+            wifi_fw.len(),
+            nvram.len(),
+            CHIP.atcm_ram_base_address,
+            CHIP.chip_ram_size,
+        )?;
         #[cfg(feature = "bluetooth")]
         if let Some(firmware) = bt_fw {
             crate::bluetooth_firmware::Firmware::new(firmware, CHIP.bluetooth_base_address)?;
@@ -267,17 +444,8 @@ where
         self.bus.bp_write(ram_addr, wifi_fw).await;
 
         debug!("loading nvram");
-        // Round up to 4 bytes.
-        let nvram_len = (nvram.len() + 3) / 4 * 4;
-        self.bus
-            .bp_write(ram_addr + CHIP.chip_ram_size - 4 - nvram_len as u32, nvram)
-            .await;
-
-        let nvram_len_words = nvram_len as u32 / 4;
-        let nvram_len_magic = (!nvram_len_words << 16) | nvram_len_words;
-        self.bus
-            .bp_write32(ram_addr + CHIP.chip_ram_size - 4, nvram_len_magic)
-            .await;
+        self.bus.bp_write(layout.nvram_address, nvram).await;
+        self.bus.bp_write32(layout.magic_address, layout.magic).await;
 
         // Start core!
         debug!("starting up core...");
@@ -400,6 +568,7 @@ where
     }
 
     #[cfg(feature = "firmware-logs")]
+    /// Discovers the firmware console descriptor through the RAM-end shared pointer; trusts firmware addresses.
     async fn log_init(&mut self) {
         // Initialize shared memory for logging.
 
@@ -415,6 +584,8 @@ where
     }
 
     #[cfg(feature = "firmware-logs")]
+    /// Reads one 1024-byte firmware ring snapshot and emits completed nonempty lines, truncating lines to 256 bytes.
+    /// Invalid producer offsets are ignored; overwritten ring data and missed complete laps cannot be recovered.
     async fn log_read(&mut self) {
         // Read log struct
         let mut log: Aligned<A4, [u8; _]> = Aligned([0; SharedMemLog::SIZE]);
@@ -453,13 +624,15 @@ where
         }
     }
 
-    /// Run the CYW43 event handling loop.
+    /// Never returns: runs with an empty maintenance hook; panics propagate and canceling may leave bus/DMA work active.
     pub async fn run(self) -> ! {
         self.run_with_boundary(async || {}).await
     }
 
-    /// Run with a maintenance hook between completed bus operations. The hook
-    /// may park the owner; cancelling the runner itself can leave DMA active.
+    /// Never returns: calls `boundary` before each service turn after prior bus operations complete.
+    /// The hook may park this sole owner. The loop retains a 2048-byte scratch buffer and bounds each F2 drain to four frames.
+    /// Bluetooth uses a 1 ms polling fallback and receives after every selected branch; bus waits are not time-bounded.
+    /// Cancellation is not safe maintenance: it can leave DMA, IOCTL state or radio ring transactions unfinished.
     pub async fn run_with_boundary<F: AsyncFnMut()>(mut self, mut boundary: F) -> ! {
         let mut buf = [0; 512];
         loop {
@@ -499,7 +672,7 @@ where
                         self.check_status(&mut buf).await;
                     }
                     Either4::Second(packet) => {
-                        trace!("tx pkt {:02x}", Bytes(&packet[..packet.len().min(48)]));
+                        trace!("Ethernet TX: {} bytes", packet.len());
 
                         let buf8 = slice8_mut(&mut buf);
 
@@ -511,6 +684,7 @@ where
                         // WHD adds it here https://github.com/Infineon/wifi-host-driver/blob/c04fcbb6b0d049304f376cf483fd7b1b570c8cd5/WiFi_Host_Driver/src/include/whd_sdpcm.h#L90
                         // and adds it to the header size her https://github.com/Infineon/wifi-host-driver/blob/c04fcbb6b0d049304f376cf483fd7b1b570c8cd5/WiFi_Host_Driver/src/whd_sdpcm.c#L597
                         // ¯\_(ツ)_/¯
+                        /// Firmware-required bytes between SDPCM and BDC for Ethernet TX only.
                         const PADDING_SIZE: usize = 2;
                         let total_len = SdpcmHeader::SIZE + PADDING_SIZE + BdcHeader::SIZE + packet.len();
 
@@ -546,7 +720,7 @@ where
 
                         let total_len = (total_len + 3) & !3; // round up to 4byte
 
-                        trace!("    {:02x}", Bytes(&buf8[..total_len.min(48)]));
+                        trace!("SDPCM TX: {} transport bytes", total_len);
 
                         self.bus.wlan_write(&aligned_ref(&buf)[..total_len]).await;
                         self.ch.tx_done();
@@ -593,7 +767,8 @@ where
         }
     }
 
-    /// Wait for IRQ on F2 packet available
+    /// Services current transport interrupt/mailbox state using `buf`; does not wait for the IRQ itself.
+    /// SDIO acknowledges mailbox after drain; SPI clears unavailable-data IRQ. At most one bounded drain is performed.
     async fn handle_irq(&mut self, buf: &mut [u32; 512]) {
         match BUS::TYPE {
             BusType::Sdio => {
@@ -647,7 +822,8 @@ where
         }
     }
 
-    /// Handle F2 events while status register is set
+    /// Drains up to four F2 packets into `buf`, admitting at most 2048 bytes each before parsing/updating credits.
+    /// Malformed/oversized framing stops or skips the current drain without allocating. Transport calls can stall.
     pub(crate) async fn check_status(&mut self, buf: &mut [u32; 512]) {
         for _ in 0..4 {
             match BUS::TYPE {
@@ -661,7 +837,7 @@ where
                             break;
                         }
                         self.bus.wlan_read(&mut aligned_mut(buf)[..len as usize]).await;
-                        trace!("rx {:02x}", Bytes(&slice8_mut(buf)[..(len as usize).min(48)]));
+                        trace!("SDPCM RX: {} bytes", len);
                         self.rx(&mut slice8_mut(buf)[..len as usize]);
                     } else {
                         break;
@@ -703,7 +879,7 @@ where
 
                         self.update_credit(&sdpcm_header);
                     } else if len > SdpcmHeader::SIZE {
-                        trace!("rx {:02x}", Bytes(&slice8_mut(buf)[..len.min(48)]));
+                        trace!("SDPCM RX: {} bytes", len);
                         self.rx(&mut slice8_mut(buf)[..len]);
                     }
                 }
@@ -711,6 +887,9 @@ where
         }
     }
 
+    /// Processes aligned SDPCM `packet`: updates credit, completes matching IOCTLs, publishes events or queues Ethernet.
+    /// Bad bounds/identifiers are ignored; matched nonzero IOCTL status panics. Two-byte packet alignment is required.
+    /// Event parsing mutates byte order in place; full queues drop/overwrite data according to channel type.
     pub(crate) fn rx(&mut self, packet: &mut [u8]) {
         let Some((sdpcm_header, payload)) = SdpcmHeader::parse(packet) else {
             return;
@@ -747,7 +926,8 @@ where
                     return;
                 };
 
-                const ETH_P_LINK_CTL: u16 = 0x886C; // HPNA, wlan link local tunnel, according to linux if_ether.h
+                /// Ethernet type assigned to Broadcom link-control event envelopes.
+                const ETH_P_LINK_CTL: u16 = 0x886C;
                 if event_packet.eth.ether_type != ETH_P_LINK_CTL {
                     warn!(
                         "unexpected ethernet type 0x{:04x}, expected Broadcom ether type 0x{:04x}",
@@ -755,6 +935,7 @@ where
                     );
                     return;
                 }
+                /// Required vendor identifier for accepted event envelopes.
                 const BROADCOM_OUI: &[u8] = &[0x00, 0x10, 0x18];
                 if event_packet.hdr.oui != BROADCOM_OUI {
                     warn!(
@@ -764,12 +945,14 @@ where
                     );
                     return;
                 }
+                /// Long vendor envelope subtype required before interpreting event metadata.
                 const BCMILCP_SUBTYPE_VENDOR_LONG: u16 = 32769;
                 if event_packet.hdr.subtype != BCMILCP_SUBTYPE_VENDOR_LONG {
                     warn!("unexpected subtype {}", event_packet.hdr.subtype);
                     return;
                 }
 
+                /// Vendor payload subtype identifying an event message.
                 const BCMILCP_BCM_SUBTYPE_EVENT: u16 = 1;
                 if event_packet.hdr.user_subtype != BCMILCP_BCM_SUBTYPE_EVENT {
                     warn!("unexpected user_subtype {}", event_packet.hdr.subtype);
@@ -788,10 +971,10 @@ where
                     .map(EStatus::from)
                     .unwrap_or(EStatus::Unknown);
                 debug!(
-                    "=== EVENT {:?}: {:?} {:02x}",
+                    "=== EVENT {:?}: {:?}, {} payload bytes",
                     event_type,
                     event_packet.msg,
-                    Bytes(evt_data)
+                    evt_data.len()
                 );
 
                 let update_link_status = match (
@@ -903,7 +1086,7 @@ where
                 let Some((_, packet)) = BdcHeader::parse(payload) else {
                     return;
                 };
-                trace!("rx pkt {:02x}", Bytes(&packet[..packet.len().min(48)]));
+                trace!("Ethernet RX: {} bytes", packet.len());
 
                 if packet.len() > MTU {
                     warn!("oversized WLAN packet");
@@ -921,20 +1104,26 @@ where
         }
     }
 
+    /// Adopts control/event/data credit from `sdpcm_header`; invalid forward windows above 64 clamp to two credits.
+    /// Sequence arithmetic wraps modulo 256; unknown channels leave the current window unchanged.
     fn update_credit(&mut self, sdpcm_header: &SdpcmHeader) {
         if sdpcm_header.channel_and_flags & 0xF < 3 {
             let mut sdpcm_seq_max = sdpcm_header.bus_data_credit;
             if sdpcm_seq_max.wrapping_sub(self.sdpcm_seq) > 0x40 {
-                sdpcm_seq_max = self.sdpcm_seq + 2;
+                sdpcm_seq_max = self.sdpcm_seq.wrapping_add(2);
             }
             self.sdpcm_seq_max = sdpcm_seq_max;
         }
     }
 
+    /// Returns whether the exclusive credit limit is ahead by 1..=127 in wrapping sequence space.
     fn has_credit(&self) -> bool {
         self.sdpcm_seq != self.sdpcm_seq_max && self.sdpcm_seq_max.wrapping_sub(self.sdpcm_seq) & 0x80 == 0
     }
 
+    /// Frames `kind`/`cmd` for `iface` with `data` in initialized `buf`, increments wrapping identities, and transmits.
+    /// Data must fit 2020 bytes after headers; larger inputs panic while copying. Interface is truncated to u16 before shifting.
+    /// Cancel/failure can consume identities and partially deliver; this method does not await a firmware response.
     async fn send_ioctl(&mut self, kind: IoctlType, cmd: Ioctl, iface: u32, data: &[u8], buf: &mut [u32; 512]) {
         let buf8 = slice8_mut(buf);
 
@@ -971,11 +1160,13 @@ where
         buf8[SdpcmHeader::SIZE + CdcHeader::SIZE..][..data.len()].copy_from_slice(data);
 
         let total_len = (total_len + 3) & !3; // round up to 4byte,
-        trace!("    {:02x}", Bytes(&buf8[..total_len.min(48)]));
+        trace!("SDPCM control TX: {} transport bytes", total_len);
 
         self.bus.wlan_write(&aligned_ref(buf)[..total_len]).await;
     }
 
+    /// Asserts reset for firmware `core`, skipping already-reset cores; blocks locally for 1 ms before asserting reset.
+    /// No verification result or rollback is supplied; bus errors follow adapter policy.
     async fn core_disable(&mut self, core: Core) {
         let base = core.base_addr();
 
@@ -999,6 +1190,8 @@ where
         let _ = self.bus.bp_read8(base + AI_RESETCTRL_OFFSET).await;
     }
 
+    /// Disables then restarts firmware `core`, with two asynchronous 1 ms settling waits.
+    /// Cancellation can leave reset/forced-clock state between steps; core_is_up performs the separate status check.
     async fn core_reset(&mut self, core: Core) {
         self.core_disable(core).await;
 
@@ -1020,6 +1213,8 @@ where
         Timer::after_millis(1).await;
     }
 
+    /// Returns whether `core` has clock enabled without forced gate and reset deasserted, from two register reads.
+    /// This is a transient register observation, not proof the firmware is responsive.
     async fn core_is_up(&mut self, core: Core) -> bool {
         let base = core.base_addr();
 

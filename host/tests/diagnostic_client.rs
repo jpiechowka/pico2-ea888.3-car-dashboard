@@ -1,8 +1,13 @@
+//! Pure diagnostic-client token, epoch, ISO-TP and deadline regressions; no adapter or ECU traffic.
+
 use dashboard_host_validation::diagnostics::CanFrame;
 use dashboard_host_validation::diagnostics::client::{Client, ClientError, Event, Failure};
 use dashboard_host_validation::diagnostics::request::Request;
 
+/// Returns a standard 0x7E8 frame carrying `bytes`; panics beyond eight bytes.
 fn frame(bytes: &[u8]) -> CanFrame { CanFrame::new(0x7E8, bytes).unwrap() }
+/// Returns an epoch 1 client with `request` started at 0ms and its exact TX token completed at 1ms; invariant failure
+/// panics.
 fn started(request: Request) -> Client {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
     let tx = client.start(request, 0).unwrap();
@@ -10,6 +15,7 @@ fn started(request: Request) -> Client {
     client
 }
 
+/// Only the current completed request TX enables a reply; duplicate/older tokens cannot authorize a later generation.
 #[test]
 fn one_request_waits_for_current_tx_and_rejects_stale_completions() {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
@@ -38,6 +44,7 @@ fn one_request_waits_for_current_tx_and_rejects_stale_completions() {
     assert!(later.generation > reply.generation);
 }
 
+/// Foreign PID responses neither extend the first-response deadline nor complete or contaminate the matching request.
 #[test]
 fn foreign_reply_does_not_extend_deadline_or_pollute_matching_payload() {
     let mut client = started(Request::Obd(5));
@@ -54,6 +61,8 @@ fn foreign_reply_does_not_extend_deadline_or_pollute_matching_payload() {
     assert_eq!(client.receive(&frame(&[3, 0x41, 5, 70]), 1, 503), Ok(Event::Ignored));
 }
 
+/// Foreign positive/negative single frames cannot abort a segmented DID reply before or after its flow-control
+/// completion.
 #[test]
 fn late_foreign_single_frame_cannot_abort_an_active_segmented_reply_or_its_fc() {
     for acknowledge_first in [false, true] {
@@ -79,6 +88,7 @@ fn late_foreign_single_frame_cannot_abort_an_active_segmented_reply_or_its_fc() 
     }
 }
 
+/// A foreign single frame near the consecutive-frame deadline leaves the original timeout intact.
 #[test]
 fn foreign_single_frame_does_not_extend_consecutive_frame_deadline() {
     let mut client = started(Request::ReadDid(0xF190));
@@ -99,6 +109,7 @@ fn foreign_single_frame_does_not_extend_consecutive_frame_deadline() {
     ));
 }
 
+/// Each block requires its own flow-control token; stale callbacks cannot advance clocks or authorize later blocks.
 #[test]
 fn request_and_previous_block_tokens_cannot_authorize_later_flow_control() {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
@@ -131,6 +142,7 @@ fn request_and_previous_block_tokens_cannot_authorize_later_flow_control() {
     ));
 }
 
+/// NRC 0x78 retries have finite count/deadlines; ongoing valid segments cannot extend the five-second total budget.
 #[test]
 fn pending_response_has_finite_count_and_cannot_move_the_hard_deadline() {
     let mut client = started(Request::ReadDid(0xF190));
@@ -189,6 +201,8 @@ fn pending_response_has_finite_count_and_cannot_move_the_hard_deadline() {
     ));
 }
 
+/// Oversized replies complete their overflow flow-control TX before terminal failure; client/event storage stays
+/// bounded.
 #[test]
 fn oversized_first_response_sends_overflow_before_finishing_and_tokens_stay_bounded() {
     assert!(std::mem::size_of::<Client>() <= 512);
@@ -212,6 +226,7 @@ fn oversized_first_response_sends_overflow_before_finishing_and_tokens_stay_boun
     assert!(client.start(Request::Obd(5), 552).is_ok());
 }
 
+/// Abort and epoch replacement invalidate prior flow-control tokens while a new generation still assembles correctly.
 #[test]
 fn flow_control_tokens_cannot_be_reused_after_abort_or_across_epochs() {
     let mut client = started(Request::ReadDid(0xF190));
@@ -246,6 +261,8 @@ fn flow_control_tokens_cannot_be_reused_after_abort_or_across_epochs() {
     assert_eq!(client.change_epoch(2, 9), Err(ClientError::Epoch));
 }
 
+/// TX timeout requires epoch recovery; malformed negatives, clock reversal and invalid addressing never become positive
+/// samples.
 #[test]
 fn tx_timeout_requires_new_transport_epoch_and_malformed_or_negative_replies_are_not_samples() {
     let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();

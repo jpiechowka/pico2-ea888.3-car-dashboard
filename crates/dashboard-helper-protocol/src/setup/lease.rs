@@ -1,42 +1,95 @@
+//! Private two-peer transcript admission with bounded records, receipts and one-way retirement.
 use super::*;
 use crate::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Trusted transport direction supplied by the native adapter, not chosen from message content.
 pub enum SetupDirection {
+    /// Registered peer sends to its original owner.
     PeerToOwner,
+    /// Original owner sends an acknowledgement/rejection to its peer.
     OwnerToPeer,
 }
 #[derive(Clone, PartialEq, Eq)]
+/// Expected next transition; Idle/Executing defer operation deadlines to the native owner.
 enum Phase {
+    /// Waiting for exact nonce and expected peer identity.
     Hello,
+    /// Waiting for matching owner nonce acknowledgement.
     HelloAck,
+    /// Association ready for the next admitted control request.
     Idle,
-    Admission(SetupStepId),
-    Executing(SetupStepId),
-    Receipt(SetupStepId),
-    Prepare(Sha256),
-    Register(SetupPeerIdentity),
-    Result(Sha256),
-    Close(SetupCloseDisposition),
+    /// Waiting for owner admission; ledger is not yet Running.
+    Admission(
+        /// Requested exact tuple.
+        SetupStepId,
+    ),
+    /// One ledger step is Running.
+    Executing(
+        /// Active exact tuple.
+        SetupStepId,
+    ),
+    /// Finished step holds the ledger receipt barrier.
+    Receipt(
+        /// Tuple to acknowledge.
+        SetupStepId,
+    ),
+    /// Bootstrap requested continuation preparation.
+    Prepare(
+        /// Bound continuation image digest.
+        Sha256,
+    ),
+    /// Waiting for owner registration acknowledgement.
+    Register(
+        /// Prepared continuation process/image identity.
+        SetupPeerIdentity,
+    ),
+    /// Waiting for owner result receipt.
+    Result(
+        /// Announced result-byte digest.
+        Sha256,
+    ),
+    /// Waiting for exact close acknowledgement; abnormal causes are already latched.
+    Close(
+        /// Requested retirement reason.
+        SetupCloseDisposition,
+    ),
+    /// Permanently retired; no sequence or slot reuse is allowed.
     Closed,
 }
 /// Pure transcript/ledger validator. Caller must separately verify real pipe/process/Job facts.
 #[derive(Clone)]
 pub struct SetupLeasePeer {
+    /// Immutable attempt/context/role and secret capability binding.
     envelope: SetupLeaseEnvelope,
+    /// Independently observed expected process/image identity.
     expected_peer: SetupPeerIdentity,
+    /// Expected next message shape/direction.
     phase: Phase,
+    /// Accepted envelope plus frame count, capped at 1024 per association.
     records: u16,
+    /// Total accepted encoded envelope/frame bytes including prefixes, capped at 4 MiB.
     bytes: u64,
+    /// Next exact nonwrapping frame sequence, starting at 1.
     message_no: u16,
+    /// Last accepted transition time in owner-monotonic milliseconds.
     pending_since: u64,
+    /// Sole continuation preparation has been acknowledged.
     prepared: bool,
+    /// Sole continuation identity has been acknowledged.
     registered: bool,
+    /// Result digest receipt has been acknowledged; further step admission is forbidden.
     result_ready: bool,
+    /// Prepared continuation executable identity, retained for registration.
     delegated_image: Option<Sha256>,
+    /// Distinct prepared continuation capability, retained for its admission envelope.
     delegated_nonce: Option<Nonce>,
+    /// Registered continuation identity, matched when the second association is created.
     delegated_peer: Option<SetupPeerIdentity>,
 }
 impl SetupLeasePeer {
+    /// Return a Hello-phase association for validated `envelope`, independent `expected_peer` and `now_ms`.
+    /// Require nonzero peer PID and matching image digest; count the envelope against byte/record budgets.
+    /// The caller must verify actual pipe ownership, process creation/image identity and OS cleanup ownership.
     pub fn new(
         envelope: SetupLeaseEnvelope,
         expected_peer: SetupPeerIdentity,
@@ -63,10 +116,13 @@ impl SetupLeasePeer {
         })
     }
 
+    /// Return accepted `(record count, framed bytes)`, including the initial envelope.
     pub fn counts(&self) -> (u16, u64) { (self.records, self.bytes) }
 
+    /// Return whether this association is permanently retired, regardless of success or failure.
     pub fn closed(&self) -> bool { self.phase == Phase::Closed }
 
+    /// Return the fixed ledger executor corresponding to the validated envelope slot.
     fn executor(&self) -> SetupExecutor {
         if self.envelope.peer_slot == 0 {
             SetupExecutor::Peer0
@@ -75,7 +131,9 @@ impl SetupLeasePeer {
         }
     }
 
-    /// A failed transcript retires the association and latches stop, without changing completed facts.
+    /// Return success after atomically advancing `frame` in `direction` at owner-relative `now_ms` with `ledger`.
+    /// Validate cloned state first. On failure, retire this association and latch InvalidState in the original
+    /// ledger, preserving completed/active facts; rejected candidate transitions/byte counts are discarded.
     pub fn accept(
         &mut self,
         direction: SetupDirection,
@@ -99,6 +157,7 @@ impl SetupLeasePeer {
         }
     }
 
+    /// Retire this peer and stop pending `ledger` work with OwnerLost; preserve active/completed evidence.
     pub fn owner_lost(
         &mut self,
         ledger: &mut SetupLedger,
@@ -107,6 +166,8 @@ impl SetupLeasePeer {
         ledger.stop(SetupFailure::OwnerLost);
     }
 
+    /// Return success for `result` only when envelope identity/action/context/role and `ledger` outcomes match.
+    /// Does not hash transferred bytes, verify OS facts or publish output; native owner performs those steps.
     pub fn validate_result(
         &self,
         result: &SetupContinuationResult,
@@ -123,6 +184,10 @@ impl SetupLeasePeer {
         ledger.validate_result(result)
     }
 
+    /// Return success after checking/advancing candidate `frame` in `direction` at `now_ms` against `ledger`.
+    /// Reject closed peers, replay, context mismatch, backward time, >1024 records or >4 MiB framed bytes.
+    /// Pending handshakes expire after 15000 ms (exact boundary accepted); Idle/Executing use caller deadlines.
+    /// Called on clones because a rejected transition must not publish partially updated bookkeeping.
     fn advance(
         &mut self,
         direction: SetupDirection,
@@ -245,10 +310,13 @@ impl SetupLeasePeer {
 }
 /// Exactly two retained slots, never recycled during an attempt.
 pub struct SetupLeasePeers {
+    /// Admitted topology; Cold forbids the second association.
     shape: DelegationShape,
+    /// Retained associations, including retired ones; occupied slots are never recycled.
     peers: [Option<SetupLeasePeer>; 2],
 }
 impl SetupLeasePeers {
+    /// Return an empty two-slot association set governed by `shape`.
     pub fn new(shape: DelegationShape) -> Self {
         Self {
             shape,
@@ -256,6 +324,10 @@ impl SetupLeasePeers {
         }
     }
 
+    /// Return success after registering `envelope` with independent OS `identity` at `now_ms`.
+    /// Reject occupied/out-of-range slots and role/topology mismatches. Peer1 additionally requires a live
+    /// registered bootstrap with exact inherited context/owner/action and prepared distinct nonce/image/identity.
+    /// Errors leave retained slots unchanged; this method performs no process or pipe operations.
     pub fn register(
         &mut self,
         envelope: SetupLeaseEnvelope,
@@ -291,6 +363,7 @@ impl SetupLeasePeers {
         Ok(())
     }
 
+    /// Return the retained mutable association at `slot`, including a closed one; absent/out-of-range is unavailable.
     pub fn peer_mut(
         &mut self,
         slot: u8,

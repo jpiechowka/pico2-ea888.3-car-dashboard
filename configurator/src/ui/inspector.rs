@@ -1,7 +1,11 @@
+//! Widget, warning, fuel and source controls backed by revision-checked editor edits.
+
 use dashboard_configurator::workspace::Command;
 
 use super::*;
 
+/// Reports `result` from an in-memory preset mutation through `ui` events and notice;
+/// success still requires an explicit save or export.
 fn preset_result(
     ui: Ui,
     result: Result<(), PresetError>,
@@ -30,6 +34,8 @@ fn preset_result(
         Err(error) => error.message().into(),
     });
 }
+/// Changes the source snapshot and optional color override `palette` in `ui` to
+/// `source`; rejected combinations leave the session unchanged and display the error.
 fn choose_appearance(
     ui: Ui,
     source: AppearanceSource,
@@ -42,8 +48,13 @@ fn choose_appearance(
     }
 }
 
+/// Returns appearance preview and named-preset controls for `ui`. Frozen offers must
+/// still match the editor/session before apply; list mutations require explicit storage save.
 #[component]
-fn AppearancePanel(ui: Ui) -> impl IntoView {
+fn AppearancePanel(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     let name = RwSignal::new(String::new());
     view! {
         <details class="appearance-tools"><summary>"Copy appearance and presets"</summary>
@@ -140,8 +151,13 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns the Views inspector for `ui`, remounting widget fields when inspected ID
+/// or channel changes; empty selection retains appearance tools and placement guidance.
 #[component]
-pub fn Inspector(ui: Ui) -> impl IntoView {
+pub fn Inspector(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <aside id="studio-widget-inspector" class="inspector panel" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views)>
             <div class="panel-heading"><p class="eyebrow">"WIDGET INSPECTOR"</p><h2>{move || ui.inspected_widget().map(|(_,channel)|channel.label()).unwrap_or("Make it yours")}</h2></div>
@@ -155,6 +171,8 @@ pub fn Inspector(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns a `label` toggle for widget `id` in `ui`, reading with `get` and changing
+/// display options with `set`. AFR changes also synchronize the advanced lambda readout.
 fn flag(
     ui: Ui,
     id: u16,
@@ -172,9 +190,13 @@ fn flag(
     }))/> }
 }
 
+/// Returns repairable layout, gauge, appearance and warning fields for widget `id`
+/// in `ui`; inactive invalid fields remain visible and all edits use editor admission.
 #[component]
 fn WidgetInspector(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
     ui: Ui,
+    /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
     let channel = ui.widget(id).map(|w| w.channel).unwrap_or(Channel::Oil);
@@ -279,6 +301,8 @@ fn WidgetInspector(
     }
 }
 
+/// Moves widget `id` in `ui` before/after its nearest accepted same-view neighbor
+/// according to `later`; missing widget or neighbor is a no-op.
 fn reorder(
     ui: Ui,
     id: u16,
@@ -299,8 +323,13 @@ fn reorder(
     }
 }
 
+/// Returns shared warning scope, paging and combined-palette fields for `ui`;
+/// milliseconds and color contrast are validated by the common editor/schema.
 #[component]
-pub fn WarningSettingsPanel(ui: Ui) -> impl IntoView {
+pub fn WarningSettingsPanel(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Give each warning its moment."</h3><p>"Messages follow priority first, then stable view and widget order. All eligible warnings cycle, including lower priorities. A new episode restarts paging; button feedback takes display priority."</p><p class="hint">"The appearance Warnings button uses synthetic data with compressed dwell. Diagnostics controls the persistent timing simulation in the shared preview dock, with Dashboard pixels, real configured dwell and completed-page acknowledgment. Neither qualifies ECU support."</p></div><div class="settings-form">
             <Choice ui repair_invalid_draft=true label="Show warnings from" value=Signal::derive(move ||ui.editor.with(|e|if e.editing_config().warnings.scope==WarningScope::AllViews{"all"}else{"view"}.to_string())) options=choices(&[("all","All views"),("view","Current view only")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
@@ -318,8 +347,13 @@ pub fn WarningSettingsPanel(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns fuel-assumption fields for `ui` with the accepted preview stoichiometry;
+/// candidate edits and the accepted ratio can differ until admission succeeds.
 #[component]
-pub fn FuelSettings(ui: Ui) -> impl IntoView {
+pub fn FuelSettings(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Lambda, in your fuel's language."</h3><p>"AFR = lambda × stoichiometric ratio. E5 means up to 5% ethanol, not a measured tank composition."</p><p>"An ethanol blend remains an estimate. Declare the inputs and their basis; the Pico resolves the ratio once at boot."</p><div class="ratio-readout"><small>"RESOLVED STOICHIOMETRY"</small><b>{move || ui.editor.with(|e|format!("{:.4} : 1",e.preview().stoich()))}</b></div></div><div class="settings-form">
             <Choice ui repair_invalid_draft=true label="AFR scale" value=Signal::derive(move ||ui.editor.with(|e|match e.editing_config().fuel{Fuel::EquivalentGasoline=>"eq",Fuel::Stoichiometric{..}=>"ratio",Fuel::EthanolBlend(_)=>"blend"}.to_string())) options=choices(&[("eq","Gasoline-equivalent 14.7"),("ratio","Explicit stoichiometric ratio"),("blend","Ethanol blend estimate")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.typed(token,Edit::SetFuel(match value.as_str(){"ratio"=>Fuel::Stoichiometric{ratio:14.7},"blend"=>Fuel::EthanolBlend(Blend::illustrative()),_=>Fuel::EquivalentGasoline})))/>
@@ -329,6 +363,8 @@ pub fn FuelSettings(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns the candidate ethanol blend in `ui`, or illustrative defaults when the
+/// current fuel mode has no blend; this does not infer measured composition.
 fn blend(ui: Ui) -> Blend {
     ui.editor.with(|e| {
         match e.editing_config().fuel {
@@ -337,6 +373,8 @@ fn blend(ui: Ui) -> Blend {
         }
     })
 }
+/// Applies `f` once to the candidate/default blend in `ui`, then submits the complete
+/// fuel edit under `token`; stale or invalid edits follow normal editor rejection.
 fn edit_blend(
     ui: Ui,
     token: FieldToken,
@@ -347,8 +385,13 @@ fn edit_blend(
     ui.typed(token, Edit::SetFuel(Fuel::EthanolBlend(b)));
 }
 
+/// Returns composition, basis, density and ratio fields for `ui`; all numeric
+/// inputs retain raw drafts and pass through shared fuel validation.
 #[component]
-fn BlendSettings(ui: Ui) -> impl IntoView {
+fn BlendSettings(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <TextField ui field=RawField::Fuel(FuelField::Percent) label="Ethanol content (%)" hint="0–100; enter an explicit assumption or measurement"/>
         <Choice ui repair_invalid_draft=true label="Percentage basis" value=Signal::derive(move ||if blend(ui).basis==BlendBasis::Volume{"volume"}else{"mass"}.to_string()) options=choices(&[("volume","Component volume"),("mass","Mass")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.basis=if value=="volume"{BlendBasis::Volume}else{BlendBasis::Mass}))/>
@@ -360,8 +403,13 @@ fn BlendSettings(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns channel-shared source settings for `ui`; pending JSON disables channel
+/// selection and changing channel remounts its source controls.
 #[component]
-pub fn SourceSettings(ui: Ui) -> impl IntoView {
+pub fn SourceSettings(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
+    ui: Ui
+) -> impl IntoView {
     let selected = ui.source_channel;
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Know where a value comes from."</h3><p>"Each channel shares one source across all views. Catalogue entries retain request, decoder and documentary evidence."</p><p class="hint">"DNUC / Simos candidates are unverified on your ECU. A configuration cannot qualify a transport or enable an unimplemented decoder."</p>
@@ -372,9 +420,14 @@ pub fn SourceSettings(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns catalogue, route and timing fields for `channel` in `ui`. Selecting a
+/// definition resets its source defaults; displayed example CAN IDs do not discover
+/// an ECU, qualify a source, or initiate traffic.
 #[component]
 fn SourcePanel(
+    /// Shared selected/candidate objects and token-checked inspection/edit adapters.
     ui: Ui,
+    /// Canonical measurement channel whose configured source and route are inspected.
     channel: Channel,
 ) -> impl IntoView {
     let source = move || ui.editor.with(|e| e.editing_config().sources[channel.index()]);

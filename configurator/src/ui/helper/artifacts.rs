@@ -2,7 +2,13 @@
 use super::*;
 
 #[component]
-pub fn Panel(ui: Ui) -> impl IntoView {
+/// Returns retained-artifact download/flash controls for `ui`, using a memoized
+/// accepted-content identity only for display/eligibility. Explicit actions pass
+/// the selected artifact to the helper, which independently rechecks authority.
+pub fn Panel(
+    /// Studio owner of accepted project/options, session artifacts and device confirmation.
+    ui: Ui
+) -> impl IntoView {
     let state = ui.helper;
     let cache = StoredValue::new(dashboard_configurator::helper_client::ArtifactDisplayCache::default());
     let current = Memo::new(move |_| {

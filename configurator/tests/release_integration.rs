@@ -1,3 +1,5 @@
+//! Editor export/migration through boot codec and shared synthetic runtime integration.
+
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_core::acquisition::AcquisitionModel;
@@ -6,6 +8,9 @@ use dashboard_core::presentation::{PresentationState, Unit};
 use dashboard_core::samples::SensorId;
 use dashboard_core::warning_state::WarningCommand;
 
+/// Asserts fixture `config` drives canonical/raw warnings, requested PSI presentation,
+/// elapsed smoothing, history, latch/snooze acknowledgment and reduced-motion LED behavior;
+/// requires the specially configured boost rule and panics on runtime divergence.
 fn exercise_runtime(config: &ValidatedConfig) {
     use dashboard_core::status_led::{LedController, PresentedScene};
     let duty = LedController::new().update(
@@ -58,6 +63,8 @@ fn exercise_runtime(config: &ValidatedConfig) {
 }
 
 #[test]
+/// Accepted settings survive persistence, JSON and boot binary into shared runtime; corrupt boot bytes atomically fall
+/// back to defaults.
 fn ordinary_exports_and_persisted_envelope_reach_current_boot_and_advanced_runtime() {
     let mut c = default_config();
     c.history_seconds[0] = 30;
@@ -106,6 +113,8 @@ fn ordinary_exports_and_persisted_envelope_reach_current_boot_and_advanced_runti
 }
 
 #[test]
+/// Frozen v1-v3 JSON/EAV imports migrate through saved envelopes to current default bytes and admitted boot
+/// acquisition.
 fn all_supported_legacy_json_and_binary_inputs_reach_current_boot_with_defaults() {
     for (format, bytes) in [
         (

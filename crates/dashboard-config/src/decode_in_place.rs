@@ -8,6 +8,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::Config;
 
+/// Current Config declaration order; additions/reordering must match model, codec and migration tests.
 const FIELDS: &[&str] = &[
     "version",
     "catalogue_version",
@@ -26,11 +27,17 @@ const FIELDS: &[&str] = &[
     "ble",
 ];
 
-pub(crate) struct ConfigSeed<'a>(pub(crate) &'a mut Config);
+/// In-place sequence seed; errors may leave partial mutation, so storage must remain unpublished.
+pub(crate) struct ConfigSeed<'a>(
+    /// Exclusively borrowed initialized candidate, not necessarily valid.
+    pub(crate) &'a mut Config,
+);
 
 impl<'de> DeserializeSeed<'de> for ConfigSeed<'_> {
+    /// Decoding mutates borrowed storage rather than returning another full model.
     type Value = ();
 
+    /// Decode from sequence-capable `deserializer`; returns its shape/field errors with possible partial writes.
     fn deserialize<D: Deserializer<'de>>(
         self,
         deserializer: D,
@@ -40,8 +47,10 @@ impl<'de> DeserializeSeed<'de> for ConfigSeed<'_> {
 }
 
 impl<'de> Visitor<'de> for ConfigSeed<'_> {
+    /// Successful in-place mutation has no owned model result.
     type Value = ();
 
+    /// Write the required wire-shape description to `formatter`; returns formatting sink errors.
     fn expecting(
         &self,
         formatter: &mut fmt::Formatter<'_>,
@@ -49,6 +58,8 @@ impl<'de> Visitor<'de> for ConfigSeed<'_> {
         formatter.write_str("the current Postcard Config sequence")
     }
 
+    /// Fill fields in declaration order from `seq`, returning the first decode/missing-field error.
+    /// Prior writes remain on error; envelope consumption/canonicalization and validation occur afterward.
     fn visit_seq<A: SeqAccess<'de>>(
         self,
         mut seq: A,
@@ -74,6 +85,8 @@ impl<'de> Visitor<'de> for ConfigSeed<'_> {
     }
 }
 
+/// Return the next `T` from `seq`; absence is reported with the exact static `field` name.
+/// Underlying decoding errors propagate unchanged.
 fn next<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(
     seq: &mut A,
     field: &'static str,
@@ -81,13 +94,17 @@ fn next<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(
     seq.next_element()?.ok_or_else(|| A::Error::missing_field(field))
 }
 
-// Separate bounded View and Widget visitor instantiations reuse this seed.
-// Only an individual element is returned by serde; no full vector is built.
-struct VecSeed<'a, T, const N: usize>(&'a mut Vec<T, N>);
+/// Shared bounded View/Widget seed; serde returns one `T` at a time, never a full vector temporary.
+struct VecSeed<'a, T, const N: usize>(
+    /// Initialized destination with capacity `N`; decoding may clear/fill it before failure.
+    &'a mut Vec<T, N>,
+);
 
 impl<'de, T: Deserialize<'de>, const N: usize> DeserializeSeed<'de> for VecSeed<'_, T, N> {
+    /// No owned vector is returned.
     type Value = ();
 
+    /// Decode a sequence through `deserializer`, returning its errors with possible destination mutation.
     fn deserialize<D: Deserializer<'de>>(
         self,
         deserializer: D,
@@ -97,8 +114,10 @@ impl<'de, T: Deserialize<'de>, const N: usize> DeserializeSeed<'de> for VecSeed<
 }
 
 impl<'de, T: Deserialize<'de>, const N: usize> Visitor<'de> for VecSeed<'_, T, N> {
+    /// Success leaves the decoded elements in the borrowed vector.
     type Value = ();
 
+    /// Write the bounded-sequence expectation to `formatter`; returns formatting errors.
     fn expecting(
         &self,
         formatter: &mut fmt::Formatter<'_>,
@@ -106,6 +125,9 @@ impl<'de, T: Deserialize<'de>, const N: usize> Visitor<'de> for VecSeed<'_, T, N
         formatter.write_str("a bounded sequence")
     }
 
+    /// Replace the vector from `seq`, returning decode/capacity errors rather than truncating.
+    /// Oversized size hints reject before clearing. Otherwise old contents are cleared and
+    /// a valid prefix can remain on failure; a missing/lying hint never bypasses capacity checks.
     fn visit_seq<A: SeqAccess<'de>>(
         self,
         mut seq: A,

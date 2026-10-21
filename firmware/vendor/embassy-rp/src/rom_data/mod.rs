@@ -1,3 +1,4 @@
+//! Chip-selected boot-ROM entry points; availability and safety depend on the selected silicon.
 #![cfg_attr(
     feature = "rp2040",
     doc = r"
@@ -29,5 +30,6 @@ RP2350 datasheet:
 
 #[cfg_attr(feature = "rp2040", path = "rp2040.rs")]
 #[cfg_attr(feature = "_rp235x", path = "rp235x.rs")]
+/// Chip-selected ROM function lookup and typed call wrappers.
 mod inner;
 pub use inner::*;

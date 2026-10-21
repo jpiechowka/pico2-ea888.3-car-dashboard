@@ -1,21 +1,40 @@
+//! Standalone no-pairing BLE inventory utility for Pico 2 W.
+//! Core0 owns peripherals, watchdog, read-only USB and capture flash; core1 owns
+//! catalogue/UI rendering. Two affine framebuffers and separate byte leases cross
+//! cores. Connections require explicit inspection; no ECU polling is implemented.
 #![no_std]
 #![no_main]
 
+/// Bounded cross-core messages and atomic progress/fault observations.
 mod bridge;
+/// Affine storage reply-envelope exchange with core1.
 mod capture_reply;
+/// Lossless stage-aware mapping of host/controller failures.
 mod errors;
+/// Bounded standard-service GATT enumeration and allowed reads.
 mod inventory;
+/// One flash operation per finite watchdog/owner barrier.
 mod maintenance;
+/// Coherent polling-work, stack sample and transfer-count observations.
 mod metrics;
+/// Retained CYW/PIO/DMA and host connection/scan lifecycle.
 mod radio;
+/// Bounded HCI advertisement decoding and raw-report preservation.
 mod reports;
+/// Cancellation ordering and terminal connection evidence publication.
 mod session;
+/// Atomic fault-priority RGB policy with protected recovery.
 mod status;
+/// Sole core0 journal owner and read-only USB service.
 mod storage;
+/// Core1 live/saved catalogue state and affine rendering.
 mod ui;
+/// Read-only CDC export with bounded packets and session checks.
 mod usb;
+/// Non-wrapping bus-generation fence excluding stale endpoint work.
 mod usb_session;
 include!(concat!(env!("OUT_DIR"), "/probe_identity.rs"));
+/// Permanent measured owner-task wrappers and independent supervision.
 mod tasks;
 
 use dashboard_core::display::FrameBuffer;
@@ -26,7 +45,9 @@ use embassy_rp::{bind_interrupts, dma, i2c, peripherals, pio};
 use panic_probe as _;
 use static_cell::StaticCell;
 
-bind_interrupts!(pub struct Irqs {
+bind_interrupts!(
+/// Core0 display/radio DMA, I2C, PIO radio and USB controller interrupt bindings.
+pub struct Irqs {
     DMA_IRQ_0 => dma::InterruptHandler<peripherals::DMA_CH0>, dma::InterruptHandler<peripherals::DMA_CH1>;
     I2C0_IRQ => i2c::InterruptHandler<peripherals::I2C0>;
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
@@ -35,15 +56,20 @@ bind_interrupts!(pub struct Irqs {
 
 // Each object is taken once before core1 starts; channel ownership is affine.
 #[unsafe(no_mangle)]
+/// First fixed RGB565 frame; boot constructs its only mutable reference once.
 static mut BLE_PROBE_FRAMEBUFFER_0: FrameBuffer = FrameBuffer::new();
 #[unsafe(no_mangle)]
+/// Second fixed RGB565 frame circulating exclusively through FREE/READY.
 static mut BLE_PROBE_FRAMEBUFFER_1: FrameBuffer = FrameBuffer::new();
 #[unsafe(no_mangle)]
+/// Dedicated aligned 32 KiB core1 stack, borrowed once before core launch.
 static mut BLE_PROBE_CORE1_STACK: Stack<32768> = Stack::new();
+/// One-time core1 thread-mode executor residence.
 static CORE1_EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
 #[unsafe(link_section = ".bi_entries")]
 #[used]
+/// Read-only picotool identity/build metadata for this standalone image.
 static INFO: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_name!(c"pico2w-ble-probe"),
     embassy_rp::binary_info::rp_program_description!(c"BLE discovery and manual read-only GATT inspection"),
@@ -52,6 +78,11 @@ static INFO: [embassy_rp::binary_info::EntryAddr; 4] = [
 ];
 
 #[embassy_executor::main]
+/// Initializes board clocks/watchdog, qualifies capture flash, transfers both
+/// framebuffers and boot evidence to core1, then uses `spawner` for each permanent
+/// core0 owner. Qualification failure leaves capture storage unavailable and
+/// latched red while the utility runs. Panics on broken one-time/channel/task
+/// invariants; never flashes, pairs, or issues an automatic inspection request.
 async fn main(spawner: Spawner) {
     let mut config = embassy_rp::config::Config::default();
     config.clocks = dashboard_pico2::clock_profile::clock_config();
@@ -122,6 +153,8 @@ async fn main(spawner: Spawner) {
 }
 
 #[inline(never)]
+/// Never returns: runs the sole UI task forever on core1; panics on repeated executor/task
+/// initialization. Peripheral and flash owners remain on core0.
 fn probe_core1() -> ! {
     CORE1_EXECUTOR.init(Executor::new()).run(|spawner| {
         spawner.spawn(tasks::probe_ui_task().unwrap());

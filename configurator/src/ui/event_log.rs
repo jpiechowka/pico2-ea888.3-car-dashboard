@@ -12,23 +12,31 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 use super::*;
 
+/// Browser console adapter with bounded accepted-editor context captured at event production.
 struct BrowserConsole {
+    /// Accepted editor revision, excluding unapplied candidate changes.
     revision: u64,
+    /// Active workspace when the event was recorded.
     workspace: Workspace,
 }
 // The pinned web-sys write_text binding returns a Promise but does not catch a
 // synchronous host exception. Keep the same Clipboard API with a caught call.
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
+    /// Clipboard API binding catching synchronous host exceptions as well as returning its promise.
+    /// See the [Clipboard API draft](https://www.w3.org/TR/clipboard-apis/#dom-clipboard-writetext).
     #[wasm_bindgen::prelude::wasm_bindgen(extends=web_sys::Clipboard,js_name=Clipboard)]
     type ClipboardWriter;
     #[wasm_bindgen::prelude::wasm_bindgen(method,catch,js_name=writeText)]
+    /// Starts writing `text` through `this` clipboard; returns its completion promise or synchronous host exception.
     fn write_text(
         this: &ClipboardWriter,
         text: &str,
     ) -> Result<js_sys::Promise, wasm_bindgen::JsValue>;
 }
 impl ConsoleSink for BrowserConsole {
+    /// Emits `text` with `severity` styling and captured workspace/revision; constant console format prevents `%`
+    /// injection.
     fn write(
         &mut self,
         severity: Severity,
@@ -56,6 +64,9 @@ impl ConsoleSink for BrowserConsole {
     }
 }
 
+/// Records sanitized `notice` in `ui`'s bounded local store with checked wall/monotonic timestamps.
+/// Applies console policy and offers newly emitted events to the optional relay; exhaustion reports a bounded notice.
+/// Disposed signals are ignored; this does not log raw browser exceptions or recursively report relay failures.
 pub(super) fn record(
     ui: Ui,
     notice: &Notice,
@@ -97,10 +108,12 @@ pub(super) fn record(
     }
 }
 
+/// Returns decimal `count`, adding an inexactness suffix only after actual saturation.
 fn count(count: DiagnosticCount) -> String {
     format!("{}{}", count.value, if count.saturated { " or more" } else { "" })
 }
 
+/// Minimum-severity selector order, indexed by its DOM option values.
 const SEVERITIES: [Severity; 5] = [
     Severity::Trace,
     Severity::Debug,
@@ -108,6 +121,7 @@ const SEVERITIES: [Severity; 5] = [
     Severity::Warn,
     Severity::Error,
 ];
+/// Category selector order; DOM zero means unrestricted and entries use one-based values.
 const CATEGORIES: [Category; 8] = [
     Category::Editor,
     Category::Validation,
@@ -119,6 +133,8 @@ const CATEGORIES: [Category; 8] = [
     Category::Device,
 ];
 
+/// Returns bounded `query` filtering with indexed `minimum` and one-based `category`.
+/// Invalid severity defaults to Trace; zero/out-of-range category permits all categories.
 fn filter(
     query: &str,
     minimum: usize,
@@ -132,6 +148,7 @@ fn filter(
     })
 }
 
+/// Reports typed transfer `failure` through `ui` notice and local diagnostic event without raw exception data.
 fn failed(
     ui: Ui,
     failure: TransferFailure,
@@ -141,6 +158,10 @@ fn failed(
     ui.event(event);
 }
 
+/// Starts clipboard transfer of UTF-8 `bytes` for `ui` in the current user gesture, setting `busy` until settlement.
+/// Failure retains selectable text in `fallback`; success clears it. Invalid UTF-8 reports serialization failure.
+/// Busy requests are ignored and disposed fallback owners suppress late publication; clipboard writes are not
+/// cancellable.
 fn copy(
     ui: Ui,
     bytes: Vec<u8>,
@@ -185,7 +206,12 @@ fn copy(
 }
 
 #[component]
-pub fn EventLog(ui: Ui) -> impl IntoView {
+/// Returns bounded diagnostic filters, paused/live rows, console/relay controls and JSONL export for `ui`.
+/// Pause fixes a display anchor while recording continues; eviction is shown as a gap. Text uses escaped DOM nodes.
+pub fn EventLog(
+    /// Persistent Studio owner containing the local diagnostic store and adapters.
+    ui: Ui
+) -> impl IntoView {
     let query = RwSignal::new(String::new());
     let minimum = RwSignal::new(0usize);
     let category = RwSignal::new(0usize);

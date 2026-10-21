@@ -1,5 +1,8 @@
+//! Synthetic device/inspection identity and explicit genuine-board confirmation contracts.
+
 use dashboard_configurator::helper_client::{Connection, DeviceSelection};
 use dashboard_helper_protocol::*;
+/// Returns a decoded synthetic protocol2 session/capability; invalid fixture encoding panics.
 fn connection() -> Connection {
     Connection::decode(
         format!(
@@ -11,6 +14,7 @@ fn connection() -> Connection {
     )
     .unwrap()
 }
+/// Returns descriptor-only RP2350 BOOTSEL evidence with unknown capacity and no flash readiness.
 fn device() -> DeviceSummary {
     DeviceSummary {
         device_id: DeviceId::new("c".repeat(32)).unwrap(),
@@ -29,6 +33,8 @@ fn device() -> DeviceSummary {
         flash_ready: false,
     }
 }
+/// Returns complete synthetic picotool facts tied to the fixture session/device; the capacity estimate remains
+/// unverified.
 fn inspection() -> DeviceInspection {
     let d = device();
     DeviceInspection {
@@ -54,6 +60,7 @@ fn inspection() -> DeviceInspection {
     }
 }
 #[test]
+/// Genuine-Pico-2-W acknowledgment requires current complete inspection plus explicit choice and resets on reselection.
 fn confirmation_requires_current_complete_inspection_and_explicit_choice() {
     let c = connection();
     let mut state = DeviceSelection::default();
@@ -75,6 +82,8 @@ fn confirmation_requires_current_complete_inspection_and_explicit_choice() {
     assert!(state.inspection().is_none());
 }
 #[test]
+/// Wrong session/device/descriptor, missing facts, forged readiness and ambiguous descriptors cannot authorize
+/// flashing.
 fn foreign_and_changed_inspection_cannot_authorize_selected_device() {
     for variant in 0..5 {
         let mut state = DeviceSelection::default();
@@ -97,6 +106,7 @@ fn foreign_and_changed_inspection_cannot_authorize_selected_device() {
     assert!(state.selected().is_none());
 }
 #[test]
+/// Incomplete reinspection removes prior confirmation, and clearing selection also drops inspection authority.
 fn failed_reinspection_removes_previous_confirmation() {
     let mut state = DeviceSelection::default();
     state.select(device()).unwrap();
@@ -115,6 +125,8 @@ fn failed_reinspection_removes_previous_confirmation() {
 }
 
 #[test]
+/// Flash requests bind project/config/startup identities, options, session and confirmed device;
+/// changed source, artwork, session or cleared selection denies authorization.
 fn flash_request_binds_complete_project_artifact_options_and_confirmed_device() {
     use dashboard_configurator::build_flash::BuildSelection;
     use dashboard_configurator::editor::Editor;

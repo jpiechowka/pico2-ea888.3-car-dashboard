@@ -1,3 +1,10 @@
+//! Single-executor LE credit-channel admission, segmentation, queues and deferred disconnection.
+//!
+//! Local CIDs map directly to retained slots starting at 0x40. Refcounts prevent reuse while
+//! handles or handshakes own a slot; RefCell/NoopRawMutex do not provide cross-thread exclusion.
+//! Credits count K-frames, not SDUs or controller ACL fragments. See
+//! [Bluetooth L2CAP](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
+
 use core::cell::{Ref, RefCell, RefMut};
 use core::future::poll_fn;
 use core::task::{Context, Poll};
@@ -25,66 +32,87 @@ use crate::types::l2cap::{
 };
 use crate::{config, BleHostError, Error, PacketPool};
 
+/// First dynamic local CID; slot index is CID minus 0x40.
 const BASE_ID: u16 = 0x40;
 
 #[cfg(all(test, feature = "default-packet-pool"))]
 #[path = "channel_regression_tests.rs"]
+/// Actual manager/stack regressions for handshake lifetime, credits, malformed frames and identity.
 mod regression_tests;
 
 /// BT Core Spec Vol 3, Part A, Section 6.2.1: RTX signaling timeout.
 const L2CAP_RTX_TIMEOUT: embassy_time::Duration = embassy_time::Duration::from_secs(30);
 
+/// Shared request-identifier sequence, single waiter registrations and permanently registered service bitmap.
 struct State {
+    /// Next signaling identifier; zero is skipped and 255 wraps to 1.
     next_req_id: u8,
+    /// Single waiter for incoming pending channels or link loss.
     accept_waker: WakerRegistration,
+    /// Single waiter for outgoing handshake completion or link loss.
     create_waker: WakerRegistration,
+    /// Host runner waiter for deferred channel close signaling.
     disconnect_waker: WakerRegistration,
     /// Bitmask tracking which SPSMs (0x0001..=0x00FF) have active listeners.
     registered_spsms: [u32; 8],
 }
 
-/// Channel manager for L2CAP channels used directly by clients.
+/// Borrowed dynamic-channel table and signaling state for one host executor; references prevent slot reuse, not concurrent access.
 pub struct ChannelManager<'d, P: PacketPool> {
+    /// Identifier/listener/waker state; runtime borrow checked within one executor.
     state: RefCell<State>,
+    /// Host-owned fixed table; handles borrow this manager for its full lifetime.
     channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
 }
 
+/// Bounded inbound SDU queue; None is a best-effort close marker. P owns packet storage; QLEN counts queue entries.
 pub(crate) struct PacketChannel<P, const QLEN: usize> {
+    /// Single-executor bounded packet queue; None marks closure when capacity permits.
     chan: Channel<NoopRawMutex, Option<Pdu<P>>, QLEN>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ChannelIndex(u8);
+/// Manager-local slot identity; never valid for a different ChannelManager.
+pub struct ChannelIndex(
+    /// Zero-based slot, derived from a validated local CID or table allocation.
+    u8,
+);
 
 impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
+    /// Returns an empty queue with no close marker; capacity is QLEN.
     pub(crate) const fn new() -> Self {
         Self { chan: Channel::new() }
     }
 
+    /// Returns Ok after enqueueing a close marker, or Err(()) if full; existing packets remain queued and failure does not wake a receiver.
     pub fn close(&self) -> Result<(), ()> {
         self.chan.try_send(None).map_err(|_| ())
     }
 
+    /// Queues owned `pdu`, waiting for capacity. Cancellation before enqueue drops the packet; a completed send transfers ownership to the receiver.
     pub async fn send(&self, pdu: Pdu<P>) {
         self.chan.send(Some(pdu)).await;
     }
 
+    /// Returns Ok after queueing owned `pdu`, or OutOfMemory if full; rejected packet storage is dropped.
     pub fn try_send(&self, pdu: Pdu<P>) -> Result<(), Error> {
         self.chan.try_send(Some(pdu)).map_err(|_| Error::OutOfMemory)
     }
 
+    /// Returns the next packet or None close marker, consuming it. Empty queues register `cx` for one receiver and return Pending.
     pub fn poll_receive(&self, cx: &mut Context<'_>) -> Poll<Option<Pdu<P>>> {
         self.chan.poll_receive(cx)
     }
 
+    /// Drops all queued packets/markers and wakes a blocked sender when the queue was full; does not enqueue a close marker.
     pub fn clear(&self) {
         self.chan.clear()
     }
 }
 
 impl State {
-    /// Register a SPSM for listening.
+    /// Permanently registers `spsm` in 1..=255; values outside that bitmap are ignored.
     fn register_spsm(&mut self, spsm: u16) {
         if (1..=255).contains(&spsm) {
             let idx = spsm as usize / 32;
@@ -93,7 +121,7 @@ impl State {
         }
     }
 
-    /// Check if a SPSM has an active listener.
+    /// Returns bitmap membership for `spsm` in 1..=255; reserved values return the allow-reserved-l2cap-psu feature setting.
     fn is_spsm_registered(&self, spsm: u16) -> bool {
         if !(1..=255).contains(&spsm) {
             // When the allow-reserved-l2ca-psu feature is enable, treat all reserved PSUs as registered
@@ -104,6 +132,7 @@ impl State {
         self.registered_spsms[idx] & (1 << bit) != 0
     }
 
+    /// Returns the next nonzero signaling identifier, wrapping 255 to 1; does not reserve identifiers against outstanding requests.
     fn next_request_id(&mut self) -> u8 {
         // 0 is an invalid identifier
         if self.next_req_id == 0 {
@@ -115,7 +144,17 @@ impl State {
     }
 }
 
+impl<P: PacketPool> Drop for ChannelManager<'_, P> {
+    /// Resets borrowed slots, releasing queued/partial SDU allocations before backing resources can be reused. Borrowed channel owners cannot outlive this manager; no peer disconnect is sent.
+    fn drop(&mut self) {
+        for storage in self.channels.borrow_mut().iter_mut() {
+            *storage = ChannelStorage::new();
+        }
+    }
+}
+
 impl<'d, P: PacketPool> ChannelManager<'d, P> {
+    /// Returns a manager borrowing `channels` without resetting their slots; caller supplies initialized storage owned by this host. Signaling sequence/listeners start empty.
     pub fn new(channels: &'d RefCell<[ChannelStorage<P::Packet>]>) -> Self {
         Self {
             state: RefCell::new(State {
@@ -129,47 +168,58 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
+    /// Returns a shared borrow of local `index`; panics for an invalid index or conflicting mutable table borrow.
     fn channel(&self, index: ChannelIndex) -> Ref<'_, ChannelStorage<P::Packet>> {
         Ref::map(self.channels.borrow(), |x| &x[index.0 as usize])
     }
 
+    /// Returns an exclusive borrow of local `index`; panics for an invalid index or any conflicting table borrow.
     fn channel_mut(&self, index: ChannelIndex) -> RefMut<'_, ChannelStorage<P::Packet>> {
         RefMut::map(self.channels.borrow_mut(), |x| &mut x[index.0 as usize])
     }
 
+    /// Permanently registers service `spsm` in 1..=255; reserved services depend on the feature policy.
     pub(crate) fn register_spsm(&self, spsm: u16) {
         self.state.borrow_mut().register_spsm(spsm);
     }
 
+    /// Returns the next nonzero, wrapping signaling identifier under the shared state borrow.
     fn next_request_id(&self) -> u8 {
         self.state.borrow_mut().next_request_id()
     }
 
+    /// Returns the registered service multiplexer stored at local `index`; zero may describe an unconfigured/closed slot. Invalid indices or borrow conflicts panic.
     pub(crate) fn spsm(&self, index: ChannelIndex) -> u16 {
         self.channel(index).spsm
     }
 
+    /// Returns the local accepted SDU byte ceiling stored at local `index`; zero may describe an unconfigured/closed slot. Invalid indices or borrow conflicts panic.
     pub(crate) fn mtu(&self, index: ChannelIndex) -> u16 {
         self.channel(index).mtu
     }
 
+    /// Returns the local accepted K-frame payload byte ceiling stored at local `index`; zero may describe an unconfigured/closed slot. Invalid indices or borrow conflicts panic.
     pub(crate) fn mps(&self, index: ChannelIndex) -> u16 {
         self.channel(index).mps
     }
 
+    /// Returns the peer accepted SDU byte ceiling stored at local `index`; zero may describe an unconfigured/closed slot. Invalid indices or borrow conflicts panic.
     pub(crate) fn peer_mtu(&self, index: ChannelIndex) -> u16 {
         self.channel(index).peer_mtu
     }
 
+    /// Returns the peer accepted K-frame payload byte ceiling stored at local `index`; zero may describe an unconfigured/closed slot. Invalid indices or borrow conflicts panic.
     pub(crate) fn peer_mps(&self, index: ChannelIndex) -> u16 {
         self.channel(index).peer_mps
     }
 
+    /// Requests deferred disconnection of connected local `index`, queues a best-effort receive-close marker and wakes the host runner. Other states are unchanged; peer acknowledgment is not awaited.
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
         self.channel_mut(index).disconnect();
         self.state.borrow_mut().disconnect_waker.wake();
     }
 
+    /// Requests deferred close only when local `channel` CID is in range and belongs to `conn`; unknown/mismatched channels are ignored.
     pub(crate) fn disconnect_by_cid(&self, conn: ConnHandle, channel: u16) {
         if channel >= BASE_ID && usize::from(channel - BASE_ID) < self.channels.as_ptr().len() {
             let index = ChannelIndex((channel - BASE_ID) as u8);
@@ -182,10 +232,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
-    /// Validate an incoming length against a channel limit (MTU or MPS).
-    ///
-    /// If the length exceeds the limit, the channel is disconnected per Bluetooth spec
-    /// Vol 3, Part A, Section 10.1 and `Err(Error::InvalidValue)` is returned.
+    /// Checks `actual` bytes against the value selected by `limit` for connected local `channel` on `conn`; `label` names the diagnostic length. Returns InvalidChannelId for wrong ownership/state, or InvalidValue after requesting/waking disconnect on excess.
     fn check_len(
         &self,
         conn: ConnHandle,
@@ -208,14 +255,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             .inspect_err(|_| self.state.borrow_mut().disconnect_waker.wake())
     }
 
+    /// Returns admission of `sdu_len` bytes against local SDU MTU for `channel` on `conn`; invalid identity/state fails and excess requests disconnection.
     pub(crate) fn check_sdu_len(&self, conn: ConnHandle, channel: u16, sdu_len: u16) -> Result<(), Error> {
         self.check_len(conn, channel, sdu_len, |s| s.mtu, "SDU")
     }
 
+    /// Returns admission of `pdu_len` bytes against local K-frame MPS for `channel` on `conn`; invalid identity/state fails and excess requests disconnection.
     pub(crate) fn check_pdu_len(&self, conn: ConnHandle, channel: u16, pdu_len: u16) -> Result<(), Error> {
         self.check_len(conn, channel, pdu_len, |s| s.mps, "PDU")
     }
 
+    /// Closes all slots owned by lost link `conn`, clears partial reassembly/metrics and wakes handshake waiters; existing reference counts remain. Returns Ok; queued data is retained until reuse, with a best-effort close marker.
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
             if Some(conn) == storage.conn {
@@ -233,6 +283,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    /// Returns a free zero-reference slot for `conn`, rejecting duplicate active `peer_cid` and table exhaustion. Clears old inbound/reassembly storage, assigns local CID, then calls `f` to initialize state. A panicking `f` can leave partial slot changes; table indices must fit the configured u8 identity domain.
     fn alloc<F: FnOnce(&mut ChannelStorage<P::Packet>)>(
         &self,
         conn: ConnHandle,
@@ -267,10 +318,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(ChannelIndex(idx as u8))
     }
 
-    /// Wait for an incoming L2CAP connection request on the given connection.
-    ///
-    /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
-    /// SPSMs must be registered globally via [`StackBuilder::register_l2cap_spsm`].
+    /// Returns a retained pending channel for `conn`, waiting while `connections` reports the link alive; returns Disconnected after link loss. Uses one accept waker and skips requests already owned by pending tokens. Pending cancellation owns no slot.
     pub(crate) async fn next_pending(
         &'d self,
         conn: ConnHandle,
@@ -284,11 +332,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let mut channels = self.channels.borrow_mut();
             for (idx, chan) in channels.iter_mut().enumerate() {
                 match chan.state {
-                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) => {
-                        if chan.refcount != 0 {
-                            log_status(&channels, true);
-                            panic!("unexpected refcount");
-                        }
+                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) && chan.refcount == 0 => {
                         chan.inc_ref();
                         let index = ChannelIndex(idx as u8);
                         return Poll::Ready(Ok(L2capPendingConnection::new(index, self, conn)));
@@ -304,9 +348,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         .await
     }
 
-    /// Reject all pending L2CAP connections on the given connection that have not yet been
-    /// returned by `next_pending` (refcount == 0). Sends a `NoResources` rejection response
-    /// for each, then closes the channel slot.
+    /// Best-effort rejects every unclaimed peer request on `conn` using `manager` outbound capacity, then closes each slot even when queueing fails. Already retained pending tokens remain owned by their callers.
     pub(crate) fn reject_all_pending(&self, conn: ConnHandle, manager: &ConnectionManager<'_, P>) {
         let mut channels = self.channels.borrow_mut();
         for chan in channels.iter_mut() {
@@ -329,7 +371,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
-    /// Accept a pending L2CAP connection: negotiate parameters, transition to Connected, send success response.
+    /// Accepts retained local `index` using `config` limits/credits and originating `ble` transport. Returns its channel after a success response is submitted; rejects bad MTU/MPS or packet capacity. Marks Connected before awaiting I/O; error/cancellation releases the pending reference and requests disconnect if the handshake may have escaped.
     pub(crate) async fn accept_pending<T: Controller>(
         &'d self,
         index: ChannelIndex,
@@ -397,7 +439,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(L2capChannel::new(index, self))
     }
 
-    /// Reject a pending L2CAP connection: send rejection response and free the channel slot.
+    /// Rejects retained local `index` with wire `result` through originating `ble`; returns signal submission success/error. Closes locally before I/O, and releases its reference on all exits including cancellation; peer receipt is not guaranteed.
     pub(crate) async fn reject_pending<T: Controller>(
         &self,
         index: ChannelIndex,
@@ -422,7 +464,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Release the reference owned by an unfinished create, accept or reject operation.
+    /// Releases one handshake-owned reference at `index`; closes unfinished handshakes or requests disconnect when an established channel loses its last owner. Panics on reference underflow.
     pub(crate) fn drop_pending(&self, index: ChannelIndex) {
         let mut chan = self.channel_mut(index);
         chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
@@ -438,6 +480,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
+    /// Creates service `spsm` on `conn` using local `config` and originating `ble`. Returns a retained channel or allocation/config/controller/peer error. Only the response wait has a 30-second timeout; initial request I/O may wait longer. Error/cancellation releases its slot reference, closing incomplete handshakes or requesting established-channel disconnect.
     pub(crate) async fn create<T: Controller>(
         &'d self,
         conn: ConnHandle,
@@ -507,6 +550,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(result)
     }
 
+    /// Polls outgoing slot `idx` on `conn` against originating `ble`; optional `cx` registers the single create waiter. Returns the retained channel on success, link/peer error on failure, otherwise Pending. Success requires exactly one handshake reference or panics; caller transfers/releases that reference.
     fn poll_created<T: Controller>(
         &'d self,
         conn: ConnHandle,
@@ -545,6 +589,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Poll::Pending
     }
 
+    /// Consumes one incoming K-frame credit for connected local `channel` on `conn`; `credits` is currently ignored. Returns OutOfMemory when no local credit remains, NotFound for wrong state/link, or InvalidChannelId outside the table. Used when host-level reassembly owns packet dispatch.
     pub(crate) fn received(&self, conn: ConnHandle, channel: u16, credits: u16) -> Result<(), Error> {
         if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
@@ -573,6 +618,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
+    /// Consumes owned `pdu` for local `channel` on `conn`, returning queue/reassembly/identity errors. Normal mode consumes one credit and assembles K-frames; optimized mode receives an already assembled SDU. Malformed lengths request disconnect; full inbound queue drops the completed SDU. Packet ownership is retained only by assembly or a successful queue insertion.
     pub(crate) fn dispatch(&self, conn: ConnHandle, channel: u16, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
@@ -628,7 +674,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                             sdu.replace(Pdu::new(packet, sdu_len as usize));
                         } else {
                             // Need another fragment
-                            storage.reassembly.init_with_written(channel, sdu_len, packet, len)?;
+                            if let Err(error) = storage.reassembly.init_with_written(channel, sdu_len, packet, len) {
+                                storage.disconnect();
+                                self.state.borrow_mut().disconnect_waker.wake();
+                                return Err(error);
+                            }
                         }
                     } else {
                         match storage.reassembly.update(pdu.as_ref()) {
@@ -655,7 +705,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Handle incoming L2CAP signal
+    /// Processes concatenated signaling `data` from `conn` using `manager` link state/outbound queue. Returns framing/rejection-queue errors; most per-command errors are logged and processing continues. Header extents are checked before mutation; malformed payloads can follow earlier successful commands. Identifier zero is skipped.
     pub(crate) fn signal(
         &self,
         conn: ConnHandle,
@@ -783,6 +833,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    /// Admits peer `req` on `conn` with response `identifier`, using `manager` listener state and rejection queue. Returns Ok for queued acceptance-to-user or rejection; invalid CID/parameters/service, absent listener and capacity failures become wire rejection codes. Outbound allocation failures propagate.
     fn handle_connect_request(
         &self,
         conn: ConnHandle,
@@ -832,6 +883,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
+    /// Matches peer `res` by `conn` and `identifier`; returns success after publishing Connected, or peer/validation errors. Unknown identifiers close all Connecting slots on that link; successful replies require legal unique peer CID and MTU/MPS. Wakes the create waiter on every matched/fallback completion.
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
         let mut channels = self.channels.borrow_mut();
         let duplicate_cid = channels
@@ -887,6 +939,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
+    /// Adds peer `req` credits to the matching connected peer CID on `conn` and wakes its sender. Returns NotFound without a match; u16 overflow requests disconnect and returns InvalidValue.
     fn handle_credit_flow(&self, conn: ConnHandle, req: &LeCreditFlowInd) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
             match storage.state {
@@ -921,6 +974,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
+    /// Handles peer close of local `cid`/`peer_cid` on `conn`; stores `identifier` for the deferred response and wakes the runner. Returns Ok or an outbound rejection error through `manager` if the channel tuple is unknown.
     fn handle_disconnect_request(
         &self,
         conn: ConnHandle,
@@ -948,6 +1002,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Self::try_send_signal(conn, identifier, &CommandRejectRes { reason: 2 }, manager)
     }
 
+    /// Closes the matching Disconnecting local `cid`/`peer_cid` on `conn`; returns Ok even if no slot matches. Does not clear retained queue/reassembly storage here.
     fn handle_disconnect_response(&self, conn: ConnHandle, cid: u16, peer_cid: u16) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
             if storage.state == ChannelState::Disconnecting
@@ -962,9 +1017,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Receive SDU on a given channel.
-    ///
-    /// The MTU of the channel must be <= the MTU of the packet.
+    /// Returns one owned SDU from local `chan`, then replenishes receive credits through originating `ble`. Closed channels fail. Once dequeued, an error/cancellation during credit signaling drops the SDU; no retry delivery is retained.
     pub(crate) async fn receive_sdu<T: Controller>(
         &self,
         chan: ChannelIndex,
@@ -976,9 +1029,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(Sdu::from_pdu(pdu))
     }
 
-    /// Receive data on a given channel and copy it into the buffer.
-    ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
+    /// Copies one SDU prefix into `buf` from local `chan`, then replenishes credits through originating `ble`. Returns copied bytes; excess SDU bytes are discarded and untouched output tail is preserved. A later error/cancellation can leave the copied prefix modified without returning its length.
     pub(crate) async fn receive<T: Controller>(
         &self,
         chan: ChannelIndex,
@@ -996,6 +1047,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(to_copy)
     }
 
+    /// Returns the next owned SDU for local `chan`, or ChannelClosed if no longer Connected/close marker dequeued. `ble` is retained in the signature but not consulted. Cancellation while empty consumes nothing; only one receiver waker is retained.
     async fn receive_pdu<'m>(
         &self,
         ble: &'m ConnectionManager<'d, P>,
@@ -1017,11 +1069,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         .await
     }
 
-    /// Send the provided buffer over a given l2cap channel.
-    ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
-    ///
-    /// If the channel has been closed or the channel id is not valid, an error is returned.
+    /// Segments `buf` into K-frames for local `index` through originating `ble`, using `p_buf` as reusable encoding scratch (at least MPS+4 bytes). Returns MTU/encoding/link/controller errors; waits for all SDU credits first. Error/cancellation can leave a transmitted prefix; unsent reserved credits are refunded, but sent bytes are not recalled.
     pub(crate) async fn send<T: Controller>(
         &self,
         index: ChannelIndex,
@@ -1034,8 +1082,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             return Err(Error::InsufficientSpace.into());
         }
         // The number of packets we'll need to send for this payload
-        let len = (buf.len() as u16).saturating_add(2);
-        let n_packets = len.div_ceil(mps);
+        let n_packets = sdu_credits(buf.len() as u16, mps);
         // info!("[host] sending {} LE K frames, len {}, mps {}", n_packets, len, mps);
 
         let mut grant = poll_fn(|cx| self.poll_request_to_send(index, n_packets, Some(cx))).await?;
@@ -1057,11 +1104,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Send the provided buffer over a given l2cap channel.
-    ///
-    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
-    ///
-    /// If the channel has been closed or the channel id is not valid, an error is returned.
+    /// Attempts complete `buf` segmentation for local `index` through originating `ble`, using `p_buf` scratch of at least MPS+4 bytes. Returns Busy when credits/ACL ownership are unavailable, or MTU/encoding/controller errors. Controller failure after admission can expose a prefix; unused channel credits are refunded.
     pub(crate) fn try_send<T: Controller + blocking::Controller>(
         &self,
         index: ChannelIndex,
@@ -1076,8 +1119,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
         // The number of packets we'll need to send for this payload
         let sdu_len = buf.len() as u16;
-        let len = sdu_len.saturating_add(2);
-        let n_packets = len.div_ceil(mps);
+        let n_packets = sdu_credits(sdu_len, mps);
 
         let mut grant = match self.poll_request_to_send(index, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -1107,6 +1149,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    /// Encodes `signal` with nonzero protocol `identifier` for `conn` into a pool packet and queues it through `manager`. Returns allocation, encoding or outbound-state/capacity errors; success means queued, not transmitted.
     fn try_send_signal<D: L2capSignal>(
         conn: ConnHandle,
         identifier: u8,
@@ -1131,6 +1174,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         manager.try_outbound(conn, Pdu::new(buf, len))
     }
 
+    /// Sends `param` link-update request for `handle` through `host` with a fresh identifier. Returns transport/encoding result without waiting for the peer response; cancellation may leave a transmitted prefix.
     pub(crate) async fn send_conn_param_update_req<T: Controller>(
         &self,
         handle: ConnHandle,
@@ -1142,6 +1186,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
     }
 
+    /// Sends `param` response for `handle` and nonzero request `identifier` through `host`. Returns InvalidValue for zero or transport/encoding result; cancellation may leave a transmitted prefix.
     pub(crate) async fn send_conn_param_update_res<T: Controller>(
         &self,
         handle: ConnHandle,
@@ -1156,6 +1201,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
     }
 
+    /// Returns (link handle, peer MPS bytes, peer MTU bytes, peer CID) for local `index`, or ChannelClosed. Invalid index/borrow conflict and a Connected slot without a link panic.
     fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16, u16), Error> {
         let chan = self.channel(index);
         if chan.state == ChannelState::Connected {
@@ -1167,6 +1213,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     // Check the current state of flow control and send flow indications if
     // our policy says so.
+    /// Replenishes local `index` according to its policy through originating `ble`, encoding into `p_buf`. Returns NotFound after closure or transport error. Accounting changes only after successful submission; cancellation/error after a partial send can leave peer/local credit knowledge different.
     async fn flow_control<T: Controller>(
         &self,
         index: ChannelIndex,
@@ -1203,6 +1250,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    /// Reserves `credits` K-frames at local `index`; optional `cx` replaces its sender waker. Returns a refund-on-drop grant, Pending for insufficient peer credits, or NotFound when not Connected. Sent metrics count reservation, including subsequently refunded credits.
     fn poll_request_to_send(
         &self,
         index: ChannelIndex,
@@ -1218,7 +1266,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 chan.peer_credits -= credits;
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.sent(credits as usize);
-                return Poll::Ready(Ok(CreditGrant::new(self.channels, index, credits)));
+                return Poll::Ready(Ok(CreditGrant::new(self.channels, &self.state, index, credits)));
             } else {
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.blocked_send();
@@ -1229,6 +1277,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Poll::Ready(Err(Error::NotFound))
     }
 
+    /// Returns the first locally/peer-requested disconnect, or Pending; optional `cx` registers the runner waiter. Returned request borrows table state without adding a channel reference; runner must send/confirm before polling another.
     pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, P>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
@@ -1250,10 +1299,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Poll::Pending
     }
 
+    /// Retains local `index`; panics if its u8 reference count is already 255 or index/borrow is invalid.
     pub(crate) fn inc_ref(&self, index: ChannelIndex) {
         self.channel_mut(index).inc_ref();
     }
 
+    /// Releases local `index`; zero remaining references request disconnect and wake the runner. Panics on underflow or invalid index/borrow.
     pub(crate) fn dec_ref(&self, index: ChannelIndex) {
         let mut chan = self.channel_mut(index);
         chan.refcount = unwrap!(
@@ -1267,22 +1318,26 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
+    /// Logs all slots if `verbose`, otherwise only non-Disconnected slots; retains an immutable table borrow during formatting.
     pub(crate) fn log_status(&self, verbose: bool) {
         log_status(&self.channels.borrow(), verbose);
     }
 
     #[cfg(feature = "defmt")]
+    /// Formats local `index` into defmt `f`; invalid index or conflicting mutable table borrow panics.
     pub(crate) fn print(&self, index: ChannelIndex, f: defmt::Formatter) {
         use defmt::Format;
         self.channel(index).format(f);
     }
 
     #[cfg(feature = "channel-metrics")]
+    /// Returns callback `f` result for metrics at local `index`, holding an immutable table borrow. Reentrant mutation of channel state from `f` panics.
     pub(crate) fn metrics<F: FnOnce(&Metrics) -> R, R>(&self, index: ChannelIndex, f: F) -> R {
         f(&self.channel(index).metrics)
     }
 }
 
+/// Logs `channels` with slot indices, including closed slots only when `verbose`; does not mutate state.
 fn log_status<P>(channels: &[ChannelStorage<P>], verbose: bool) {
     for (idx, storage) in channels.iter().enumerate() {
         if verbose || storage.state != ChannelState::Disconnected {
@@ -1291,18 +1346,25 @@ fn log_status<P>(channels: &[ChannelStorage<P>], verbose: bool) {
     }
 }
 
+/// Runner-owned borrowed description of a pending channel disconnect; send/confirm does not wait for peer acknowledgment.
 pub struct DisconnectRequest<'a, P: PacketPool> {
+    /// Local slot selected by the runner poll.
     index: ChannelIndex,
+    /// Captured link identity checked before signaling.
     handle: ConnHandle,
+    /// Shared allocator for fresh local disconnect request identifiers.
     state: &'a RefCell<State>,
+    /// Borrowed slot table; this request adds no reference count.
     channels: &'a RefCell<[ChannelStorage<P::Packet>]>,
 }
 
 impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
+    /// Returns the link handle captured when this disconnect request was polled.
     pub fn handle(&self) -> ConnHandle {
         self.handle
     }
 
+    /// Submits the current slot close request/response through originating `host`; returns transport result, or Ok if state no longer needs signaling. Panics if the captured link identity changed. Cancellation leaves the request pending; partial wire effects remain possible.
     pub async fn send<T: Controller>(&self, host: &BleHost<'_, T, P>) -> Result<(), BleHostError<T::Error>> {
         let (state, conn, our_cid, peer_cid) = {
             let state = self.channels.borrow();
@@ -1344,16 +1406,27 @@ impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
         Ok(())
     }
 
+    /// Marks the slot Disconnected after runner submission; leaves its other fields, queues and references until cleanup/reuse. This is not a peer acknowledgment.
     pub fn confirm(self) {
         self.channels.borrow_mut()[self.index.0 as usize].state = ChannelState::Disconnected;
     }
 }
 
+/// Returns K-frame credits for `sdu_len` payload bytes plus the first frame's two-byte SDU prefix.
+/// `mps` is the negotiated K-frame payload ceiling; panics below the legal 23-byte minimum.
+/// Widening before addition preserves the prefix for SDU lengths 65534 and 65535.
+fn sdu_credits(sdu_len: u16, mps: u16) -> u16 {
+    core::assert!(mps >= 23);
+    (u32::from(sdu_len) + 2).div_ceil(u32::from(mps)) as u16
+}
+
 // Core Vol 3, Part A, sections 4.22/4.23: LE credit channel limits.
+/// Returns whether `mtu` is at least 23 SDU bytes and `mps` is 23..=65533 K-frame payload bytes (Core Vol3 PartA4.22/4.23).
 fn valid_credit_parameters(mtu: u16, mps: u16) -> bool {
     mtu >= 23 && (23..=65533).contains(&mps)
 }
 
+/// Encodes K-frame `data` for `peer_cid` into `packet`; optional `header` supplies first-frame SDU length. Returns bytes written or InsufficientSpace with a possibly modified prefix. Internal callers bound payload to MPS<=65533 so u16 length plus the optional two bytes fits.
 fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) -> Result<usize, Error> {
     let mut w = WriteCursor::new(packet);
     if header.is_some() {
@@ -1371,27 +1444,44 @@ fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) ->
     Ok(w.len())
 }
 
+/// One reusable dynamic-channel slot; P owns queued/reassembly packet memory. Reuse requires Disconnected and zero retained references.
 pub struct ChannelStorage<P> {
+    /// Handshake/close phase controlling admission and reuse.
     state: ChannelState,
+    /// Owning link handle; None after full close.
     conn: Option<ConnHandle>,
+    /// Local dynamic CID (0x40+slot), or zero when cleared.
     cid: u16,
+    /// Service protocol multiplexer, or zero before configuration/after close.
     spsm: u16,
+    /// Local maximum accepted K-frame payload bytes, or zero when unconfigured.
     mps: u16,
+    /// Local maximum accepted SDU payload bytes, or zero when unconfigured.
     mtu: u16,
+    /// Advertised local receive credits and pending replenishment.
     flow_control: CreditFlowControl,
+    /// Retained channel/half/metrics/pending owners; zero permits disconnected slot reuse.
     refcount: u8,
 
+    /// Peer dynamic CID, or zero until accepted/after close.
     peer_cid: u16,
+    /// Peer K-frame payload byte ceiling; legal negotiated range 23..=65533.
     peer_mps: u16,
+    /// Peer SDU payload byte ceiling; legal negotiated minimum 23.
     peer_mtu: u16,
+    /// Unreserved outgoing K-frame credits currently granted by the peer.
     peer_credits: u16,
+    /// Single sender waiting for peer credits or a local refund.
     credit_waker: WakerRegistration,
 
+    /// Completed SDUs plus best-effort closure marker; allocation clears retained contents.
     inbound: PacketChannel<P, { config::L2CAP_RX_QUEUE_SIZE }>,
     #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+    /// Partial nonoptimized SDU; link loss and slot allocation release retained packet memory.
     reassembly: PacketReassembly<P>,
 
     #[cfg(feature = "channel-metrics")]
+    /// Wrapping counters for reservations, accepted frames and blocked attempts.
     metrics: Metrics,
 }
 
@@ -1399,18 +1489,19 @@ pub struct ChannelStorage<P> {
 #[cfg(feature = "channel-metrics")]
 #[derive(Debug)]
 pub struct Metrics {
-    /// Number of sent l2cap packets.
+    /// Wrapping count of reserved outgoing K-frames, including later refunds.
     pub num_sent: usize,
-    /// Number of received l2cap packets.
+    /// Wrapping count of accepted incoming K-frames.
     pub num_received: usize,
-    /// Number of l2cap packets blocked from sending.
+    /// Wrapping count of insufficient-credit polls, including repeated polls.
     pub blocked_send: usize,
-    /// Number of l2cap packets blocked from receiving.
+    /// Wrapping count of incoming frames rejected for exhausted credits.
     pub blocked_receive: usize,
 }
 
 #[cfg(feature = "channel-metrics")]
 impl Metrics {
+    /// Returns zeroed wrapping channel counters.
     pub(crate) const fn new() -> Self {
         Self {
             num_sent: 0,
@@ -1419,22 +1510,27 @@ impl Metrics {
             blocked_receive: 0,
         }
     }
+    /// Adds `num` reserved K-frames with usize wrapping; refunds do not subtract from this counter.
     pub(crate) fn sent(&mut self, num: usize) {
         self.num_sent = self.num_sent.wrapping_add(num);
     }
 
+    /// Adds `num` accepted K-frames with usize wrapping.
     pub(crate) fn received(&mut self, num: usize) {
         self.num_received = self.num_received.wrapping_add(num);
     }
 
+    /// Increments the insufficient-credit poll count with usize wrapping; repeated polls count separately.
     pub(crate) fn blocked_send(&mut self) {
         self.blocked_send = self.blocked_send.wrapping_add(1);
     }
 
+    /// Increments the incoming-without-credit count with usize wrapping.
     pub(crate) fn blocked_receive(&mut self) {
         self.blocked_receive = self.blocked_receive.wrapping_add(1);
     }
 
+    /// Resets all channel counters to zero on link/channel cleanup.
     pub(crate) fn reset(&mut self) {
         *self = Self::new();
     }
@@ -1443,6 +1539,7 @@ impl Metrics {
 #[cfg(feature = "channel-metrics")]
 #[cfg(feature = "defmt")]
 impl defmt::Format for Metrics {
+    /// Writes all four metrics counters to defmt formatter `f`.
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
@@ -1456,6 +1553,7 @@ impl defmt::Format for Metrics {
 }
 
 impl<P> core::fmt::Debug for ChannelStorage<P> {
+    /// Writes state/identities/limits/credits/reference count to `f`; returns formatter failures. Packet payloads are omitted.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_struct("ChannelStorage");
         let d = d
@@ -1478,6 +1576,7 @@ impl<P> core::fmt::Debug for ChannelStorage<P> {
 
 #[cfg(feature = "defmt")]
 impl<P> defmt::Format for ChannelStorage<P> {
+    /// Writes channel state/identities/limits/credits and optional metrics to defmt `f`; packet payloads are omitted.
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
@@ -1500,6 +1599,7 @@ impl<P> defmt::Format for ChannelStorage<P> {
 }
 
 impl<P> ChannelStorage<P> {
+    /// Returns an unowned Disconnected slot with zero identities/limits/credits and empty inbound/reassembly storage.
     pub(crate) const fn new() -> ChannelStorage<P> {
         ChannelStorage {
             state: ChannelState::Disconnected,
@@ -1524,13 +1624,12 @@ impl<P> ChannelStorage<P> {
         }
     }
 
+    /// Adds one retained owner; panics before mutation if u8 reference count is already 255.
     fn inc_ref(&mut self) {
         self.refcount = unwrap!(self.refcount.checked_add(1), "Too many references to the same channel");
     }
 
-    /// Check a received length against a limit. If exceeded, log a warning and disconnect.
-    /// Returns `Err(Error::InvalidValue)` on violation.
-    /// Callers must wake `State::disconnect_waker` on error.
+    /// Returns Ok if `actual` bytes fit `limit`; otherwise logs `label`, requests disconnect and returns InvalidValue. Caller must wake the manager disconnect waiter.
     fn check_len(&mut self, actual: u16, limit: u16, label: &str) -> Result<(), Error> {
         if actual > limit {
             warn!(
@@ -1543,12 +1642,12 @@ impl<P> ChannelStorage<P> {
         Ok(())
     }
 
+    /// Returns admission of `sdu_len` bytes against this slot MTU; excess requests disconnect. Caller must wake the manager on failure.
     pub(crate) fn check_sdu_len(&mut self, sdu_len: u16) -> Result<(), Error> {
         self.check_len(sdu_len, self.mtu, "SDU")
     }
 
-    /// Begin a local-initiated disconnect. Sets the channel to `Disconnecting`, closes the
-    /// inbound queue, and resets metrics. Callers must wake `State::disconnect_waker` afterwards.
+    /// Transitions Connected to Disconnecting, queues a best-effort close marker and resets metrics. Other states are unchanged; caller wakes the runner. Full queues can reject the marker.
     fn disconnect(&mut self) {
         if self.state == ChannelState::Connected {
             self.state = ChannelState::Disconnecting;
@@ -1558,6 +1657,7 @@ impl<P> ChannelStorage<P> {
         }
     }
 
+    /// Resets state, link/CIDs/service/limits and credit accounting; preserves references, waker, inbound queue, reassembly and metrics for caller-managed cleanup.
     fn close(&mut self) {
         self.state = ChannelState::Disconnected;
         self.cid = 0;
@@ -1575,13 +1675,33 @@ impl<P> ChannelStorage<P> {
 
 #[derive(Debug, PartialEq, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Local handshake/close state; Disconnected permits reuse only when reference count reaches zero.
 pub enum ChannelState {
+    /// Locally closed; reuse additionally requires zero references.
     Disconnected,
-    Connecting(u8),
-    PeerConnecting(u8),
+    /// Outgoing request submitted or waiting for controller capacity.
+    Connecting(
+        /// Nonzero request identifier expected in the response.
+        u8,
+    ),
+    /// Incoming request awaiting application acceptance/rejection.
+    PeerConnecting(
+        /// Peer request identifier to echo in the response.
+        u8,
+    ),
+    /// Handshake accepted locally; data/credit operations are admitted.
     Connected,
-    ConnectFailed(LeCreditConnResultCode),
-    PeerDisconnecting(u8),
+    /// Outgoing handshake received a negative peer result.
+    ConnectFailed(
+        /// Exact peer connection result delivered to the creator.
+        LeCreditConnResultCode,
+    ),
+    /// Peer requested closure; runner must send the response.
+    PeerDisconnecting(
+        /// Peer disconnect identifier to echo.
+        u8,
+    ),
+    /// Local close requested; runner must submit disconnect signaling.
     Disconnecting,
 }
 
@@ -1590,12 +1710,19 @@ pub enum ChannelState {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CreditFlowPolicy {
     /// Issue credits for every N messages received
-    Every(u16),
+    Every(
+        /// Consumed K-frame threshold; zero triggers even with no consumed credits.
+        u16,
+    ),
     /// Issue credits when below a threshold
-    MinThreshold(u16),
+    MinThreshold(
+        /// Replenish when available credits are strictly below this value; zero never triggers.
+        u16,
+    ),
 }
 
 impl Default for CreditFlowPolicy {
+    /// Returns Every(1), replenishing consumed credits after each receive-side flow-control check.
     fn default() -> Self {
         Self::Every(1)
     }
@@ -1603,13 +1730,18 @@ impl Default for CreditFlowPolicy {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Local receive-credit balance and consumed-but-not-yet-replenished count; arithmetic saturates at u16 bounds.
 pub(crate) struct CreditFlowControl {
+    /// Condition for sending all accumulated replenishment credits.
     policy: CreditFlowPolicy,
+    /// Available incoming K-frame credits already advertised to the peer.
     credits: u16,
+    /// Consumed K-frame credits awaiting successful replenishment submission.
     received: u16,
 }
 
 impl CreditFlowControl {
+    /// Returns accounting with grant `policy`, `initial_credits` offered to the peer, and zero consumed credits.
     const fn new(policy: CreditFlowPolicy, initial_credits: u16) -> Self {
         Self {
             policy,
@@ -1617,22 +1749,26 @@ impl CreditFlowControl {
             received: 0,
         }
     }
+    /// Returns credits currently advertised as available for incoming K-frames.
     fn available(&self) -> u16 {
         self.credits
     }
 
+    /// Consumes `n` advertised credits and accumulates consumed credits using saturating subtraction/addition; does not itself validate peer compliance.
     fn confirm_received(&mut self, n: u16) {
         self.credits = self.credits.saturating_sub(n);
         self.received = self.received.saturating_add(n);
     }
 
     // Confirm that we've granted amount credits
+    /// Confirms `amount` replenishment after signal submission, subtracting pending consumption and adding available credits with saturation.
     fn confirm_granted(&mut self, amount: u16) {
         self.received = self.received.saturating_sub(amount);
         self.credits = self.credits.saturating_add(amount);
     }
 
     // Check if policy says we should grant more credits
+    /// Returns all consumed credits when policy triggers, otherwise None; may return Some(0) for zero thresholds/counts and does not mutate accounting.
     fn process(&mut self) -> Option<u16> {
         match self.policy {
             CreditFlowPolicy::Every(count) => {
@@ -1653,42 +1789,66 @@ impl CreditFlowControl {
     }
 }
 
+/// Reserved outgoing K-frame credits; confirms submitted frames and refunds the remainder to a still-connected slot on drop.
 pub struct CreditGrant<'reference, P> {
+    /// Runner wake registration used if a canceled reservation reveals credit overflow.
+    state: &'reference RefCell<State>,
+    /// Originating table used to refund a still-connected slot.
     channels: &'reference RefCell<[ChannelStorage<P>]>,
+    /// Manager-local slot whose credits were reserved.
     index: ChannelIndex,
+    /// Unconfirmed reserved credits refundable on drop.
     credits: u16,
 }
 
 impl<'reference, P> CreditGrant<'reference, P> {
-    fn new(channels: &'reference RefCell<[ChannelStorage<P>]>, index: ChannelIndex, credits: u16) -> Self {
+    /// Returns ownership of already-debited `credits` for local `index` in `channels`, using `state` to wake deferred close on refund overflow.
+    /// Does not debit the table itself or retain the channel slot.
+    fn new(
+        channels: &'reference RefCell<[ChannelStorage<P>]>,
+        state: &'reference RefCell<State>,
+        index: ChannelIndex,
+        credits: u16,
+    ) -> Self {
         Self {
             channels,
+            state,
             index,
             credits,
         }
     }
 
+    /// Subtracts submitted `sent` K-frames from refundable credits, saturating at zero.
     pub(crate) fn confirm(&mut self, sent: u16) {
         self.credits = self.credits.saturating_sub(sent);
     }
 
+    /// Returns reserved K-frame credits not yet confirmed as submitted.
     pub(crate) fn remaining(&self) -> u16 {
         self.credits
     }
 
+    /// Discards all refund entitlement without changing the channel balance.
     fn done(&mut self) {
         self.credits = 0;
     }
 }
 
 impl<P> Drop for CreditGrant<'_, P> {
+    /// Refunds outstanding credits only while Connected and wakes its sender; overflow requests disconnect and wakes the runner. Invalid slot/borrow conflicts panic.
     fn drop(&mut self) {
         if self.credits > 0 {
             let mut channels = self.channels.borrow_mut();
             let chan = &mut channels[self.index.0 as usize];
             if chan.state == ChannelState::Connected {
-                chan.peer_credits += self.credits;
-                chan.credit_waker.wake();
+                if let Some(credits) = chan.peer_credits.checked_add(self.credits) {
+                    chan.peer_credits = credits;
+                    chan.credit_waker.wake();
+                } else {
+                    // New peer grants may have arrived while this reservation was pending.
+                    chan.disconnect();
+                    self.state.borrow_mut().disconnect_waker.wake();
+                }
             }
             // make it an assert?
             //        warn!("[l2cap][credit grant drop] channel {} not found", self.index);
@@ -1697,6 +1857,7 @@ impl<P> Drop for CreditGrant<'_, P> {
 }
 
 #[cfg(test)]
+/// Actual host/channel lifetime regression; no controller or hardware traffic.
 mod tests {
     extern crate std;
 
@@ -1707,7 +1868,51 @@ mod tests {
     use crate::prelude::{ConnParams, DefaultPacketPool};
     use crate::{Address, HostResources};
 
+    /// Builder cancellation and full stack teardown release queued SDUs and partial reassembly before repeated resource reuse.
     #[test]
+    fn teardown_releases_channel_packets_before_resource_reuse() {
+        let available = || {
+            let mut packets = std::vec::Vec::new();
+            while let Some(packet) = DefaultPacketPool::allocate() {
+                packets.push(packet);
+            }
+            packets.len()
+        };
+        let before = available();
+        let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+        for build in [false, true, false, true] {
+            let builder = crate::new(MockController::new(), &mut resources);
+            {
+                let state = builder.host_state.as_ref().unwrap();
+                let slot = state.channels.channel_mut(ChannelIndex(0));
+                slot.inbound
+                    .try_send(Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))
+                    .unwrap();
+                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+                {
+                    let mut slot = slot;
+                    slot.reassembly
+                        .init(0x40, 10, DefaultPacketPool::allocate().unwrap())
+                        .unwrap();
+                }
+                let owned = if cfg!(feature = "l2cap-sdu-reassembly-optimization") {
+                    1
+                } else {
+                    2
+                };
+                assert_eq!(available(), before - owned);
+            }
+            if build {
+                drop(builder.build());
+            } else {
+                drop(builder);
+            }
+            assert_eq!(available(), before);
+        }
+    }
+
+    #[test]
+    /// Link loss during an outgoing channel handshake produces Disconnected and cleanup releases its retained slot reference.
     fn channel_refcount() {
         let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
         let ble = MockController::new();

@@ -1,4 +1,5 @@
-//! Attribute protocol implementation.
+//! Attribute storage, typed GATT access, permissions and value-update transport.
+//! Declaration layouts follow [Core Vol 3 Part G, section 3](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html).
 use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
@@ -22,25 +23,25 @@ use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
 /// The maximum size in bytes of an attribute using inline small data storage.
 pub const MAX_SMALL_DATA_SIZE: usize = 20;
 
-/// Characteristic properties
+/// Characteristic declaration property bits; advertising a bit does not itself authorize access or implement a procedure.
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum CharacteristicProp {
-    /// Broadcast
+    /// Advertises broadcast support (bit 0).
     Broadcast = 0x01,
-    /// Read
+    /// Advertises read procedures (bit 1); read permissions are checked separately.
     Read = 0x02,
-    /// Write without response
+    /// Advertises write-command support (bit 2), without an ATT response.
     WriteWithoutResponse = 0x04,
-    /// Write
+    /// Advertises write-request support (bit 3), with an ATT response.
     Write = 0x08,
-    /// Notify
+    /// Advertises unacknowledged notifications (bit 4); sending still requires subscription/access admission.
     Notify = 0x10,
-    /// Indicate
+    /// Advertises confirmed indications (bit 5); only one may await confirmation per connection.
     Indicate = 0x20,
-    /// Authenticated writes
+    /// Advertises authenticated signed writes (bit 6); setting this flag alone does not implement that procedure.
     AuthenticatedWrite = 0x40,
-    /// Extended properties
+    /// Signals additional properties in a characteristic extended-properties descriptor (bit 7).
     Extended = 0x80,
 }
 
@@ -67,12 +68,13 @@ pub struct AttPermissions {
     pub read: PermissionLevel,
     /// Security required for write operations
     pub write: PermissionLevel,
-    /// Minimum encryption key length required (0 = no minimum)
+    /// Minimum encrypted-link key length in bytes (0 disables the minimum); values above 16 deny normal LE keys.
     #[cfg(feature = "legacy-pairing")]
     pub min_key_len: u8,
 }
 
 impl AttPermissions {
+    /// Returns unencrypted read permission, no write permission and no minimum key length.
     pub(crate) fn read_only() -> Self {
         Self {
             read: PermissionLevel::Allowed,
@@ -82,6 +84,8 @@ impl AttPermissions {
         }
     }
 
+    /// Checks current `level` and, with legacy pairing, byte `encryption_key_len`. Returns read denial,
+    /// insufficient authentication/key size, or Ok. An unencrypted Allowed read ignores the key-size minimum.
     pub(crate) fn can_read(
         &self,
         level: SecurityLevel,
@@ -107,6 +111,8 @@ impl AttPermissions {
         }
     }
 
+    /// Checks current `level` and, with legacy pairing, byte `encryption_key_len`. Returns write denial,
+    /// insufficient authentication/key size, or Ok. An unencrypted Allowed write ignores the key-size minimum.
     pub(crate) fn can_write(
         &self,
         level: SecurityLevel,
@@ -135,12 +141,16 @@ impl AttPermissions {
 
 /// A GATT characteristic declaration value.
 pub(crate) struct CharacteristicDeclaration {
+    /// Advertised characteristic operations; separate permissions govern actual access.
     pub props: CharacteristicProps,
+    /// One-based handle of the immediately following value attribute.
     pub value_handle: u16,
+    /// Type UUID of the characteristic value, not the declaration UUID.
     pub uuid: Uuid,
 }
 
 impl CharacteristicDeclaration {
+    /// Returns a declaration from `props`, one-based `value_handle` and characteristic `uuid`; no admission checks.
     pub(crate) fn new<U: Into<Uuid>, P: Into<CharacteristicProps>>(props: P, value_handle: u16, uuid: U) -> Self {
         Self {
             props: props.into(),
@@ -151,8 +161,11 @@ impl CharacteristicDeclaration {
 }
 
 impl TryFrom<&[u8]> for CharacteristicDeclaration {
+    /// Truncated cursor fields or unsupported UUID byte length.
     type Error = Error;
 
+    /// Returns a declaration decoded from little-endian `data`; requires property/handle bytes and
+    /// a 2/4/16-byte UUID tail. Does not validate handle or property bits.
     fn try_from(data: &'_ [u8]) -> Result<Self, Self::Error> {
         let mut r = ReadCursor::new(data);
         Ok(CharacteristicDeclaration {
@@ -165,63 +178,88 @@ impl TryFrom<&[u8]> for CharacteristicDeclaration {
 
 /// Attribute metadata.
 pub struct Attribute<'a> {
+    /// Attribute type UUID; service declaration values contain a different, service-specific UUID.
     pub(crate) uuid: Uuid,
+    /// Read/write security policy applied by the server, not by raw storage access.
     pub(crate) permissions: AttPermissions,
+    /// Shared storage or metadata identifying per-client storage.
     pub(crate) data: AttributeData<'a>,
 }
 
 impl<'a> Attribute<'a> {
+    /// Empty slot sentinel retained for fixed attribute-table initialization.
     const EMPTY: Option<Attribute<'a>> = None;
 
+    /// Copies bytes at `offset` into `data`; Returns byte count or storage/offset error. Does not check permissions.
     pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         self.data.read(offset, data)
     }
 
+    /// Writes `data` at `offset`; Returns storage/offset/length errors. Does not check link permissions.
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         self.data.write(offset, data)
     }
 
+    /// Returns the stored permission policy without checking any connection.
     pub(crate) fn permissions(&self) -> AttPermissions {
         self.permissions
     }
 
+    /// Returns whether reads are permitted at some security level, not whether a particular peer qualifies.
     pub(crate) fn readable(&self) -> bool {
         self.permissions.read != PermissionLevel::NotAllowed
     }
 
+    /// Returns whether writes are permitted at some security level, not whether a particular peer qualifies.
     pub(crate) fn writable(&self) -> bool {
         self.permissions.write != PermissionLevel::NotAllowed
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
+/// Attribute storage with byte-length invariants maintained by builders; per-client values live elsewhere.
 pub(crate) enum AttributeData<'d> {
+    /// Borrowed immutable bytes shared by all clients.
     ReadOnlyData {
+        /// Complete initialized value; its slice length is the logical length and capacity.
         value: &'d [u8],
     },
+    /// Borrowed writable backing storage shared by all clients.
     Data {
+        /// True makes each successful write set the logical end to offset plus input length.
         variable_len: bool,
+        /// Initialized byte length, bounded by value capacity and u16::MAX.
         len: u16,
+        /// Backing bytes; only the logical prefix is readable.
         value: &'d mut [u8],
     },
+    /// Owned inline bytes for small shared values.
     SmallData {
+        /// True allows writes to shorten or extend the logical prefix within capacity.
         variable_len: bool,
+        /// Usable byte capacity, at most MAX_SMALL_DATA_SIZE.
         capacity: u8,
+        /// Initialized byte length, at most capacity.
         len: u8,
+        /// Inline backing bytes; tail beyond logical length is not exposed.
         value: [u8; MAX_SMALL_DATA_SIZE],
     },
+    /// Per-connection storage metadata, resolved by the attribute server.
     ClientSpecific {
+        /// Whether the per-client value may have a logical length below capacity.
         variable_len: bool,
+        /// Maximum per-client bytes; public builders cap this at 512.
         capacity: u16,
     },
 }
 
 impl From<Uuid> for AttributeData<'_> {
+    /// Returns fixed inline ATT UUID storage for `uuid`; UUID32 expands to the Bluetooth 128-bit base form.
     fn from(uuid: Uuid) -> Self {
-        let raw = uuid.as_raw();
-        let len = raw.len() as u8;
+        let (bytes, len) = uuid.att_bytes();
         let mut value = [0u8; MAX_SMALL_DATA_SIZE];
-        value[..raw.len()].copy_from_slice(raw);
+        value[..len].copy_from_slice(&bytes[..len]);
+        let len = len as u8;
         AttributeData::SmallData {
             variable_len: false,
             capacity: len,
@@ -232,6 +270,7 @@ impl From<Uuid> for AttributeData<'_> {
 }
 
 impl From<bt_hci::uuid::BluetoothUuid16> for AttributeData<'_> {
+    /// Returns fixed two-byte inline storage for Bluetooth `uuid` in little-endian order.
     fn from(uuid: bt_hci::uuid::BluetoothUuid16) -> Self {
         let raw = uuid.to_le_bytes();
         let len = raw.len() as u8;
@@ -247,6 +286,7 @@ impl From<bt_hci::uuid::BluetoothUuid16> for AttributeData<'_> {
 }
 
 impl From<bt_hci::uuid::BluetoothUuid128> for AttributeData<'_> {
+    /// Returns fixed sixteen-byte inline storage for Bluetooth `uuid` in little-endian order.
     fn from(uuid: bt_hci::uuid::BluetoothUuid128) -> Self {
         let raw = uuid.to_le_bytes();
         let len = raw.len() as u8;
@@ -262,8 +302,11 @@ impl From<bt_hci::uuid::BluetoothUuid128> for AttributeData<'_> {
 }
 
 impl From<CharacteristicDeclaration> for AttributeData<'_> {
+    /// Returns inline property/handle/UUID bytes for `decl`; handle is little-endian and UUID32 expands.
+    /// The declaration fits the 20-byte inline capacity for every supported UUID representation.
     fn from(decl: CharacteristicDeclaration) -> Self {
-        let uuid_raw = decl.uuid.as_raw();
+        let (uuid_bytes, uuid_len) = decl.uuid.att_bytes();
+        let uuid_raw = &uuid_bytes[..uuid_len];
         let total_len = 1 + 2 + uuid_raw.len(); // props + handle + uuid
         debug_assert!(total_len <= MAX_SMALL_DATA_SIZE);
         let mut value = [0u8; MAX_SMALL_DATA_SIZE];
@@ -281,7 +324,8 @@ impl From<CharacteristicDeclaration> for AttributeData<'_> {
 }
 
 impl AttributeData<'_> {
-    /// Get the byte value of the attribute data.
+    /// Returns the logical shared byte prefix, or None for per-client metadata.
+    /// Panics if internally constructed length exceeds backing storage.
     pub(crate) fn value(&self) -> Option<&[u8]> {
         match self {
             AttributeData::ReadOnlyData { value } => Some(value),
@@ -291,6 +335,7 @@ impl AttributeData<'_> {
         }
     }
 
+    /// Returns whether writes may change the logical byte length; immutable bytes always return false.
     pub(crate) fn is_variable_len(&self) -> bool {
         match self {
             AttributeData::Data { variable_len, .. }
@@ -300,6 +345,7 @@ impl AttributeData<'_> {
         }
     }
 
+    /// Returns byte capacity, including unused writable tail; immutable capacity equals its length.
     pub(crate) fn capacity(&self) -> usize {
         match self {
             AttributeData::ReadOnlyData { value, .. } => value.len(),
@@ -309,7 +355,11 @@ impl AttributeData<'_> {
         }
     }
 
+    /// Copies the logical value at byte `offset` into `data`, bounded by the output slice. Returns copied
+    /// bytes, INVALID_OFFSET beyond the end, or UNLIKELY_ERROR for per-client metadata; exact end returns zero.
     pub(crate) fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        /// Copies the suffix of `src` selected by `offset` into remaining `dest`; Returns bytes copied.
+        /// Consumes skipped offset and advances the destination reference; leaves unwritten bytes unchanged.
         fn append(src: &[u8], offset: &mut usize, dest: &mut &mut [u8]) -> usize {
             if *offset >= src.len() {
                 *offset -= src.len();
@@ -344,6 +394,9 @@ impl AttributeData<'_> {
         }
     }
 
+    /// Writes `data` at byte `offset` within initialized length/capacity. Returns offset/length/read-only
+    /// errors before mutation. Variable values end at offset plus input length; fixed values retain length.
+    /// Caller-maintained lengths/capacities must fit backing storage; this method does not check permissions.
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         match self {
             Self::Data {
@@ -387,6 +440,7 @@ impl AttributeData<'_> {
 }
 
 impl fmt::Debug for Attribute<'_> {
+    /// Writes UUID and readability/writability flags to `f`; Returns its write result without exposing value bytes.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Attribute")
             .field("uuid", &self.uuid)
@@ -398,12 +452,14 @@ impl fmt::Debug for Attribute<'_> {
 
 #[cfg(feature = "defmt")]
 impl<'a> defmt::Format for Attribute<'a> {
+    /// Writes the metadata-only Debug representation to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", defmt::Debug2Format(self))
     }
 }
 
 impl<'a> Attribute<'a> {
+    /// Returns an attribute containing converted `uuid`/`data` and supplied `permissions`; no bounds validation.
     pub(crate) fn new<U: Into<Uuid>, T: Into<AttributeData<'a>>>(
         uuid: U,
         permissions: AttPermissions,
@@ -417,22 +473,28 @@ impl<'a> Attribute<'a> {
     }
 }
 
-/// A table of attributes.
+/// Fixed-capacity, one-based GATT attribute table. Builders panic on exhaustion; raw local access
+/// bypasses peer permissions. Mutation/iteration closures run under the configured mutex and RefCell borrow.
 pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
+    /// Mutex-protected table; callbacks must not re-enter conflicting table access.
     inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
 }
 
+/// Contiguous attribute storage; vector index plus one is the ATT handle.
 pub(crate) struct InnerTable<'d, const MAX: usize> {
+    /// At most MAX entries; keep MAX below u16::MAX so the next handle remains representable.
     attributes: Vec<Attribute<'d>, MAX>,
 }
 
 impl<'d, const MAX: usize> InnerTable<'d, MAX> {
+    /// Appends owned `attribute`; Returns its one-based handle. Panics on full storage or debug handle overflow.
     fn push(&mut self, attribute: Attribute<'d>) -> u16 {
         let handle = self.next_handle();
         self.attributes.push(attribute).unwrap();
         handle
     }
 
+    /// Returns a borrowed iterator starting at zero-based `pos`; positions at/past the end yield no values.
     fn iterate_from(&self, pos: usize) -> AttributeIterator<'_, 'd> {
         AttributeIterator {
             attributes: &self.attributes,
@@ -440,29 +502,34 @@ impl<'d, const MAX: usize> InnerTable<'d, MAX> {
         }
     }
 
+    /// Returns the end of the service starting at one-based `service_handle`, or u16::MAX for the final group.
     fn service_group_end(&self, service_handle: u16) -> u16 {
         self.iterate_from(usize::from(service_handle)).service_group_end()
     }
 
+    /// Returns the next one-based handle; table capacity must keep length below u16::MAX.
     fn next_handle(&self) -> u16 {
         self.attributes.len() as u16 + 1
     }
 }
 
 impl<M: RawMutex, const MAX: usize> Default for AttributeTable<'_, M, MAX> {
+    /// Returns an empty fixed-capacity table with the configured raw mutex.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
-    /// Create a new GATT table.
+    /// Returns an empty GATT table; no heap allocation or link state is created.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RefCell::new(InnerTable { attributes: Vec::new() })),
         }
     }
 
+    /// Runs `f` under the mutex with a shared table borrow; Returns its result.
+    /// A conflicting reentrant borrow panics; keep the synchronous callback bounded.
     pub(crate) fn with_inner<F: FnOnce(&InnerTable<'d, MAX>) -> R, R>(&self, f: F) -> R {
         self.inner.lock(|inner| {
             let table = inner.borrow();
@@ -470,6 +537,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Runs `f` under the mutex with an exclusive table borrow; Returns its result.
+    /// Any reentrant table borrow panics; callback mutations persist even if its result represents failure.
     pub(crate) fn with_inner_mut<F: FnOnce(&mut InnerTable<'d, MAX>) -> R, R>(&self, f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
@@ -477,10 +546,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Runs `f` with an iterator from the first attribute under a shared lock; Returns its result.
     pub(crate) fn iterate<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, f: F) -> R {
         self.with_inner(|table| f(table.iterate_from(0)))
     }
 
+    /// Runs `f` on the one-based `handle` under a shared lock; Returns Some(result), or None for zero/absent handle.
     pub(crate) fn with_attribute<F: FnOnce(&Attribute<'d>) -> R, R>(&self, handle: u16, f: F) -> Option<R> {
         if handle == 0 {
             return None;
@@ -492,6 +563,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Runs `f` on the one-based `handle` under an exclusive lock; Returns Some(result), or None for zero/absent handle.
     pub(crate) fn with_attribute_mut<F: FnOnce(&mut Attribute<'d>) -> R, R>(&self, handle: u16, f: F) -> Option<R> {
         if handle == 0 {
             return None;
@@ -503,16 +575,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Runs `f` with a locked iterator beginning at one-based `start` (zero also starts at the first item); Returns its result.
     pub(crate) fn iterate_from<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, start: u16, f: F) -> R {
         let i = usize::from(start).saturating_sub(1);
         self.with_inner(|table| f(table.iterate_from(i)))
     }
 
+    /// Appends `attribute` under an exclusive lock; Returns its handle and panics if capacity is exhausted.
     fn push(&mut self, attribute: Attribute<'d>) -> u16 {
         self.with_inner_mut(|table| table.push(attribute))
     }
 
-    /// Add a service to the attribute table (group of characteristics)
+    /// Appends primary `service` declaration and Returns its builder; panics when the table is full.
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let handle = self.push(Attribute::new(
             PRIMARY_SERVICE,
@@ -522,7 +596,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         ServiceBuilder { handle, table: self }
     }
 
-    /// Add a service to the attribute table (group of characteristics)
+    /// Appends secondary `service` declaration and Returns its builder; panics when the table is full.
     pub fn add_secondary_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let handle = self.push(Attribute::new(
             SECONDARY_SERVICE,
@@ -532,20 +606,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         ServiceBuilder { handle, table: self }
     }
 
-    /// Get the permissions for the attribute
-    ///
-    /// Returns `None` if the attribute handle is invalid.
+    /// Returns the policy for one-based `attribute`, or None for zero/absent handle.
     pub fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
         self.with_attribute(attribute, |att| att.permissions())
     }
 
-    /// Get the UUID of the attribute type
-    ///
-    /// Returns `None` if the attribute handle is invalid.
+    /// Returns the type UUID for one-based `attribute`, or None for zero/absent handle.
     pub fn uuid(&self, attribute: u16) -> Option<Uuid> {
         self.with_attribute(attribute, |att| att.uuid)
     }
 
+    /// Replaces immutable storage for one-based `attribute` with borrowed `new_value`; Returns NotFound
+    /// for an absent handle or NotSupported for other storage. Does not enforce the former length/type.
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
         self.with_attribute_mut(attribute, |att| match &mut att.data {
             AttributeData::ReadOnlyData { value, .. } => {
@@ -557,27 +629,23 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         .unwrap_or(Err(Error::NotFound))
     }
 
-    /// Read the raw value of the attribute
-    ///
-    /// If the attribute value is larger than the data buffer, data will be filled with
-    /// as many bytes as fit. Use additional reads with an offset to read the remaining data.
-    ///
-    /// The value of the attribute is undefined for connection-specific attributes (like CCCD).
+    /// Reads one-based `attribute` at byte `offset` into `data`; Returns copied bytes or NotFound/storage
+    /// errors. Output truncation is successful; exact end returns zero. Per-client values are unsupported.
+    /// This local operation does not enforce remote read permissions.
     pub fn read(&self, attribute: u16, offset: usize, data: &mut [u8]) -> Result<usize, Error> {
         self.with_attribute(attribute, |att| att.read(offset, data).map_err(Into::into))
             .unwrap_or(Err(Error::NotFound))
     }
 
-    /// Write the raw value of the attribute
-    ///
-    /// If the attribute is variable length, its length will be set to `offset + data.len()`.
-    /// If the attribute is fixed length, the range `offset..(offset + data.len())` will be
-    /// overwritten.
+    /// Writes `data` to one-based `attribute` at byte `offset`; Returns NotFound/storage errors.
+    /// Variable length becomes offset plus input length; fixed values retain length. Bypasses peer permissions.
     pub fn write(&self, attribute: u16, offset: usize, data: &[u8]) -> Result<(), Error> {
         self.with_attribute_mut(attribute, |att| att.write(offset, data).map_err(Into::into))
             .unwrap_or(Err(Error::NotFound))
     }
 
+    /// Replaces one-based `attribute` with `input`; Returns NotFound, storage errors, or UnexpectedDataLength
+    /// if fixed-length storage differs. Variable values accept up to capacity and update their logical length.
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
         self.with_attribute_mut(attribute, |att| {
             if !att.data.is_variable_len() && att.data.capacity() != input.len() {
@@ -592,34 +660,25 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         .unwrap_or(Err(Error::NotFound))
     }
 
-    /// Get the number of attributes in the table
+    /// Returns the number of stored attributes, including declarations and descriptors.
     pub fn len(&self) -> usize {
         self.with_inner(|table| table.attributes.len())
     }
 
-    /// Returns true if the table is empty
+    /// Returns true when no attributes have been added.
     pub fn is_empty(&self) -> bool {
         self.with_inner(|table| table.attributes.is_empty())
     }
 
-    /// Set the value of a characteristic
-    ///
-    /// For fixed-length values, the provided data must exactly match the storage size.
-    /// For variable-length values, any length up to the configured capacity is accepted.
-    ///
-    /// Returns an error if the characteristic cannot be found, if the input length is
-    /// incompatible with the characteristic storage, or if the data shape does not
-    /// match the characteristic type.
+    /// Serializes `input` into the value selected by `attribute_handle`; Returns storage/handle/length errors.
+    /// Fixed storage requires exact size; variable storage accepts up to capacity. Bypasses remote permissions.
     pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.as_gatt();
         self.set_raw(attribute_handle.handle(), gatt_value)
     }
 
-    /// Read the value of the characteristic and pass the value to the provided closure.
-    ///
-    /// The return value of the closure is returned in this function and is assumed to be infallible.
-    ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
+    /// Returns the typed value selected by `attribute_handle`. Returns NotFound, NotSupported for per-client
+    /// metadata, or CannotConstructGattValue with a bounded byte prefix when decoding fails.
     pub fn get<T: AttributeHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
         self.with_attribute(attribute_handle.handle(), |att| {
             let value_slice = att.data.value().ok_or(Error::NotSupported)?;
@@ -634,9 +693,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         .unwrap_or(Err(Error::NotFound))
     }
 
-    /// Return the characteristic which corresponds to the supplied value handle
-    ///
-    /// If no characteristic corresponding to the given value handle was found, returns an error
+    /// Returns typed characteristic metadata inferred immediately before value `handle`, or NotFound/decode
+    /// error. Type T is not validated against stored bytes; malformed internal declarations can panic.
     pub fn find_characteristic_by_value_handle<T: AsGatt>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
         if handle == 0 {
             return Err(Error::NotFound);
@@ -670,29 +728,39 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     #[cfg(feature = "security")]
-    /// Calculate the database hash for the attribute table.
-    ///
-    /// See Core Specification Vol 3, Part G, Section 7.3.1
+    /// Returns the numeric AES-CMAC GATT database hash over mandated declaration/descriptor fields.
+    /// Runs synchronously under a shared table lock; value changes outside hashed fields do not alter the hash.
+    /// See Bluetooth Core Vol 3, Part G, section 7.3.1.
     pub fn hash(&self) -> u128 {
         use bt_hci::uuid::*;
 
         use crate::security_manager::crypto::AesCmac;
 
+        /// Primary-service declaration: include handle, type and complete value in the hash.
         const PRIMARY_SERVICE: Uuid = Uuid::Uuid16(declarations::PRIMARY_SERVICE.to_le_bytes());
+        /// Secondary-service declaration: include handle, type and complete value in the hash.
         const SECONDARY_SERVICE: Uuid = Uuid::Uuid16(declarations::SECONDARY_SERVICE.to_le_bytes());
+        /// Included-service declaration: include handle, type and complete value in the hash.
         const INCLUDED_SERVICE: Uuid = Uuid::Uuid16(declarations::INCLUDE.to_le_bytes());
+        /// Characteristic declaration: include handle, type and complete value in the hash.
         const CHARACTERISTIC: Uuid = Uuid::Uuid16(declarations::CHARACTERISTIC.to_le_bytes());
+        /// Extended-properties descriptor: include handle, type and complete value in the hash.
         const CHARACTERISTIC_EXTENDED_PROPERTIES: Uuid =
             Uuid::Uuid16(descriptors::CHARACTERISTIC_EXTENDED_PROPERTIES.to_le_bytes());
 
+        /// User-description descriptor: hash handle/type, excluding mutable value.
         const CHARACTERISTIC_USER_DESCRIPTION: Uuid =
             Uuid::Uuid16(descriptors::CHARACTERISTIC_USER_DESCRIPTION.to_le_bytes());
+        /// Client-configuration descriptor: hash handle/type, excluding per-client value.
         const CLIENT_CHARACTERISTIC_CONFIGURATION: Uuid =
             Uuid::Uuid16(descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        /// Server-configuration descriptor: hash handle/type only.
         const SERVER_CHARACTERISTIC_CONFIGURATION: Uuid =
             Uuid::Uuid16(descriptors::SERVER_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        /// Presentation-format descriptor: hash handle/type only.
         const CHARACTERISTIC_PRESENTATION_FORMAT: Uuid =
             Uuid::Uuid16(descriptors::CHARACTERISTIC_PRESENTATION_FORMAT.to_le_bytes());
+        /// Aggregate-format descriptor: hash handle/type only.
         const CHARACTERISTIC_AGGREGATE_FORMAT: Uuid =
             Uuid::Uuid16(descriptors::CHARACTERISTIC_AGGREGATE_FORMAT.to_le_bytes());
 
@@ -736,8 +804,10 @@ pub trait AttributeHandle {
 }
 
 impl<T: AsGatt + ?Sized> AttributeHandle for Characteristic<T> {
+    /// Serialized characteristic value type; the handle itself does not validate stored bytes.
     type Value = T;
 
+    /// Returns the one-based characteristic value handle.
     fn handle(&self) -> u16 {
         self.handle
     }
@@ -749,6 +819,7 @@ impl<T: AsGatt + ?Sized> AttributeHandle for Characteristic<T> {
 pub struct InvalidHandle;
 
 impl core::fmt::Display for InvalidHandle {
+    /// Writes the InvalidHandle marker to `f`; Returns its write result.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         core::fmt::Debug::fmt(self, f)
     }
@@ -757,6 +828,7 @@ impl core::fmt::Display for InvalidHandle {
 impl core::error::Error for InvalidHandle {}
 
 impl From<InvalidHandle> for Error {
+    /// Maps `value` to the host InvalidValue error; Returns no handle detail.
     fn from(value: InvalidHandle) -> Self {
         Error::InvalidValue
     }
@@ -764,11 +836,15 @@ impl From<InvalidHandle> for Error {
 
 /// Builder for constructing GATT service definitions.
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+    /// One-based service declaration handle retained through builder operations.
     handle: u16,
+    /// Exclusive table borrow; appended declarations/values persist if a later operation panics.
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
 impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
+    /// Appends declaration, `uuid` value with `permissions`/`data`, and optional CCCD selected by `props`.
+    /// Returns a characteristic builder; capacity/handle overflow can panic after earlier insertions.
     fn add_characteristic_internal<T: AsGatt + ?Sized>(
         &mut self,
         uuid: Uuid,
@@ -825,7 +901,9 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         }
     }
 
-    /// Add a characteristic to this service with a refererence to a mutable storage buffer.
+    /// Appends characteristic `uuid`/`props`, copying serialized `value` into borrowed `store`.
+    /// Returns its builder; panics if initial bytes exceed storage or attribute capacity. Caller supplies
+    /// storage fitting T and u16 byte lengths. Permissions initially follow properties, without authentication.
     pub fn add_characteristic<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
@@ -851,7 +929,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add a characteristic to this service using inline storage. The characteristic value must be [`MAX_SMALL_DATA_SIZE`] bytes or less.
+    /// Appends characteristic `uuid`/`props` with inline serialized `value`; Returns its builder.
+    /// Panics if initial/minimum size exceeds 20 bytes or table capacity; usable capacity is min(T::MAX_SIZE,20).
     pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
@@ -882,7 +961,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add a characteristic to this service with a refererence to an immutable storage buffer.
+    /// Appends readable characteristic `uuid` borrowing immutable `value`; Returns its builder.
+    /// Panics on table exhaustion; the value must outlive the table.
     pub fn add_characteristic_ro<T: AsGatt + ?Sized, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -898,7 +978,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add a client-specific characteristic to this service.
+    /// Appends per-client characteristic `uuid`/`props`; Returns its builder.
+    /// Panics if T::MAX_SIZE exceeds 512 or the table fills; actual client bytes are allocated separately.
     pub fn add_characteristic_client<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
@@ -919,7 +1000,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add an included service to this service
+    /// Includes service at one-based `handle`; Returns the new declaration handle or InvalidHandle when
+    /// absent/not a service. Only 16-bit service UUIDs are embedded; table exhaustion still panics.
     pub fn add_included_service(&mut self, handle: u16) -> Result<u16, InvalidHandle> {
         self.table.with_inner_mut(|table| {
             if handle > 0 && table.attributes.len() >= usize::from(handle) {
@@ -961,7 +1043,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         })
     }
 
-    /// Finish construction of the service and return a handle.
+    /// Returns the service declaration handle; already appended table entries remain installed.
     pub fn build(self) -> u16 {
         self.handle
     }
@@ -981,11 +1063,12 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub props: CharacteristicProps,
     /// UUID of this characteristic
     pub uuid: Uuid,
+    /// Associates serialization type T without owning a value.
     pub(crate) phantom: PhantomData<T>,
 }
 
 impl<T: AsGatt + ?Sized> Characteristic<T> {
-    /// Check if notifications should be sent to `connection` for this characteristic.
+    /// Returns whether `connection` has enabled this characteristic notification CCCD; absent CCCD is false.
     pub fn should_notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
         let Some(cccd_handle) = self.cccd_handle else {
             return false;
@@ -993,13 +1076,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         connection.server.should_notify(connection.raw(), cccd_handle)
     }
 
-    /// Send a notification to `connection` with a new `value` for the characteristic.
-    ///
-    /// If `store` is true, the new value will be written to the table before sending the notification.
-    ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
-    ///
-    /// If the characteristic does not support notifications, an error is returned.
+    /// Serializes `value` and notifies `connection`; `store` updates server storage before subscription checks.
+    /// Returns Ok for no subscriber or successful queue admission, not delivery; missing CCCD, storage,
+    /// security, assembly and enqueue errors propagate. Cancellation can leave the stored value changed.
     pub async fn notify<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1009,13 +1088,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         self.notify_raw(connection, value.as_gatt(), store).await
     }
 
-    /// Send a notification to `connection` with a new `value` for the characteristic.
-    ///
-    /// If `store` is true, the new value will be written to the table before sending the notification.
-    ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
-    ///
-    /// If the characteristic does not support notifications, an error is returned.
+    /// Notifies `connection` with raw `value`; `store` updates storage before subscription/permission checks.
+    /// Returns Ok for no subscriber or successful queue admission, not delivery. Missing CCCD, storage,
+    /// security, packet/MTU and enqueue errors propagate; cancellation does not roll back stored bytes.
     pub async fn notify_raw<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1041,7 +1116,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         send_unsolicited(server, conn, cccd_handle, uns).await
     }
 
-    /// Check if indications should be sent to `connection` for this characteristic.
+    /// Returns whether `connection` has enabled this characteristic indication CCCD; absent CCCD is false.
     pub fn should_indicate<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
         let Some(cccd_handle) = self.cccd_handle else {
             return false;
@@ -1049,19 +1124,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         connection.server.should_indicate(connection.raw(), cccd_handle)
     }
 
-    /// Send an indication to `connection` with a new `value` for the characteristic.
-    ///
-    /// If `store` is true, the new value will be written to the table before sending the indication.
-    ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
-    ///
-    /// If the characteristic does not support indications, an error is returned.
-    ///
-    /// Blocks until the peer's `HandleValueConfirmation` is received, for up to 30 seconds
-    /// (BT Core Spec Vol 3, Part F, Section 3.3.3 ATT transaction timeout). On timeout the
-    /// connection is closed and `Error::Timeout` is returned. Concurrent calls on the same
-    /// connection are serialized; callers do not need to coordinate. Returns
-    /// `Error::Disconnected` if the connection is dropped while waiting.
+    /// Serializes `value` and indicates to `connection`; `store` updates storage before subscription checks.
+    /// Returns Ok for no subscriber or received confirmation; storage/security/assembly/enqueue errors propagate.
+    /// See [`Self::indicate_raw`] for serialization, timeout and cancellation semantics.
     pub async fn indicate<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1071,19 +1136,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         self.indicate_raw(connection, value.as_gatt(), store).await
     }
 
-    /// Send an indication to `connection` with a new `value` for the characteristic.
-    ///
-    /// If `store` is true, the new value will be written to the table before sending the indication.
-    ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
-    ///
-    /// If the characteristic does not support indications, an error is returned.
-    ///
-    /// Blocks until the peer's `HandleValueConfirmation` is received, for up to 30 seconds
-    /// (BT Core Spec Vol 3, Part F, Section 3.3.3 ATT transaction timeout). On timeout the
-    /// connection is closed and `Error::Timeout` is returned. Concurrent calls on the same
-    /// connection are serialized; callers do not need to coordinate. Returns
-    /// `Error::Disconnected` if the connection is dropped while waiting.
+    /// Indicates raw `value` to `connection`; `store` updates storage before subscription/permission checks.
+    /// Returns Ok for no subscriber or received confirmation; missing CCCD, storage, security, assembly
+    /// and enqueue errors propagate. Concurrent indications serialize without a queue-wait deadline; after
+    /// assembly, enqueue plus confirmation have a 30-second deadline. Timeout returns Timeout and closes
+    /// the bearer; cancellation after that point also closes it to prevent ambiguous late confirmations.
     pub async fn indicate_raw<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1109,7 +1166,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         send_unsolicited(server, conn, cccd_handle, uns).await
     }
 
-    /// Set the value of the characteristic in the provided attribute server.
+    /// Stores serialized `value` in shared `server` storage; Returns handle/storage/length errors.
+    /// Does not send traffic, enforce peer permissions or select per-client storage.
     pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CN>,
@@ -1120,7 +1178,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Ok(())
     }
 
-    /// Set the value of the characteristic in the provided attribute server.
+    /// Rebinds shared immutable storage in `server` to borrowed `value`; Returns missing-handle or
+    /// unsupported-storage errors. Does not enforce the previous length or send traffic.
     pub fn set_ro<'a, M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'a, M, P, AT, CN>,
@@ -1131,10 +1190,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Ok(())
     }
 
-    /// Read the value of the characteristic.
-    ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
-    ///
+    /// Returns the typed shared value from `server`, or handle/storage/decode errors; no peer permissions checked.
     pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CN>,
@@ -1145,7 +1201,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         server.table().get(self)
     }
 
-    /// Access the raw byte value of the characteristic.
+    /// Runs `f` over shared bytes in `server` under its table lock; Returns Some(result) or None for
+    /// missing/per-client storage. Do not re-enter conflicting table access from the callback.
     pub fn with_raw_value<M: RawMutex, P: PacketPool, R, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CN>,
@@ -1162,7 +1219,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         self.cccd_handle.map(CharacteristicPropertiesHandle)
     }
 
-    /// Convert this characteristic's type to raw bytes
+    /// Returns identical handles/UUID/properties with raw byte serialization type; no stored bytes are converted.
     pub fn to_raw(self) -> Characteristic<[u8]> {
         Characteristic {
             cccd_handle: self.cccd_handle,
@@ -1175,7 +1232,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     }
 }
 
-/// Common authorization and indication lifetime for characteristic and bulk APIs.
+/// Authorizes CCCD `cccd_handle` through `server` for `conn`, then sends notification/indication `uns`.
+/// Returns permission, encryption-retry, assembly or enqueue errors; notification success means queued.
+/// An indication owns a serialized slot and Returns success only after confirmation. Its 30-second
+/// timeout includes enqueue time; failure/cancellation after assembly disconnects before releasing the
+/// slot. Cancellation while acquiring the slot has not begun this transaction; prior storage changes persist.
 pub(crate) async fn send_unsolicited<P: PacketPool>(
     server: &dyn crate::attribute_server::DynamicAttributeServer<P>,
     conn: &crate::connection::Connection<'_, P>,
@@ -1199,7 +1260,7 @@ pub(crate) async fn send_unsolicited<P: PacketPool>(
     let indication = matches!(uns, AttUns::Indicate { .. });
     if !indication {
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
-        conn.send(pdu).await;
+        conn.send(pdu).await?;
         return Ok(());
     }
     conn.acquire_indication_slot().await?;
@@ -1217,7 +1278,7 @@ pub(crate) async fn send_unsolicited<P: PacketPool>(
     let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
     completed.set(false);
     let outcome = with_timeout(ATT_TRANSACTION_TIMEOUT, async {
-        conn.send(pdu).await;
+        conn.send(pdu).await?;
         conn.wait_indication_confirmation().await
     })
     .await;
@@ -1232,11 +1293,16 @@ pub(crate) async fn send_unsolicited<P: PacketPool>(
 }
 
 /// Attribute handle for a characteristic's properties
-pub struct CharacteristicPropertiesHandle(u16);
+pub struct CharacteristicPropertiesHandle(
+    /// One-based CCCD handle; constructors do not check the descriptor type.
+    u16,
+);
 
 impl AttributeHandle for CharacteristicPropertiesHandle {
+    /// Single-octet characteristic property bitmask exposed by this typed handle.
     type Value = CharacteristicProps;
 
+    /// Returns the stored one-based descriptor handle.
     fn handle(&self) -> u16 {
         self.0
     }
@@ -1244,11 +1310,15 @@ impl AttributeHandle for CharacteristicPropertiesHandle {
 
 /// Builder for characteristics.
 pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> {
+    /// Value/CCCD metadata; build refreshes the last descriptor handle.
     handle: Characteristic<T>,
+    /// Exclusive table borrow for appending descriptors and changing permissions.
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
 impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
+    /// Appends descriptor `uuid` with `permissions` and owned/borrowed `data`; Returns its typed handle.
+    /// Panics on exhausted table capacity; DT is a serialization marker, not a runtime check.
     fn add_descriptor_internal<DT: AsGatt + ?Sized>(
         &mut self,
         uuid: Uuid,
@@ -1264,7 +1334,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         }
     }
 
-    /// Add a characteristic descriptor for this characteristic.
+    /// Appends descriptor `uuid`/`permissions`, copying serialized `value` into borrowed `store`; Returns
+    /// its handle. Panics on short storage/table exhaustion; caller keeps storage lengths within u16.
     pub fn add_descriptor<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -1287,7 +1358,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         )
     }
 
-    /// Add a characteristic to this service using inline storage. The descriptor value must be [`MAX_SMALL_DATA_SIZE`] bytes or less.
+    /// Appends descriptor `uuid`/`permissions` with inline `value`; Returns its handle.
+    /// Panics if initial/minimum bytes exceed 20 or table fills; capacity is min(DT::MAX_SIZE,20).
     pub fn add_descriptor_small<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -1315,7 +1387,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         )
     }
 
-    /// Add a read only characteristic descriptor for this characteristic.
+    /// Appends descriptor `uuid` borrowing immutable `data`, with `read_permission` and writes disabled.
+    /// Returns its handle; panics on table exhaustion.
     pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -1335,7 +1408,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         )
     }
 
-    /// Add a client-specific descriptor to this service.
+    /// Appends per-client descriptor `uuid`/`permissions`; Returns its handle.
+    /// Panics if DT::MAX_SIZE exceeds 512 or table capacity; bytes are stored separately per client.
     pub fn add_descriptor_client<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -1353,23 +1427,21 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         )
     }
 
-    /// Set the read permission for this characteristic
+    /// Sets value read policy to `read`; Returns this builder. Does not change CCCD permissions.
     pub fn read_permission(self, read: PermissionLevel) -> Self {
         self.table
             .with_attribute_mut(self.handle.handle, |att| att.permissions.read = read);
         self
     }
 
-    /// Set the write permission for this characteristic
+    /// Sets value write policy to `write`; Returns this builder. Does not change CCCD permissions.
     pub fn write_permission(self, write: PermissionLevel) -> Self {
         self.table
             .with_attribute_mut(self.handle.handle, |att| att.permissions.write = write);
         self
     }
 
-    /// Set the write permission for the Client Characteristic Configuration Descriptor for this characteristic
-    ///
-    /// Panics if this characteristic does not have a Client Characteristic Configuration Descriptor.
+    /// Sets CCCD write policy to `write`; Returns this builder. Panics when notify/indicate did not create a CCCD.
     pub fn cccd_permission(self, write: PermissionLevel) -> Self {
         let Some(handle) = self.handle.cccd_handle else {
             panic!("Can't set CCCD permission on characteristics without notify or indicate properties.");
@@ -1382,20 +1454,22 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 
     /// Set the minimum encryption key length required for this characteristic
     #[cfg(feature = "legacy-pairing")]
+    /// Sets minimum encrypted-link byte key length to `len`; Returns this builder without range validation.
+    /// Zero disables this minimum; it does not independently require an encrypted link.
     pub fn min_key_len(self, len: u8) -> Self {
         self.table
             .with_attribute_mut(self.handle.handle, |att| att.permissions.min_key_len = len);
         self
     }
 
-    /// Convert this characteristic's type to raw bytes
+    /// Returns the same in-progress builder with raw byte serialization type; stored bytes remain unchanged.
     pub fn to_raw(self) -> CharacteristicBuilder<'r, 'd, [u8], M, MAX> {
         CharacteristicBuilder {
             handle: self.handle.to_raw(),
             table: self.table,
         }
     }
-    /// Return the built characteristic.
+    /// Returns characteristic metadata after setting end_handle to the current final table entry.
     pub fn build(mut self) -> Characteristic<T> {
         self.handle.end_handle = self.table.with_inner(|t| t.next_handle() - 1);
         self.handle
@@ -1406,31 +1480,37 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub struct Descriptor<T: AsGatt + ?Sized> {
+    /// One-based descriptor handle in its source table.
     pub(crate) handle: u16,
+    /// Descriptor type UUID, independent of serialized value type T.
     pub(crate) uuid: Uuid,
+    /// Serialization type marker; no value is owned.
     pub(crate) phantom: PhantomData<T>,
 }
 
 impl<T: AsGatt + ?Sized> AttributeHandle for Descriptor<T> {
+    /// Descriptor serialization type; runtime bytes are validated only on typed reads.
     type Value = T;
 
+    /// Returns the one-based descriptor handle.
     fn handle(&self) -> u16 {
         self.handle
     }
 }
 
 impl<T: AsGatt + ?Sized> Descriptor<T> {
-    /// Get the handle of this descriptor.
+    /// Returns this descriptor's one-based attribute handle.
     pub fn handle(&self) -> u16 {
         self.handle
     }
 
-    /// Get the UUID of this descriptor.
+    /// Returns the borrowed descriptor type UUID.
     pub fn uuid(&self) -> &Uuid {
         &self.uuid
     }
 
-    /// Set the value of the descriptor in the provided attribute server.
+    /// Stores serialized `value` in shared `server` storage; Returns handle/length/storage errors.
+    /// Does not send traffic or enforce remote write permissions.
     pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CN>,
@@ -1441,10 +1521,7 @@ impl<T: AsGatt + ?Sized> Descriptor<T> {
         Ok(())
     }
 
-    /// Read the value of the descriptor.
-    ///
-    /// If the descriptor for the handle cannot be found, an error is returned.
-    ///
+    /// Returns the typed shared descriptor value from `server`, or handle/storage/decode errors.
     pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CN>,
@@ -1458,13 +1535,17 @@ impl<T: AsGatt + ?Sized> Descriptor<T> {
 
 /// Iterator over attributes.
 pub struct AttributeIterator<'a, 'd> {
+    /// Borrowed contiguous table; handles are slice indices plus one.
     attributes: &'a [Attribute<'d>],
+    /// Zero-based index of the next entry; reaching/passing length exhausts iteration.
     pos: usize,
 }
 
 impl<'a, 'd> Iterator for AttributeIterator<'a, 'd> {
+    /// One-based handle paired with a borrowed attribute.
     type Item = (u16, &'a Attribute<'d>);
 
+    /// Returns the next handle/attribute and advances the index, or None at/past the end.
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos < self.attributes.len() {
             let att = &self.attributes[self.pos];
@@ -1478,9 +1559,8 @@ impl<'a, 'd> Iterator for AttributeIterator<'a, 'd> {
 }
 
 impl<'a, 'd> AttributeIterator<'a, 'd> {
-    /// Find the handle of the last attribute in the current GATT service.
-    ///
-    /// Returns `u16::MAX` for the last service in the table.
+    /// Returns the handle before the next primary/secondary declaration after the current position,
+    /// or u16::MAX for the final service. Does not advance the iterator.
     pub fn service_group_end(&self) -> u16 {
         // We return the 0-based index of the next service definition. When interpretted as a 1-based handle,
         // this represents the handle of the last attribute before the next service definition.
@@ -1493,7 +1573,8 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
             .unwrap_or(u16::MAX)
     }
 
-    /// Find the handle of the last attribute in the current GATT characteristic.
+    /// Returns the handle before the next characteristic/service declaration, or the last actual table
+    /// handle when none follows. Does not advance the iterator.
     pub fn characteristic_group_end(&self) -> u16 {
         // We return the 0-based index of the next characteristic or service definition. When interpretted as a 1-based handle,
         // this represents the handle of the last attribute before the next characteristic or service definition.
@@ -1518,7 +1599,7 @@ pub struct Service {
 }
 
 impl Service {
-    /// Create a new service with a uuid.
+    /// Returns a service with converted `uuid`; no table entry is created until added.
     pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
         Self { uuid: uuid.into() }
     }
@@ -1527,9 +1608,13 @@ impl Service {
 /// Properties of a characteristic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CharacteristicProps(u8);
+pub struct CharacteristicProps(
+    /// Raw characteristic operation bitmask.
+    u8,
+);
 
 impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
+    /// Returns the union of property flags in borrowed `props`; duplicates have no additional effect.
     fn from(props: &'a [CharacteristicProp]) -> Self {
         let mut val: u8 = 0;
         for prop in props {
@@ -1540,6 +1625,7 @@ impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
 }
 
 impl<'a, const N: usize> From<&'a [CharacteristicProp; N]> for CharacteristicProps {
+    /// Returns the union of flags in borrowed array `props`; an empty array yields zero.
     fn from(props: &'a [CharacteristicProp; N]) -> Self {
         let mut val: u8 = 0;
         for prop in props {
@@ -1550,6 +1636,7 @@ impl<'a, const N: usize> From<&'a [CharacteristicProp; N]> for CharacteristicPro
 }
 
 impl<const N: usize> From<[CharacteristicProp; N]> for CharacteristicProps {
+    /// Returns the union of flags in owned array `props`; an empty array yields zero.
     fn from(props: [CharacteristicProp; N]) -> Self {
         let mut val: u8 = 0;
         for prop in props {
@@ -1560,13 +1647,14 @@ impl<const N: usize> From<[CharacteristicProp; N]> for CharacteristicProps {
 }
 
 impl From<u8> for CharacteristicProps {
+    /// Returns raw property bits from `value` without validating supported combinations.
     fn from(value: u8) -> Self {
         Self(value)
     }
 }
 
 impl CharacteristicProps {
-    /// Check if any of the properties are set.
+    /// Returns whether any flag in `props` is present; an empty slice returns false.
     pub fn any(&self, props: &[CharacteristicProp]) -> bool {
         for p in props {
             if (*p as u8) & self.0 != 0 {
@@ -1576,6 +1664,8 @@ impl CharacteristicProps {
         false
     }
 
+    /// Returns unencrypted read/write permissions implied by operation bits; no authentication or key
+    /// minimum is inferred even from AuthenticatedWrite. Other operations do not grant local read/write.
     pub(crate) fn default_permissions(&self) -> AttPermissions {
         let read = if (self.0 & CharacteristicProp::Read as u8) != 0 {
             PermissionLevel::Allowed
@@ -1602,22 +1692,24 @@ impl CharacteristicProps {
         }
     }
 
-    /// Check if the characteristic will have a Client Characteristic Configuration Descriptor
+    /// Returns whether Notify or Indicate requires a client configuration descriptor.
     pub fn has_cccd(&self) -> bool {
         (self.0 & (CharacteristicProp::Indicate as u8 | CharacteristicProp::Notify as u8)) != 0
     }
 
-    /// Get the raw value of the characteristic props
+    /// Returns the unchanged eight property bits.
     pub fn to_raw(self) -> u8 {
         self.0
     }
 }
 
 impl FixedGattValue for CharacteristicProps {
+    /// One byte on the GATT wire.
     const SIZE: usize = 1;
 }
 
 impl FromGatt for CharacteristicProps {
+    /// Returns the raw property byte in `data`, or InvalidLength unless exactly one byte; all bit patterns accepted.
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             return Err(FromGattError::InvalidLength);
@@ -1628,9 +1720,12 @@ impl FromGatt for CharacteristicProps {
 }
 
 impl AsGatt for CharacteristicProps {
+    /// Minimum encoded length: one property octet.
     const MIN_SIZE: usize = Self::SIZE;
+    /// Maximum encoded length: one property octet.
     const MAX_SIZE: usize = Self::SIZE;
 
+    /// Returns a borrowed one-byte representation with all property bits preserved.
     fn as_gatt(&self) -> &[u8] {
         AsGatt::as_gatt(&self.0)
     }
@@ -1638,6 +1733,7 @@ impl AsGatt for CharacteristicProps {
 
 /// A value of an attribute.
 pub struct AttributeValue<'d, M: RawMutex> {
+    /// Raw-mutex-protected borrowed byte storage; this wrapper currently has no access methods.
     value: Mutex<M, &'d mut [u8]>,
 }
 
@@ -1655,9 +1751,13 @@ pub enum CCCDFlag {
 /// CCCD flag.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
-pub struct CCCD(pub(crate) u16);
+pub struct CCCD(
+    /// Raw little-endian wire value after decoding; bits 0/1 enable notify/indicate.
+    pub(crate) u16,
+);
 
 impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
+    /// Returns the union of subscription flags in `props`; duplicates are idempotent.
     fn from(props: [CCCDFlag; T]) -> Self {
         let mut val: u16 = 0;
         for prop in props {
@@ -1668,23 +1768,24 @@ impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
 }
 
 impl From<u16> for CCCD {
+    /// Returns raw CCCD bits from `value`, including reserved bits; validation belongs to the server.
     fn from(value: u16) -> Self {
         CCCD(value)
     }
 }
 
 impl CCCD {
-    /// Get raw value
+    /// Returns all sixteen stored CCCD bits, including reserved bits.
     pub fn raw(&self) -> u16 {
         self.0
     }
 
-    /// Clear all properties
+    /// Clears notification, indication and reserved bits.
     pub fn disable(&mut self) {
         self.0 = 0;
     }
 
-    /// Check if any of the properties are set.
+    /// Returns whether any requested flag in `props` is enabled; empty input returns false.
     pub fn any(&self, props: &[CCCDFlag]) -> bool {
         for p in props {
             if (*p as u16) & self.0 != 0 {
@@ -1694,35 +1795,74 @@ impl CCCD {
         false
     }
 
-    /// Enable or disable notifications
+    /// Sets the notification bit to `is_enabled`, preserving indication and all other bits.
     pub fn set_notify(&mut self, is_enabled: bool) {
         let mask: u16 = CCCDFlag::Notify as u16;
         self.0 = if is_enabled { self.0 | mask } else { self.0 & !mask };
     }
 
-    /// Check if notifications are enabled
+    /// Returns whether the notification subscription bit is set.
     pub fn should_notify(&self) -> bool {
         (self.0 & (CCCDFlag::Notify as u16)) != 0
     }
 
-    /// Enable or disable indication
+    /// Sets the indication bit to `is_enabled`, preserving notification and all other bits.
     pub fn set_indicate(&mut self, is_enabled: bool) {
         let mask: u16 = CCCDFlag::Indicate as u16;
         self.0 = if is_enabled { self.0 | mask } else { self.0 & !mask };
     }
 
-    /// Check if indications are enabled
+    /// Returns whether the indication subscription bit is set.
     pub fn should_indicate(&self) -> bool {
         (self.0 & (CCCDFlag::Indicate as u16)) != 0
     }
 }
 
 #[cfg(test)]
+/// Database-hash known answers and variable-length replacement boundary regressions.
 mod tests {
     extern crate std;
 
+    /// A service built from UUID32 stores the required 128-bit UUID on its ATT-readable declaration.
+    #[test]
+    fn uuid32_service_declaration_uses_bluetooth_base_uuid() {
+        use super::*;
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        let mut table: AttributeTable<'_, NoopRawMutex, 4> = AttributeTable::new();
+        let handle = table.add_service(Service::new(0x12345678u32)).build();
+        let mut bytes = [0; 20];
+        let len = table.read(handle, 0, &mut bytes).unwrap();
+        assert_eq!(
+            &bytes[..len],
+            &[0xfb, 0x34, 0x9b, 0x5f, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0x78, 0x56, 0x34, 0x12]
+        );
+    }
+
+    /// A characteristic declaration preserves properties/handle and expands its UUID32 to sixteen bytes.
+    #[test]
+    fn uuid32_characteristic_declaration_uses_bluetooth_base_uuid() {
+        use super::*;
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        let mut table: AttributeTable<'_, NoopRawMutex, 4> = AttributeTable::new();
+        let ch = table
+            .add_service(Service::new(0x180fu16))
+            .add_characteristic_small(0x12345678u32, [CharacteristicProp::Read], 7u8)
+            .build();
+        let mut bytes = [0; 20];
+        let len = table.read(ch.handle - 1, 0, &mut bytes).unwrap();
+        assert_eq!(len, 19);
+        assert_eq!(&bytes[..3], &[CharacteristicProp::Read as u8, ch.handle as u8, 0]);
+        assert_eq!(
+            &bytes[3..len],
+            &[0xfb, 0x34, 0x9b, 0x5f, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0x78, 0x56, 0x34, 0x12]
+        );
+        let parsed = CharacteristicDeclaration::try_from(&bytes[..len]).unwrap();
+        assert!(matches!(parsed.uuid, Uuid::Uuid128(_)));
+    }
+
     #[cfg(feature = "security")]
     #[test]
+    /// Known AES-CMAC transcripts cover GAP/GATT/custom declarations and selective descriptor hashing.
     fn database_hash() {
         use bt_hci::uuid::characteristic::{
             APPEARANCE, CLIENT_SUPPORTED_FEATURES, DATABASE_HASH, DEVICE_NAME, SERVICE_CHANGED,
@@ -1876,7 +2016,9 @@ mod tests {
             expected, actual
         );
 
+        /// Custom 128-bit service UUID used by the final frozen hash transcript.
         const CUSTOM_SERVICE: u128 = 0x12345678_12345678_12345678_9abcdef0;
+        /// Custom characteristic UUID adjacent to the frozen service UUID.
         const CUSTOM_CHARACTERISTIC: u128 = 0x12345678_12345678_12345678_9abcdef1;
 
         // Custom service (handles 0x00e - 0x0013)
@@ -1934,6 +2076,7 @@ mod tests {
     }
 
     #[test]
+    /// Replacing a borrowed variable value with capacity-sized bytes updates its logical length.
     fn set_updates_variable_length_when_value_fills_backing_storage() {
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use heapless::Vec;
@@ -1963,6 +2106,7 @@ mod tests {
     }
 
     #[test]
+    /// Replacing an inline string at its full capacity exposes every new byte through the typed getter.
     fn set_updates_small_variable_length_when_value_reaches_capacity() {
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use heapless::String;

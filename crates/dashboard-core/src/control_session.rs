@@ -12,24 +12,40 @@ use crate::popup::Popup;
 use crate::render::FpsMode;
 use crate::view_state::ViewSelection;
 
+/// Bounded effects for hardware/producer adapters after one shared control transaction.
 #[derive(Default, Debug)]
 pub struct ControlEffects {
+    /// Effective page differs from transaction entry; self-navigation is a no-op.
     pub page_changed: bool,
+    /// Selected named view changed.
     pub view_changed: bool,
+    /// Physical bar/PSI preference changed; fixed per-widget units remain fixed.
     pub units_changed: bool,
+    /// FPS text mode advanced.
     pub fps_changed: bool,
+    /// Protected recovery applied Dashboard/Full, even when page was already Dashboard.
     pub recovered: bool,
+    /// Adapter must request producer statistics reset; popup awaits acknowledgment.
     pub reset_requested: bool,
+    /// Adapter must submit acknowledgment for the last completed warning presentation.
     pub acknowledge_requested: bool,
+    /// Coalesced immediately applied input observations, excluding deferred statistics reset.
     pub observations: Option<Observation>,
+    /// Reset-trigger observations retained for eventual producer acknowledgment/presentation.
     pub reset_observation: Option<Observation>,
+    /// Saturating count of invalid, no-effect or precedence-discarded events.
     pub ignored: u32,
 }
 
+/// Returns `o`'s event count, at least one for malformed present observations, or zero for None.
 fn count(o: Option<Observation>) -> u32 { o.map_or(0, |o| o.events.max(1)) }
+/// Returns whether `o` has nonzero count and observation no later than acceptance.
 fn valid(o: Observation) -> bool { o.events != 0 && o.observed_us <= o.accepted_us }
 // Input sources are independently timestamped. Transaction aggregation is
 // commutative, unlike the chronological publisher's Observation::merge.
+/// Merges valid `o` into optional `target`, preserving min observation/max acceptance
+/// and checked count. Returns false without mutation for invalid input or overflow;
+/// unlike publisher merge, independent source acceptance order need not be chronological.
 fn aggregate(
     target: &mut Option<Observation>,
     o: Observation,
@@ -50,18 +66,31 @@ fn aggregate(
     true
 }
 
+/// Render-owner controls shared by firmware and simulator; adapters own reset/ack correlation and I/O.
 pub struct ControlSession {
+    /// Current Dashboard/Debug/Logs page.
     page: Page,
+    /// Named view retained across screen changes and recovery.
     views: ViewSelection,
+    /// Requested/applied brightness and presentation-gated shutdown state.
     backlight: Backlight,
+    /// Current optional frame-rate overlay mode.
     fps: FpsMode,
+    /// Physical unit toggle: true PSI, false bar for FollowBoost displays.
     boost_psi: bool,
+    /// Latest button feedback with precedence over dashboard warning overlays.
     popup: Option<Popup>,
+    /// Frozen log sequence anchor, or None for live/newest view.
     log_anchor: Option<u64>,
+    /// Last admitted control/feedback time in monotonic milliseconds.
     last_ms: u64,
+    /// Reset requested but adapter acknowledgment not yet accepted; independent of current page.
     reset_pending: bool,
 }
 impl ControlSession {
+    /// Returns Dashboard at `config`'s boot view and Full brightness, initial `fps`
+    /// mode and physical `boost_psi` toggle. Caller must keep the supplied configuration
+    /// compatible with the retained view identity in subsequent operations.
     pub fn new(
         config: &ValidatedConfig,
         fps: FpsMode,
@@ -80,24 +109,34 @@ impl ControlSession {
         }
     }
 
+    /// Returns the active screen.
     pub const fn page(&self) -> Page { self.page }
 
+    /// Returns retained named-view selection, independent of active screen.
     pub const fn view_selection(&self) -> &ViewSelection { &self.views }
 
+    /// Returns the retained configuration view identifier, not a positional index.
     pub const fn view_id(&self) -> u8 { self.views.id() }
 
+    /// Returns brightness policy, including pending feedback/clear-frame shutdown gates.
     pub const fn backlight(&self) -> &Backlight { &self.backlight }
 
+    /// Returns exclusive policy access for adapter presentation acknowledgments and recovery.
     pub fn backlight_mut(&mut self) -> &mut Backlight { &mut self.backlight }
 
+    /// Returns current FPS text mode.
     pub const fn fps(&self) -> FpsMode { self.fps }
 
+    /// Returns true for the physical PSI preference, false for bar.
     pub const fn boost_psi(&self) -> bool { self.boost_psi }
 
+    /// Returns current feedback without checking expiry or proving it was presented.
     pub const fn popup(&self) -> Option<Popup> { self.popup }
 
+    /// Returns frozen log sequence anchor, or None for live/newest log view.
     pub const fn log_anchor(&self) -> Option<u64> { self.log_anchor }
 
+    /// Replaces feedback with `popup`, first applying page-specific cancellation of pending shutdown.
     fn feedback(
         &mut self,
         popup: Popup,
@@ -106,6 +145,8 @@ impl ControlSession {
         self.popup = Some(popup);
     }
 
+    /// Changes to `page`, cancelling shutdown feedback and returning logs to live;
+    /// retains named view, unit/FPS choices and outstanding producer reset.
     fn navigate(
         &mut self,
         page: Page,
@@ -116,6 +157,9 @@ impl ControlSession {
         self.page = page;
     }
 
+    /// Expires feedback at monotonic `now_ms`, delegating brightness presentation
+    /// gates. Reversed time is ignored; pending/busy warning-command feedback persists
+    /// until replaced by its producer result rather than timing out.
     pub fn expire_feedback(
         &mut self,
         now_ms: u64,
@@ -140,6 +184,9 @@ impl ControlSession {
         }
     }
 
+    /// Accepts adapter-qualified reset acknowledgment at monotonic `now_ms`. Clears
+    /// pending state and shows Reset only on Dashboard; no pending request or reversed
+    /// time is ignored. Adapter must correlate generation before calling this method.
     pub fn statistics_acknowledged(
         &mut self,
         now_ms: u64,
@@ -154,6 +201,8 @@ impl ControlSession {
         }
     }
 
+    /// Publishes `feedback` at monotonic `now` milliseconds only on Dashboard;
+    /// reversed time is ignored. Accepted timestamps advance even on other screens.
     pub fn warning_feedback(
         &mut self,
         feedback: crate::warning_state::WarningFeedback,
@@ -168,6 +217,9 @@ impl ControlSession {
         }
     }
 
+    /// Returns the current feedback overlay, resolving selected-view text through
+    /// `config`, or None. Panics if a retained view is absent from this configuration;
+    /// validated bounded labels fit PopupText. Caller separately handles expiry and warning priority.
     pub fn overlay(
         &self,
         config: &ValidatedConfig,
@@ -200,6 +252,9 @@ impl ControlSession {
         })
     }
 
+    /// Applies compatible `action` using `config` and bounded `logs` at `now`
+    /// milliseconds, updating `effects`. Returns true for an applied effect, false for
+    /// incompatible/no-op actions; producer reset/ack merely set request flags.
     fn action<M: RawMutex>(
         &mut self,
         config: &ValidatedConfig,
@@ -283,6 +338,13 @@ impl ControlSession {
     }
 
     /// All mappings and precedence use the page captured at transaction entry.
+    /// `config` resolves named views; `map` supplies page mappings; `buttons` and
+    /// `encoder` contain qualified observations; `logs` supplies bounded sequence-based
+    /// scrolling; `now_ms` is monotonic control time. Returns effects/ignored counts.
+    /// Recovery wins, then first A/B/X/Y real navigation, then encoder navigation;
+    /// otherwise actions run A/B/X/Y, rotation, clicks. Invalid/future observations,
+    /// reversed time or microsecond overflow cannot apply actions. Acceptance within
+    /// the current millisecond bucket is allowed; reset observations remain deferred.
     #[allow(clippy::too_many_arguments)]
     pub fn apply<M: RawMutex>(
         &mut self,

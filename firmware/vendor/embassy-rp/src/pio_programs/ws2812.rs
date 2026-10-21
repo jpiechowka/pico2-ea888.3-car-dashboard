@@ -1,53 +1,64 @@
-//! [ws2812](https://www.sparkfun.com/categories/tags/ws2812)
+//! PIO/DMA RGB and RGBW streams at nominal 800 kbit/s with a 300 microsecond reset wait.
+//! Instruction timing follows the [Raspberry Pi PIO example](https://github.com/raspberrypi/pico-examples/blob/master/pio/ws2812/ws2812.pio); verify timing against the actual LED revision.
 
 use embassy_time::Timer;
 use smart_leds::{RGB8, RGBW};
 
 use crate::pio::{
-    Common, Config, FifoJoin, Instance, LoadedProgram, PioPin, ShiftConfig, ShiftDirection, StateMachine,
+    Common,
+    Config,
+    FifoJoin,
+    Instance,
+    LoadedProgram,
+    PioPin,
+    ShiftConfig,
+    ShiftDirection,
+    StateMachine,
 };
+use crate::pio_programs::clock_divider::calculate_pio_clock_divider;
+use crate::pio_programs::wait_tx_idle;
 use crate::{Peri, dma, interrupt};
-use crate::pio_programs::{clock_divider::calculate_pio_clock_divider, wait_tx_idle};
 
+/// High prefix in PIO cycles for either bit value.
 const T1: u8 = 2; // start bit
+/// Data-dependent high/low extension in PIO cycles.
 const T2: u8 = 5; // data bit
+/// Low prefix before the next bit, in PIO cycles.
 const T3: u8 = 3; // stop bit
+/// Total instruction cycles per transmitted bit.
 const CYCLES_PER_BIT: u32 = (T1 + T2 + T3) as u32;
 
 /// Color orders for WS2812B, type RGB8
 pub trait RgbColorOrder {
-    /// Pack an 8-bit RGB color into a u32
+    /// Returns `color` packed into the upper 24 bits in the implementation-specific byte order.
+    /// PIO shifts most-significant bits first; the low byte is unused.
     fn pack(color: RGB8) -> u32;
 }
 
 /// Green, Red, Blue order is the common default for WS2812B
 pub struct Grb;
 impl RgbColorOrder for Grb {
-    /// Pack an 8-bit RGB color into a u32 in GRB order
-    fn pack(color: RGB8) -> u32 {
-        (u32::from(color.g) << 24) | (u32::from(color.r) << 16) | (u32::from(color.b) << 8)
-    }
+    /// Returns `color` as G/R/B bytes in bits 31..8; low byte is zero.
+    fn pack(color: RGB8) -> u32 { (u32::from(color.g) << 24) | (u32::from(color.r) << 16) | (u32::from(color.b) << 8) }
 }
 
 /// Red, Green, Blue is used by some WS2812B implementations
 pub struct Rgb;
 impl RgbColorOrder for Rgb {
-    /// Pack an 8-bit RGB color into a u32 in RGB order
-    fn pack(color: RGB8) -> u32 {
-        (u32::from(color.r) << 24) | (u32::from(color.g) << 16) | (u32::from(color.b) << 8)
-    }
+    /// Returns `color` as R/G/B bytes in bits 31..8; low byte is zero.
+    fn pack(color: RGB8) -> u32 { (u32::from(color.r) << 24) | (u32::from(color.g) << 16) | (u32::from(color.b) << 8) }
 }
 
 /// Color orders RGBW strips
 pub trait RgbwColorOrder {
-    /// Pack an RGB+W color into a u32
+    /// Returns all four channels of `color` packed in implementation-specific order, MSB first.
     fn pack(color: RGBW<u8>) -> u32;
 }
 
 /// Green, Red, Blue, White order is the common default for RGBW strips
 pub struct Grbw;
 impl RgbwColorOrder for Grbw {
-    /// Pack an RGB+W color into a u32 in GRBW order
+    /// Returns `color` as G/R/B/W bytes from most to least significant.
     fn pack(color: RGBW<u8>) -> u32 {
         (u32::from(color.g) << 24) | (u32::from(color.r) << 16) | (u32::from(color.b) << 8) | u32::from(color.a.0)
     }
@@ -56,7 +67,7 @@ impl RgbwColorOrder for Grbw {
 /// Red, Green, Blue, White order
 pub struct Rgbw;
 impl RgbwColorOrder for Rgbw {
-    /// Pack an RGB+W color into a u32 in RGBW order
+    /// Returns `color` as R/G/B/W bytes from most to least significant.
     fn pack(color: RGBW<u8>) -> u32 {
         (u32::from(color.r) << 24) | (u32::from(color.g) << 16) | (u32::from(color.b) << 8) | u32::from(color.a.0)
     }
@@ -64,11 +75,13 @@ impl RgbwColorOrder for Rgbw {
 
 /// This struct represents a ws2812 program loaded into pio instruction memory.
 pub struct PioWs2812Program<'a, PIO: Instance> {
+    /// Relocated side-set bitstream program.
     prg: LoadedProgram<'a, PIO>,
 }
 
 impl<'a, PIO: Instance> PioWs2812Program<'a, PIO> {
-    /// Load the ws2812 program into the given pio
+    /// Loads the LED bitstream instructions through `common`; returns their allocation handle.
+    /// Panics if instruction memory cannot fit the program.
     pub fn new(common: &mut Common<'a, PIO>) -> Self {
         let side_set = pio::SideSet::new(false, 1, false);
         let mut a: pio::Assembler<32> = pio::Assembler::new_with_side_set(side_set);
@@ -102,14 +115,18 @@ pub struct PioWs2812<'d, P: Instance, const S: usize, const N: usize, ORDER>
 where
     ORDER: RgbColorOrder,
 {
+    /// Exclusively owned DMA channel feeding the transmit FIFO.
     dma: dma::Channel<'d>,
+    /// Enabled transmitter with an eight-word joined FIFO.
     sm: StateMachine<'d, P, S>,
+    /// Compile-time channel packing policy; no runtime storage.
     _order: core::marker::PhantomData<ORDER>,
 }
 
 impl<'d, P: Instance, const S: usize, const N: usize> PioWs2812<'d, P, S, N, Grb> {
-    /// Configure a pio state machine to use the loaded ws2812 program.
-    /// Uses the default GRB order.
+    /// Returns a GRB transmitter using `program` on `sm`, with output `pin` registered through `pio`.
+    /// Owns `dma`; `irq` proves its matching DMA interrupt handler. Starts the machine immediately.
+    /// Panics if the system clock cannot represent the required 8 MHz instruction rate.
     pub fn new<D: dma::ChannelInstance>(
         pio: &mut Common<'d, P>,
         sm: StateMachine<'d, P, S>,
@@ -126,8 +143,9 @@ impl<'d, P: Instance, const S: usize, const N: usize, ORDER> PioWs2812<'d, P, S,
 where
     ORDER: RgbColorOrder,
 {
-    /// Configure a pio state machine to use the loaded ws2812 program.
-    /// Uses the specified color order.
+    /// Returns an ORDER-packed RGB transmitter using `program` on `sm` and output `pin` through `pio`.
+    /// Owns `dma`; `irq` proves its matching interrupt handler. Starts at nominal 800 kbit/s.
+    /// Panics for an unrepresentable 8 MHz instruction rate; system clock must stay unchanged.
     pub fn with_color_order<D: dma::ChannelInstance>(
         pio: &mut Common<'d, P>,
         mut sm: StateMachine<'d, P, S>,
@@ -166,8 +184,13 @@ where
         }
     }
 
-    /// Write a buffer of [smart_leds::RGB8] to the ws2812 string
-    pub async fn write(&mut self, colors: &[RGB8; N]) {
+    /// Sends exactly N `colors`, using a 4*N-byte local word buffer; N=0 is an immediate no-op.
+    /// Waits for prior output/reset, DMA transfer, then shifter drain/reset. Cancellation during DMA
+    /// aborts the channel but can leave a prefix on the wire; the next write performs a fresh reset wait.
+    pub async fn write(
+        &mut self,
+        colors: &[RGB8; N],
+    ) {
         if N == 0 {
             return;
         }
@@ -193,14 +216,18 @@ pub struct RgbwPioWs2812<'d, P: Instance, const S: usize, const N: usize, ORDER>
 where
     ORDER: RgbwColorOrder,
 {
+    /// Exclusively owned DMA channel feeding the transmit FIFO.
     dma: dma::Channel<'d>,
+    /// Enabled transmitter with an eight-word joined FIFO.
     sm: StateMachine<'d, P, S>,
+    /// Compile-time channel packing policy; no runtime storage.
     _order: core::marker::PhantomData<ORDER>,
 }
 
 impl<'d, P: Instance, const S: usize, const N: usize> RgbwPioWs2812<'d, P, S, N, Grbw> {
-    /// Configure a pio state machine to use the loaded ws2812 program.
-    /// Uses the default GRBW color order
+    /// Returns a GRBW transmitter using `program` on `sm`, with output `pin` registered through `pio`.
+    /// Owns `dma`; `irq` proves its matching DMA interrupt handler. Starts the machine immediately.
+    /// Panics if the system clock cannot represent the required 8 MHz instruction rate.
     pub fn new<D: dma::ChannelInstance>(
         pio: &mut Common<'d, P>,
         sm: StateMachine<'d, P, S>,
@@ -217,8 +244,9 @@ impl<'d, P: Instance, const S: usize, const N: usize, ORDER> RgbwPioWs2812<'d, P
 where
     ORDER: RgbwColorOrder,
 {
-    /// Configure a pio state machine to use the loaded ws2812 program.
-    /// Uses the specified color order
+    /// Returns an ORDER-packed RGBW transmitter using `program` on `sm` and output `pin` through `pio`.
+    /// Owns `dma`; `irq` proves its matching interrupt handler. Starts at nominal 800 kbit/s.
+    /// Panics for an unrepresentable 8 MHz instruction rate; system clock must stay unchanged.
     pub fn with_color_order<D: dma::ChannelInstance>(
         pio: &mut Common<'d, P>,
         mut sm: StateMachine<'d, P, S>,
@@ -257,8 +285,13 @@ where
         }
     }
 
-    /// Write a buffer of [smart_leds::RGBW] to the ws2812 string
-    pub async fn write(&mut self, colors: &[RGBW<u8>; N]) {
+    /// Sends exactly N `colors`, including white, using a 4*N-byte local word buffer. N=0 is a no-op.
+    /// Waits for prior output/reset, DMA transfer, then shifter drain/reset. Cancellation during DMA
+    /// aborts the channel but can leave a prefix on the wire; the next write performs a fresh reset wait.
+    pub async fn write(
+        &mut self,
+        colors: &[RGBW<u8>; N],
+    ) {
         if N == 0 {
             return;
         }
@@ -276,6 +309,8 @@ where
     }
 }
 
+/// Waits for `sm` to drain its FIFO/shifter then remain idle for 300 microseconds.
+/// Requires a functioning time driver and running program; cancellation leaves output running.
 async fn reset_interval<P: Instance, const S: usize>(sm: &mut StateMachine<'_, P, S>) {
     // DMA completion leaves up to eight FIFO words plus OSR on the wire.
     wait_tx_idle(sm).await;

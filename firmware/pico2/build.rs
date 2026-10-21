@@ -1,8 +1,14 @@
+//! Build-time admission and immutable snapshots for clocks, configuration and artwork.
+//! Cargo environment paths are read on the host; this script never flashes hardware.
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-fn main() {
+/// Reads Cargo features/custom clock environment, validates configuration/startup
+/// inputs, and writes generated source, metadata and linker scripts to OUT_DIR.
+/// Emits rerun/identity directives; panics on missing Cargo context, invalid input,
+/// compiler-query failure or filesystem errors so no invalid build is admitted.
+pub(crate) fn main() {
     use dashboard_config_tools::clocks::{CUSTOM_KEYS, generate, selection};
     for key in CUSTOM_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
@@ -83,6 +89,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
+/// Resolves startup environment files against `default_orientation`, validates
+/// effective Splash geometry, and writes profile/asset snapshots with their hashes.
+/// Missing optional inputs use defaults; malformed formats, mismatches and I/O
+/// errors panic instead of silently dropping artwork or selecting another geometry.
 fn embed_startup(default_orientation: dashboard_config::Orientation) {
     use dashboard_config::startup::StartupProfile;
     let profile = startup_input("DASHBOARD_STARTUP_PROFILE", 16).map_or(StartupProfile::DEFAULT, |bytes| {
@@ -115,6 +125,9 @@ fn embed_startup(default_orientation: dashboard_config::Orientation) {
 }
 
 /// Retain one extra byte so the format validator rejects oversized input.
+/// Returns bytes from the file named by `variable`, bounded to `maximum + 1`, or
+/// `None` when the variable is absent. `maximum` must be a small non-overflowing limit.
+/// Empty paths, canonicalization/open/read failures panic; emits Cargo rerun keys.
 fn startup_input(
     variable: &str,
     maximum: u64,

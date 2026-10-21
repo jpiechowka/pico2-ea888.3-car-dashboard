@@ -1,28 +1,59 @@
+//! Browser composition and adapters between editor authority, rendered pixels, persistence
+//! and explicit helper actions. Reactive handles are owned by the mounted Studio scope.
+//! [Component props](https://book.leptos.dev/view/03_components.html) carry static values
+//! or reactive handles; prop rustdoc also describes the macro-generated builder fields.
+
+/// Widget bands, readouts, smoothing and warning acknowledgment controls.
 mod advanced;
+/// Configuration and synthetic BLE diagnostic panels.
 mod ble;
+/// Build options and current-image status presentation.
 mod build_flash;
+/// Revision-bound command offers, search and deferred focus.
 mod command_palette;
+/// Device bindings and synthetic timing/canvas controls.
 mod controls;
+/// Offline documentary ECU evidence and catalogue references.
 mod ecu_reference;
+/// Bounded contextual browser diagnostics and filtering.
 mod event_log;
+/// Raw and typed controls with retained invalid input and target ownership.
 mod fields;
+/// Explicit loopback helper authentication and one request/poll chain.
 mod helper;
+/// IndexedDB request/open/transaction lifetime and deadline ownership.
 mod idb;
+/// Widget, source, fuel, warning and appearance editors.
 mod inspector;
+/// Bounded file imports/downloads and legacy/preset storage.
 mod io;
+/// Retained textarea drafts, debounce parsing and explicit apply/discard.
 mod json_editor;
+/// Shared LED policy controls and previews.
 mod led;
+/// Browser render/interaction timing without physical scanout claims.
 mod metrics;
+/// Device/screen/view orientation and artwork-mismatch repair.
 mod orientation;
+/// Origin-locked original blobs, live ownership pins and materialization leases.
 mod originals;
+/// Complete-project persistence, conflict checks and captured exports.
 mod project_io;
+/// Optional bounded diagnostic relay with separate cancellation ownership.
 mod relay;
+/// Accepted configuration resource and image admission summaries.
 mod resources;
+/// Owned timing callbacks and synthetic display completion.
 mod simulation;
+/// Captured pointer placement and appearance/inspection canvas publication.
 mod stage;
+/// Startup profile, preview and project-level artwork admission.
 mod startup;
+/// Replaceable bounded Rust worker conversion of original artwork.
 mod startup_artwork;
+/// Revision-bound widget actions and context-menu interaction.
 mod widget_menu;
+/// Workspace navigation, registry focus and persistent preview dock.
 mod workspaces;
 
 use dashboard_configurator::appearance_presets::*;
@@ -51,59 +82,110 @@ use stage::Library;
 use wasm_bindgen::JsCast;
 use workspaces::{Group, PreviewDockState, PreviewMode};
 
+/// Copyable handles to one mounted editor/session; copying does not clone project assets.
 #[derive(Clone, Copy)]
 pub struct Ui {
+    /// Performance timestamp in milliseconds captured before initial restore.
     mount_started: f64,
+    /// Deduplicates each cache-identity exhaustion cause for this mount.
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
+    /// Accepted project, revisioned drafts, selection and undo/redo authority.
     editor: RwSignal<Editor>,
+    /// Current build options, independently revisioned by the helper state.
     build: RwSignal<dashboard_configurator::build_flash::BuildSelection>,
+    /// Ephemeral capability, native operation observation and explicit selection.
     helper: helper::State,
+    /// Optional diagnostic queue with independent cancellation.
     relay: relay::State,
+    /// Memoized accepted-project resource analysis.
     resources: StoredValue<ResourceCache>,
+    /// Textarea draft projection, parse timer and inspection pixels identity.
     json: json_editor::State,
+    /// Current user-facing transient message, never a project payload log.
     notice: RwSignal<String>,
+    /// Bounded local event history and filters.
     events: RwSignal<EventStore>,
+    /// Transition deduplication for storage/render diagnostic events.
     event_adapters: StoredValue<AdapterState>,
+    /// Whether bounded events are also mirrored to browser console.
     console_enabled: RwSignal<bool>,
+    /// At most 16 object URLs retained until delayed revocation.
     downloads: StoredValue<io::Downloads, LocalStorage>,
+    /// Stored draft differs from the observed persistence base.
     conflict: RwSignal<bool>,
+    /// Observed legacy JSON storage record, None when absent.
     saved_bytes: RwSignal<Option<String>>,
+    /// Copied/preset appearance snapshot and current preview offer.
     appearance: RwSignal<AppearanceSession>,
+    /// Bounded named-preset list and explicit persistence state.
     presets: RwSignal<PresetStore>,
+    /// Preset write lock acquisition/operation is active.
     preset_lock_busy: RwSignal<bool>,
+    /// One bounded preset file read is in flight.
     preset_import_busy: RwSignal<bool>,
+    /// Current browser-lock AbortController retained as a JS object.
     preset_abort: StoredValue<Option<js_sys::Object>, LocalStorage>,
+    /// Synthetic appearance boost toggle; fixed configured units remain fixed.
     psi: RwSignal<bool>,
+    /// Whether appearance rendering shows synthetic warnings.
     warnings: RwSignal<bool>,
+    /// Synthetic sample position in milliseconds, independent of frame count.
     sample_ms: RwSignal<u64>,
+    /// Demo/minimum/maximum/width/zero synthetic value selection.
     sample_set: RwSignal<dashboard_configurator::preview::SampleSet>,
+    /// Last appearance/canvas failure until a successful current render.
     preview_error: RwSignal<Option<String>>,
+    /// First pending interaction performance timestamp in milliseconds.
     pending_at: RwSignal<Option<f64>>,
+    /// Last appearance render duration in browser milliseconds.
     render_ms: RwSignal<f64>,
+    /// Mounted shared-renderer canvas node, absent before mount/disposal.
     canvas: NodeRef<leptos::html::Canvas>,
+    /// Geometry of the last successfully written canvas.
     pixel_geometry: RwSignal<Geometry>,
+    /// Exact editor/mode/geometry identity permitted for interaction.
     published_canvas: RwSignal<dashboard_configurator::canvas_frame::PublishedCanvas>,
+    /// Widget IDs whose current rendered sample exceeds reserved lanes.
     pixel_fit_issues: RwSignal<Vec<u16>>,
+    /// One pointer gesture tied to canvas geometry and editor authority.
     drag: RwSignal<Option<stage::Drag>>,
+    /// Native pointer ID and element whose capture must be released.
     capture: RwSignal<Option<(i32, web_sys::Element)>>,
+    /// Current widget context menu with captured action identity.
     menu: RwSignal<Option<widget_menu::Menu>>,
+    /// Appearance/startup elapsed-time playback enabled.
     playing: RwSignal<bool>,
+    /// Startup timing drafts, accepted profile and feedback.
     startup: startup::State,
+    /// IndexedDB restore/save/conflict operation state.
     project_store: project_io::State,
+    /// Active workspace and stored group preferences.
     workspace: RwSignal<WorkspaceState>,
+    /// Registry field target, including revision and candidate position.
     inspection: RwSignal<Option<FieldTarget>>,
+    /// Validation diagnostic target offered for repair navigation.
     error_inspection: RwSignal<Option<InspectionTarget>>,
+    /// Cancelable deferred focus request identity and handle.
     focus: RwSignal<command_palette::FocusState>,
+    /// Channel shown in shared source controls.
     source_channel: RwSignal<Channel>,
+    /// Offline documentary reference search/filter/selection state.
     reference: RwSignal<dashboard_configurator::ecu_reference::ReferenceState>,
+    /// Persistent synthetic simulator and frame ownership across workspaces.
     dock: PreviewDockState,
+    /// Bounded browser interaction timing measurements.
     trace: RwSignal<metrics::Trace>,
+    /// Optional browser performance observer detached on cleanup.
     observer: RwSignal<Option<web_sys::PerformanceObserver>>,
 }
 
+/// Returns performance.now() milliseconds, or zero when Window/Performance is absent;
+/// consumers handle unavailable/time-reversal observations without physical timing claims.
 fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p| p.now()) }
 
 impl Ui {
+    /// Returns the current candidate selection/mode/geometry identity, or None when
+    /// its selected view has no resolvable orientation.
     fn canvas_identity(self) -> Option<dashboard_configurator::canvas_frame::CanvasFrame> {
         self.editor.with(|editor| {
             let geometry = editor
@@ -118,6 +200,8 @@ impl Ui {
         })
     }
 
+    /// Returns whether Views permits layout editing and its exact current identity
+    /// matches successfully published pixels; failures/pending drafts deny hit targets.
     fn canvas_current(self) -> bool {
         self.workspace.with(|workspace| workspace.active() == Workspace::Views)
             && self.editor.with(Editor::can_edit_layout)
@@ -126,6 +210,8 @@ impl Ui {
                 .is_some_and(|identity| self.published_canvas.with(|pixels| pixels.permits(identity)))
     }
 
+    /// Advances published selection from `before` only when current identity differs
+    /// in permitted selection metadata; absent/mismatched identities remain untrusted.
     fn canvas_selection(
         self,
         before: Option<dashboard_configurator::canvas_frame::CanvasFrame>,
@@ -135,6 +221,9 @@ impl Ui {
         }
     }
 
+    /// Writes RGBA `pixels` for `geometry`/`mode`, returning canvas errors without
+    /// publishing new geometry. Records success/failure against the captured editor
+    /// identity; browser submission does not prove physical display completion.
     fn write_canvas(
         self,
         pixels: &[u8],
@@ -154,6 +243,8 @@ impl Ui {
         result
     }
 
+    /// Returns cached accepted-project resource analysis or editor admission error;
+    /// panics only if the synchronous cache callback unexpectedly fails to run.
     fn resource_report(self) -> Result<ResourceReport, EditorError> {
         self.editor.with(|editor| {
             let mut report = None;
@@ -163,6 +254,7 @@ impl Ui {
         })
     }
 
+    /// Records bounded contextual `notice` locally and through enabled diagnostic sinks.
     fn event(
         self,
         notice: Notice,
@@ -170,6 +262,8 @@ impl Ui {
         event_log::record(self, &notice);
     }
 
+    /// Reports changed write outcome `result` for `area`, suppressing repeated
+    /// identical states and safely ignoring a disposed adapter.
     fn storage_outcome(
         self,
         area: StorageArea,
@@ -184,6 +278,8 @@ impl Ui {
         }
     }
 
+    /// Reports changed restore/read `result` for `area` independently of write
+    /// outcomes; disposed adapters emit nothing.
     fn storage_read_outcome(
         self,
         area: StorageArea,
@@ -198,6 +294,8 @@ impl Ui {
         }
     }
 
+    /// Records boolean `success` for rendering `lane`, emitting only adapter
+    /// transitions instead of per-frame diagnostic spam.
     fn render_outcome(
         self,
         lane: RenderLane,
@@ -212,6 +310,8 @@ impl Ui {
         }
     }
 
+    /// Records detailed rendering `result` for `lane`, emitting bounded changes
+    /// while retaining failure classification for recovery.
     fn render_issue(
         self,
         lane: RenderLane,
@@ -226,6 +326,9 @@ impl Ui {
         }
     }
 
+    /// Compares accepted identity with `before`; a new valid configuration emits
+    /// `subject` feedback and synchronizes/reports simulator restart. Draft-only changes
+    /// do not become accepted-configuration events.
     fn accepted_field(
         self,
         before: AcceptedConfigKey,
@@ -249,6 +352,8 @@ impl Ui {
         }
     }
 
+    /// Synchronizes simulator ownership, applies `action` once, then records bounded
+    /// before/after state transitions; callers decide whether inspection permits action.
     fn simulate(
         self,
         action: impl FnOnce(&mut dashboard_configurator::simulator::ControlSimulator),
@@ -266,8 +371,9 @@ impl Ui {
         }
     }
 
-    /// Sampling/producer actions recheck actual pending state at dispatch;
-    /// physical controls keep their separate bounded inspection route.
+    /// Applies sampling/producer `action` only after synchronizing and rechecking
+    /// pending inspection; blocked actions are no-ops. Physical controls use their
+    /// separate bounded inspection route.
     fn simulate_accepted(
         self,
         action: impl FnOnce(&mut dashboard_configurator::simulator::ControlSimulator),
@@ -279,8 +385,11 @@ impl Ui {
         self.simulate(action);
     }
 
+    /// Returns whether current action readiness blocks save/export/build snapshots.
     fn snapshot_blocked(self) -> bool { self.editor.with(|e| e.action_readiness().block.is_some()) }
 
+    /// Returns the capability explanation for widget-scoped registry `label`, or
+    /// None for unknown/non-widget labels, missing widget, or a usable capability.
     fn control_reason(
         self,
         label: &str,
@@ -296,6 +405,8 @@ impl Ui {
         }
     }
 
+    /// Returns inspected candidate ID/channel only when registry identity is current
+    /// and unambiguous, otherwise None; absent inspection uses the editing selection.
     fn inspected_widget(self) -> Option<(u16, Channel)> {
         self.editor.with(|e| {
             if let Some(target) = self.inspection.get() {
@@ -316,6 +427,8 @@ impl Ui {
         })
     }
 
+    /// Returns the unambiguous current inspected candidate view ID, falling back to
+    /// editor selection if the target is absent, stale or unresolved.
     fn inspected_view(self) -> u8 {
         self.editor.with(|e| {
             self.inspection
@@ -328,6 +441,8 @@ impl Ui {
         })
     }
 
+    /// Returns registry-resolved DOM identity for raw `field`, or its legacy field ID
+    /// fallback when the current editor cannot resolve that target.
     fn raw_dom(
         self,
         field: RawField,
@@ -339,6 +454,8 @@ impl Ui {
         })
     }
 
+    /// Returns the registry DOM ID for `label` at its current root/widget/channel
+    /// owner; unsupported scope, unknown label or missing owner returns an empty string.
     fn control_id(
         self,
         label: &str,
@@ -366,6 +483,8 @@ impl Ui {
         owner.map(|owner| Registry::dom_id(key, owner)).unwrap_or_default()
     }
 
+    /// Returns whether pending JSON or a stale/ambiguous inspected target forbids
+    /// typed repair; ordinary invalid raw drafts can remain editable.
     fn inspect_read_only(self) -> bool {
         self.editor.with(|e| {
             e.has_pending_json()
@@ -375,6 +494,8 @@ impl Ui {
         })
     }
 
+    /// Rebinds `target`'s key/owner to current editor identity when resolvable;
+    /// failure leaves the old target for downstream stale-target guards.
     fn refresh_inspection(
         self,
         target: FieldTarget,
@@ -387,6 +508,8 @@ impl Ui {
         }
     }
 
+    /// Reports each newly exhausted cache identity in `status` once for this mount,
+    /// updating notice and a warning event before later observations can repeat it.
     fn observe_cache(
         self,
         status: dashboard_core::cache_diagnostics::CacheExhaustionStatus,
@@ -409,14 +532,21 @@ impl Ui {
         });
     }
 
+    /// Returns whether the editor retains a rejected raw/structural draft.
     fn invalid(self) -> bool { self.editor.with(Editor::has_invalid_draft) }
 
+    /// Returns whether unapplied JSON text blocks accepted-state actions.
     fn json_pending(self) -> bool { self.editor.with(Editor::has_pending_json) }
 
+    /// Returns whether invalid editor draft or pending JSON requires inspection
+    /// routing instead of accepted simulation acquisition.
     fn inspection_active(self) -> bool { self.invalid() || self.json_pending() }
 
+    /// Returns whether editor readiness currently denies layout changes.
     fn layout_locked(self) -> bool { self.editor.with(|e| !e.can_edit_layout()) }
 
+    /// Runs `action` through normal feedback/persistence and returns true on success;
+    /// newly accepted configuration identity also triggers acceptance/restart events.
     fn run(
         self,
         action: impl FnOnce(&mut Editor) -> Result<Revision, EditorError>,
@@ -429,6 +559,9 @@ impl Ui {
         success
     }
 
+    /// Applies `action` once and returns whether it succeeded. Tracks revision/selection
+    /// and validation transitions, clears stale focus, schedules conflict-free valid saves
+    /// and retains rejected drafts with error feedback. Success need not imply a change.
     fn run_quiet(
         self,
         action: impl FnOnce(&mut Editor) -> Result<Revision, EditorError>,
@@ -473,12 +606,14 @@ impl Ui {
         }
     }
 
+    /// Captures the first pending input timestamp until a successful render consumes it.
     fn input_started(self) {
         if self.pending_at.get_untracked().is_none() {
             self.pending_at.set(Some(now()));
         }
     }
 
+    /// Submits `edit` through normal editor admission, feedback and eligible persistence.
     fn apply(
         self,
         edit: Edit,
@@ -486,6 +621,9 @@ impl Ui {
         self.run(move |editor| editor.apply(edit));
     }
 
+    /// Submits `edit` only under current `token` and unambiguous inspection authority;
+    /// successful inspected edits refresh the target identity. Rejected values remain
+    /// subject to editor draft semantics and are reported through quiet feedback.
     fn typed(
         self,
         token: FieldToken,
@@ -506,6 +644,8 @@ impl Ui {
         }
     }
 
+    /// Returns a layout-safe unique widget `id` for canvas interactions, or None
+    /// when missing/ambiguous/unavailable in the editor layout projection.
     fn canvas_widget(
         self,
         id: u16,
@@ -513,6 +653,8 @@ impl Ui {
         self.editor.with(|e| Registry::layout_widget(e, id))
     }
 
+    /// Returns widget `id` from the resolved inspected candidate position when present,
+    /// otherwise the editing configuration; stale inspection or mismatched ID returns None.
     fn widget(
         self,
         id: u16,
@@ -528,6 +670,8 @@ impl Ui {
         })
     }
 
+    /// Applies `f` once to existing widget `id`'s placement, submitting it under
+    /// `token`; absent widget is a no-op and shared admission checks geometry/overlap.
     fn place_widget(
         self,
         token: FieldToken,
@@ -542,6 +686,8 @@ impl Ui {
         self.typed(token, Edit::PlaceWidget { id, placement });
     }
 
+    /// Applies `f` once to a copy of widget `id`, submitting it under `token`;
+    /// missing widget is a no-op and rejected complete edits remain repairable drafts.
     fn update_widget(
         self,
         token: FieldToken,
@@ -554,6 +700,8 @@ impl Ui {
         }
     }
 
+    /// Returns current save/conflict status, distinguishing pending JSON, artwork
+    /// shape mismatch, quota failure and unavailable browser storage.
     fn save_label(self) -> String {
         if self.conflict.get() {
             return "Browser draft changed in another tab".into();
@@ -574,6 +722,8 @@ impl Ui {
         })
     }
 
+    /// Returns first accepted-layout placement for `span` in the selected view,
+    /// ignoring widget `except` when supplied; None means no admissible free footprint.
     fn free(
         self,
         span: Span,
@@ -590,6 +740,9 @@ impl Ui {
     }
 }
 
+/// Returns the mounted Studio editor with restored browser preferences/projects,
+/// persistent preview and explicit helper controls. Registers owned listeners/timers
+/// and cleanup; native helper connection, device operations and flashing require actions.
 #[component]
 pub fn Studio() -> impl IntoView {
     let mount_started = now();
@@ -775,8 +928,13 @@ pub fn Studio() -> impl IntoView {
     }
 }
 
+/// Returns accepted view navigation and inspected-view fields for `ui`; selection,
+/// duplication, ordering and deletion use shared editor admission and preserve repair paths.
 #[component]
-fn Views(ui: Ui) -> impl IntoView {
+fn Views(
+    /// Shared view selection, layout candidate and accepted editor history.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="view-tabs" role="navigation" aria-label="Dashboard views">
             <For each=move || ui.editor.with(|e| e.preview().config().views.iter().map(|v| v.id).collect::<Vec<_>>()) key=|id| *id children=move |id| {
@@ -810,7 +968,9 @@ fn Views(ui: Ui) -> impl IntoView {
     }
 }
 #[cfg(feature = "browser-tests")]
+/// Isolated browser integration/failure suite gated by origin handshake.
 mod browser_tests;
 
 #[cfg(feature = "browser-tests")]
+/// Real DOM BLE field and synthetic-fixture regressions.
 mod ble_browser_tests;

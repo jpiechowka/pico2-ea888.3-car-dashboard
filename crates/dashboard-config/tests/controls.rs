@@ -1,6 +1,8 @@
+//! Independent onboard/encoder compatibility, reachability and reserved recovery contracts.
 use dashboard_config::*;
 
 #[test]
+/// The independent approved button/encoder map and 800 ms threshold match the bounded default representation.
 fn defaults_match_reviewed_onboard_and_encoder_table() {
     use ControlAction::*;
     let map = ControlMap::default();
@@ -49,6 +51,7 @@ fn defaults_match_reviewed_onboard_and_encoder_table() {
 }
 
 #[test]
+/// Every action/rotation choice matches its independently listed screen compatibility.
 fn compatibility_is_the_independent_approved_table() {
     use ControlAction::*;
     let cases = [
@@ -90,6 +93,7 @@ fn compatibility_is_the_independent_approved_table() {
 }
 
 #[test]
+/// Only 400 through 1500 ms remappable holds admit, and every screen reserves the Y hold.
 fn hold_boundaries_and_reserved_recovery_are_enforced() {
     for (hold_ms, expected) in [
         (399, Err(ControlError::HoldDuration)),
@@ -112,6 +116,7 @@ fn hold_boundaries_and_reserved_recovery_are_enforced() {
 }
 
 #[test]
+/// Invalid tap/hold/click/rotation reports the exact screen, button and gesture.
 fn invalid_bindings_identify_the_actual_gesture() {
     for page in ControlPage::ALL {
         let invalid = if page == ControlPage::Dashboard {
@@ -157,6 +162,7 @@ fn invalid_bindings_identify_the_actual_gesture() {
 }
 
 #[test]
+/// Encoder-only routes cannot satisfy onboard reachability; reserved recovery permits one-way screen routes.
 fn onboard_routes_and_wrapped_view_fallback_are_required() {
     let mut map = ControlMap::default();
     for screen in &mut map.screens {
@@ -196,6 +202,7 @@ fn onboard_routes_and_wrapped_view_fallback_are_required() {
 }
 
 #[test]
+/// Screen/button indices and forward/reverse cycles retain their stable ordering.
 fn page_and_button_indices_and_navigation_are_stable() {
     assert_eq!(ControlPage::default(), ControlPage::Dashboard);
     for (index, page) in ControlPage::ALL.into_iter().enumerate() {
@@ -213,6 +220,7 @@ fn page_and_button_indices_and_navigation_are_stable() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Unknown control actions and unexpected fields reject at every nested map level.
 fn serde_rejects_unknown_actions_and_struct_fields() {
     let map = ControlMap::default();
     let value = serde_json::to_value(map).unwrap();

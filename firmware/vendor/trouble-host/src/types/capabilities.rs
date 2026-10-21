@@ -1,3 +1,4 @@
+//! SMP I/O-capability octets and user-facing names (Core Vol3 PartH section2.3.2).
 use crate::Error;
 
 /// Device I/O capabilities
@@ -17,7 +18,9 @@ pub enum IoCapabilities {
 }
 
 impl TryFrom<u8> for IoCapabilities {
+    /// Unsupported octets produce the host InvalidValue error.
     type Error = Error;
+    /// Returns the SMP capability for `val`0x00..=0x04; other octets return InvalidValue.
     fn try_from(val: u8) -> Result<Self, Error> {
         Ok(match val {
             0x00 => Self::DisplayOnly,
@@ -31,6 +34,7 @@ impl TryFrom<u8> for IoCapabilities {
 }
 
 impl From<IoCapabilities> for u8 {
+    /// Returns the SMP on-wire octet for `val`.
     fn from(val: IoCapabilities) -> u8 {
         match val {
             IoCapabilities::DisplayOnly => 0x00,
@@ -43,6 +47,7 @@ impl From<IoCapabilities> for u8 {
 }
 
 impl AsRef<str> for IoCapabilities {
+    /// Returns a static human-readable I/O-capability label.
     fn as_ref(&self) -> &str {
         match self {
             IoCapabilities::DisplayOnly => "Display Only",
@@ -55,6 +60,7 @@ impl AsRef<str> for IoCapabilities {
 }
 
 impl core::fmt::Display for IoCapabilities {
+    /// Writes the capability label into `f` and returns its formatting result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
@@ -62,6 +68,7 @@ impl core::fmt::Display for IoCapabilities {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for IoCapabilities {
+    /// Emits the capability label through `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", self.as_ref())
     }

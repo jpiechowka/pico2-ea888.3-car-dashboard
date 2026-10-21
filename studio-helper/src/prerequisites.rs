@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::process;
+/// Returns the canonical first absolute-PATH file named `name`, or None for absence/canonicalization failure.
 fn find(name: &str) -> Option<PathBuf> { find_on_path(&std::env::var_os("PATH").unwrap_or_default(), name) }
+/// Returns the canonical first file named `name` in absolute entries of PATH value `path`.
+/// Relative entries/directories are skipped; canonicalization failure for the first matching file returns None.
 fn find_on_path(
     path: &OsStr,
     name: &str,
@@ -16,10 +19,17 @@ fn find_on_path(
         .find(|p| p.is_file())
         .and_then(|p| p.canonicalize().ok())
 }
+/// Returns absolute-PATH python.exe, falling back to python3.exe only when that search fails; None means neither
+/// resolved.
 pub(crate) fn python_executable() -> Option<PathBuf> { python_on_path(&std::env::var_os("PATH").unwrap_or_default()) }
+/// Returns the canonical Python executable from PATH value `path`, searching all python.exe candidates before
+/// python3.exe. None means no file could be resolved; this does not execute or validate Python.
 fn python_on_path(path: &OsStr) -> Option<PathBuf> {
     find_on_path(path, "python.exe").or_else(|| find_on_path(path, "python3.exe"))
 }
+/// Runs fixed executable `path` with `args` in `repo` under owned `process` supervision.
+/// Returns trimmed stdout for exit zero; returns supervisor/cancellation/timeout/output or nonzero-exit diagnostics
+/// otherwise. The caller restricts arguments to read-only probes; no shell interpolation occurs here.
 fn probe(
     process: &mut process::ProcessContext,
     path: &Path,
@@ -32,6 +42,9 @@ fn probe(
     }
     Ok(output.stdout.trim().to_owned())
 }
+/// Appends a prerequisite row to `rows`: stable `id`, `status`, observed `evidence`, corrective `setup` text and
+/// `required` gate. Inputs are private report construction values; this does not validate or execute setup
+/// instructions.
 fn row(
     rows: &mut Vec<Value>,
     id: &str,
@@ -45,6 +58,9 @@ fn row(
     );
 }
 #[allow(clippy::too_many_arguments)]
+/// Appends exact-version result to `rows` for `id`, probing optional `path` with fixed `args` in `repo` through
+/// `process`. A trimmed stdout line must equal `expected`; absent path or probe/version failure becomes a required
+/// failure row with `setup`.
 fn version(
     process: &mut process::ProcessContext,
     rows: &mut Vec<Value>,
@@ -86,6 +102,8 @@ fn version(
         }
     }
 }
+/// Returns the quoted channel line from `repo`/rust-toolchain.toml after dated-nightly shape checks.
+/// Returns read/missing/shape errors; this is a line parser, not general TOML parsing or calendar-date validation.
 fn channel(repo: &Path) -> Result<String, String> {
     let text = std::fs::read_to_string(repo.join("rust-toolchain.toml")).map_err(|e| e.to_string())?;
     let value = text
@@ -100,7 +118,15 @@ fn channel(repo: &Path) -> Result<String, String> {
     }
     Ok(value.into())
 }
+/// Returns read-only installed-tool evidence for `repo` using a fresh process context; failures appear in the JSON
+/// report. Canonicalizes the repository, probes native tools only on the supported host, and performs no
+/// downloads/builds/USB commands. Report readiness covers installed versions only, not host linking, image admission or
+/// device access.
 pub fn check(repo: &Path) -> Value { check_with_process(&mut process::ProcessContext::default(), repo) }
+/// Returns prerequisite JSON for `repo`, supervising fixed version/help probes through `process`.
+/// Invalid repository/channel yields an early not-ready report; later failures accumulate required rows.
+/// Cancellation/cleanup faults become probe failures, not an interrupted report. Tool/setup suggestions are text only
+/// and are never executed.
 pub(crate) fn check_with_process(
     process: &mut process::ProcessContext,
     repo: &Path,
@@ -433,6 +459,11 @@ pub(crate) fn check_with_process(
     let ready = rows.iter().all(|r| r["required"] != true || r["status"] == "passed");
     json!({"schema_version":1,"operation":"prerequisite_check","ready":ready,"readiness_scope":"installed_tool_versions_only","native_build_flash_available":cfg!(windows),"native_build_flash_scope":"adapter_routes_only_not_image_admission","repository":repo,"selected_toolchain":selected,"checks":rows})
 }
+/// Parses command-line `args` excluding program name, prints help or prerequisite evidence, and returns an exit code.
+/// Returns 0 for help/readiness, 2 for usage, 4 for unavailable prerequisites, or 70 for process-cleanup quarantine.
+/// An explicit repository must be absolute; absent --repo uses cwd. Duplicate/unknown options fail before probing.
+/// Standard-output/error write failures can panic through Rust's print macros; internal JSON shape is assumed after
+/// check.
 pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
     let args: Vec<_> = args.into_iter().collect();
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
@@ -502,9 +533,11 @@ pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
     }
 }
 #[cfg(test)]
+/// Executable selection, exact-version classification and CLI rejection regressions.
 mod tests {
     use super::*;
     #[test]
+    /// Relative PATH entries/directories are ignored and python.exe globally outranks the python3.exe fallback.
     fn python_selection_supports_fallback_and_preserves_absolute_path_priority() {
         let root = std::env::temp_dir().join(format!(
             "studio-python-selection-{}-{}",
@@ -542,6 +575,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    /// Missing executable yields a required missing row without starting a process.
     fn missing_version_is_reported() {
         let mut rows = Vec::new();
         version(
@@ -558,6 +592,7 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    /// Real supervised Python output passes only the exact pinned version line, rejecting a suffixed older version.
     fn exact_version_passes_and_wrong_version_fails() {
         let process = &mut process::ProcessContext::default();
         let python = python_executable().expect("Windows runner tests require Python");
@@ -579,6 +614,7 @@ mod tests {
         }
     }
     #[test]
+    /// Relative explicit repositories and duplicate JSON flags are usage errors before native probes.
     fn strict_cli() {
         assert_eq!(cli(["check", "--repo", "relative"].map(OsString::from)), 2);
         assert_eq!(cli(["check", "--json", "--json"].map(OsString::from)), 2);

@@ -1,7 +1,12 @@
+//! Shared control-map editing, protected simulator recovery and timing-canvas publication.
 use dashboard_configurator::simulator::ControlSimulator;
 
 use super::*;
 
+/// Publishes RGBA `pixels` to `canvas` at `geometry` dimensions, returning allocation,
+/// context or draw errors. On resize, snapshots prior pixels before clearing dimensions
+/// and attempts restoration if publication fails; restoration can itself fail silently.
+/// Successful canvas write is browser publication, not a physical display completion.
 pub(super) fn write_timing_canvas(
     canvas: NodeRef<leptos::html::Canvas>,
     pixels: &[u8],
@@ -47,6 +52,8 @@ pub(super) fn write_timing_canvas(
     Ok(())
 }
 
+/// Returns a legacy control anchor for physical `button` on `page`; `hold` selects
+/// hold rather than tap. Reserved Y repair uses this anchor outside ordinary field lookup.
 fn binding_id(
     page: ControlPage,
     button: ButtonId,
@@ -60,6 +67,7 @@ fn binding_id(
     )
 }
 
+/// Returns the DOM anchor for `error`, using the route summary for missing navigation paths.
 fn error_target(error: ControlError) -> String {
     match error {
         ControlError::HoldDuration => Registry::dom_id(FieldKey::ControlDuration, TargetOwner::Root),
@@ -84,6 +92,7 @@ fn error_target(error: ControlError) -> String {
     }
 }
 
+/// Returns repair guidance for `error`, preserving onboard-only reachability and fixed Y recovery.
 fn error_label(error: ControlError) -> String {
     match error {
         ControlError::HoldDuration => "Hold duration must be 400–1500 ms.".into(),
@@ -119,6 +128,8 @@ fn error_label(error: ControlError) -> String {
     }
 }
 
+/// Applies `change` to `ui`'s editing control map and submits it with captured `token`.
+/// Shared validation retains rejected drafts; stale callbacks cannot publish accepted state.
 fn change_map(
     ui: Ui,
     token: FieldToken,
@@ -131,12 +142,20 @@ fn change_map(
     });
 }
 
+/// Returns a repairable action picker in `ui` for `page` and optional physical `button`.
+/// With no button it edits encoder click; otherwise `hold` selects tap/ordinary hold.
+/// Incompatible imported actions remain visible as INVALID options until repaired.
 #[component]
 fn ActionPicker(
+    /// Shared control-map editor and synthetic input simulation owner.
     ui: Ui,
+    /// Control page whose button or encoder-click binding is edited.
     page: ControlPage,
+    /// Physical button, or None for the encoder click binding.
     button: Option<ButtonId>,
-    #[prop(default = false)] hold: bool,
+    /// Select ordinary hold when a button exists; false selects tap.
+    #[prop(default = false)]
+    hold: bool,
 ) -> impl IntoView {
     let action = move || {
         ui.editor.with(|e| {
@@ -181,9 +200,13 @@ fn ActionPicker(
     }
 }
 
+/// Returns `ui`'s encoder rotation picker for `page`; incompatible imported values
+/// remain inspectable while shared validation governs every replacement.
 #[component]
 fn RotationPicker(
+    /// Shared control-map editor and synthetic input simulation owner.
     ui: Ui,
+    /// Control page whose clockwise/counterclockwise binding pair is edited.
     page: ControlPage,
 ) -> impl IntoView {
     let action = move || {
@@ -206,8 +229,14 @@ fn RotationPicker(
     }
 }
 
+/// Returns `ui`'s per-screen button/encoder mapping editor with ordinary hold bounds,
+/// onboard reachability diagnostics and a fixed Y recovery repair path. Mapping changes
+/// use shared validation and do not send physical input to hardware.
 #[component]
-pub fn DeviceControls(ui: Ui) -> impl IntoView {
+pub fn DeviceControls(
+    /// Shared control-map editor and synthetic input simulation owner.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <section class="device-controls" aria-label="Device controls">
             <h2>"Device controls"</h2>
@@ -263,11 +292,16 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns the persistent simulation control panel owned by `ui`.
 #[component]
-pub fn SimulationControls(ui: Ui) -> impl IntoView {
+pub fn SimulationControls(
+    /// Shared control-map editor and synthetic input simulation owner.
+    ui: Ui
+) -> impl IntoView {
     view! { <super::simulation::Panel ui/> }
 }
-/// The palette and visible protected Y hold share the persistent control path.
+/// Cancels `ui`'s playback callbacks, invokes the persistent protected recovery path
+/// and records Dashboard/Full feedback. Palette and visible Y hold share this operation.
 pub(super) fn recover(ui: Ui) {
     super::simulation::cancel(ui);
     ui.simulate(ControlSimulator::recover);

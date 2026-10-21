@@ -3,6 +3,9 @@ use dashboard_core::discovery::{FailureReason, ReadResult};
 use trouble_host::att::AttErrorCode;
 use trouble_host::{BleHostError, Error};
 
+/// Returns the bounded classification of `error`, preserving ATT/HCI/hardware
+/// numeric codes while deliberately omitting arbitrary controller-specific data.
+/// Does not retry, request security, or decide whether cleanup was acknowledged.
 pub fn failure_reason<E>(error: BleHostError<E>) -> FailureReason {
     match error {
         BleHostError::Controller(_) => FailureReason::Controller,
@@ -41,6 +44,8 @@ pub fn failure_reason<E>(error: BleHostError<E>) -> FailureReason {
     }
 }
 /// Protected DIS values remain evidence; inspection never escalates security.
+/// Returns Protected for authentication/encryption/key-size/authorization `code`,
+/// otherwise Unavailable. Callers retain the original ATT code separately.
 pub fn device_info_att_result(code: AttErrorCode) -> ReadResult {
     if matches!(
         code,

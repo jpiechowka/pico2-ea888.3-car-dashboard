@@ -5,6 +5,9 @@ use crate::input_trace::Observation;
 
 /// A bounded factual route from the actual current-page map, followed by the
 /// immutable recovery gesture. No route is invented for unreachable/raw maps.
+/// Returns ASCII guidance for `requested` from `page` using `map`: prefer matching
+/// onboard tap/hold, then encoder click; otherwise show the first actual transition.
+/// Always includes fixed Y recovery. Output is at most52bytes; no mapping is executed.
 pub fn navigation_hint(
     map: &ControlMap,
     page: ControlPage,
@@ -61,23 +64,33 @@ pub fn navigation_hint(
     text
 }
 
+/// One qualified onboard gesture, already resolved against the captured page's mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ControlEvent {
+    /// Physical A/B/X/Y identity; defines deterministic precedence.
     pub button: ButtonId,
+    /// Finite mapped action, checked for compatibility by gesture and session owners.
     pub action: ControlAction,
+    /// First press observation and gesture acceptance in microseconds, normally one event.
     pub observation: Observation,
 }
 
+/// At most one event per button, after recovery/navigation precedence and startup filtering.
 #[derive(Default, Debug)]
 pub struct ControlBatch {
     /// Qualified startup gesture, including a button mapped to None.
     pub startup_skip: bool,
+    /// Surviving actions in A/B/X/Y order, bounded to four.
     pub actions: heapless::Vec<ControlEvent, 4>,
+    /// Protected two-second Y hold, independent of user mappings.
     pub recovery: Option<Observation>,
+    /// Events dropped for invalid mapping/time conversion or competing precedence.
     pub discarded: u32,
 }
 impl ControlBatch {
     /// The first surviving navigation that actually changes the captured page.
+    /// Returns a destination different from `page`, or None; recovery on Dashboard
+    /// still suppresses other actions but needs no page transition. Does not validate timestamps.
     pub fn transition(
         &self,
         page: ControlPage,
@@ -94,23 +107,35 @@ impl ControlBatch {
     }
 }
 
+/// One key's raw/debounced state and one-shot gesture arming.
 #[derive(Clone, Copy, Default)]
 struct ButtonState {
+    /// Accepted pressed level after50ms candidate stability.
     stable: bool,
+    /// Most recently sampled pressed level.
     candidate: bool,
+    /// First observation of current candidate in monotonic milliseconds.
     candidate_at: u64,
+    /// A stable release has permitted a subsequent gesture; false suppresses spanning/boot-held keys.
     armed: bool,
+    /// Origin of the accepted press candidate in monotonic milliseconds, before debounce delay.
     press_at: u64,
+    /// Hold fired or the spanning press was suppressed; prevents a later tap.
     fired: bool,
 }
 
+/// Four-key sampled gesture owner; screen changes preserve release debounce while cancelling old presses.
 #[derive(Default)]
 pub struct ControlGestures {
+    /// Fixed A/B/X/Y state, with no dynamic input allocation.
     buttons: [ButtonState; 4],
+    /// Screen associated with prior samples; None before initial synchronization.
     page: Option<ControlPage>,
+    /// Last accepted sample time in monotonic milliseconds; reversal is ignored.
     last_ms: Option<u64>,
 }
 impl ControlGestures {
+    /// Returns an unsynchronized owner that suppresses any key held on its first sample.
     pub fn new() -> Self { Self::default() }
 
     /// Maintenance requires a fresh release before any held button can act.
@@ -126,6 +151,9 @@ impl ControlGestures {
         }
     }
 
+    /// Samples A/B/X/Y `pressed` levels for `page` using `map` at monotonic `now_ms`.
+    /// Returns startup_skip for a qualified ordinary gesture, even mapped None; fixed Y
+    /// recovery survives and ordinary actions are omitted. Uses the same debounce/order guards as update.
     pub fn update_startup(
         &mut self,
         map: &ControlMap,
@@ -136,6 +164,10 @@ impl ControlGestures {
         self.update_context(map, page, pressed, now_ms, true)
     }
 
+    /// Samples A/B/X/Y `pressed` levels for captured `page` using `map` at monotonic
+    /// `now_ms`. Returns bounded events after50ms debounce, tap-on-release or one-shot
+    /// configured hold (clamped400..1500ms); Y hold is fixed2000ms. Holds require the
+    /// current raw level still pressed. Reversal/initial-page synchronization produces no actions.
     pub fn update(
         &mut self,
         map: &ControlMap,
@@ -146,6 +178,11 @@ impl ControlGestures {
         self.update_context(map, page, pressed, now_ms, false)
     }
 
+    /// Resolves `pressed` A/B/X/Y samples under `map` and captured `page` at `now_ms`
+    /// monotonic milliseconds; `startup` converts ordinary gestures to skip feedback.
+    /// Returns recovery before navigation before other actions, with discarded counts.
+    /// Page changes cancel spanning presses; failed microsecond conversion discards the
+    /// gesture. No hold is synthesized on a sampled release, even after a long stall.
     fn update_context(
         &mut self,
         map: &ControlMap,

@@ -1,6 +1,7 @@
 //! Documentary source catalogue. A catalogue entry is not ECU qualification.
 use crate::*;
 
+/// Stable editor enumeration of disabled, generic, candidate and unresolved selections.
 pub const DEFINITIONS: [DefinitionId; 16] = [
     DefinitionId::Disabled,
     DefinitionId::ObdCoolant05,
@@ -20,44 +21,66 @@ pub const DEFINITIONS: [DefinitionId; 16] = [
     DefinitionId::UnresolvedEgt,
 ];
 
+/// Pinned decoder implementation; command mapping and scaling tables are separate evidence.
 pub const OBD_REFERENCE: &str =
     "https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py";
+/// Public secondary PID table used as a research lead, not normative or exact-ECU proof.
 pub const OBD_TABLE_REFERENCE: &str = "https://www.csselectronics.com/pages/obd2-pid-table-on-board-diagnostics-j1979";
+/// Pinned Simos documentary parameter table; installed ECU/software applicability is unverified.
 pub const SIMOS_REFERENCE: &str =
     "https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv";
+/// Pinned logging implementation used to inspect DSG byte handling and interpretation.
 pub const DSG_REFERENCE: &str = "https://github.com/Switchleg1/SimosTools/blob/f99771ceb0442c863601a84a282c6e67e6b311a8/app/src/main/java/com/app/simostools/UDSlog.kt";
+/// Pinned SimosTools request/definition source; interpreted together with its logger.
 pub const SIMOS_DEFINITIONS_REFERENCE: &str = "https://github.com/Switchleg1/SimosTools/blob/f99771ceb0442c863601a84a282c6e67e6b311a8/app/src/main/java/com/app/simostools/PIDs.kt";
+/// Pinned PID-to-decoder mapping, distinct from the decoder function itself.
 pub const OBD_COMMANDS_REFERENCE: &str =
     "https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/commands.py";
+/// Pinned units/scaling implementation referenced by generic OBD command decoders.
 pub const OBD_SCALING_REFERENCE: &str =
     "https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/UnitsAndScaling.py";
 
+/// Reason a selected documentary source cannot resolve to the supported live request shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnavailableReason {
+    /// Definition/formula remains an unqualified candidate or lacks an executable binding.
     CandidateDecoder,
+    /// Required scaling/sensor prerequisites remain unresolved.
     ScalingUnresolved,
+    /// Requested measured sensor has no established source.
     SensorUnresolved,
+    /// No physical/deployment route is selected.
     MissingRoute,
+    /// Explicit physical route does not match the supplied active route.
     RouteNotAvailable,
 }
 
+/// Immutable documentary record; interpretation and links retain uncertainty explicitly.
 #[derive(Clone, Copy, Debug)]
 pub struct Definition {
+    /// Closed catalogue key.
     pub id: DefinitionId,
+    /// Required owning channel; `None` is the disabled selection usable for any channel.
     pub channel: Option<Channel>,
+    /// Human-readable selection name; not a peer- or ECU-provided value.
     pub name: &'static str,
+    /// Fixed request shape constrained by configuration admission.
     pub access: Access,
+    /// Fixed documentary conversion identity.
     pub decoder: Decoder,
+    /// Source-evidence class, separate from deployment qualification.
     pub evidence: Evidence,
-    /// Stripped service/identifier bytes are not included in these data widths.
+    /// Reply width, byte order, formula and limitations; data widths exclude service/identifier echoes.
     pub interpretation: &'static str,
+    /// Primary display link; use [`Self::references`] to retain companion mapping/formula evidence.
     pub reference: &'static str,
+    /// Documentary blocker; `None` still does not establish live ECU capability or authority.
     pub unavailable: Option<UnavailableReason>,
 }
 
 impl Definition {
-    /// Keep request mapping, formula and byte-order provenance together. A
-    /// decoder implementation alone does not establish which PID selects it.
+    /// Return companion request, formula and byte-order links; disabled returns an empty slice.
+    /// A decoder implementation alone does not establish which PID selects it.
     pub fn references(self) -> &'static [&'static str] {
         use DefinitionId::*;
         match self.id {
@@ -72,6 +95,9 @@ impl Definition {
         }
     }
 
+    /// Return editable source metadata with timing defaults derived from `channel`.
+    /// Unavailable/disabled definitions default to polling off; DSG/EGT/disabled routes are unknown.
+    /// Does not check that `channel` matches this definition; full validation must follow.
     pub fn source(
         self,
         channel: Channel,
@@ -99,6 +125,8 @@ impl Definition {
     }
 }
 
+/// Return the configured minimum poll interval for `channel` in milliseconds.
+/// This scheduler policy is not an ECU response-time or bus-capacity guarantee.
 pub const fn minimum_period(channel: Channel) -> u16 {
     match channel {
         Channel::Battery | Channel::Boost | Channel::Lambda => 500,
@@ -107,6 +135,8 @@ pub const fn minimum_period(channel: Channel) -> u16 {
     }
 }
 
+/// Return the complete fixed record for `id`; the closed enum makes lookup total.
+/// Candidate formulas are documentary only; no request is transmitted or qualified here.
 pub fn definition(id: DefinitionId) -> Definition {
     use DefinitionId::*;
     let (channel, name, access, decoder, evidence, interpretation, reference, unavailable) = match id {
@@ -307,19 +337,33 @@ pub fn definition(id: DefinitionId) -> Definition {
     }
 }
 
+/// Bounded source-selection outcome; runtime must separately admit transport/deployment/sample quality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceResolution {
+    /// Polling is off or the definition is disabled.
     Disabled,
-    Unavailable(UnavailableReason),
+    /// Selected polling cannot resolve to a supported generic OBD request.
+    Unavailable(
+        /// First routing/documentary blocker encountered during resolution.
+        UnavailableReason,
+    ),
     /// Describes selection only. The live transport must additionally enforce
     /// deployment qualification, capability discovery and sample quality.
     Obd {
+        /// Current-data service 01 PID from the validated catalogue record.
         pid: u8,
+        /// Admitted requested polling period in milliseconds.
         period_ms: u16,
+        /// Admitted sample lifetime in milliseconds.
         freshness_ms: u16,
     },
 }
 
+/// Resolve `channel` from validated `config` against active CAN IDs `request` and `response`.
+/// Returns disabled before checking routes; unknown/mismatched explicit routes precede
+/// documentary blockers. Only the four generic temperature/voltage definitions resolve to OBD.
+/// Deployment-profile routes inherit the supplied route without qualifying it; callers must
+/// validate actual transport authority/capability before sending any bytes.
 pub fn resolve_source(
     config: &ValidatedConfig,
     channel: Channel,

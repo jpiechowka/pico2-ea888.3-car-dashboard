@@ -6,21 +6,37 @@ use std::path::{Path, PathBuf};
 
 use dashboard_helper_protocol::*;
 use sha2::{Digest, Sha256 as Hasher};
+/// Maximum aggregate bytes in one admitted repository source snapshot.
 const MAX_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+/// Maximum bytes per copied source or reread frozen input file.
 const MAX_SOURCE_FILE: usize = 8 * 1024 * 1024;
+/// Maximum source files admitted across all fixed inventory roots.
 const MAX_SOURCE_FILES: usize = 10000;
+/// Returns lowercase SHA-256 hexadecimal for exact `bytes`, including the standard digest of an empty slice.
 pub fn digest(bytes: &[u8]) -> String { Hasher::digest(bytes).iter().map(|b| format!("{b:02x}")).collect() }
 #[derive(Clone)]
+/// Canonical validated configuration/project and normalized options accepted before filesystem or build work.
 pub struct AcceptedInput {
+    /// Encoded startup profile bytes; dashboard-only request admission supplies reviewed defaults.
     pub(crate) profile: Vec<u8>,
+    /// Converted bounded startup artwork bytes, or empty when absent.
     pub(crate) asset: Vec<u8>,
+    /// Canonical converted-only project bytes; empty for dashboard-only legacy request admission.
     pub(crate) project: Vec<u8>,
+    /// Canonical current-version validated dashboard EAV bytes.
     pub(crate) eav: Vec<u8>,
+    /// Shared normalized clock/features/optimization build choices.
     pub(crate) options: NormalizedBuildOptions,
+    /// Editor accepted publication revision captured in the request.
     pub(crate) revision: u64,
+    /// Lowercase SHA-256 of canonical dashboard bytes.
     config_digest: String,
 }
 impl AcceptedInput {
+    /// Returns dashboard-only input from validated `request`, binding its digest and requiring exact current canonical
+    /// EAV. Schema/hex/digest/codec/options failures reject admission; startup defaults and no artwork/project are
+    /// explicit. Hex unwraps rely on BuildRequest validation, and default profile encoding relies on reviewed
+    /// defaults.
     pub fn from_request(request: &BuildRequest) -> Result<Self, String> {
         request.validate().map_err(|e| e.to_string())?;
         let eav = request
@@ -56,21 +72,34 @@ impl AcceptedInput {
         })
     }
 }
+/// Owned source/input snapshot retained against Windows writes/relocation and verified by content inventory.
 pub struct FrozenInput {
+    /// Source/input file and ancestor handles retained for this snapshot's lifetime.
     _locks: Vec<std::fs::File>,
+    /// Generated attempt directory supplied by the storage reservation owner.
     attempt: PathBuf,
+    /// Isolated source checkout beneath the attempt.
     source: PathBuf,
+    /// Ordered relative source path to SHA-256 inventory.
     files: BTreeMap<String, String>,
+    /// Relative frozen input paths and expected SHA-256 values.
     inputs: BTreeMap<String, String>,
+    /// SHA-256 of deterministic serialized source path/hash inventory.
     source_digest: String,
 }
 impl FrozenInput {
+    /// Returns the isolated source root; callers must not substitute the live repository after capture.
     pub fn source_root(&self) -> &Path { &self.source }
 
+    /// Returns the generated attempt root owning frozen inputs, scratch and retained evidence.
     pub fn attempt_root(&self) -> &Path { &self.attempt }
 
+    /// Returns the deterministic source-manifest SHA-256 recorded at freezing.
     pub fn source_digest(&self) -> &str { &self.source_digest }
 
+    /// Returns success only after re-inventorying every fixed source input and checking every frozen input hash.
+    /// Filesystem/link/size, added/missing source and content mismatches return errors; no bytes are repaired or
+    /// replaced.
     pub fn verify(&self) -> Result<(), String> {
         let current = inventory(&self.source)?;
         if current.len() != self.files.len() {
@@ -90,6 +119,8 @@ impl FrozenInput {
         Ok(())
     }
 }
+/// Returns non-following metadata for `path`, rejecting symlinks/Windows reparse points and filesystem errors.
+/// This check alone does not lock against path replacement; frozen snapshots later retain file/ancestor handles.
 fn safe_metadata(path: &Path) -> Result<fs::Metadata, String> {
     let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     #[cfg(windows)]
@@ -104,6 +135,9 @@ fn safe_metadata(path: &Path) -> Result<fs::Metadata, String> {
     }
     Ok(metadata)
 }
+/// Adds regular bounded `path` beneath `root` to ordered `files`, increasing aggregate byte `total`.
+/// Rejects links, unsupported types, >8 MiB files, >512-byte relative names, 10,000-file cap or >128 MiB total.
+/// Returns errors before adding this file; caller supplies unique traversal paths and a total already within bounds.
 fn add_file(
     root: &Path,
     path: &Path,
@@ -131,6 +165,9 @@ fn add_file(
     files.insert(name, bytes);
     Ok(())
 }
+/// Traverses directory `path` beneath inventory `root`, adding bounded source bytes to `files`/`total`.
+/// Skips target/.git/__pycache__, rejects links and depth beyond 32; I/O/type/budget errors may leave partial caller
+/// collections. Returns success after every admitted child has been copied into the inventory.
 fn tree(
     root: &Path,
     path: &Path,
@@ -159,6 +196,9 @@ fn tree(
     }
     Ok(())
 }
+/// Returns deterministic bounded source bytes from fixed manifests/toolchain configs and build/script/vendor trees
+/// under `root`. Includes unselected firmware member sources needed by Cargo resolution; any
+/// missing/link/type/depth/budget error rejects all.
 fn inventory(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut files = BTreeMap::new();
     let mut total = 0;
@@ -186,6 +226,9 @@ fn inventory(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     }
     Ok(files)
 }
+/// Creates missing parent directories and exclusively writes/syncs exact `bytes` to generated `path`.
+/// Returns filesystem errors without replacing existing files; failure can retain parents or a partially written file.
+/// Caller owns the reserved destination tree and path admission.
 fn write_new(
     path: &Path,
     bytes: &[u8],
@@ -202,6 +245,11 @@ fn write_new(
     file.sync_all().map_err(|e| e.to_string())?;
     Ok(())
 }
+/// Returns a held source/input snapshot of `repo` and admitted `input` inside exclusively reserved `attempt`.
+/// Two complete live inventories must agree before copying; source/input hashes are rechecked after acquiring Windows
+/// holds. Filesystem/source-drift/bounds/serialization errors return no snapshot but can retain partial attempt
+/// evidence for accounting. Caller must own `attempt` through a storage reservation; this performs no compilation or
+/// hardware operation.
 pub(crate) fn freeze_at(
     repo: &Path,
     input: &AcceptedInput,
@@ -263,6 +311,9 @@ pub(crate) fn freeze_at(
     Ok(result)
 }
 
+/// Returns at most 8 MiB from `path`, reading one excess sentinel byte to reject larger files; propagates open/read
+/// errors. Caller supplies separately admitted source metadata or retained frozen-input authority; this function itself
+/// follows paths.
 fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     fs::File::open(path)
@@ -276,11 +327,16 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 #[derive(Clone)]
+/// Canonical converted-only project upload bound to one helper session and opaque upload identity.
 pub struct UploadedProject {
+    /// Session/project identity and exact project/dashboard/profile/asset digests returned to Studio.
     pub response: ProjectUploadResponse,
+    /// Immutable admitted project bytes without original artwork.
     bytes: Vec<u8>,
 }
 impl UploadedProject {
+    /// Returns an upload bound to `session` only if `bytes` satisfy upload size, complete project validation,
+    /// no-original-artwork and exact converted-only canonical encoding. Entropy/admission errors retain no upload.
     pub fn admit(
         session: SessionId,
         bytes: Vec<u8>,
@@ -313,6 +369,9 @@ impl UploadedProject {
         Ok(Self { response, bytes })
     }
 
+    /// Returns immutable build input for `request` only when its project token/digest matches this upload and
+    /// `session`. Request/schema/project/options failures return errors; uploaded bytes are decoded again and never
+    /// replaced from live editor state.
     pub fn accepted(
         &self,
         session: &SessionId,
@@ -338,6 +397,11 @@ impl UploadedProject {
     }
 }
 
+/// Runs the fixed frozen capture script for `frozen` using owned `process`, delivering sanitized output through `sink`.
+/// Returns child output for any exit after before/after source/input verification; caller checks exit and independently
+/// admits artifacts. Creates one attempt-local short scratch directory; source, path, tool, process and verification
+/// errors can leave owned outputs. Sink must not panic/block; cancellation/time/output/scratch budgets are enforced by
+/// the process supervisor.
 pub(crate) fn capture(
     process: &mut crate::process::ProcessContext,
     frozen: &FrozenInput,
@@ -388,7 +452,9 @@ pub(crate) fn capture(
 
 #[cfg(all(test, windows))]
 mod tests {
+    //! Windows snapshot retention and Cargo workspace-loadability fixture without compilation/device operations.
     use super::*;
+    /// Returns a canonical reviewed-default dashboard request with matching digest and default build options.
     fn request() -> BuildRequest {
         let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
         let mut buf = vec![0; dashboard_config::MAX_FILE_BYTES];
@@ -402,6 +468,8 @@ mod tests {
         }
     }
     #[test]
+    /// Frozen source includes all firmware members/vendors, resists writes and remains independent of live checkout
+    /// edits.
     fn snapshot_is_independent_and_detects_input_mutation() {
         use std::fs;
         let repo = std::env::temp_dir().join(format!(

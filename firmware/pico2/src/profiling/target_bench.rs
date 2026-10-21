@@ -9,8 +9,10 @@ use dashboard_pico2::microbench::{self, Budget, Counter, Error, ITERATIONS, Meas
 use embassy_rp::{clocks, pac};
 use embassy_time::Instant;
 
+/// Timer0 register boundary for the temporary benchmark debug-pause guard.
 struct HardwareTimer;
 impl TimerPort for HardwareTimer {
+    /// Returns live Timer0 tick/source/debug-pause metadata without changing the timebase.
     fn read(&self) -> Timebase {
         let tick = pac::TICKS.timer0_ctrl().read();
         Timebase {
@@ -24,6 +26,7 @@ impl TimerPort for HardwareTimer {
         }
     }
 
+    /// Writes Timer0 debug-pause `value` and completes peripheral ordering before return.
     fn write_debug_pause(
         &mut self,
         value: u32,
@@ -33,6 +36,8 @@ impl TimerPort for HardwareTimer {
     }
 }
 
+/// Returns secure core0 DWT_CTRL and DEMCR register snapshots without stealing
+/// a singleton or resetting/disabling the shared counter.
 fn controls() -> (u32, u32) {
     // Privileged Secure core0, Armv8-M DWT_CTRL and DEMCR. No singleton is
     // stolen and no shared counter is reset/disabled by this experiment.
@@ -43,6 +48,7 @@ fn controls() -> (u32, u32) {
         )
     }
 }
+/// Returns controls, wall microseconds then DWT cycles sampled in start order.
 fn start() -> Counter {
     let (control, demcr) = controls();
     let wall_us = Instant::now().as_micros();
@@ -54,6 +60,8 @@ fn start() -> Counter {
         demcr,
     }
 }
+/// Returns DWT cycles, wall microseconds then controls sampled in end order,
+/// bounding the work interval conservatively against wall time.
 fn end() -> Counter {
     let cycles = cortex_m::peripheral::DWT::cycle_count();
     let wall_us = Instant::now().as_micros();
@@ -65,6 +73,9 @@ fn end() -> Counter {
         demcr,
     }
 }
+/// Returns success only on privileged interruptible core0 with an active
+/// unpaused 1 MHz watchdog tick and at least five seconds remaining; otherwise
+/// returns Context or Watchdog without feeding or altering watchdog state.
 fn context() -> Result<(), Error> {
     if pac::SIO.cpuid().read() != 0
         || !crate::tasks::maintenance::interrupt_ready()
@@ -89,16 +100,24 @@ fn context() -> Result<(), Error> {
 }
 
 #[derive(Clone, Copy)]
+/// One finite kernel result retained until timer restoration and deferred logging.
 struct Sample {
+    /// Kernel identity fixing input workload and expected checksum.
     kind: Kernel,
+    /// Start-order raw counter/time/control snapshot.
     before: Counter,
+    /// End-order raw counter/time/control snapshot.
     after: Counter,
+    /// Observed output checksum, compared with the kernel fixture contract.
     checksum: u32,
+    /// Zero on accepted sample, otherwise the shared benchmark Error discriminant.
     status: u8,
 }
 
 /// Retain a named symbol for optimized-code review of every finite iteration.
 #[inline(never)]
+/// Runs `kind` for exactly ITERATIONS using mutable `fixture` and `frame`,
+/// retaining optimizer-visible effects and completing CPU writes with DSB.
 fn batch(
     fixture: &mut Fixture,
     kind: Kernel,
@@ -111,6 +130,11 @@ fn batch(
     cortex_m::asm::dsb();
 }
 
+/// Mutates exclusively borrowed SRAM `frame` with finite benchmark kernels and
+/// emits results only after timing/debug-pause restoration. Rejects debug builds,
+/// bad address/alignment, absent clock/voltage metadata or invalid counter/timebase/
+/// watchdog evidence; retains partial sample diagnostics. Never feeds watchdog,
+/// uses DMA, or increments production display completion/sample counters.
 pub fn run(frame: &mut FrameBuffer) {
     let mut samples = [None; 4];
     let address = frame.as_ptr() as usize;

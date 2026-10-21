@@ -1,23 +1,35 @@
-//! Active colors, independent of the display board's active-low GPIO wiring.
+//! Completed-scene warning evidence and configurable RGB duty, independent of
+//! the display board's active-low GPIO wiring.
 use crate::dashboard::Overlay;
 use crate::display::pipeline::FrameToken;
 
 /// Immutable identity of the warning page whose pixels completed transmission.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PresentedWarning {
+    /// Widget/rule mask whose warning text was included in the frame; zero means none.
     pub rules: u64,
+    /// Producer event frontier captured with those pixels, not the latest live frontier.
     pub event_serial: u64,
+    /// Warning producer run identity; zero means unavailable/unbound.
     pub run_id: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Immutable LED/acknowledgment metadata captured for one rendered scene.
+/// Only matching transfer completion promotes it to the visible scene; completion is not scanout proof.
 pub struct PresentedScene {
+    /// Overlay encoded in the frame, including any frozen warning blink phase.
     pub overlay: Option<Overlay>,
+    /// Acknowledgment evidence for warning text present in the frame.
     pub warning: PresentedWarning,
+    /// Screen whose background-warning policy applies.
     pub page: crate::pages::Page,
+    /// Any scoped visible warning, including snoozed or latched episodes.
     pub eligible: bool,
+    /// Any scoped warning needing unsnoozed attention; distinct from LED eligibility.
     pub attention: bool,
 }
 impl PresentedScene {
+    /// Dashboard scene without overlay, acknowledgment evidence or warning eligibility.
     pub const EMPTY: Self = Self {
         overlay: None,
         warning: PresentedWarning {
@@ -30,9 +42,12 @@ impl PresentedScene {
         attention: false,
     };
 
+    /// Returns Dashboard compatibility metadata for `overlay`, without configured eligibility/evidence.
     pub const fn legacy(overlay: Option<Overlay>) -> Self { Self { overlay, ..Self::EMPTY } }
 
     /// Startup may indicate current warnings but never presents their text.
+    /// Returns a scene stripped of overlay/acknowledgment evidence; `warning_led`
+    /// gates preservation of the input scene's eligibility and attention flags.
     pub const fn startup(
         self,
         warning_led: bool,
@@ -44,6 +59,11 @@ impl PresentedScene {
         }
     }
 
+    /// Returns metadata for validated `config`, coherent `snapshot`, screen `page`,
+    /// stable view ID `view`, rendered `overlay` and freshness clock `now` in ms.
+    /// Scope filters eligibility by view; only a configured Warnings overlay carries
+    /// acknowledgment bits. Caller must match snapshot/config/overlay to the actual
+    /// rendered frame; this function does not verify pixels or complete a transfer.
     pub fn capture(
         config: &dashboard_config::ValidatedConfig,
         snapshot: &crate::acquisition::DashboardSnapshot,
@@ -76,9 +96,11 @@ impl PresentedScene {
     }
 }
 impl From<Option<Overlay>> for PresentedScene {
+    /// Returns legacy Dashboard metadata for `overlay` without acknowledgment evidence.
     fn from(overlay: Option<Overlay>) -> Self { Self::legacy(overlay) }
 }
 impl Default for PresentedScene {
+    /// Returns [`Self::EMPTY`].
     fn default() -> Self { Self::EMPTY }
 }
 
@@ -86,12 +108,16 @@ impl Default for PresentedScene {
 /// rendering the other buffer. No shared GPIO owner or extra task is required.
 #[derive(Default)]
 pub struct PresentedLed {
+    /// Sole submitted frame token and immutable metadata awaiting completion.
     pending: Option<(FrameToken, PresentedScene)>,
+    /// Metadata of the last exactly matched completed transfer.
     visible: PresentedScene,
+    /// Highest admitted sequence, retained even when a pending source is retired.
     last_submitted: u64,
 }
 
 impl PresentedLed {
+    /// Returns empty completed metadata with no in-flight frame and sequence high-water zero.
     pub const fn new() -> Self {
         Self {
             pending: None,
@@ -100,6 +126,9 @@ impl PresentedLed {
         }
     }
 
+    /// Returns `true` after retaining `state` for `token` if idle and its sequence
+    /// exceeds all prior submissions. Returns `false` without mutation otherwise;
+    /// completed metadata remains unchanged until exact-token completion.
     pub fn submit(
         &mut self,
         token: FrameToken,
@@ -115,6 +144,7 @@ impl PresentedLed {
 
     /// A read-only transport gate lets browser rendering preserve its last
     /// submitted buffers when submission is already known to be impossible.
+    /// Returns whether `token` has a strictly newer sequence and no frame is pending.
     pub const fn can_submit(
         &self,
         token: FrameToken,
@@ -122,6 +152,9 @@ impl PresentedLed {
         self.pending.is_none() && token.sequence > self.last_submitted
     }
 
+    /// Returns `true` and promotes pending metadata only when `token` matches both
+    /// buffer and sequence. Stale, duplicate or mismatched completions return `false`
+    /// without mutation. Caller must have already established transport completion.
     pub fn complete(
         &mut self,
         token: FrameToken,
@@ -137,6 +170,8 @@ impl PresentedLed {
         }
     }
 
+    /// Returns whether `state` exactly matches completed metadata while no frame
+    /// is pending. Performs no promotion; caller separately proves unchanged pixels.
     pub fn unchanged(
         &mut self,
         state: impl Into<PresentedScene>,
@@ -152,10 +187,13 @@ impl PresentedLed {
     /// Sequence high-water is preserved so the retired token cannot be resubmitted.
     pub fn retire_pending(&mut self) { self.pending = None; }
 
+    /// Returns warning acknowledgment evidence from the last completed scene only.
     pub const fn warning(&self) -> PresentedWarning { self.visible.warning }
 
+    /// Returns complete metadata from the last matching transfer completion.
     pub const fn visible(&self) -> PresentedScene { self.visible }
 
+    /// Returns whether `state` matches completed metadata with no pending transfer.
     pub fn equivalent(
         &self,
         state: PresentedScene,
@@ -163,6 +201,8 @@ impl PresentedLed {
         self.pending.is_none() && self.visible == state
     }
 
+    /// Returns the legacy default-policy red/green/off projection of completed
+    /// overlay metadata; `backlight_on` gates default visible-warning indication.
     pub fn output(
         &self,
         backlight_on: bool,
@@ -172,13 +212,20 @@ impl PresentedLed {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Legacy single-color projection; configurable RGB output uses [`LedDuty`].
 pub enum StatusLed {
+    /// No emitted light, including the off phase of a visible warning blink.
     Off,
+    /// Normal policy indication; not vehicle-health certification.
     Green,
+    /// On phase of an indicated warning.
     Red,
 }
 
 impl StatusLed {
+    /// Returns default-policy color for completed overlay `visible` and actual
+    /// `backlight_on`. Uses a fresh epoch at zero; configurable RGB animations
+    /// require a persistent [`LedController`] instead.
     pub fn for_overlay(
         visible: Option<Overlay>,
         backlight_on: bool,
@@ -205,21 +252,30 @@ impl StatusLed {
 /// Per-channel emitted light, before the board's active-low inversion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LedDuty {
+    /// Red emitted-light duty in `0..=10000`, before electrical polarity inversion.
     pub red: u16,
+    /// Green emitted-light duty in `0..=10000`, before electrical polarity inversion.
     pub green: u16,
+    /// Blue emitted-light duty in `0..=10000`, before electrical polarity inversion.
     pub blue: u16,
 }
 
 /// One animation epoch follows completed normal/warning selection, never repaint cadence.
 #[derive(Default)]
 pub struct LedController {
+    /// Millisecond start of the current normal/warning selection's animation.
     epoch: u64,
+    /// Last accepted update clock; backward clocks cannot change output or selection.
     last_ms: u64,
+    /// Most recently computed emitted-light duty.
     duty: LedDuty,
+    /// Whether the warning pattern is selected after screen/backlight policy gates.
     warning: bool,
+    /// Whether the first update established an epoch and monotonic clock guard.
     initialized: bool,
 }
 impl LedController {
+    /// Returns an uninitialized controller with zero emitted light until its first update.
     pub const fn new() -> Self {
         Self {
             epoch: 0,
@@ -234,8 +290,17 @@ impl LedController {
         }
     }
 
+    /// Returns the last computed duty without advancing animation time.
     pub const fn duty(&self) -> LedDuty { self.duty }
 
+    /// Returns and stores emitted-light duty using `settings`, completed `scene`,
+    /// actual `backlight_on`, monotonic `now_ms` and `reduced_motion`.
+    /// Backward time returns the previous duty without mutation. Normal/warning
+    /// selection changes restart the epoch; repaint or settings changes alone do not.
+    /// Snoozed eligibility still selects warning policy. A committed overlay phase
+    /// controls synchronized warning blink when lit; reduced motion makes breathing
+    /// solid but preserves explicit blinking. Invalid raw periods/duties/brightness
+    /// clamp to `200..=10000` ms, `10..=90` percent and at most 100 percent respectively.
     pub fn update(
         &mut self,
         settings: &dashboard_config::LedSettings,

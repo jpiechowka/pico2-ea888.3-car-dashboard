@@ -4,31 +4,51 @@ use heapless::Vec;
 use super::elm::{self, Line, Payload};
 use crate::diagnostics::request::{Reply, Request};
 
+/// Maximum accepted bytes in one ingress notification.
 pub const MAX_NOTIFICATION: usize = 244;
+/// Maximum total notification bytes consumed by one transaction, including whitespace.
 pub const MAX_TRANSACTION_BYTES: usize = 1024;
+/// Maximum caller-selected transaction budget in milliseconds; pending replies never extend it.
 pub const MAX_DEADLINE_MS: u64 = 5_000;
 
+/// Explicit traffic authority; real adapter sessions never issue ECU reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// Initialize and identify an adapter only; reject every diagnostic read command.
     AdapterOnly,
+    /// Separate synthetic test service permits bounded fixture reads after initialization.
     SyntheticPeer,
 }
 
+/// One ordered adapter configuration command; successful OK/prompt advances exactly one step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Init {
+    /// ATE0: disable command echo, while the parser tolerates one initial exact echo.
     EchoOff,
+    /// ATL0: disable generated linefeeds.
     LinefeedsOff,
+    /// ATS1: retain spaces required by the raw CAN grammar.
     SpacesOn,
+    /// ATH1: include CAN identifier headers.
     HeadersOn,
+    /// ATD1: include explicit DLC digits.
     DlcOn,
+    /// ATM0: disable automatic protocol persistence in the adapter.
     MemoryOff,
+    /// ATSP6: select 11-bit CAN at 500 kbit/s.
     Can11Bit500K,
+    /// ATCEA: restore normal CAN addressing.
     NormalAddressing,
+    /// ATCAF0: disable adapter ISO-TP formatting, retaining raw CAN/PCI bytes.
     RawCan,
+    /// ATCFC1: let the adapter provide ISO-TP flow control.
     AutomaticFlowControl,
+    /// ATSH7E0: select the engine request CAN identifier for synthetic fixture reads.
     EngineHeader,
+    /// ATCRA7E8: filter raw CAN replies to the expected engine response identifier.
     EngineFilter,
 }
+/// Mandatory initialization order before any synthetic read; each command needs an OK and prompt.
 pub const INITIALIZATION: [Init; 12] = [
     Init::EchoOff,
     Init::LinefeedsOff,
@@ -44,13 +64,18 @@ pub const INITIALIZATION: [Init; 12] = [
     Init::EngineFilter,
 ];
 
+/// Privately constructed synthetic read contract; carries no real-vehicle qualification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QualifiedRead {
+    /// Read-only service and echoed PID/DID expected in the response.
     request: Request,
+    /// Exact positive-response data width after service/identifier prefix.
     width: u8,
 }
 impl QualifiedRead {
     /// Qualification is for a synthetic test peer only, never a vehicle.
+    /// Returns the fixture contract for `pid`: supported-page 00/20/40 use four bytes,
+    /// temperature 05/0F/5C one, module voltage 42 two; other PIDs return Unqualified.
     pub fn synthetic_obd(pid: u8) -> Result<Self, Error> {
         let width = match pid {
             0 | 0x20 | 0x40 => 4,
@@ -65,6 +90,8 @@ impl QualifiedRead {
     }
 
     /// Echo/width fixture. No DID conversion or vehicle source is supplied.
+    /// Returns a synthetic read of `did` requiring `width` data bytes in 1..=61;
+    /// zero/oversized width returns Length. DID bytes are echoed, not semantically qualified.
     pub fn synthetic_did(
         did: u16,
         width: u8,
@@ -78,100 +105,196 @@ impl QualifiedRead {
         })
     }
 
+    /// Returns `self`'s read-only service/identifier request without changing its authority.
     pub const fn request(self) -> Request { self.request }
 }
 
+/// One transaction type admitted by mode and initialization state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    Initialize(Init),
+    /// Perform the next ordered initialization command.
+    Initialize(
+        /// Required current initialization step.
+        Init,
+    ),
+    /// Request ATI adapter identity; allowed independently of initialization completion.
     Identity,
-    Read(QualifiedRead),
+    /// Execute a bounded read only in fully initialized synthetic-peer mode.
+    Read(
+        /// Synthetic request and exact positive data width.
+        QualifiedRead,
+    ),
 }
+/// Exact write acknowledgment/completion identity, nonreused across connection epochs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
+    /// Strictly increasing connection epoch supplied by the owner.
     epoch: u64,
+    /// Checked transaction serial, retained across reconnects and never wrapped.
     serial: u64,
 }
+/// Owned command bytes and identity returned to the GATT writer.
 #[derive(Debug)]
 pub struct Transmission {
+    /// Token that must be returned once the complete GATT write finishes.
     pub token: Token,
+    /// ASCII command with final CR, at most 32 bytes; diagnostic requests include raw PCI/padding.
     pub bytes: Vec<u8, 32>,
 }
+/// Recognized adapter text error, distinct from a valid diagnostic response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdapterError {
+    /// Adapter returned `?` for an unrecognized command.
     UnknownCommand,
+    /// Adapter returned STOPPED.
     Stopped,
+    /// Adapter returned CAN ERROR.
     Can,
+    /// Adapter returned BUS ERROR or BUS INIT: ERROR.
     Bus,
+    /// Adapter returned BUFFER FULL.
     BufferFull,
+    /// Adapter returned UNABLE TO CONNECT.
     UnableToConnect,
 }
+/// Prompt-completed response; negative/pending/no-data/error outcomes are never samples.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Response {
+    /// Initialization returned exact OK.
     Ok,
-    Identity(Line),
-    Diagnostic(Payload),
-    Negative(u8),
+    /// Identity line matched an allowed adapter prefix; does not prove genuine hardware.
+    Identity(
+        /// Original bounded printable identity line.
+        Line,
+    ),
+    /// Synthetic read echoed exact service/identifier and expected data width.
+    Diagnostic(
+        /// Full diagnostic response including service/identifier prefix.
+        Payload,
+    ),
+    /// Diagnostic negative response with service echo and exact framing.
+    Negative(
+        /// Raw negative response code other than pending 0x78.
+        u8,
+    ),
+    /// Prompt arrived after response-pending, invalidating the session rather than extending budget.
     Pending,
+    /// Adapter returned NO DATA; does not publish a numeric zero.
     NoData,
-    AdapterError(AdapterError),
+    /// Adapter reported a recognized failure line.
+    AdapterError(
+        /// Specific adapter error classification.
+        AdapterError,
+    ),
 }
+/// One response finalized by a prompt, with immutable request identity and actual receipt times.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Completion {
+    /// Exact transaction token originally issued for its command bytes.
     pub token: Token,
+    /// Command that produced this response.
     pub command: Command,
+    /// Authority mode under which the transaction was admitted.
     pub mode: Mode,
+    /// Parsed response; only synthetic Diagnostic is a successful diagnostic fixture reply.
     pub response: Response,
+    /// Boot-relative admission time in milliseconds.
     pub started_ms: u64,
+    /// Boot-relative milliseconds of notification containing the final prompt.
     pub completed_ms: u64,
 }
+/// Session admission/protocol error; clock/exhaustion are terminal for the instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// No current connected epoch is valid.
     Disconnected,
+    /// Connection epoch is stale/nonincreasing or notification belongs to another epoch.
     Epoch,
+    /// Another command is already outstanding.
     Busy,
+    /// Real-adapter mode or unsupported synthetic PID prohibits a read.
     Unqualified,
+    /// Initialization step is out of order or synthetic reads began too early.
     Initialization,
+    /// TX acknowledgment token is stale, absent or already acknowledged.
     Token,
+    /// Ingress notification counter skipped/repeated a value; queued data cannot be trusted.
     NotificationLoss,
+    /// Budget, expected width or raw diagnostic framing length is invalid.
     Length,
+    /// Notification/transaction/payload work exceeded its bounded capacity.
     Overflow,
+    /// Monotonic clock regressed; instance cannot reconnect afterward.
     Clock,
+    /// Immutable transaction deadline reached or passed.
     Timeout,
+    /// Epoch-independent serial, notification sequence or deadline arithmetic exhausted.
     Exhausted,
+    /// Unexpected echo/status/prompt ordering or notification before TX acknowledgment.
     Unexpected,
-    Parse(elm::Error),
+    /// ASCII/CAN/ISO-TP parser rejected the reply.
+    Parse(
+        /// Specific bounded parser failure.
+        elm::Error,
+    ),
+    /// Service/identifier/negative-response shape disagreed, or pending limit was exceeded.
     Reply,
 }
 
+/// Single active transaction context; only one mutable owner can advance its receive state.
 struct Active {
+    /// Admitted command and its synthetic read width if applicable.
     command: Command,
+    /// Epoch/serial identity required by TX acknowledgment.
     token: Token,
+    /// Boot-relative start time in milliseconds.
     started_ms: u64,
+    /// Exclusive absolute deadline in milliseconds, never extended by received data.
     deadline_ms: u64,
+    /// Complete GATT write has been acknowledged locally.
     sent: bool,
+    /// The optional exact command echo has already been consumed.
     echo: bool,
+    /// Total notification bytes seen for this command, including delimiters/padding.
     bytes_seen: usize,
+    /// Number of response-pending messages received, capped at three.
     pending_count: u8,
 }
 
+/// Bounded single-flight ASCII session; transport owner supplies fresh epochs and ingress counts.
 pub struct Session {
+    /// Immutable adapter-only versus separate synthetic-peer authority.
     mode: Mode,
+    /// Last connected epoch, retained across invalidation.
     epoch: u64,
+    /// Last issued TX serial, retained across connections and checked for exhaustion.
     serial: u64,
+    /// Last accepted notification ingress sequence in the current epoch.
     sequence: u64,
+    /// Latest accepted boot-relative observation time in milliseconds.
     last_ms: u64,
+    /// Current epoch is usable; invalidation clears this before any reconnect.
     connected: bool,
+    /// Irrecoverable clock/exhaustion error preventing reconnect on this instance.
     terminal: Option<Error>,
+    /// Count of successfully prompted initialization commands in the fixed sequence.
     initialized: usize,
+    /// Outstanding command context, absent outside a transaction.
     active: Option<Active>,
+    /// Incremental ASCII framing for the current transaction.
     parser: elm::Parser,
+    /// Parsed response awaiting prompt; Pending may be replaced by a later final response.
     response: Option<Response>,
+    /// Current raw ISO-TP payload assembly, bounded to 64 bytes.
     payload: Payload,
+    /// Expected ISO-TP payload length from SF/FF, reset on new/pending reply.
     total: usize,
+    /// Next expected consecutive-frame sequence nibble, wrapping modulo 16.
     next_frame: u8,
 }
 impl Session {
+    /// Returns a disconnected session with immutable authority `mode`, zero identities
+    /// and no parser history. Owner must establish a fresh transport before connecting it.
     pub const fn new(mode: Mode) -> Self {
         Self {
             mode,
@@ -193,6 +316,10 @@ impl Session {
 
     /// The owner must reconnect, discard old RX/TX work and establish a fresh
     /// notification stream before calling this. A larger number alone is no flush.
+    /// Returns unit after activating strictly newer nonzero `epoch` at boot-relative
+    /// `now_ms`, clearing transaction/initialization state and resetting notification count.
+    /// Stale epoch returns Epoch without mutation; backward time invalidates and latches
+    /// Clock. Existing terminal clock/exhaustion failures reject all reconnect attempts.
     pub fn connect(
         &mut self,
         epoch: u64,
@@ -215,6 +342,11 @@ impl Session {
         Ok(())
     }
 
+    /// Admits `command` in `self` at boot-relative `now_ms` with immutable `budget_ms`
+    /// in 1..=5000, returning owned ASCII bytes and a checked token. Allows one active
+    /// command, enforces initialization order and confines all reads to synthetic mode.
+    /// Admission errors retain current work except temporal/exhaustion failures, which
+    /// invalidate the session. A successful begin resets parsing but does not acknowledge TX.
     pub fn begin(
         &mut self,
         command: Command,
@@ -276,6 +408,9 @@ impl Session {
 
     /// Acknowledges the complete GATT write, never ECU receipt. The owner must
     /// retain/queue early notifications until this callback, or invalidate.
+    /// Returns unit after marking exact active unsent `token` sent at boot-relative
+    /// `now_ms`; wrong/already-sent tokens return Token before advancing the clock.
+    /// Temporal failure invalidates the session. This is not proof of ECU receipt.
     pub fn sent(
         &mut self,
         token: Token,
@@ -291,6 +426,13 @@ impl Session {
 
     /// Sequence counts notifications at ingress, before a bounded queue can
     /// drop them. The first notification of each connection is sequence one.
+    /// Consumes `bytes` for exact `epoch` and next ingress `sequence` at boot-relative
+    /// `now_ms`. Returns `None` while accumulating, or one Completion only after the prompt.
+    /// Old epochs return Epoch without mutation. Lost sequence, early TX, foreign/malformed
+    /// reply, non-CR/LF post-prompt data, or bounds/deadline errors invalidate the session.
+    /// Empty notifications still consume sequence. Idle CR/LF is accepted; failed reply
+    /// outcomes return a completion but disconnect logically and reset initialization.
+    /// No partial positive payload escapes; caller must invalidate on cancelled/partial TX.
     pub fn notify(
         &mut self,
         epoch: u64,
@@ -372,6 +514,9 @@ impl Session {
         }))
     }
 
+    /// Advances `self`'s boot-relative `now_ms`, returning unit while connected and before
+    /// the active deadline. Disconnected returns Disconnected; reversed time or deadline
+    /// equality invalidates the session. Clock is terminal, timeout permits a fresh epoch.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -391,6 +536,9 @@ impl Session {
 
     /// Disconnect, flash park, notification loss, partial TX or cancelled work.
     /// Resume requires a strictly newer connection epoch and initialization.
+    /// Clears `self`'s connection, active work, initialization and parser/response payload,
+    /// returning unit. Retains epoch/serial/clock and terminal fault so stale work cannot
+    /// regain authority; owner must still disconnect/drain the physical transport separately.
     pub fn invalidate(&mut self) {
         self.connected = false;
         self.initialized = 0;
@@ -400,12 +548,18 @@ impl Session {
         self.parser = elm::Parser::new();
     }
 
+    /// Returns whether `self` currently admits work in a valid logical connection epoch.
     pub const fn connected(&self) -> bool { self.connected }
 
+    /// Returns whether `self` has one outstanding command awaiting prompt completion.
     pub fn busy(&self) -> bool { self.active.is_some() }
 
+    /// Returns `self`'s next ordered initialization step, or `None` after all twelve succeed.
+    /// This reports progress even when disconnected; it does not authorize transmission.
     pub fn next_initialization(&self) -> Option<Init> { INITIALIZATION.get(self.initialized).copied() }
 
+    /// Invalidates `self` and returns the supplied `error` for any expected output type;
+    /// Clock/Exhausted also latch terminal state that blocks all later connect calls.
     fn fail<T>(
         &mut self,
         error: Error,
@@ -417,6 +571,11 @@ impl Session {
         Err(error)
     }
 
+    /// Consumes complete ASCII `line` for `self`'s active command, returning unit after
+    /// optional exact echo, status, identity or raw CAN admission. Rejects duplicate/
+    /// reordered responses; Pending clears assembly for a possible final reply.
+    /// Errors may partially update receive state and must be followed by invalidation.
+    /// Panics if called without active work; `notify` establishes that precondition.
     fn line(
         &mut self,
         line: &[u8],
@@ -471,6 +630,11 @@ impl Session {
         Ok(())
     }
 
+    /// Parses raw CAN `line` for synthetic `read` into `self`'s bounded ISO-TP assembly,
+    /// returning unit after validating source 0x7E8, PCI/sequence, service/identifier echo
+    /// and exact positive width. Allows at most three pending responses without extending
+    /// deadline. Errors can leave partial assembly and require session invalidation.
+    /// Active command must exist for pending accounting; caller guarantees this invariant.
     fn receive_frame(
         &mut self,
         read: QualifiedRead,
@@ -545,6 +709,10 @@ impl Session {
     }
 }
 
+/// Returns ASCII bytes for `command` with final CR; synthetic reads reuse read-only
+/// request PCI/service/identifier encoding at 0x7E0 and output uppercase hex with padding.
+/// Fixed initialization/identity strings and eight-byte CAN requests fit capacity 32;
+/// internal unwraps rely on those compile-time command/identifier bounds.
 fn encode(command: Command) -> Vec<u8, 32> {
     let mut bytes = Vec::new();
     let text: &[u8] = match command {
@@ -581,9 +749,12 @@ fn encode(command: Command) -> Vec<u8, 32> {
 }
 
 #[cfg(test)]
+/// Synthetic protocol/state regressions; never connect to an adapter or publish vehicle data.
 mod tests {
     use super::*;
 
+    /// Returns a synthetic session at epoch one after all twelve OK/prompt replies and
+    /// its last ingress sequence; panics if the fixture initialization fails.
     fn initialized() -> (Session, u64) {
         let mut session = Session::new(Mode::SyntheticPeer);
         session.connect(1, 0).unwrap();
@@ -599,6 +770,9 @@ mod tests {
         }
         (session, sequence)
     }
+    /// Starts synthetic PID05 in initialized `session` at 1 ms and acknowledges TX at
+    /// 2 ms; returns its transmission after asserting exact raw request bytes.
+    /// Panics if fixture admission/encoding or acknowledgment fails.
     fn coolant(session: &mut Session) -> Transmission {
         let tx = session
             .begin(Command::Read(QualifiedRead::synthetic_obd(5).unwrap()), 1, 500)
@@ -609,6 +783,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking every notification split preserves final-prompt timing
+    /// and exact PID/source decoding; panics on premature publication or changed payload.
     fn every_notification_split_requires_final_prompt_and_exact_source() {
         let reply = b"7E8 8 03 41 05 82 00 00 00 00\r\n>";
         for split in 1..reply.len() {
@@ -630,6 +806,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after rejecting OBD/DID reads in adapter-only mode while admitting
+    /// ATI with one echo; panics if a synthetic fixture gains real-adapter read authority.
     fn real_adapter_cannot_transmit_any_ecu_request() {
         let mut session = Session::new(Mode::AdapterOnly);
         session.connect(1, 0).unwrap();
@@ -649,6 +827,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking timeout/loss/disconnect/reversal invalidation, newer-epoch
+    /// recovery and terminal clock failure; panics if stale callbacks mutate a new session.
     fn timeout_loss_disconnect_and_clock_regression_invalidate() {
         for failure in 0..4 {
             let (mut session, seq) = initialized();
@@ -674,6 +854,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after rejecting wrong CAN/PID/width, unexpected echoes, post-prompt
+    /// data and incomplete multiframes; panics if malformed evidence completes a sample.
     fn malformed_foreign_echo_and_post_prompt_bytes_never_publish() {
         for reply in [
             b"7E9 4 03 41 05 82\r>".as_slice(),
@@ -692,6 +874,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after classifying no-data, CAN-error, negative and pending outcomes
+    /// while invalidating their sessions; panics if any becomes a successful sample.
     fn no_data_errors_and_negative_responses_are_not_samples() {
         for (reply, expected) in [
             (b"NO DATA\r>".as_slice(), Response::NoData),
@@ -710,6 +894,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after reassembling a synthetic DID first/consecutive-frame pair
+    /// with exact request and reply bytes; panics on PCI/padding or payload drift.
     fn raw_multiframe_reassembles_with_adapter_owned_flow_control() {
         let (mut session, seq) = initialized();
         let tx = session
@@ -734,6 +920,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after accepting pending then final response before the original
+    /// deadline and rejecting equality; panics if pending extends the transaction budget.
     fn pending_can_precede_final_reply_but_never_extend_total_budget() {
         let (mut session, seq) = initialized();
         coolant(&mut session);
@@ -753,6 +941,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking stale TX tokens/notification epochs cannot advance
+    /// a new transaction's clock or corrupt it; panics if its valid reply cannot complete.
     fn old_tx_tokens_and_notification_epochs_cannot_mutate_new_request() {
         let (mut session, seq) = initialized();
         let first = coolant(&mut session);
@@ -766,6 +956,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after forcing serial/deadline/sequence exhaustion and checking terminal
+    /// rejection; panics if an identity or absolute deadline can wrap into valid work.
     fn checked_identity_and_time_exhaustion_remain_terminal() {
         let mut session = Session::new(Mode::AdapterOnly);
         session.connect(1, 0).unwrap();
@@ -785,6 +977,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after injecting an ingress sequence gap at every reply split;
+    /// panics if any partial reply survives loss to become a completion.
     fn lost_notification_at_every_split_cannot_complete() {
         let reply = b"7E8 4 03 41 05 82\r>";
         for split in 0..reply.len() {
@@ -800,6 +994,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking line, notification and cumulative transaction caps,
+    /// including whitespace-only input; panics if excess work leaves the session connected.
     fn bounded_notification_line_and_transaction_work() {
         for bytes in [&[b'A'; 65][..], &[b'\r'; MAX_NOTIFICATION + 1][..]] {
             let (mut session, seq) = initialized();
@@ -816,6 +1012,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after reassembling every synthetic positive width 1..=61 under
+    /// seventeen deterministic fragmentations; panics on early prompt or payload mismatch.
     fn all_bounded_payload_lengths_and_seeded_fragmentations() {
         use core::fmt::Write;
         for width in 1..=61 {
@@ -881,6 +1079,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after rejecting oversized, missing-first, bad-sequence and duplicate
+    /// ISO-TP frames; panics if any invalid assembly leaves the session connected.
     fn incomplete_duplicate_bad_sequence_and_oversize_multiframes_fail_closed() {
         for reply in [
             b"7E8 8 10 41 62 12 34 01 02 03\r>".as_slice(),
@@ -900,6 +1100,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking initialization order/read gating, adapter rejection
+    /// and the fourth pending response; panics if failures can retain an active epoch.
     fn initialization_failure_and_four_pending_replies_close_epoch() {
         let mut session = Session::new(Mode::SyntheticPeer);
         session.connect(1, 0).unwrap();
@@ -934,6 +1136,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after accepting one exact echo, rejecting duplicates and rejecting
+    /// notifications before TX acknowledgment; panics if owner queue discipline is bypassed.
     fn echoes_are_consumed_once_and_early_notifications_require_owner_queue() {
         let (mut session, seq) = initialized();
         coolant(&mut session);
@@ -956,6 +1160,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after completing at the final ingress sequence and rejecting another
+    /// transmission; panics if next-command admission permits sequence reuse.
     fn notification_counter_exhaustion_blocks_next_transmission() {
         let mut session = Session::new(Mode::AdapterOnly);
         session.connect(1, 0).unwrap();
@@ -967,6 +1173,8 @@ mod tests {
     }
 
     #[test]
+    /// Returns unit after checking big-endian millivolt decoding and exact negative reply
+    /// service/width; panics on byte-order drift or accepting malformed negative evidence.
     fn voltage_preserves_big_endian_millivolts_and_negative_width_is_exact() {
         let (mut session, seq) = initialized();
         let tx = session

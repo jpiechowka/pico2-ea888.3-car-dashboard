@@ -1,4 +1,6 @@
 //! Bounded authenticated loopback transport for explicit helper actions.
+//! Browser origin/preflight handling follows the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol);
+//! the session capability is additionally required for operations and is never accepted from a URL.
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,33 +18,55 @@ mod operations;
 use http::*;
 use operations::*;
 
+/// Fixed loopback listener and exact accepted Host authority.
 const AUTHORITY: &str = "127.0.0.1:8765";
+/// Explicit Studio development origins; no wildcard or alternate ports.
 const ORIGINS: [&str; 2] = ["http://127.0.0.1:8080", "http://localhost:8080"];
+/// Short-held serialized status/cache owner; filesystem and process work must run outside this mutex.
 struct Inner {
+    /// Authoritative job state and bounded retained event history.
     jobs: JobStore,
+    /// Most recent prerequisite report, initially explicitly unchecked.
     cached: Value,
+    /// Last descriptor scan; not proof of current device presence.
     devices: DeviceScanReport,
+    /// Latest admitted converted-only upload; replacement retires its old token.
     project: Option<Arc<crate::build_input::UploadedProject>>,
+    /// Last two published artifacts and their immutable bytes/optional held source leases.
     artifacts: Vec<crate::artifacts::Artifact>,
+    /// Explicit inspection evidence keyed by selected device; scans and completed flashes invalidate entries.
     inspections: std::collections::BTreeMap<DeviceId, DeviceInspection>,
+    /// Current or finished blocking operation, reaped before later operation admission.
     worker: Option<tokio::task::JoinHandle<()>>,
+    /// Shutdown latch refusing new operations while producers are cancelled/joined.
     stopping: bool,
 }
+/// Per-helper session identity, authority and admission ownership shared by bounded HTTP connections.
 struct State {
+    /// Canonical repository root in production; tests may inject missing roots.
     repo: PathBuf,
+    /// Random session identity invalidated by helper restart.
     session: SessionId,
+    /// Random 256-bit lowercase hexadecimal capability returned only by explicit connect.
     capability: String,
+    /// Optional metadata-only browser terminal relay.
     relay: crate::relay::Relay,
+    /// Serialized status state; poisoning quarantines stateful routes.
     inner: Mutex<Inner>,
+    /// Sticky worker/ownership fault; read-only session status remains available.
     fatal: std::sync::atomic::AtomicBool,
+    /// Single permit covers native operations and blocking storage/project admission even after HTTP cancellation.
     activity: Arc<tokio::sync::Semaphore>,
 }
+/// Returns `2 * N` lowercase hexadecimal characters from OS entropy; returns an entropy error without a token.
 fn random_hex<const N: usize>() -> Result<String, String> {
     let mut b = [0u8; N];
     getrandom::fill(&mut b).map_err(|_| "OS entropy unavailable")?;
     Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 impl State {
+    /// Returns fresh empty state for `repo`, random session/capability and detached diagnostic relay.
+    /// Returns entropy/identity errors; does not validate the repository, bind a listener or start a native operation.
     fn new(repo: PathBuf) -> Result<Arc<Self>, String> {
         let session = SessionId::new(random_hex::<16>()?).map_err(|_| "invalid session")?;
         Ok(Arc::new(Self {
@@ -65,6 +89,9 @@ impl State {
         }))
     }
 
+    /// Returns the sole owned activity permit, Busy while held/closed, or InvalidState after a fatal fault.
+    /// Dropping the permit releases admission; callers move it into blocking work so HTTP cancellation cannot release
+    /// it early.
     fn reserve(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
         if self.fatal.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState);
@@ -72,6 +99,7 @@ impl State {
         self.activity.clone().try_acquire_owned().map_err(|_| Error::Busy)
     }
 }
+/// Returns retained job `id`'s summary from `state`, or lookup/batch error; panics if the owner mutex is poisoned.
 fn summary(
     state: &State,
     id: &JobId,
@@ -84,6 +112,10 @@ fn summary(
         .poll(id, PollRequest { after: 0, limit: 1 })
         .map(|b| b.summary)
 }
+/// Returns storage read by `read` for `state`'s repository and currently leased attempt IDs, outside the status mutex.
+/// Returns Busy for activity/worker contention, Unavailable for owner/task failure, or Quarantined for reader failure.
+/// The blocking closure retains its permit if this future is dropped; started [`tokio::task::spawn_blocking`] work is
+/// not aborted.
 async fn read_build_storage(
     state: Arc<State>,
     read: impl FnOnce(&std::path::Path, &std::collections::BTreeSet<String>) -> Result<BuildStorage, String>
@@ -110,6 +142,12 @@ async fn read_build_storage(
     .await
     .map_err(|_| "BuildStorageUnavailable")?
 }
+/// Handles `request` against session `state`, returning bounded JSON/errors or retained UF2 bytes with no-store/CORS
+/// headers. Enforces exact Host/origin, origin-form URI, capability (except explicit connect/preflight),
+/// framing/type/body limits and route-specific typed admission before work. HTTP cancellation does not undo admitted
+/// jobs or abort started blocking work. Most failures become HTTP statuses; a concurrent owner poison or internal
+/// serialization invariant failure can panic. Connect only returns session credentials; scan, inspection, build,
+/// cleanup and Flash require their explicit POST routes.
 async fn dispatch(
     state: Arc<State>,
     request: Request<Body>,
@@ -480,6 +518,9 @@ async fn dispatch(
         }
     }
 }
+/// Serves the authenticated loopback helper for `repo` until shutdown; returns host/repository/entropy/runtime/server
+/// errors. Creates a current-thread Tokio runtime with separate blocking workers; no device operation starts merely by
+/// listening. Panics if invoked inside an incompatible Tokio runtime or if standard-error reporting fails.
 pub fn serve(repo: PathBuf) -> Result<(), String> {
     let (supported, host) = crate::host::host();
     if !supported {
@@ -496,6 +537,11 @@ pub fn serve(repo: PathBuf) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .block_on(serve_async(state))
 }
+/// Runs `state` on the fixed loopback socket with at most 32 connections, 64/16-KiB headers, 10-second header and
+/// 30-second connection deadlines. Returns bind/listener/owner/worker/cleanup errors; clean shutdown returns success.
+/// On Ctrl-C/stopping, closes acceptance, requests cancellation, aborts HTTP connections and awaits the native worker.
+/// Started blocking work is cooperative and cannot be aborted by the connection timeout; transfer cancellation stays
+/// deferred.
 async fn serve_async(state: Arc<State>) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(AUTHORITY)
         .await
@@ -572,9 +618,11 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
     }
 }
 #[cfg(test)]
+/// HTTP authority, bounded admission, retained-output and cancellation ownership regressions without physical devices.
 mod tests {
     use super::*;
     #[tokio::test]
+    /// Slow blocking storage keeps its activity permit through HTTP cancellation without locking status reads.
     async fn slow_storage_read_does_not_hold_status_owner() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let (entered, ready) = tokio::sync::oneshot::channel();
@@ -614,6 +662,7 @@ mod tests {
         assert!(available, "filesystem work must not hold the status owner mutex");
     }
     #[tokio::test]
+    /// Flash-history cleanup rejects missing capability and an existing unclosed operation before worker launch.
     async fn cleanup_requires_authority_and_a_closed_operation() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let body = serde_json::json!({"attempts":["1".repeat(32)]}).to_string();
@@ -650,6 +699,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Build cleanup enforces the same authority and closed-job admission boundary as flash-history cleanup.
     async fn build_cleanup_requires_authority_and_a_closed_operation() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let body = serde_json::json!({"attempts":["1".repeat(32)]}).to_string();
@@ -686,6 +736,8 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Legacy/non-W board acknowledgement fails wire admission; valid W spelling proceeds only to unavailable artifact
+    /// lookup.
     async fn flash_route_requires_w_consent_before_artifact_lookup_or_work() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let mut body = serde_json::json!({"artifact_id":"a".repeat(64),"device_id":"b".repeat(32),"editor_revision":1,"project_sha256":"c".repeat(64),"config_sha256":"d".repeat(64),"expected_options":BuildOptions::default(),"retry_of":null,"board_acknowledgement":{"device_id":"b".repeat(32),"session_id":state.session,"information_sha256":"e".repeat(64),"board":"genuine_pico2_w"}});
@@ -711,6 +763,8 @@ mod tests {
         }
     }
     #[tokio::test]
+    /// Diagnostic relay rejects foreign origin/capability, oversize and private-message-shaped input without creating
+    /// jobs.
     async fn diagnostics_route_requires_authority_and_bounds_without_jobs() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let good = serde_json::json!({"version":1,"events":[{
@@ -754,6 +808,8 @@ mod tests {
         assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
     }
     #[tokio::test]
+    /// Re-uploading identical valid bytes issues a fresh token; oversize replacement retains the previously admitted
+    /// project.
     async fn project_upload_is_bounded_and_replacement_gets_a_new_token() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
@@ -814,6 +870,8 @@ mod tests {
         );
     }
     #[tokio::test]
+    /// Stale project digest fails before job admission; a missing prerequisite closes failure without storage/artifact
+    /// publication.
     async fn build_rejects_stale_token_and_closes_prerequisite_failure_without_artifact() {
         let repo = std::env::temp_dir().join(format!("studio-missing-{}", random_hex::<16>().unwrap()));
         assert!(!repo.exists());
@@ -859,6 +917,8 @@ mod tests {
         assert!(!repo.exists(), "prerequisite failure must not reserve snapshot storage");
     }
     #[tokio::test]
+    /// Event preflight enforces typed query bounds; a typed build request admits a job that closes on missing
+    /// prerequisites.
     async fn browser_poll_preflight_and_typed_build_route() {
         let repo = std::env::temp_dir().join(format!("studio-missing-{}", random_hex::<16>().unwrap()));
         assert!(!repo.exists());
@@ -908,6 +968,8 @@ mod tests {
         assert!(!repo.exists());
     }
     #[tokio::test]
+    /// Authorized download returns exact retained bytes even without a live flashing lease; missing capability is
+    /// forbidden.
     async fn artifact_download_requires_capability_and_uses_retained_bytes() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let hash = Sha256::new("1".repeat(64)).unwrap();
@@ -963,6 +1025,7 @@ mod tests {
         }
     }
     #[tokio::test]
+    /// Unknown selected device ID rejects inspection before job admission or native work.
     async fn device_inspection_requires_cached_selected_id() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let request = Request::builder()
@@ -977,6 +1040,7 @@ mod tests {
         assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
     }
     #[tokio::test]
+    /// Foreign connect origin and missing operation capability are forbidden.
     async fn rejects_foreign_origin_and_missing_capability() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let bad = Request::builder()
@@ -997,6 +1061,7 @@ mod tests {
         assert_eq!(dispatch(state, missing).await.status(), StatusCode::FORBIDDEN);
     }
     #[tokio::test]
+    /// Explicit connect publishes credentials/no-store/CORS response without starting work.
     async fn connect_is_explicit_and_does_not_start_jobs() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let connect = Request::builder()
@@ -1014,6 +1079,8 @@ mod tests {
         assert_eq!(response.headers()["access-control-allow-origin"], ORIGINS[1]);
     }
     #[tokio::test]
+    /// Rejects absolute-form URIs, unexpected queries, duplicate authority and pre-restart capability; cursors retain
+    /// u64 precision.
     async fn duplicate_authority_query_and_restart_tokens_are_rejected() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let restarted = State::new(std::env::current_dir().unwrap()).unwrap();
@@ -1052,13 +1119,22 @@ mod tests {
 }
 
 #[cfg(test)]
+/// Interrupted project upload retains previous accepted state and supports an explicit new attempt.
 mod upload_failure_tests {
     use super::*;
-    struct InterruptedBody(bool);
+    /// Body yielding one prefix then a repeated connection-reset error.
+    struct InterruptedBody(
+        /// Whether the sole successful prefix frame has already been yielded.
+        bool,
+    );
     impl hyper::body::Body for InterruptedBody {
+        /// Owned byte chunks matching the server body adapter.
         type Data = axum::body::Bytes;
+        /// Injected transport reset surfaced through bounded body collection.
         type Error = std::io::Error;
 
+        /// Returns the initial project magic once, then an injected reset on every poll; the unused task context is
+        /// never parked.
         fn poll_frame(
             mut self: std::pin::Pin<&mut Self>,
             _: &mut std::task::Context<'_>,
@@ -1076,6 +1152,8 @@ mod upload_failure_tests {
             }
         }
     }
+    /// Returns an authorized binary upload request containing `body` for `state`; panics if fixture headers are
+    /// invalid.
     fn upload(
         state: &State,
         body: Body,
@@ -1091,6 +1169,8 @@ mod upload_failure_tests {
             .unwrap()
     }
     #[tokio::test]
+    /// A disconnected body does not replace accepted upload identity; a later explicit successful upload receives a new
+    /// token.
     async fn interrupted_body_keeps_previous_upload_and_allows_explicit_retry() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();

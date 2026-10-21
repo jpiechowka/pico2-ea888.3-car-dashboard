@@ -7,6 +7,8 @@ use dashboard_core::ble::link::LinkSnapshot;
 use dashboard_core::ble::poll::{Cadence, Scheduler};
 use dashboard_core::ble::session::{Command, Completion, INITIALIZATION, Mode, QualifiedRead, Session};
 
+/// Returns a fully initialized synthetic-peer session at epoch one and its last notification sequence.
+/// Feeds fixed OK prompts for every initialization command at 0 ms; protocol/setup rejection panics.
 fn initialized() -> (Session, u64) {
     let mut session = Session::new(Mode::SyntheticPeer);
     session.connect(1, 0).unwrap();
@@ -20,6 +22,8 @@ fn initialized() -> (Session, u64) {
     (session, sequence)
 }
 
+/// Registers chunked coolant decoding and four-channel scheduling CPU workloads with Criterion `c`.
+/// Prints host type sizes; synthetic replies have no wire delay and fixture invariant failures panic.
 fn transactions(c: &mut Criterion) {
     println!(
         "Host layouts: Session={} Completion={} Scheduler<8>={} LinkSnapshot={}",

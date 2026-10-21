@@ -1,5 +1,7 @@
+//! DWT availability requires register enablement and observed counter progress.
 use dashboard_host_validation::cpu_math::cycle_counter_available;
 
+/// Wraparound counts as progress; disabled, absent, trace-disabled or static counters do not.
 #[test]
 fn progress_requires_enabled_implemented_counter_and_trace() {
     assert!(cycle_counter_available(1, 1 << 24, 10, 74));

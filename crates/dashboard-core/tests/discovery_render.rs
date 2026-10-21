@@ -1,17 +1,25 @@
+//! Pixel-boundary and evidence-region checks for live probe, saved capture and slot screens.
 use dashboard_core::discovery::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 #[derive(Default)]
+/// Pixel oracle that rejects any renderer write outside the native landscape panel.
 struct ScreenTarget {
+    /// Last written RGB565 color at each target coordinate.
     pixels: std::collections::BTreeMap<(i32, i32), Rgb565>,
 }
 impl OriginDimensions for ScreenTarget {
+    /// Returns the probe's native 320x240 logical dimensions.
     fn size(&self) -> Size { Size::new(320, 240) }
 }
 impl DrawTarget for ScreenTarget {
+    /// Native panel pixel format.
     type Color = Rgb565;
+    /// Successful writes are infallible; out-of-bounds coordinates panic as test failures.
     type Error = core::convert::Infallible;
 
+    /// Records `pixels`, panicking on any coordinate outside the panel. Returns
+    /// success after retaining all last-write colors; does not silently clip bad output.
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
         pixels: I,
@@ -26,6 +34,7 @@ impl DrawTarget for ScreenTarget {
         Ok(())
     }
 }
+/// Returns a full48-peer catalogue with long synthetic names and fixed unknown-age observations.
 fn populated() -> Probe {
     let mut p = Probe::new();
     for i in 0..48 {
@@ -46,6 +55,7 @@ fn populated() -> Probe {
     p
 }
 #[test]
+/// Exercises every radio phase with first/last/invalid selection and maximum clock, rejecting stray pixels.
 fn every_phase_and_extreme_selection_stays_on_display() {
     let mut p = populated();
     for phase in [
@@ -66,6 +76,7 @@ fn every_phase_and_extreme_selection_stays_on_display() {
     }
 }
 #[test]
+/// Renders a maximum characteristic/value inventory across all pages and proves oversized page indices clamp.
 fn detail_pages_cover_large_inspection_and_clamp() {
     let mut p = populated();
     p.input(Input::Click, 0).unwrap();
@@ -109,6 +120,7 @@ fn detail_pages_cover_large_inspection_and_clamp() {
     assert_eq!(last.pixels, expected.pixels);
 }
 #[test]
+/// Verifies the startup spinner changes pixels after200ms without a rendered-frame counter.
 fn spinner_is_elapsed_time_based() {
     let p = Probe::new();
     let mut a = ScreenTarget::default();
@@ -119,6 +131,7 @@ fn spinner_is_elapsed_time_based() {
 }
 
 #[test]
+/// Changes diagnostics on both screens and multiple radio phases, asserting only the reserved telemetry rows change.
 fn telemetry_is_always_visible_and_does_not_overpaint_other_regions() {
     let mut p = populated();
     for screen in [Screen::List, Screen::Details] {
@@ -174,6 +187,7 @@ fn telemetry_is_always_visible_and_does_not_overpaint_other_regions() {
 }
 
 #[test]
+/// Exercises maximum-width failure/scan evidence while preserving header diagnostics and footer pixels on every page.
 fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
     let mut p = populated();
     p.input(Input::Click, 0).unwrap();
@@ -231,6 +245,7 @@ fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
 }
 
 #[test]
+/// Confirms fault-latch hints affect only the status band even when malformed-report counts are saturated.
 fn latched_scan_hint_changes_only_the_status_band_even_with_saturated_counts() {
     let mut p = populated();
     p.malformed_reports = u32::MAX;
@@ -259,6 +274,8 @@ fn latched_scan_hint_changes_only_the_status_band_even_with_saturated_counts() {
 }
 
 #[test]
+/// Checks saved-page clamping, stable live diagnostics/footer and slot prompts for blocked/empty/unknown/corrupt
+/// states.
 fn saved_pages_and_slot_prompts_fit_and_preserve_the_same_diagnostics_band() {
     use capture_ui::{
         Action as CaptureAction,

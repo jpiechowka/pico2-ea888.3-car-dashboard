@@ -1,3 +1,5 @@
+//! Firmware event IDs and a single-executor, bounded notification queue.
+//! IDs follow [Infineon WHD events](https://infineon.github.io/wifi-host-driver/html/whd__events_8h.html).
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
@@ -11,8 +13,10 @@ use crate::structs::BssInfo;
 crate::util::enum_from_u8! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    /// Firmware event discriminator; unknown bytes map to `Unknown`, not a valid subscription.
     enum Event {
         #[default]
+        /// Unrecognized event ID; never enabled in the host event mask.
         Unknown = 0xFF,
         /// indicates status of set SSID
         SET_SSID = 0,
@@ -84,11 +88,17 @@ crate::util::enum_from_u8! {
         PFN_NET_FOUND = 33,
         /// PFN network lost event
         PFN_NET_LOST = 34,
+        /// Firmware reset completion notification.
         RESET_COMPLETE = 35,
+        /// Beginning of a join attempt; does not establish link success.
         JOIN_START = 36,
+        /// Beginning of a roam attempt; status is reported separately.
         ROAM_START = 37,
+        /// Beginning of association; does not establish authorization.
         ASSOC_START = 38,
+        /// Association in an independent BSS.
         IBSS_ASSOC = 39,
+        /// Radio state notification.
         RADIO = 40,
         /// PSM microcode watchdog fired
         PSM_WATCHDOG = 41,
@@ -98,9 +108,11 @@ crate::util::enum_from_u8! {
         CCX_ASSOC_ABORT = 43,
         /// probe request received
         PROBREQ_MSG = 44,
+        /// Firmware scan confirmation indication.
         SCAN_CONFIRM_IND = 45,
         /// WPA Handshake
         PSK_SUP = 46,
+        /// Regulatory country selection changed.
         COUNTRY_CODE_CHANGED = 47,
         /// WMMAC excedded medium time
         EXCEEDED_MEDIUM_TIME = 48,
@@ -110,6 +122,7 @@ crate::util::enum_from_u8! {
         UNICAST_DECODE_ERROR = 50,
         /// Unsupported multicast encrypted frame
         MULTICAST_DECODE_ERROR = 51,
+        /// Firmware trace notification; no typed payload is decoded here.
         TRACE = 52,
         /// BT-AMP HCI event
         BTA_HCI_EVENT = 53,
@@ -121,6 +134,7 @@ crate::util::enum_from_u8! {
         RSSI = 56,
         /// PFN best network batching event
         PFN_BEST_BATCHING = 57,
+        /// Extended firmware log notification; no typed payload is decoded here.
         EXTLOG_MSG = 58,
         /// Action frame reception
         ACTION_FRAME = 59,
@@ -150,8 +164,9 @@ crate::util::enum_from_u8! {
         PROBRESP_MSG = 71,
         /// P2P Probe request received
         P2P_PROBREQ_MSG = 72,
+        /// Dynamic channel selection request.
         DCS_REQUEST = 73,
-        /// credits for D11 FIFOs. [AC0,AC1,AC2,AC3,BC_MC,ATIM]
+        /// credits for D11 FIFOs. `AC0, AC1, AC2, AC3, BC_MC, ATIM`
         FIFO_CREDIT_MAP = 74,
         /// Received action frame event WITH wl_event_rx_frame_data_t header
         ACTION_FRAME_RX = 75,
@@ -163,6 +178,7 @@ crate::util::enum_from_u8! {
         HTSFSYNC = 78,
         /// request an overlay IOCTL/iovar from the host
         OVERLAY_REQ = 79,
+        /// Channel switch announcement completion indication.
         CSA_COMPLETE_IND = 80,
         /// excess PM Wake Event to inform host
         EXCESS_PM_WAKE_EVENT = 81,
@@ -170,12 +186,15 @@ crate::util::enum_from_u8! {
         PFN_SCAN_NONE = 82,
         /// last found PFN network gets lost
         PFN_SCAN_ALLGONE = 83,
+        /// Group temporal key installed.
         GTK_PLUMBED = 84,
         /// 802.11 ASSOC indication for NDIS only
         ASSOC_IND_NDIS = 85,
         /// 802.11 REASSOC indication for NDIS only
         REASSOC_IND_NDIS = 86,
+        /// Association request information elements.
         ASSOC_REQ_IE = 87,
+        /// Association response information elements.
         ASSOC_RESP_IE = 88,
         /// association recreated on resume
         ASSOC_RECREATED = 89,
@@ -199,6 +218,7 @@ crate::util::enum_from_u8! {
         NIC_AF_TXS = 99,
         /// NAN event
         NAN = 100,
+        /// Received beacon frame notification.
         BEACON_FRAME_RX = 101,
         /// desired service found
         SERVICE_FOUND = 102,
@@ -234,9 +254,13 @@ crate::util::enum_from_u8! {
         AWDL_AW_END = 118,
         /// AWDL AW Extensions
         AWDL_AW_EXT = 119,
+        /// AWDL peer-cache control notification; no typed payload is decoded here.
         AWDL_PEER_CACHE_CONTROL = 120,
+        /// Channel switch announcement procedure started.
         CSA_START_IND = 121,
+        /// Channel switch announcement procedure finished.
         CSA_DONE_IND = 122,
+        /// Channel switch announcement procedure failed.
         CSA_FAILURE_IND = 123,
         /// CCA based channel quality report
         CCA_CHAN_QUAL = 124,
@@ -288,15 +312,21 @@ crate::util::enum_from_u8! {
 }
 
 // TODO this PubSub can probably be replaced with shared memory to make it a bit more efficient.
+/// Queue of two copied messages with one publisher/subscriber; immediate publication can lose old events.
 pub type EventQueue = PubSubChannel<NoopRawMutex, Message, 2, 1, 1>;
+/// Exclusive subscriber borrowing the queue for `'a`; lag reflects overwritten event messages.
 pub type EventSubscriber<'a> = Subscriber<'a, NoopRawMutex, Message, 2, 1, 1>;
 
+/// Runner-to-control event channel and host-side subscription mask; confined to one executor.
 pub struct Events {
+    /// Bounded event delivery; subscribing twice fails.
     pub queue: EventQueue,
+    /// Filters host publication, not firmware event generation.
     pub mask: SharedEventMask,
 }
 
 impl Events {
+    /// Returns an empty channel with every event disabled.
     pub const fn new() -> Self {
         Self {
             queue: EventQueue::new(),
@@ -305,27 +335,36 @@ impl Events {
     }
 }
 
+/// Decoded event identity and full-width firmware status.
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Status {
+    /// Recognized firmware discriminator.
     pub event_type: Event,
+    /// Firmware status preserved without truncation; zero success is event-specific.
     pub status: u32,
 }
 
+/// Payloads decoded by this driver; other firmware payloads are not exposed.
 #[derive(Copy, Clone)]
 pub enum Payload {
+    /// Event has no decoded payload (also scan completion).
     None,
-    BssInfo(BssInfo),
+    /// One copied partial-scan BSS record.
+    BssInfo(#[doc = "Validated fixed-size BSS information, excluding trailing variable IEs."] BssInfo),
 }
 
+/// Copied event delivered through the bounded queue.
 #[derive(Copy, Clone)]
-
 pub struct Message {
+    /// Event identity and full-width status.
     pub header: Status,
+    /// Optional decoded scan record; no raw payload ownership is transferred.
     pub payload: Payload,
 }
 
 impl Message {
+    /// Returns a message containing `status` and `payload` without validating their combination.
     pub fn new(status: Status, payload: Payload) -> Self {
         Self {
             header: status,
@@ -334,53 +373,65 @@ impl Message {
     }
 }
 
+/// Dense bitset for recognized non-sentinel event discriminators.
 struct EventMask {
+    /// Bit n admits event n; unused high bits stay clear.
     mask: [u32; Self::WORD_COUNT],
 }
 
 impl EventMask {
+    /// Number of words needed for IDs below the exclusive LAST sentinel.
     const WORD_COUNT: usize = ((Event::LAST as u32 + (u32::BITS - 1)) / u32::BITS) as usize;
 
+    /// Returns an all-disabled mask.
     const fn new() -> Self {
         Self {
             mask: [0; Self::WORD_COUNT],
         }
     }
 
+    /// Returns the word index and one-hot bit for `event`, or None for either sentinel.
     fn bit(event: Event) -> Option<(usize, u32)> {
         let n = event as u32;
         // Unknown and LAST are sentinels, not subscribable firmware events.
         (n < Event::LAST as u32).then_some(((n / u32::BITS) as usize, 1 << (n % u32::BITS)))
     }
 
+    /// Enables `event`; sentinel inputs have no effect.
     fn enable(&mut self, event: Event) {
         if let Some((word, bit)) = Self::bit(event) {
             self.mask[word] |= bit;
         }
     }
 
+    /// Disables `event`; sentinel inputs have no effect.
     fn disable(&mut self, event: Event) {
         if let Some((word, bit)) = Self::bit(event) {
             self.mask[word] &= !bit;
         }
     }
 
+    /// Returns whether `event` is enabled; sentinels always return false.
     fn is_enabled(&self, event: Event) -> bool {
         Self::bit(event).is_some_and(|(word, bit)| self.mask[word] & bit != 0)
     }
 }
 
+/// Interior-mutable host filter; RefCell forbids cross-thread sharing and overlapping mutation.
 pub struct SharedEventMask {
+    /// Synchronous borrows never cross an await in this implementation.
     mask: RefCell<EventMask>,
 }
 
 impl SharedEventMask {
+    /// Returns a host mask with every event disabled.
     pub const fn new() -> Self {
         Self {
             mask: RefCell::new(EventMask::new()),
         }
     }
 
+    /// Enables every recognized entry in `events`; duplicates and sentinels are harmless.
     pub fn enable(&self, events: &[Event]) {
         let mut mask = self.mask.borrow_mut();
         for event in events {
@@ -389,6 +440,7 @@ impl SharedEventMask {
     }
 
     #[allow(dead_code)]
+    /// Disables every entry in `events`, preserving other subscriptions.
     pub fn disable(&self, events: &[Event]) {
         let mut mask = self.mask.borrow_mut();
         for event in events {
@@ -396,11 +448,13 @@ impl SharedEventMask {
         }
     }
 
+    /// Clears all host subscriptions, including those established by another control operation.
     pub fn disable_all(&self) {
         let mut mask = self.mask.borrow_mut();
         mask.mask = Default::default();
     }
 
+    /// Returns whether recognized `event` is subscribed; sentinels return false.
     pub fn is_enabled(&self, event: Event) -> bool {
         let mask = self.mask.borrow();
         mask.is_enabled(event)
@@ -408,6 +462,7 @@ impl SharedEventMask {
 }
 
 impl Default for SharedEventMask {
+    /// Returns an all-disabled host mask.
     fn default() -> Self {
         Self::new()
     }

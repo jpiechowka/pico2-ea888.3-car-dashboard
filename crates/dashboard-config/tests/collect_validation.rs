@@ -1,7 +1,9 @@
+//! Multi-error traversal, causal suppression and stable JSON-location contracts.
 use core::ops::ControlFlow;
 
 use dashboard_config::*;
 
+/// Visit every issue in `config`, returning deterministic ordered errors; panics if traversal unexpectedly stops.
 fn issues(config: &Config) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
     assert_eq!(
@@ -15,6 +17,7 @@ fn issues(config: &Config) -> Vec<ValidationIssue> {
 }
 
 #[test]
+/// Bad references/IDs do not suppress independent errors or invent overlap coordinates for invalid placements.
 fn independent_errors_survive_bad_geometry_references_and_duplicate_ids() {
     let mut config = default_config();
     config
@@ -81,6 +84,7 @@ fn independent_errors_survive_bad_geometry_references_and_duplicate_ids() {
 }
 
 #[test]
+/// A visitor break emits only the same first issue returned by single-error validation.
 fn break_stops_at_the_existing_first_error() {
     let mut config = default_config();
     config.version = 999;
@@ -98,6 +102,7 @@ fn break_stops_at_the_existing_first_error() {
 }
 
 #[test]
+/// Control/color/fuel errors accumulate, while invalid fuel inputs prevent misleading derived-math errors.
 fn nested_helpers_collect_independent_fields_and_skip_derived_fuel_math() {
     let mut config = default_config();
     config.controls.hold_ms = 0;
@@ -136,6 +141,7 @@ fn nested_helpers_collect_independent_fields_and_skip_derived_fuel_math() {
 }
 
 #[test]
+/// Default and 64-widget candidates emit no issues and return the same derived stoichiometry as admission.
 fn accepted_default_and_maximum_fixture_produce_no_issues() {
     let mut maximum = default_config();
     maximum.views.clear();
@@ -177,6 +183,7 @@ fn accepted_default_and_maximum_fixture_produce_no_issues() {
 }
 
 #[test]
+/// Envelope, payload, JSON and semantic errors remain distinguishable through all import entry points.
 fn codecs_preserve_distinct_envelope_payload_and_semantic_categories() {
     let mut config = default_config();
     config.widgets[0].display.decimals = 255;
@@ -215,6 +222,7 @@ fn codecs_preserve_distinct_envelope_payload_and_semantic_categories() {
 }
 
 #[test]
+/// A wrong-channel definition suppresses dependent metadata blame but preserves route/freshness findings.
 fn incompatible_source_skips_dependent_metadata_but_collects_route_and_freshness() {
     let mut config = default_config();
     config.sources[0] = definition(DefinitionId::Disabled).source(Channel::Boost);
@@ -238,6 +246,7 @@ fn incompatible_source_skips_dependent_metadata_but_collects_route_and_freshness
 }
 
 #[test]
+/// Nested errors retain exact JSON pointers, including button gesture and band coordinates.
 fn nested_locations_keep_led_control_and_band_coordinates() {
     let mut config = default_config();
     config.led.normal.period_ms = 0;
@@ -283,6 +292,7 @@ fn nested_locations_keep_led_control_and_band_coordinates() {
 }
 
 #[test]
+/// Duplicate view identity cannot manufacture a chosen view index or overlap claim for a widget.
 fn ambiguous_view_ids_never_supply_an_arbitrary_view_coordinate_or_overlap() {
     let mut config = default_config();
     config.views.push(config.views[0].clone()).unwrap();
@@ -296,6 +306,7 @@ fn ambiguous_view_ids_never_supply_an_arbitrary_view_coordinate_or_overlap() {
 }
 
 #[test]
+/// A bad minimum identifies only that endpoint, while later independent warning errors remain visible.
 fn invalid_band_minimum_never_blames_a_valid_maximum_and_keeps_later_errors() {
     // Boost's domain is [-1, 10]; 2 is an independently valid maximum.
     for min in [11.0, -2.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -318,6 +329,7 @@ fn invalid_band_minimum_never_blames_a_valid_maximum_and_keeps_later_errors() {
 }
 
 #[test]
+/// Both independently invalid endpoints report; ordering is checked only after an admitted minimum.
 fn band_maximum_keeps_independent_bounds_and_valid_minimum_ordering_checks() {
     for (min, max, expected) in [
         (11.0, 12.0, vec![Field::BandMinimum(0), Field::BandMaximum(0)]),

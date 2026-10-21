@@ -1,6 +1,9 @@
+//! Host checks for the real inverted-output RGB compare calculation, without PWM hardware.
+/// Firmware driver with ARM hardware ownership excluded by its target guard.
 #[path = "../../firmware/pico2/src/drivers/rgb_led.rs"]
 mod rgb_led;
 use dashboard_core::status_led::LedDuty;
+/// Each channel independently preserves duty and saturates at TOP+1; inversion belongs to owned hardware configuration.
 #[test]
 fn active_low_compare_endpoints_are_independent_and_saturated() {
     assert_eq!(

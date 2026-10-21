@@ -1,3 +1,5 @@
+//! Gauge pixel geometry, visible cache identity, raw peak/reference decorations and bounded widget ownership.
+
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::configured_scene::Layout;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
@@ -6,6 +8,8 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Prepared subpixel motion with identical text/decoration pixels leaves both physical buffers clean for every
+/// graphical gauge.
 #[test]
 fn prepared_subpixel_gauge_motion_keeps_both_buffers_clean() {
     use dashboard_host_validation::presentation::PresentationState;
@@ -61,6 +65,9 @@ fn prepared_subpixel_gauge_motion_keeps_both_buffers_clean() {
 
 // These pixels catch missing production marker integration, smoothed peaks,
 // unsupported numeric decoration and writes beyond the owning cell.
+/// All gauge/span variants retain raw peaks/static bands, omit unsupported numeric decoration and stay inside their
+/// cell. Compares lossless reviewed RLE pixels; GAUGE_EVIDENCE_DIR optionally writes crops and BLESS_GAUGE_GOLDENS
+/// explicitly replaces the fixture.
 #[test]
 fn advanced_gauge_markers_use_prepared_raw_peaks_and_static_bands_in_every_span() {
     use dashboard_host_validation::presentation::PresentationState;
@@ -174,6 +181,8 @@ fn advanced_gauge_markers_use_prepared_raw_peaks_and_static_bands_in_every_span(
     );
 }
 
+/// Returns lossless runs of `pixels` as little-endian nonzero u16 counts plus big-endian RGB565 words; long runs split
+/// at 65535.
 fn rle_pixels(pixels: &[u16]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut start = 0;
@@ -189,6 +198,7 @@ fn rle_pixels(pixels: &[u16]) -> Vec<u8> {
     output
 }
 
+/// Wider compact gauges enlarge short digits while long readouts still match a complete independent glyph oracle.
 #[test]
 fn wide_compact_gauges_give_short_values_larger_complete_digits() {
     use dashboard_host_validation::widgets::gauge::{Reading, draw};
@@ -263,6 +273,8 @@ fn wide_compact_gauges_give_short_values_larger_complete_digits() {
     }
 }
 
+/// Reference/peak/band graphics are affine-unit invariant; out-of-range markers disappear instead of clamping into
+/// view.
 #[test]
 fn reference_peak_and_adjacent_bands_share_affine_geometry_and_omit_outside_values() {
     use dashboard_host_validation::presentation::Unit;
@@ -335,6 +347,8 @@ fn reference_peak_and_adjacent_bands_share_affine_geometry_and_omit_outside_valu
     }
 }
 
+/// Held-peak expiry and statistics reset alter both buffer rasters; view-local lookup resolves the correct global
+/// widget rule.
 #[test]
 fn peak_only_expiry_and_reset_repair_both_buffers_and_raw_lookup_uses_global_rule() {
     use dashboard_host_validation::presentation::PresentationState;
@@ -402,23 +416,32 @@ fn peak_only_expiry_and_reset_repair_both_buffers_and_raw_lookup_uses_global_rul
     }
 }
 
+/// Each widget clears its outer background once and adds only the warning inset when active, preserving
+/// gutters/neighbors.
 #[test]
 fn widget_clears_each_background_once_and_preserves_warning_inset() {
     use embedded_graphics::pixelcolor::Rgb565;
     use embedded_graphics::prelude::*;
     use embedded_graphics::primitives::Rectangle;
 
+    /// Drawing proxy recording solid fills while forwarding all pixels to the real renderer.
     struct Tracked<'a> {
+        /// Borrowed framebuffer renderer with actual clipping/storage behavior.
         renderer: St7789Renderer<'a>,
+        /// Ordered solid-fill area/color calls before renderer clipping.
         fills: Vec<(Rectangle, Rgb565)>,
     }
     impl OriginDimensions for Tracked<'_> {
+        /// Returns the wrapped renderer's logical pixel dimensions.
         fn size(&self) -> Size { self.renderer.size() }
     }
     impl DrawTarget for Tracked<'_> {
+        /// Native RGB565 drawing color.
         type Color = Rgb565;
+        /// Framebuffer drawing has no recoverable error.
         type Error = core::convert::Infallible;
 
+        /// Forwards `pixels` without adding fill records; returns the infallible renderer result.
         fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
             &mut self,
             pixels: I,
@@ -426,6 +449,7 @@ fn widget_clears_each_background_once_and_preserves_warning_inset() {
             self.renderer.draw_iter(pixels)
         }
 
+        /// Records `area`/`color`, then paints through real clipping; returns the infallible renderer result.
         fn fill_solid(
             &mut self,
             area: &Rectangle,
@@ -509,6 +533,7 @@ fn widget_clears_each_background_once_and_preserves_warning_inset() {
     }
 }
 
+/// Background palette changes affect independently chosen blank pixels and invalidate both retained buffers.
 #[test]
 fn widget_background_palette_is_rendered_and_invalidated_on_both_buffers() {
     let config = validate(default_config()).unwrap();
@@ -536,6 +561,8 @@ fn widget_background_palette_is_rendered_and_invalidated_on_both_buffers() {
     }
 }
 
+/// Indicator normalization matches independent 0/256/512/1024 endpoints and rejects missing/nonfinite values or invalid
+/// ranges.
 #[test]
 fn indicator_level_has_independent_endpoint_and_failure_oracles() {
     use dashboard_host_validation::widgets::gauge::Reading;
@@ -584,6 +611,8 @@ fn indicator_level_has_independent_endpoint_and_failure_oracles() {
     }
 }
 
+/// Every channel/span/graphical-gauge combination retains full-render parity and cell clipping for extreme, normal and
+/// stale values.
 #[test]
 fn gauge_matrix_fits_every_channel_span_and_value_and_matches_retained_frames() {
     for channel in Channel::ALL {
@@ -650,6 +679,7 @@ fn gauge_matrix_fits_every_channel_span_and_value_and_matches_retained_frames() 
     }
 }
 
+/// Expiring hidden statistics/trend cannot dirty compact gauge pixels in either buffer.
 #[test]
 fn hidden_statistics_and_trend_do_not_dirty_a_compact_gauge() {
     let mut raw = default_config();
@@ -683,6 +713,8 @@ fn hidden_statistics_and_trend_do_not_dirty_a_compact_gauge() {
     }
 }
 
+/// Unit changes and statistics reset repair stale/unavailable gauge ranges on both buffers without inventing a live
+/// indicator.
 #[test]
 fn unavailable_gauge_unit_toggle_and_reset_repair_both_buffers() {
     let mut raw = default_config();
@@ -711,6 +743,7 @@ fn unavailable_gauge_unit_toggle_and_reset_repair_both_buffers() {
     }
 }
 
+/// Returns a Demo view 1 scene borrowing `config`/`snapshot` at `now` milliseconds, with FPS/overlay/blink disabled.
 fn scene<'a>(
     config: &'a ValidatedConfig,
     snapshot: &'a dashboard_host_validation::acquisition::DashboardSnapshot,
@@ -732,6 +765,7 @@ fn scene<'a>(
     }
 }
 
+/// Every gauge style produces a distinct complete image, and switching styles repairs both retained buffers.
 #[test]
 fn every_gauge_draws_a_distinct_indicator_and_repairs_both_buffers() {
     let mut model = AcquisitionModel::demo();
@@ -760,6 +794,7 @@ fn every_gauge_draws_a_distinct_indicator_and_repairs_both_buffers() {
     }
 }
 
+/// Needle movement below numeric precision and expanded-scale changes preserve retained/full pixel equality.
 #[test]
 fn needle_changes_below_numeric_rounding_and_when_only_scale_changes() {
     let mut raw = default_config();
@@ -789,6 +824,8 @@ fn needle_changes_below_numeric_rounding_and_when_only_scale_changes() {
     }
 }
 
+/// Only source-qualified finite vehicle samples expand ranges; faults keep values unavailable and statistics reset
+/// restores configured bounds.
 #[test]
 fn vehicle_gauges_expand_only_on_accepted_samples_and_reset_with_statistics() {
     use dashboard_host_validation::samples::{DataMode, Quality, Quantity, Sample, SensorId, Source};
@@ -855,6 +892,7 @@ fn vehicle_gauges_expand_only_on_accepted_samples_and_reset_with_statistics() {
     assert_eq!(reading.value, None);
 }
 
+/// Public gauge drawing caps huge geometry before raster work and leaves tiny/unrepresentable regions untouched.
 #[test]
 fn public_gauge_draw_caps_geometry_before_iteration_and_handles_tiny_regions() {
     use dashboard_host_validation::widgets::gauge::{Reading, draw};
@@ -897,6 +935,8 @@ fn public_gauge_draw_caps_geometry_before_iteration_and_handles_tiny_regions() {
     }
 }
 
+/// Every applicable normal palette role contributes its chosen pixels while the neighboring half-screen stays
+/// untouched.
 #[test]
 fn each_active_palette_role_has_its_own_pixels_without_leaking_from_the_cell() {
     for role in ColorRole::ALL
@@ -963,6 +1003,8 @@ fn each_active_palette_role_has_its_own_pixels_without_leaking_from_the_cell() {
     }
 }
 
+/// Foreground-only warning phases, popup palette changes and stale expiry remain visible transitions and repair both
+/// buffers.
 #[test]
 fn warning_foreground_only_phase_and_overlay_palette_change_repaint_both_buffers() {
     use dashboard_host_validation::dashboard::Overlay;
@@ -1034,6 +1076,8 @@ fn warning_foreground_only_phase_and_overlay_palette_change_repaint_both_buffers
     }
 }
 
+/// Canonical zero outside positive/negative ranges produces no reference marker, including affine Fahrenheit and
+/// expanded ranges.
 #[test]
 fn zero_reference_omits_positive_and_negative_seed_and_expanded_ranges() {
     use dashboard_host_validation::presentation::Unit;
@@ -1081,6 +1125,7 @@ fn zero_reference_omits_positive_and_negative_seed_and_expanded_ranges() {
     }
 }
 
+/// Changed formatted text still invalidates both buffers when the gauge's quantized indicator level stays identical.
 #[test]
 fn same_raster_level_with_changed_text_still_repaints_both_buffers() {
     let mut raw = default_config();

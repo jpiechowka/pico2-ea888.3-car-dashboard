@@ -4,108 +4,194 @@ use super::names::{NameSource, ObservedName};
 use super::*;
 use crate::health::reset::{BootEvidence, ResetRecord, ResetStage};
 
+/// Capture producer's supported clock-profile label; rates are retained separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildProfile {
+    /// Stock build profile.
     Stock,
+    /// Explicit experimental 280 MHz profile; not electrical qualification.
     Expert280,
 }
+/// Producer-supplied build provenance; neither a runtime self-check nor measured clocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuildIdentity {
+    /// Full source-inventory digest; must be nonzero when declared available.
     pub source_digest: [u8; 32],
+    /// Configured CPU frequency in hertz, nonzero for admitted captures.
     pub cpu_hz: u32,
+    /// Configured LCD SPI frequency in hertz, nonzero for admitted captures.
     pub spi_hz: u32,
+    /// Producer profile classification, independent of the exact frequency fields.
     pub profile: BuildProfile,
+    /// Source digest was supplied by the checked build route; false preserves unavailable provenance.
     pub source_identity_available: bool,
 }
+/// Capture framing, schema or semantic-admission failure; no partially decoded view escapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureError {
+    /// Caller output buffer cannot hold the next bounded write.
     BufferTooSmall,
+    /// Encoding/declared payload exceeds 8192 bytes or length arithmetic overflowed.
     TooLarge,
+    /// Probe has no selected peer to capture.
     NoPeer,
+    /// Producer bookkeeping/timestamps/completion or inspection identity is inconsistent.
     InvalidState,
+    /// Required input bytes are absent or total length disagrees with the envelope.
     Truncated,
+    /// Capture discriminator does not match the supported format family.
     Magic,
+    /// Capture schema is outside supported versions 1..=4.
     Version,
+    /// Header or body CRC disagrees with the input bytes.
     Integrity,
+    /// Field code, boolean, width, count or representable metadata violates the schema.
     InvalidData,
+    /// GATT ownership, range, uniqueness or standard-read relationship fails.
     Relationships,
+    /// Metadata/record/body contains bytes beyond its declared structure.
     Trailing,
 }
 
+/// Frozen legacy packet prefix with its own optional observation metadata.
 #[derive(Clone, Copy, Debug)]
 pub struct PacketEvidence {
+    /// Zero-padded owned raw packet storage; only `len` bytes are meaningful.
     bytes: [u8; 31],
+    /// Admitted byte count in 0..=31.
     len: u8,
+    /// Producer omitted source packet bytes; independent of AD Complete Local Name type.
     pub truncated: bool,
+    /// Packet-specific timestamp/RSSI/kind; absent only with empty, untruncated bytes.
     pub observation: Option<PacketObservation>,
 }
 impl PacketEvidence {
+    /// Returns `self`'s admitted raw packet prefix, without sanitizing text or parsing AD fields.
     pub fn bytes(&self) -> &[u8] { &self.bytes[..usize::from(self.len)] }
 }
+/// Borrowed standard-read evidence with admitted declaration relationships and lossless bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct ValueRef<'a> {
+    /// Owning service declaration handle.
     pub service_start: u16,
+    /// Allowlisted characteristic's value handle.
     pub handle: u16,
+    /// Normalized 16-bit standard characteristic UUID.
     pub uuid: u16,
+    /// Read outcome, coherent with optional failure evidence.
     pub result: ReadResult,
+    /// Present exactly for failed/protected/unavailable reads.
     pub failure: Option<FailureReason>,
+    /// Producer-measured read duration in milliseconds.
     pub elapsed_ms: u32,
+    /// Original retained read prefix, at most 64 bytes; not necessarily UTF-8.
     pub bytes: &'a [u8],
+    /// Read had more bytes than retained; does not make the retained prefix a complete value.
     pub truncated: bool,
 }
 impl ValueRef<'_> {
+    /// Returns whether `self`'s retained byte count matches a fixed-width standard UUID.
+    /// Variable-width UUIDs return true; this does not clear truncation or certify a value.
     pub fn length_valid(&self) -> bool { info_length_valid(self.uuid, self.bytes.len()) }
 }
+/// One admitted record, iterated in service/characteristic/descriptor/value group order.
 #[derive(Clone, Copy, Debug)]
 pub enum Record<'a> {
-    Service(Service),
-    Characteristic(Characteristic),
-    Descriptor(Descriptor),
-    Value(ValueRef<'a>),
+    /// Nonoverlapping primary-service range.
+    Service(
+        /// Owned service declaration.
+        Service,
+    ),
+    /// Characteristic linked to an admitted service.
+    Characteristic(
+        /// Owned characteristic declaration.
+        Characteristic,
+    ),
+    /// Descriptor within its admitted characteristic range.
+    Descriptor(
+        /// Owned descriptor declaration.
+        Descriptor,
+    ),
+    /// Standard-read outcome tied to its actual allowlisted declaration.
+    Value(
+        /// Borrowed raw bytes and owned read metadata.
+        ValueRef<'a>,
+    ),
 }
 
+/// Frozen producer and selected-peer context; optional legacy fields remain unavailable.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureMetadata {
+    /// Actual admitted payload schema version in 1..=4, independent of journal/USB versions.
     pub schema_version: u16,
     /// Absent in legacy v1/v2 captures, never inferred from current firmware.
     pub fault_latch: Option<FaultLatch>,
+    /// Configured radio bus hertz, absent before v3 or when encoded as unavailable zero.
     pub radio_bus_hz: Option<u32>,
     /// Absent in v1/v2/v3; never filled from the current Pico when loading.
     pub cached_name: Option<ObservedName>,
+    /// Frozen boot/reset evidence added in v4; absent is never filled from the current device.
     pub boot: Option<BootEvidence>,
+    /// Producer-supplied source identity, profile and configured clocks.
     pub build: BuildIdentity,
+    /// Boot-relative time in milliseconds when this evidence was frozen.
     pub captured_at_ms: u64,
+    /// Nonzero discovery request generation associated with this snapshot.
     pub revision: u32,
+    /// An explicit inspection was requested for this exact captured peer.
     pub gatt_requested: bool,
+    /// Radio-owner phase at capture, retained without pretending partial work completed.
     pub phase: RadioPhase,
+    /// Coarse probe error at capture time.
     pub error: ProbeError,
+    /// Observed address/type identity; not an authenticated permanent physical identity.
     pub peer: Peer,
+    /// First admitted peer report time in boot-relative milliseconds.
     pub first_seen_ms: u64,
+    /// Latest admitted peer report time in boot-relative milliseconds.
     pub last_seen_ms: u64,
+    /// Nonzero saturating count of admitted reports for this peer.
     pub reports: u32,
+    /// Latest peer-report RSSI in -127..=20 dBm, or unavailable.
     pub rssi: Option<i8>,
+    /// Latest advertising packet and its independent original metadata.
     pub advertisement: PacketEvidence,
+    /// Latest scan response and its independent metadata; may be absent/empty.
     pub response: PacketEvidence,
+    /// Observed link parameters, absent when no connection was observed.
     pub link: Option<LinkInfo>,
+    /// Boot-relative inspection start milliseconds; absent for advertisement-only capture.
     pub started_at_ms: Option<u64>,
+    /// Boot-relative inspection end milliseconds; absent while unfinished/unrequested.
     pub ended_at_ms: Option<u64>,
+    /// Raw HCI disconnect reason from inspection termination, if observed.
     pub disconnect_reason: Option<u8>,
+    /// Radio owner acknowledged cleanup; does not itself certify clean termination.
     pub cleanup_complete: bool,
+    /// Services/characteristics/descriptors/reads stage acknowledgments in enum order.
     pub stages: [bool; 4],
+    /// Saturating count of bounded inventory omissions.
     pub omitted: u32,
+    /// Saturating count of rejected inventory structures.
     pub malformed: u32,
+    /// Producer's clean-inventory claim, checked against stages/errors/loss counters.
     pub complete: bool,
+    /// First detailed inspection failure, including optional rejected tuple evidence.
     pub failure: Option<InspectionFailure>,
+    /// Independent local receive failure and terminal-link reason evidence.
     pub failure_context: ConnectionFailureContext,
+    /// Global producer report losses; not attributed to the selected peer.
     pub dropped_reports: u32,
+    /// Global malformed-report count; not attributed to the selected peer.
     pub malformed_reports: u32,
+    /// Global catalogue capacity rejections; not selected-peer failures.
     pub catalog_overflow_reports: u32,
+    /// Global scan batch failures, possibly predating this peer's first report.
     pub scan_diagnostics: ScanDiagnostics,
 }
 
 impl CaptureMetadata {
-    // Private parsing destination. Never published until all fields and record
-    // relationships have been decoded and validated successfully.
+    /// Private invalid parsing seed, never published before full field/relationship admission.
     const EMPTY: Self = Self {
         schema_version: 0,
         fault_latch: None,
@@ -165,34 +251,48 @@ impl CaptureMetadata {
     };
 }
 
+/// Fully admitted capture borrowing metadata and immutable encoded record bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureView<'a> {
+    /// Validated metadata owned by a decoder or host convenience owner.
     metadata: &'a CaptureMetadata,
+    /// Fully parsed record stream borrowing original capture bytes.
     records: &'a [u8],
+    /// Record counts in service/characteristic/descriptor/value order.
     counts: [u16; 4],
 }
 impl<'a> CaptureView<'a> {
+    /// Returns `self`'s admitted frozen metadata by reference.
     pub fn metadata(&self) -> &CaptureMetadata { self.metadata }
 
+    /// Returns `self`'s service/characteristic/descriptor/value counts, bounded by 24/64/128/16.
     pub fn counts(&self) -> [u16; 4] { self.counts }
 
+    /// Returns a fresh zero-allocation iterator over `self`'s already admitted record stream.
     pub fn records(&self) -> Records<'a> { Records { bytes: self.records } }
 }
 /// Reusable parsing storage. Contains no references into a capture buffer.
 /// A returned view borrows this decoder, preventing another decode while in use.
 pub struct Decoder {
+    /// Reused parsing destination; partial failed parses cannot escape through a view.
     metadata: CaptureMetadata,
 }
 impl Default for Decoder {
+    /// Returns reusable decoder storage without any admitted capture.
     fn default() -> Self { Self::new() }
 }
 impl Decoder {
+    /// Returns reusable decoder storage initialized with private invalid metadata.
     pub const fn new() -> Self {
         Self {
             metadata: CaptureMetadata::EMPTY,
         }
     }
 
+    /// Returns an admitted view borrowing `self` and immutable `bytes` after envelope,
+    /// CRC, field, count, metadata and GATT-relationship checks. Supports schema 1..=4;
+    /// legacy absent fields are cleared on every reuse. Errors leave unpublished partial
+    /// metadata in `self`, so no previous view survives this mutable call.
     pub fn decode<'a>(
         &'a mut self,
         bytes: &'a [u8],
@@ -200,6 +300,11 @@ impl Decoder {
         decode_into(&mut self.metadata, bytes)
     }
 
+    /// Encodes selected-peer `probe` with producer `build` at boot-relative `captured_at_ms`
+    /// milliseconds into `output`, then validates by decoding with `self`'s reusable storage.
+    /// Returns the admitted schema-v4 byte count, at most 8192; output tail is unchanged.
+    /// Errors leave a partial or fully encoded but untrusted prefix. Performs no allocation,
+    /// radio or storage I/O and never turns incomplete evidence into complete evidence.
     pub fn encode(
         &mut self,
         probe: &Probe,
@@ -216,11 +321,15 @@ impl Decoder {
 /// Convenience owner for host callers. Firmware uses a reusable Decoder instead.
 #[derive(Debug)]
 pub struct DecodedCapture<'a> {
+    /// Independently owned admitted metadata, avoiding a decoder lifetime on host callers.
     metadata: CaptureMetadata,
+    /// Admitted encoded records borrowing the input payload.
     records: &'a [u8],
+    /// Service/characteristic/descriptor/value counts.
     counts: [u16; 4],
 }
 impl<'a> DecodedCapture<'a> {
+    /// Returns a lightweight admitted view borrowing `self`'s metadata and input records.
     pub fn view(&self) -> CaptureView<'_> {
         CaptureView {
             metadata: &self.metadata,
@@ -229,19 +338,28 @@ impl<'a> DecodedCapture<'a> {
         }
     }
 
+    /// Returns `self`'s owned frozen metadata by reference.
     pub fn metadata(&self) -> &CaptureMetadata { &self.metadata }
 
+    /// Returns a fresh iterator over `self`'s admitted records, borrowing original input bytes.
     pub fn records(&self) -> Records<'a> { Records { bytes: self.records } }
 
+    /// Returns `self`'s bounded service/characteristic/descriptor/value counts.
     pub fn counts(&self) -> [u16; 4] { self.counts }
 }
 
+/// Zero-allocation iterator constructed only over already-admitted immutable record bytes.
 pub struct Records<'a> {
+    /// Remaining encoded suffix; successful iteration consumes one complete record.
     bytes: &'a [u8],
 }
 impl<'a> Iterator for Records<'a> {
+    /// Admitted declaration or borrowed standard-read evidence.
     type Item = Record<'a>;
 
+    /// Consumes and returns `self`'s next admitted record, or `None` at stream end.
+    /// Defensive parse failure also returns `None`; public constructors validate the
+    /// entire immutable stream first, so no partial parse is exposed as evidence.
     fn next(&mut self) -> Option<Self::Item> {
         if self.bytes.is_empty() {
             return None;
@@ -253,16 +371,24 @@ impl<'a> Iterator for Records<'a> {
     }
 }
 
+/// Capture-family discriminator shared by supported schema versions.
 const MAGIC: &[u8; 8] = b"BLECAP01";
+/// Fixed envelope bytes preceding variable metadata and records.
 const HEADER: usize = 24;
 /// Prefix size needed to identify the format and validate its current envelope.
 pub const HEADER_BYTES: usize = HEADER;
 
+/// Checked writer into caller-owned output, bounded by both slice size and payload maximum.
 struct Writer<'a> {
+    /// Mutable caller storage; errors may leave an already written prefix.
     bytes: &'a mut [u8],
+    /// Next write offset, always no greater than admitted output capacity.
     pos: usize,
 }
 impl Writer<'_> {
+    /// Appends `data` to `self`, returning unit; checked overflow/payload limit returns
+    /// TooLarge and insufficient caller space returns BufferTooSmall, without advancing
+    /// or partially applying this individual write.
     fn bytes(
         &mut self,
         data: &[u8],
@@ -279,6 +405,7 @@ impl Writer<'_> {
         Ok(())
     }
 
+    /// Appends raw octet `v` to `self`; returns unit or the bounded-write error without this byte.
     fn u8(
         &mut self,
         v: u8,
@@ -286,6 +413,7 @@ impl Writer<'_> {
         self.bytes(&[v])
     }
 
+    /// Appends `v` as canonical 0/1 to `self`; returns unit or the bounded-write error.
     fn bool(
         &mut self,
         v: bool,
@@ -293,6 +421,7 @@ impl Writer<'_> {
         self.u8(u8::from(v))
     }
 
+    /// Appends `v` as two little-endian bytes to `self`; returns unit or a bounded-write error.
     fn u16(
         &mut self,
         v: u16,
@@ -300,6 +429,7 @@ impl Writer<'_> {
         self.bytes(&v.to_le_bytes())
     }
 
+    /// Appends `v` as four little-endian bytes to `self`; returns unit or a bounded-write error.
     fn u32(
         &mut self,
         v: u32,
@@ -307,6 +437,7 @@ impl Writer<'_> {
         self.bytes(&v.to_le_bytes())
     }
 
+    /// Appends `v` as eight little-endian bytes to `self`; returns unit or a bounded-write error.
     fn u64(
         &mut self,
         v: u64,
@@ -314,6 +445,8 @@ impl Writer<'_> {
         self.bytes(&v.to_le_bytes())
     }
 
+    /// Appends presence plus optional octet `v` to `self`; returns unit or a write error.
+    /// Failure after presence may leave an incomplete optional field.
     fn opt_u8(
         &mut self,
         v: Option<u8>,
@@ -325,6 +458,8 @@ impl Writer<'_> {
         Ok(())
     }
 
+    /// Appends presence plus optional little-endian `v` to `self`; returns unit or a
+    /// write error that may leave the presence byte without its value.
     fn opt_u32(
         &mut self,
         v: Option<u32>,
@@ -336,6 +471,8 @@ impl Writer<'_> {
         Ok(())
     }
 
+    /// Appends presence plus optional little-endian `v` to `self`; returns unit or a
+    /// write error that may leave the presence byte without its value.
     fn opt_u64(
         &mut self,
         v: Option<u64>,
@@ -347,6 +484,8 @@ impl Writer<'_> {
         Ok(())
     }
 
+    /// Appends width and wire-order UUID `v` to `self`, returning unit. Invalid widths
+    /// fail before writing; bounded-write errors can leave only the width prefix.
     fn uuid(
         &mut self,
         v: Uuid,
@@ -358,6 +497,9 @@ impl Writer<'_> {
         self.bytes(&v.bytes[..usize::from(v.len)])
     }
 
+    /// Appends `tag`, a reserved u16 length and the body produced by `write` into `self`.
+    /// Returns unit after backfilling body length; callback/bounds errors leave an
+    /// untrusted partial record. Global 8192-byte bounds make the u16 length cast exact.
     fn record(
         &mut self,
         tag: u8,
@@ -372,10 +514,14 @@ impl Writer<'_> {
         Ok(())
     }
 }
+/// Checked forward reader over immutable capture bytes; failed fields may consume prefixes.
 struct Reader<'a> {
+    /// Unconsumed input suffix.
     bytes: &'a [u8],
 }
 impl<'a> Reader<'a> {
+    /// Returns and consumes exactly `n` bytes from `self`, or Truncated without advancing
+    /// when insufficient bytes remain. Zero consumes nothing and returns an empty slice.
     fn take(
         &mut self,
         n: usize,
@@ -385,8 +531,11 @@ impl<'a> Reader<'a> {
         Ok(head)
     }
 
+    /// Returns and consumes one octet from `self`, or Truncated without advancing.
     fn u8(&mut self) -> Result<u8, CaptureError> { Ok(self.take(1)?[0]) }
 
+    /// Returns and consumes canonical boolean from `self`; bytes other than 0/1 are
+    /// consumed then rejected as InvalidData. Missing byte returns Truncated.
     fn bool(&mut self) -> Result<bool, CaptureError> {
         match self.u8()? {
             0 => Ok(false),
@@ -395,42 +544,57 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// Returns and consumes a little-endian u16 from `self`, or Truncated without advancing.
     fn u16(&mut self) -> Result<u16, CaptureError> {
         let b = self.take(2)?;
         Ok(u16::from_le_bytes([b[0], b[1]]))
     }
 
+    /// Returns and consumes a little-endian u32 from `self`, or Truncated without advancing.
     fn u32(&mut self) -> Result<u32, CaptureError> {
         let b = self.take(4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
+    /// Returns and consumes a little-endian u64 from `self`, or Truncated without advancing.
     fn u64(&mut self) -> Result<u64, CaptureError> {
         let b = self.take(8)?;
         Ok(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
     }
 
+    /// Returns optional octet from `self` after canonical presence decoding; absence is
+    /// `None`. Errors can consume presence while leaving a missing/invalid value untrusted.
     fn opt_u8(&mut self) -> Result<Option<u8>, CaptureError> {
         if self.bool()? { Ok(Some(self.u8()?)) } else { Ok(None) }
     }
 
+    /// Returns optional little-endian u32 from `self`; absence is `None`. Invalid
+    /// presence/truncation errors can leave the reader after the presence byte.
     fn opt_u32(&mut self) -> Result<Option<u32>, CaptureError> {
         if self.bool()? { Ok(Some(self.u32()?)) } else { Ok(None) }
     }
 
+    /// Returns optional little-endian u64 from `self`; absence is `None`. Invalid
+    /// presence/truncation errors can leave the reader after the presence byte.
     fn opt_u64(&mut self) -> Result<Option<u64>, CaptureError> {
         if self.bool()? { Ok(Some(self.u64()?)) } else { Ok(None) }
     }
 
+    /// Returns width-prefixed wire-order UUID from `self`; rejects widths other than
+    /// 2/4/16 or truncated bytes. Width/body prefixes may already be consumed on error.
     fn uuid(&mut self) -> Result<Uuid, CaptureError> {
         let len = usize::from(self.u8()?);
         Uuid::from_wire(self.take(len)?).ok_or(CaptureError::InvalidData)
     }
 }
 
+/// Defines exhaustive enum-to-octet encoding and rejecting octet-to-enum decoding
+/// from an explicit stable schema mapping; generated functions carry their own contracts.
 macro_rules! codes {
     ($encode:ident,$decode:ident,$typ:ty,{$($variant:path=>$code:literal),+$(,)?})=>{
+        #[doc = concat!("Returns the stable capture octet for `value` of type `", stringify!($typ), "`; mapping is exhaustive and performs no mutation.")]
         fn $encode(value:$typ)->u8{match value{$($variant=>$code),+}}
+        #[doc = concat!("Returns `", stringify!($typ), "` decoded from stable capture octet `value`; unknown codes return CaptureError::InvalidData without a fallback variant.")]
         fn $decode(value:u8)->Result<$typ,CaptureError>{match value{$($code=>Ok($variant)),+,_=>Err(CaptureError::InvalidData)}}
     }
 }
@@ -440,6 +604,8 @@ codes!(stage_code,read_stage,FailureStage,{FailureStage::Connect=>0,FailureStage
 codes!(kind_code,read_kind,ReportKind,{ReportKind::Connectable=>0,ReportKind::Directed=>1,ReportKind::ScanResponse=>2,ReportKind::Other=>3});
 codes!(result_code,read_result,ReadResult,{ReadResult::Ok=>0,ReadResult::Protected=>1,ReadResult::Unavailable=>2,ReadResult::Error=>3});
 
+/// Appends optional failure `v` as stable tag plus raw-code octet to `w`, returning unit.
+/// No-reason/local reasons use code zero. Bounded-write errors may leave the tag prefix.
 fn write_reason(
     w: &mut Writer<'_>,
     v: Option<FailureReason>,
@@ -471,6 +637,9 @@ fn write_reason(
     w.u8(tag)?;
     w.u8(code)
 }
+/// Returns optional failure decoded from two consumed bytes in `r`; tag zero is None.
+/// Unknown tags or nonzero unused code bytes return InvalidData; short input returns
+/// Truncated after any consumed prefix. Raw-code categories preserve all octet values.
 fn read_reason(r: &mut Reader<'_>) -> Result<Option<FailureReason>, CaptureError> {
     let tag = r.u8()?;
     let code = r.u8()?;
@@ -503,6 +672,8 @@ fn read_reason(r: &mut Reader<'_>) -> Result<Option<FailureReason>, CaptureError
         _ => return Err(CaptureError::InvalidData),
     })
 }
+/// Appends optional little-endian handle pair `v` to `w`, returning unit or a write error.
+/// Presence/first handle may remain on failure; handle ordering is not validated here.
 fn write_pair(
     w: &mut Writer<'_>,
     v: Option<(u16, u16)>,
@@ -514,6 +685,8 @@ fn write_pair(
     }
     Ok(())
 }
+/// Returns optional little-endian handle pair from `r`, without validating handle order.
+/// Invalid presence/truncated members return errors after any consumed prefix.
 fn read_pair(r: &mut Reader<'_>) -> Result<Option<(u16, u16)>, CaptureError> {
     if r.bool()? {
         Ok(Some((r.u16()?, r.u16()?)))
@@ -521,6 +694,9 @@ fn read_pair(r: &mut Reader<'_>) -> Result<Option<(u16, u16)>, CaptureError> {
         Ok(None)
     }
 }
+/// Writes packet prefix `p` and optional packet-specific `meta` into `w`, returning unit.
+/// Rejects `p.len` above 31 before writing. Other coherence checks occur on decode;
+/// bounded-write errors can leave a partial packet field.
 fn write_packet(
     w: &mut Writer<'_>,
     p: &Payload<31>,
@@ -540,6 +716,9 @@ fn write_packet(
     }
     Ok(())
 }
+/// Decodes one packet from `r` into unpublished `packet`, returning unit after byte-count,
+/// canonical boolean, RSSI and report-kind checks. Metadata absence requires empty,
+/// untruncated bytes. Errors may partially modify both reader position and destination.
 fn read_packet(
     r: &mut Reader<'_>,
     packet: &mut PacketEvidence,
@@ -567,6 +746,8 @@ fn read_packet(
     Ok(())
 }
 
+/// Returns optional signed dBm RSSI from `r`, accepting -127..=20 and preserving absence.
+/// Out-of-range values return InvalidData after consumption; prefix errors propagate.
 fn read_rssi(r: &mut Reader<'_>) -> Result<Option<i8>, CaptureError> {
     let value = r.opt_u8()?.map(|v| v as i8);
     if value.is_some_and(|v| !(-127..=20).contains(&v)) {
@@ -574,6 +755,9 @@ fn read_rssi(r: &mut Reader<'_>) -> Result<Option<i8>, CaptureError> {
     }
     Ok(value)
 }
+/// Writes global counters and optional latest batch failure from `scan` into `w`.
+/// Returns unit or a bounded-write error with a possibly written prefix; timestamps
+/// are validated against capture time by full decode, not by this serializer.
 fn write_scan(
     w: &mut Writer<'_>,
     scan: &ScanDiagnostics,
@@ -597,6 +781,9 @@ fn write_scan(
     }
     Ok(())
 }
+/// Decodes global scan counters/latest context from `r` into unpublished `scan`, returning
+/// unit or framing/code errors. Mutations may be partial; global failure time is checked
+/// against capture time later, not against selected-peer first-seen time.
 fn read_scan(
     r: &mut Reader<'_>,
     scan: &mut ScanDiagnostics,
@@ -625,6 +812,10 @@ fn read_scan(
     Ok(())
 }
 
+/// Appends schema-v4 metadata from selected-peer probe `p`, producer `b` and boot-relative
+/// capture time `at` milliseconds into `w`, returning unit. Rejects no peer, a requested
+/// inspection for another peer, impossible payload widths and explicit zero radio clock.
+/// Full semantic checks follow encode by decode; any error leaves output untrusted.
 fn write_metadata(
     w: &mut Writer<'_>,
     p: &Probe,
@@ -730,6 +921,11 @@ fn write_metadata(
     }
     Ok(())
 }
+/// Decodes schema `version` metadata from `r` into unpublished reusable `m`, returning unit.
+/// Caller first bounds version to 1..=4. Validates primitive codes, RSSI, UUID-independent
+/// lengths, ATT MTU 23..=517, positive build clocks and radio clock at most 50 MHz/CPU half.
+/// Explicitly clears fields absent in legacy schemas. Errors leave partial `m` and reader
+/// progress; complete temporal/relationship validation occurs before any view is returned.
 fn read_metadata<'a>(
     r: &mut Reader<'a>,
     m: &mut CaptureMetadata,
@@ -885,6 +1081,10 @@ fn read_metadata<'a>(
     Ok(())
 }
 
+/// Returns the next tag/u16-length record consumed from `r`, validating exact body
+/// consumption, UUID widths and read outcome/failure consistency. Value bytes borrow
+/// the source and are at most 64. Errors may consume the envelope/body; cross-record
+/// ownership and ordering require the subsequent full-stream checks.
 fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
     let tag = r.u8()?;
     let n = usize::from(r.u16()?);
@@ -946,6 +1146,10 @@ fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
 }
 
 /// Output is untrusted on error. No allocation or complete-model clone occurs.
+/// Serializes `probe`, producer `build` and boot-relative `captured_at_ms` into `output`,
+/// returning schema-v4 byte count with header/body CRCs and grouped records. Returns
+/// bounds/field errors with possible partial writes. The caller must run full decode
+/// before accepting this prefix; raw encoding alone does not establish metadata consistency.
 fn encode_bytes(
     probe: &Probe,
     build: BuildIdentity,
@@ -1013,6 +1217,8 @@ fn encode_bytes(
     Ok(total)
 }
 
+/// Returns the first service in `view` whose declaration equals `start`, or `None`.
+/// Used during relationship admission; scans immutable records without allocating an index.
 fn find_service(
     view: &CaptureView<'_>,
     start: u16,
@@ -1024,6 +1230,8 @@ fn find_service(
         }
     })
 }
+/// Returns the first characteristic in `view` with value `handle`, or `None`.
+/// Uses immutable record iteration; duplicate exclusion is checked separately.
 fn find_characteristic(
     view: &CaptureView<'_>,
     handle: u16,
@@ -1035,6 +1243,11 @@ fn find_characteristic(
         }
     })
 }
+/// Returns unit if bounded, fully parsed `view` has coherent metadata and GATT relationships.
+/// Checks nonoverlap/uniqueness, parent handles, descriptor boundaries and service-qualified
+/// standard-read allowlisting; advertisement-only captures must carry no inspection state.
+/// Fails with InvalidState/Relationships without mutation. Repeated scans are bounded by
+/// previously admitted 24/64/128/16 record limits, avoiding another inventory allocation.
 fn relationships(view: &CaptureView<'_>) -> Result<(), CaptureError> {
     metadata_valid(view.metadata)?;
     let mut services = 0u16;
@@ -1138,6 +1351,10 @@ fn relationships(view: &CaptureView<'_>) -> Result<(), CaptureError> {
 
 /// Check producer bookkeeping separately from raw peer values. Invalid standard
 /// value lengths and controller observations remain inspectable evidence.
+/// Returns unit for coherent `m` timestamps, peer-report presence, cached-name/reset
+/// provenance, stage order and completion claims; otherwise InvalidState. Global scan
+/// failures may precede peer discovery but cannot postdate capture. Does not reinterpret
+/// legacy termination claims or qualify raw link timing as a valid controller configuration.
 fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
     let packet_time_valid = |packet: &PacketEvidence| {
         packet
@@ -1200,6 +1417,9 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
 
 /// Identify a bounded prefix and check the current envelope header against the
 /// journal payload length. This does not validate body bytes or relationships.
+/// Returns unit when `prefix` contains a supported 24-byte header whose total equals
+/// `payload_length` (at most 8192) and whose CRC matches. Additional prefix bytes are
+/// ignored. Returns TooLarge, Truncated, Magic, Version or Integrity on the first failure.
 pub fn check_header(
     prefix: &[u8],
     payload_length: usize,
@@ -1227,6 +1447,10 @@ pub fn check_header(
 }
 
 /// Validate the full body and its relationships; header admission alone does not.
+/// Parses immutable `bytes` into unpublished reusable `metadata`, returning a view
+/// borrowing both only after all CRC, schema, ordered-record/count and relationship checks.
+/// Errors may partially update metadata but expose no view; at most 8192 input bytes
+/// and 24/64/128/16 records are admitted. No heap allocation or hardware I/O occurs.
 fn decode_into<'a>(
     metadata: &'a mut CaptureMetadata,
     bytes: &'a [u8],
@@ -1275,6 +1499,8 @@ fn decode_into<'a>(
 
 /// Convenience decoding for host callers that need an independently owned view.
 /// Firmware should retain a Decoder and borrow its small view instead.
+/// Returns admitted owned metadata with records borrowing immutable `bytes`, or the
+/// same framing/CRC/schema/state/relationship errors as [`Decoder::decode`].
 pub fn decode(bytes: &[u8]) -> Result<DecodedCapture<'_>, CaptureError> {
     let mut decoder = Decoder::new();
     let view = decoder.decode(bytes)?;
@@ -1287,6 +1513,9 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedCapture<'_>, CaptureError> {
     })
 }
 /// Convenience encoder; firmware should reuse Decoder::encode.
+/// Returns admitted schema-v4 prefix length written to `output` from selected-peer `probe`,
+/// producer `build` and boot-relative `captured_at_ms` milliseconds. Uses temporary decoder
+/// storage to revalidate all encoded state; errors leave output untrusted. No I/O occurs.
 pub fn encode(
     probe: &Probe,
     build: BuildIdentity,

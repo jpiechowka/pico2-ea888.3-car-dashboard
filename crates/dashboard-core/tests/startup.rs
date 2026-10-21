@@ -1,13 +1,16 @@
+//! Startup timing, recovery, codec and shared-renderer regressions; no physical transfer is performed.
 use dashboard_core::display::pipeline::{BufferId, FrameToken};
 use dashboard_core::display::{FrameBuffer, St7789Renderer};
 use dashboard_core::startup::*;
 use dashboard_core::vehicle_status::VehicleStatus;
+/// First buffer-A identity used to simulate matching/nonmatching transfer completion.
 const TOKEN: FrameToken = FrameToken {
     buffer: BufferId::A,
     sequence: 1,
 };
 
 #[test]
+/// Verifies startup may complete warning LED eligibility without creating acknowledgeable hidden text.
 fn startup_led_metadata_completes_without_acknowledgeable_warning() {
     use dashboard_core::status_led::{PresentedLed, PresentedScene, PresentedWarning};
     use dashboard_core::warning_state::WarningRequests;
@@ -31,6 +34,7 @@ fn startup_led_metadata_completes_without_acknowledgeable_warning() {
     assert!(requests.request_presented(led.warning()).is_err());
 }
 #[test]
+/// Checks first matching completion starts dwell, duplicate tokens are inert and stalled splash expires.
 fn completion_and_deadlines() {
     let p = StartupProfile::DEFAULT;
     let mut s = Startup::new(p, 100);
@@ -49,6 +53,7 @@ fn completion_and_deadlines() {
     assert_eq!(s.exit(), Some(Exit::Finished));
 }
 #[test]
+/// Checks disabled splash, backward clocks and maximum-clock deadline arithmetic.
 fn duration_zero_and_time_faults() {
     let p = StartupProfile {
         duration_ms: 0,
@@ -66,6 +71,7 @@ fn duration_zero_and_time_faults() {
     assert!(!s.active());
 }
 #[test]
+/// Checks default warning continuation, opt-in attention exit, explicit faults/recovery and state footprint.
 fn warnings_faults_and_recovery() {
     let p = StartupProfile::DEFAULT;
     let mut s = Startup::new(p, 0);
@@ -93,6 +99,7 @@ fn warnings_faults_and_recovery() {
     assert!(core::mem::size_of::<Startup>() <= 96);
 }
 #[test]
+/// Checks every procedural theme round-trip and rejection of short/reserved/out-of-range profile data.
 fn profiles_are_exact_and_bounded() {
     for theme in StartupTheme::ALL {
         let p = StartupProfile {
@@ -117,6 +124,8 @@ fn profiles_are_exact_and_bounded() {
         .is_none()
     );
 }
+/// Returns a landscape splash framebuffer rendered with profile `p`, phase time
+/// `t` milliseconds and reduced-motion flag `reduced`, using fixed synthetic status facts.
 fn pixels(
     p: StartupProfile,
     t: u64,
@@ -139,6 +148,7 @@ fn pixels(
     f
 }
 #[test]
+/// Verifies all procedural themes move with time, loop at two seconds and freeze for still/one-shot modes.
 fn every_theme_is_time_based_and_holds_without_motion() {
     for theme in StartupTheme::ALL {
         let p = StartupProfile {
@@ -156,6 +166,7 @@ fn every_theme_is_time_based_and_holds_without_motion() {
     }
 }
 #[test]
+/// Confirms unmapped button taps can skip and suppression prevents a held release leaking into Dashboard.
 fn startup_taps_include_unmapped_buttons_and_cancel_held_release() {
     use dashboard_core::controls::ControlGestures;
     use dashboard_core::view_config::{ControlAction, ControlMap, ControlPage};
@@ -182,6 +193,7 @@ fn startup_taps_include_unmapped_buttons_and_cancel_held_release() {
 }
 
 #[test]
+/// Requires stable release and a fresh two-second Y hold after boot-held input, with no duplicate recovery.
 fn boot_held_y_never_recovers_until_a_fresh_press() {
     use dashboard_core::controls::ControlGestures;
     use dashboard_core::view_config::{ControlMap, ControlPage};
@@ -222,6 +234,7 @@ fn boot_held_y_never_recovers_until_a_fresh_press() {
 }
 
 #[test]
+/// Checks exact default preview phase boundaries and relative elapsed offsets.
 fn exact_preview_boundaries() {
     let p = StartupProfile::DEFAULT;
     assert_eq!(Startup::preview(p, 599), (Phase::Status, 599));
@@ -231,6 +244,7 @@ fn exact_preview_boundaries() {
 }
 
 #[test]
+/// Confirms a matching completion advances the clock guard used by subsequent loop observations.
 fn completion_is_a_monotonic_clock_observation() {
     let profile = StartupProfile::DEFAULT;
     let mut state = Startup::new(profile, 10);
@@ -241,6 +255,7 @@ fn completion_is_a_monotonic_clock_observation() {
 }
 
 #[test]
+/// Verifies malformed optional profiles recover directly to Dashboard with Fault while valid bytes retain Status.
 fn invalid_optional_profile_skips_startup_without_panicking() {
     for bytes in [&b""[..], &b"EASP"[..], &[0xFF; 16][..]] {
         let (_, state) = Startup::from_encoded(bytes, 123);
@@ -256,7 +271,9 @@ fn invalid_optional_profile_skips_startup_without_panicking() {
 }
 
 #[test]
+/// Compares status images to ensure each changed fact affects only its advertised row and detail level.
 fn status_facts_change_only_their_visible_rows() {
+    /// Returns a fresh landscape Status image with detail `status` and supplied `facts` at time zero.
     fn render(
         status: StartupStatus,
         facts: StartupFacts,
@@ -339,6 +356,7 @@ fn status_facts_change_only_their_visible_rows() {
 }
 
 #[test]
+/// Verifies first-token ownership, duration-plus-500-ms fallback and terminal immunity to late completions.
 fn first_submission_owns_phase_start_and_stalls_use_hard_deadline() {
     let profile = StartupProfile::DEFAULT;
     let replacement = FrameToken {

@@ -1,3 +1,4 @@
+//! Software panel transaction model for exact payload reconstruction and fault-boundary ownership.
 use std::cell::Cell;
 use std::future::Future;
 use std::task::{Context, Poll, Waker};
@@ -7,19 +8,31 @@ use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::display::transfer::{FlushError, PanelBus, PanelState, flush_oriented_plan, flush_plan};
 use dashboard_host_validation::display::{FrameBuffer, WIDTH};
 
+/// Immediate panel-bus model; exercises protocol ordering without simulating electrical scanout.
 struct ModelBus {
+    /// Reconstructed RGB565 panel memory in current logical geometry.
     panel: Box<FrameBuffer>,
+    /// Geometry selected by the latest accepted MADCTL byte.
     geometry: Geometry,
+    /// Inclusive column window.
     columns: [usize; 2],
+    /// Inclusive row window.
     rows: [usize; 2],
+    /// Next logical pixel coordinate inside the active RAMWR window.
     cursor: [usize; 2],
+    /// Successfully accepted command bytes and copied parameter payloads.
     commands: Vec<(u8, Vec<u8>)>,
+    /// Whether pixel selection remains asserted.
     active: bool,
+    /// Number of attempted command/parameter/start/payload boundaries.
     operations: usize,
+    /// Zero-based boundary at which to inject failure; None disables injection.
     fail_at: Option<usize>,
+    /// Pixel bytes successfully copied into panel memory.
     payload_bytes: usize,
 }
 impl ModelBus {
+    /// Returns a zeroed landscape panel with optional zero-based failure boundary `fail_at`.
     fn new(fail_at: Option<usize>) -> Self {
         Self {
             panel: Box::default(),
@@ -35,6 +48,7 @@ impl ModelBus {
         }
     }
 
+    /// Counts one attempted boundary. Returns Err exactly at the configured index, otherwise Ok.
     fn operation(&mut self) -> Result<(), ()> {
         let failed = self.fail_at == Some(self.operations);
         self.operations += 1;
@@ -42,8 +56,12 @@ impl ModelBus {
     }
 }
 impl PanelBus for ModelBus {
+    /// Injected boundary failure with no additional diagnostic payload.
     type Error = ();
 
+    /// Applies `command` with `parameters` after separate command/parameter failure points.
+    /// Returns Err before model mutation on injected failure. Panics for active pixel selection,
+    /// unsupported commands/MADCTL values, short address parameters or reversed bounds.
     async fn command(
         &mut self,
         command: u8,
@@ -76,6 +94,8 @@ impl PanelBus for ModelBus {
         Ok(())
     }
 
+    /// Returns Ok after asserting selection and resetting the cursor, or Err before either effect.
+    /// Panics if pixel selection was already active.
     async fn begin_pixels(&mut self) -> Result<(), ()> {
         assert!(!self.active);
         self.operation()?;
@@ -85,6 +105,9 @@ impl PanelBus for ModelBus {
         Ok(())
     }
 
+    /// Attempts one payload boundary, then calls `callback` once when present, even on failure.
+    /// Returns Err without copying `bytes` on injection; otherwise copies big-endian RGB565 bytes.
+    /// Panics for inactive selection, odd byte length, window overflow or invalid framebuffer indexing.
     async fn pixels<F: FnOnce()>(
         &mut self,
         bytes: &[u8],
@@ -112,11 +135,13 @@ impl PanelBus for ModelBus {
         Ok(())
     }
 
+    /// Deasserts pixel selection; panics if no transfer was active.
     fn end_pixels(&mut self) {
         assert!(self.active);
         self.active = false;
     }
 }
+/// Polls immediate `future` once and returns its result; panics if the model unexpectedly suspends.
 fn run<T>(future: impl Future<Output = T>) -> T {
     let mut future = std::pin::pin!(future);
     match future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
@@ -124,6 +149,7 @@ fn run<T>(future: impl Future<Output = T>) -> T {
         Poll::Pending => panic!("model bus unexpectedly pending"),
     }
 }
+/// Returns a black landscape fixture with two A55A pixels, including the bottom-right corner.
 fn changed_frame() -> Box<FrameBuffer> {
     let mut frame = Box::<FrameBuffer>::default();
     for (x, y) in [(17, 29), (319, 239)] {
@@ -133,6 +159,7 @@ fn changed_frame() -> Box<FrameBuffer> {
     frame
 }
 
+/// Partial/full plans reconstruct identical pixels with one start callback; empty plans perform no I/O.
 #[test]
 fn shared_transaction_path_reconstructs_partial_full_and_empty_updates() {
     let frame = changed_frame();
@@ -154,6 +181,7 @@ fn shared_transaction_path_reconstructs_partial_full_and_empty_updates() {
     assert_eq!(bus.operations, 0);
 }
 
+/// Every injected command or row failure stops further writes and leaves selection deasserted.
 #[test]
 fn every_command_and_row_failure_stops_writes_and_deasserts_selection() {
     let frame = changed_frame();
@@ -170,6 +198,7 @@ fn every_command_and_row_failure_stops_writes_and_deasserts_selection() {
     }
 }
 
+/// Each orientation change writes MADCTL before a full window/payload, even when all pixels are black.
 #[test]
 fn black_rotation_writes_madctl_then_complete_window_and_payload() {
     let frame = Box::<FrameBuffer>::default();
@@ -208,6 +237,7 @@ fn black_rotation_writes_madctl_then_complete_window_and_payload() {
     }
 }
 
+/// Orientation changes reject empty, partial or mismatched geometry plans without any bus operation.
 #[test]
 fn orientation_checked_seam_rejects_empty_partial_and_wrong_geometry_without_io() {
     let frame = Box::<FrameBuffer>::default();
@@ -236,6 +266,7 @@ fn orientation_checked_seam_rejects_empty_partial_and_wrong_geometry_without_io(
     }
 }
 
+/// Every rotation fault invalidates completed content; uncertain MADCTL and payload state require full rewrite.
 #[test]
 fn each_rotation_fault_invalidates_completed_content_and_requires_full_rewrite() {
     let frame = Box::<FrameBuffer>::default();
@@ -279,6 +310,7 @@ fn each_rotation_fault_invalidates_completed_content_and_requires_full_rewrite()
     }
 }
 
+/// A matching completed portrait base permits a 512-byte partial update without another MADCTL write.
 #[test]
 fn same_orientation_retains_partial_damage_without_madctl() {
     let previous = Box::<FrameBuffer>::default();
@@ -315,19 +347,26 @@ fn same_orientation_retains_partial_damage_without_madctl() {
     );
 }
 
+/// A delayed prior payload retains transfer ownership until return, before the next orientation command.
 #[test]
 fn next_orientation_command_waits_for_previous_payload_return() {
     use std::cell::RefCell;
 
     use dashboard_host_validation::display::pipeline::after_first_poll;
+    /// Model bus whose payload future is manually released by the test.
     struct DelayedBus<'a> {
+        /// Immediate reconstruction and boundary-failure model.
         bus: ModelBus,
+        /// Shared readiness gate; false leaves payload pending without copying.
         ready: &'a Cell<bool>,
+        /// Ordered poll/command/return observations.
         events: &'a RefCell<Vec<&'static str>>,
     }
     impl PanelBus for DelayedBus<'_> {
+        /// Forwarded model boundary failure.
         type Error = ();
 
+        /// Logs attempted `command`, forwards `parameters`, and returns the model's validation/failure result.
         async fn command(
             &mut self,
             command: u8,
@@ -339,8 +378,11 @@ fn next_orientation_command_waits_for_previous_payload_return() {
             self.bus.command(command, parameters).await
         }
 
+        /// Returns the model's selection result, preserving its already-active panic precondition.
         async fn begin_pixels(&mut self) -> Result<(), ()> { self.bus.begin_pixels().await }
 
+        /// Waits for readiness before copying `bytes`; invokes optional `callback` after the first poll.
+        /// Returns the model copy result and records successful return. Dropping while pending copies no bytes.
         async fn pixels<F: FnOnce()>(
             &mut self,
             bytes: &[u8],
@@ -367,6 +409,7 @@ fn next_orientation_command_waits_for_previous_payload_return() {
             Ok(())
         }
 
+        /// Releases modeled selection; panics if it was not active.
         fn end_pixels(&mut self) { self.bus.end_pixels(); }
     }
     let ready = Cell::new(false);

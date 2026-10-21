@@ -1,6 +1,8 @@
+//! Retained reset evidence integrity and conservative RP2350 watchdog/ROM metadata classification.
 use dashboard_core::health::Fault;
 use dashboard_core::health::reset::{BootEvidence, RecoveryCause, ResetRecord, ResetStage, boot_type_from_sys_info};
 
+/// Nonzero unknown hardware reasons remain faults for ambiguous boot types; raw zero does not invent a watchdog event.
 #[test]
 fn hardware_reason_and_rom_boot_type_do_not_hide_unknown_watchdogs() {
     for raw in [1, 2, 3, 4, 0x8000_0000, u32::MAX] {
@@ -21,6 +23,7 @@ fn hardware_reason_and_rom_boot_type_do_not_hide_unknown_watchdogs() {
     }
 }
 
+/// Only recognized intentional ROM boot types normalize known watchdog bits, never reserved hardware reasons.
 #[test]
 fn only_documented_intentional_boot_types_normalize_watchdog_reason() {
     for boot in [2, 3, 4, 13, 0x82, 0x83, 0x84, 0x8D] {
@@ -35,6 +38,8 @@ fn only_documented_intentional_boot_types_normalize_watchdog_reason() {
     assert!(BootEvidence::capture(4, Some(2), [0; 4]).watchdog_fault());
 }
 
+/// Source-derived NORMAL reboot scratch writes can invalidate retained context while leaving ambiguous TIMER/type0
+/// evidence.
 #[test]
 fn normal_rom_reboot_can_look_like_a_watchdog_timeout_without_retained_context() {
     // picotool 2.3.1 NORMAL reboot uses delay=500 ms, param0=BOOT_PARTITION_NONE
@@ -67,6 +72,7 @@ fn normal_rom_reboot_can_look_like_a_watchdog_timeout_without_retained_context()
     }
 }
 
+/// SYS_INFO admits only its exact supported return shape and retains the chained-boot flag in the boot byte.
 #[test]
 fn rom_reply_requires_exact_supported_shape_and_preserves_chained_flag() {
     let words = [0x40, 0x0099_8255, 0, 0, 0];
@@ -79,6 +85,8 @@ fn rom_reply_requires_exact_supported_shape_and_preserves_chained_flag() {
     }
 }
 
+/// All retained stage/time combinations round-trip, but an unrelated nonwatchdog boot cannot reuse stale scratch
+/// evidence.
 #[test]
 fn retained_record_roundtrips_all_stages_and_rejects_nonwatchdog_stale_words() {
     let mut stages = vec![ResetStage::Booting, ResetStage::Supervised];
@@ -98,6 +106,7 @@ fn retained_record_roundtrips_all_stages_and_rejects_nonwatchdog_stale_words() {
     }
 }
 
+/// Every single-bit corruption and intermediate commit write is rejected until the final valid record is published.
 #[test]
 fn scratch_corruption_and_interrupted_publication_cannot_become_evidence() {
     let before = ResetRecord::booting();
@@ -130,6 +139,8 @@ fn scratch_corruption_and_interrupted_publication_cannot_become_evidence() {
     assert_eq!(ResetRecord::decode(rom_overwrite), None);
 }
 
+/// Frozen independent CRC fixtures reject future versions, reserved bits and unknown stage codes even with repaired
+/// CRCs.
 #[test]
 fn frozen_scratch_fixture_rejects_future_version_reserved_bits_and_unknown_stage() {
     // Independent CRC-32/ISO-HDLC fixtures, computed with Python zlib over the
@@ -151,6 +162,7 @@ fn frozen_scratch_fixture_rejects_future_version_reserved_bits_and_unknown_stage
     }
 }
 
+/// Exhausts raw reason bits and boot bytes to preserve faults except the explicit intentional reboot allowlist.
 #[test]
 fn every_raw_bit_and_unknown_boot_byte_remains_conservative() {
     for bit in 0..32 {
@@ -162,6 +174,7 @@ fn every_raw_bit_and_unknown_boot_byte_remains_conservative() {
     }
 }
 
+/// The first failure's stage/time survive later feeds/faults, and elapsed milliseconds saturate instead of wrapping.
 #[test]
 fn first_failure_survives_later_feeds_and_failure_reports() {
     let mut record = ResetRecord::booting();
@@ -192,6 +205,7 @@ fn first_failure_survives_later_feeds_and_failure_reports() {
     assert_eq!(saturated.elapsed_ms, u32::MAX);
 }
 
+/// Stable recovery/stage codes round-trip only their admitted values and every progress-monitor fault maps explicitly.
 #[test]
 fn stable_codes_reject_future_values_and_map_every_monitor_fault() {
     for (code, cause) in [

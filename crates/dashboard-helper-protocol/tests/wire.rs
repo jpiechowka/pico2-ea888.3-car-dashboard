@@ -1,7 +1,9 @@
+//! Wire bounds, exact integer identity, clock normalization and explicit board-consent regressions.
 use dashboard_build_profiles::{ClockSelection, ProfileId};
 use dashboard_helper_protocol::*;
 
 #[test]
+/// Default demo features and false flags normalize exactly; vehicle mode selects BLE without discarded options.
 fn normalized_defaults_and_false_features_are_exact() {
     let mut options = BuildOptions::default();
     let n = normalize(&options).unwrap();
@@ -21,6 +23,7 @@ fn normalized_defaults_and_false_features_are_exact() {
 }
 
 #[test]
+/// Legacy overclock requires Expert and retains requested/actual disagreement; conservative timing does not.
 fn expert_and_legacy_admission_preserve_requested_identity() {
     let mut options = BuildOptions {
         clock: ClockSelection::Named(ProfileId::Legacy290Spi72),
@@ -39,6 +42,7 @@ fn expert_and_legacy_admission_preserve_requested_identity() {
 }
 
 #[test]
+/// Rust JSON decoding preserves full u64 values and separately bounds browser UTC; coercible numeric spellings fail.
 fn integer_and_timestamp_wire_never_rounds() {
     for n in [
         0,
@@ -72,6 +76,7 @@ fn integer_and_timestamp_wire_never_rounds() {
 }
 
 #[test]
+/// ID grammar, unique cleanup IDs, denied unknown/duplicate fields and request-size limits fail closed.
 fn bounded_requests_and_exact_ids_reject_bad_input() {
     assert!(ArtifactId::new("a".repeat(32)).is_err());
     assert!(AttemptId::new("a".repeat(64)).is_err());
@@ -89,6 +94,7 @@ fn bounded_requests_and_exact_ids_reject_bad_input() {
 }
 
 #[test]
+/// Actual escaped JSON envelope size controls event admission; Unicode survives and zero progress totals fail.
 fn serialized_event_limit_includes_envelope_and_escapes() {
     let event = Event {
         sequence: u64::MAX - 1,
@@ -116,6 +122,7 @@ fn serialized_event_limit_includes_envelope_and_escapes() {
 }
 
 #[test]
+/// Operation layouts and exact Pico 2 W consent spelling stay closed; mismatched selected IDs cannot flash.
 fn layouts_and_board_confirmation_are_closed() {
     assert_eq!(OperationKind::Build.layout().len(), 4);
     assert_eq!(OperationKind::Flash.layout().len(), 6);
@@ -152,6 +159,7 @@ fn layouts_and_board_confirmation_are_closed() {
 }
 
 #[test]
+/// Enumerate event metadata shapes and prove the 1024-byte limit includes setup tuples plus JSON escaping.
 fn actual_maximum_event_envelopes_include_setup_step_and_escape_budget() {
     use dashboard_helper_protocol::setup::*;
     let mut shapes = Vec::new();
@@ -227,6 +235,7 @@ fn actual_maximum_event_envelopes_include_setup_step_and_escape_budget() {
     println!("Largest enumerated empty event envelope={max}; plain text budget={remaining}");
 }
 #[test]
+/// Worst-case escaped session reason fits its cap; tampered derived clock neighbors fail normalization checks.
 fn session_cap_and_normalized_tampering_are_enforced() {
     let response = SessionResponse {
         protocol_version: PROTOCOL_VERSION,
@@ -243,6 +252,7 @@ fn session_cap_and_normalized_tampering_are_enforced() {
 }
 
 #[test]
+/// Only protocol version 2 can represent the current W-board consent contract; stale/future versions fail.
 fn non_wireless_helper_sessions_cannot_supply_current_board_consent() {
     for (version, accepted) in [(0, false), (1, false), (2, true), (3, false), (u16::MAX, false)] {
         let wire = format!(

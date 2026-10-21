@@ -1,9 +1,11 @@
+//! Registry navigation, scope, identity and bounded-search regressions.
 use std::collections::BTreeSet;
 
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::field_registry::*;
 
+/// Checks normal/warning labels and exact zero-based widget JSON provenance without debug Option wrappers.
 #[test]
 fn led_search_context_and_inspection_location_use_human_labels_and_real_indices() {
     assert_eq!(TargetOwner::Led(false).display_label(), "Normal operation");
@@ -19,6 +21,7 @@ fn led_search_context_and_inspection_location_use_human_labels_and_real_indices(
     assert!(!detail.contains("Some(") && !detail.contains("None"), "{detail}");
 }
 
+/// Checks the 128-byte UTF-8 query boundary and invalidation by JSON edits even when the project stamp is unchanged.
 #[test]
 fn query_overflow_preserves_previous_unicode_query_and_stale_result_rejects() {
     let mut query = SearchQuery::default();
@@ -37,6 +40,7 @@ fn query_overflow_preserves_previous_unicode_query_and_stale_result_rejects() {
     assert!(Registry::resolve(&editor, target).is_err());
 }
 
+/// Checks duplicate widget IDs retain their exact read-only JSON index without changing selection, history or stamp.
 #[test]
 fn error_navigation_preserves_exact_duplicate_and_unknown_json_locations() {
     let mut config = default_config();
@@ -58,6 +62,7 @@ fn error_navigation_preserves_exact_duplicate_and_unknown_json_locations() {
     assert_eq!((editor.stamp(), editor.selection(), editor.history_len()), before);
 }
 
+/// Checks an independent raw/typed field inventory and unique ASCII DOM IDs for 64 widgets, bands and duplicate IDs.
 #[test]
 fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
     let keys = Registry::descriptors().iter().map(|d| d.key).collect::<BTreeSet<_>>();
@@ -252,6 +257,7 @@ fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
     );
 }
 
+/// Rejects forged scope, reserved Y holds and absent bands; retains exact raw-row provenance for repair.
 #[test]
 fn forged_scope_and_absent_band_never_resolve_and_raw_target_stays_authentic() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -283,6 +289,7 @@ fn forged_scope_and_absent_band_never_resolve_and_raw_target_stays_authentic() {
     assert!(Registry::retained_raw_target(&editor, 0, TargetOwner::Widget(0)).is_err());
 }
 
+/// Checks inactive fuel, route and graph variants still resolve with explanations for unavailable ordinary controls.
 #[test]
 fn variant_inactive_fields_explain_actual_absent_input_controls() {
     let editor = Editor::new(default_config()).unwrap();
@@ -299,6 +306,7 @@ fn variant_inactive_fields_explain_actual_absent_input_controls() {
     }
 }
 
+/// Rejects relabelling a label-validation location as gauge-style navigation.
 #[test]
 fn semantic_locations_cannot_be_relabelled_as_an_unrelated_registry_field() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -312,6 +320,7 @@ fn semantic_locations_cannot_be_relabelled_as_an_unrelated_registry_field() {
     assert!(Registry::semantic_target(&editor, issue.location, FieldKey::GaugeStyle, TargetOwner::Widget(0)).is_err());
 }
 
+/// Checks warning-pattern validation cannot acquire normal-pattern navigation authority.
 #[test]
 fn semantic_led_identity_cannot_focus_the_other_pattern() {
     let editor = Editor::new(default_config()).unwrap();
@@ -336,6 +345,8 @@ fn semantic_led_identity_cannot_focus_the_other_pattern() {
     );
 }
 
+/// Checks case-insensitive aliases, Unicode byte bounds, deterministic first-40 results and exact omitted counts with
+/// duplicate labels.
 #[test]
 fn bounded_search_covers_aliases_unicode_duplicate_labels_and_exact_omission() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -367,6 +378,7 @@ fn bounded_search_covers_aliases_unicode_duplicate_labels_and_exact_omission() {
     assert_eq!(found, Registry::search(&editor, "łambda").unwrap());
 }
 
+/// Checks capability projection across all gauge styles/spans and rejects targets after an accepted configuration edit.
 #[test]
 fn capabilities_and_resolution_follow_real_style_span_and_candidate_lineage() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -405,6 +417,8 @@ fn capabilities_and_resolution_follow_real_style_span_and_candidate_lineage() {
     );
 }
 
+/// Checks display-only bindings follow stable object IDs through reorder/deletion while old inspection authority
+/// expires.
 #[test]
 fn persistent_field_ids_follow_current_view_and_widget_positions_without_rebinding_objects() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -480,6 +494,8 @@ fn persistent_field_ids_follow_current_view_and_widget_positions_without_rebindi
     assert_eq!(editor.preview().config().widgets[0].channel, channel);
 }
 
+/// Checks inspection leaves the editing layout and selection intact; rejected overlap edits remain visible while
+/// accepted geometry is preserved.
 #[test]
 fn inspecting_current_and_other_view_rules_leaves_all_canvas_objects_available() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -556,6 +572,7 @@ fn inspecting_current_and_other_view_rules_leaves_all_canvas_objects_available()
     );
 }
 
+/// Checks Numeric scale inactivity does not block retained raw repair and all nonnumeric styles expose scale controls.
 #[test]
 fn numeric_gauge_scale_fields_explain_absent_controls_and_retained_repair_still_works() {
     let mut editor = Editor::new(default_config()).unwrap();

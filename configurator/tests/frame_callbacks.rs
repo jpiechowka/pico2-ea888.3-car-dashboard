@@ -1,3 +1,4 @@
+//! Callback retirement regressions using synthetic handles and shared rendered pixels.
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::Editor;
 use dashboard_configurator::frame_callbacks::FrameCallbacks;
@@ -6,6 +7,8 @@ use dashboard_configurator::simulator::ControlSimulator;
 use dashboard_core::input_model::EncoderBatch;
 
 #[test]
+/// Assert final physical release cancels old RAF ownership and allows candidate repaint
+/// without publishing candidate state as accepted simulator completion.
 fn final_held_release_retires_pending_inspection_draw_and_allows_new_pixels() {
     let mut editor = Editor::default();
     let mut sim = ControlSimulator::new(editor.preview().clone());
@@ -73,6 +76,7 @@ fn final_held_release_retires_pending_inspection_draw_and_allows_new_pixels() {
 }
 
 #[test]
+/// Assert stale callbacks and scheduling failures cannot release a newer reservation.
 fn late_finished_draw_and_scheduler_failure_cannot_clear_a_new_request() {
     let mut callbacks = FrameCallbacks::new();
     let first = callbacks.queue_appearance().unwrap();

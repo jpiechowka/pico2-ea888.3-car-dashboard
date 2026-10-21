@@ -1,3 +1,6 @@
+//! Exact legacy HCI report decoding, partial-batch diagnostics and callback compatibility.
+
+/// Production decoder imported without its hardware callback adapter.
 #[path = "../../firmware/ble-probe/src/reports.rs"]
 mod reports;
 
@@ -5,6 +8,9 @@ use bt_hci::FromHciBytes;
 use bt_hci::param::LeAdvReports;
 use dashboard_core::discovery::{Event, ReportKind, ScanDiagnostics, ScanErrorKind, ScanFailure};
 
+/// Returns owned events and diagnostics from counted HCI `bytes` at 1234 ms.
+/// `revision` enables that scan generation; None suppresses reports and errors.
+/// Panics if the outer batch envelope cannot be decoded.
 fn decode(
     bytes: &[u8],
     revision: Option<u32>,
@@ -22,6 +28,7 @@ fn decode(
     (events, diagnostics)
 }
 
+/// Accepted random-address reports preserve reversed wire address, payload, RSSI and generation.
 #[test]
 fn accepted_report_preserves_address_payload_rssi_and_scan_identity() {
     let (events, diagnostics) = decode(&[1, 0, 1, 1, 2, 3, 4, 5, 6, 3, 2, 1, 6, 0x9E], Some(7));
@@ -39,6 +46,7 @@ fn accepted_report_preserves_address_payload_rssi_and_scan_identity() {
     assert_eq!(diagnostics.total, 0);
 }
 
+/// All 256 RSSI encodings, including unavailable 127, survive parsing as raw evidence.
 #[test]
 fn every_rssi_byte_is_delivered_without_becoming_a_parse_failure() {
     for rssi in i8::MIN..=i8::MAX {
@@ -53,6 +61,7 @@ fn every_rssi_byte_is_delivered_without_becoming_a_parse_failure() {
     }
 }
 
+/// Invalid event-kind bytes produce one value failure with exact cursor and generation evidence.
 #[test]
 fn invalid_event_kind_retains_failure_category_and_batch_context() {
     let (events, diagnostics) = decode(&[1, 5, 0, 1, 2, 3, 4, 5, 6, 0, 0x9E], Some(9));
@@ -76,6 +85,7 @@ fn invalid_event_kind_retains_failure_category_and_batch_context() {
     );
 }
 
+/// Missing RSSI and incomplete declared data both reject the record as a size failure.
 #[test]
 fn missing_rssi_and_truncated_data_are_size_failures() {
     for bytes in [
@@ -92,6 +102,7 @@ fn missing_rssi_and_truncated_data_are_size_failures() {
     }
 }
 
+/// A malformed second record preserves the first event and stops once without guessing a third.
 #[test]
 fn malformed_second_report_preserves_valid_prefix_and_counts_one_failed_batch() {
     let (events, diagnostics) = decode(
@@ -115,6 +126,7 @@ fn malformed_second_report_preserves_valid_prefix_and_counts_one_failed_batch() 
     );
 }
 
+/// Disabled scan admission suppresses both late valid reports and malformed-batch diagnostics.
 #[test]
 fn disabled_scan_revision_discards_late_reports_and_errors() {
     for bytes in [&[1, 0, 0, 1, 2, 3, 4, 5, 6, 0, 0x9E][..], &[1, 5][..]] {
@@ -125,6 +137,7 @@ fn disabled_scan_revision_discards_late_reports_and_errors() {
     }
 }
 
+/// Policy filtering is silent, while malformed AD payload bytes remain valid raw HCI evidence.
 #[test]
 fn filtering_and_ad_decode_failures_are_not_hci_parse_failures() {
     for bytes in [
@@ -140,6 +153,9 @@ fn filtering_and_ad_decode_failures_are_not_hci_parse_failures() {
     assert_eq!(diagnostics.total, 0);
 }
 
+/// Returns one public connectable wire record without a batch count, with RSSI -94 dBm.
+/// `length` sets payload size and its one-byte declaration (caller must keep it <=255);
+/// `identity` sets the first wire address byte. Payload bytes are ascending modulo 256.
 fn record(
     length: usize,
     identity: u8,
@@ -150,6 +166,7 @@ fn record(
     bytes
 }
 
+/// Every short header prefix reports its exact size and distinguishes absent length from zero.
 #[test]
 fn short_prefixes_distinguish_absent_data_length_from_present_zero() {
     let complete = record(0, 1);
@@ -172,6 +189,7 @@ fn short_prefixes_distinguish_absent_data_length_from_present_zero() {
     }
 }
 
+/// Payload lengths 0..=31 retain complete bytes; every data/RSSI truncation reports exact context.
 #[test]
 fn every_legal_data_length_accepts_complete_data_and_explains_every_truncation() {
     for length in 0..=31 {
@@ -201,6 +219,7 @@ fn every_legal_data_length_accepts_complete_data_and_explains_every_truncation()
     }
 }
 
+/// Two valid records remain delivered when a later record fails, with the remaining cursor intact.
 #[test]
 fn later_failure_retains_multiple_prior_reports_and_exact_remaining_bytes() {
     let mut bytes = vec![4];
@@ -216,6 +235,7 @@ fn later_failure_retains_multiple_prior_reports_and_exact_remaining_bytes() {
     assert_eq!((failure.index, failure.total_reports), (2, 4));
 }
 
+/// Seven records filling the 255-byte HCI parameter limit preserve every address and payload size.
 #[test]
 fn maximum_legal_event_batch_preserves_all_records_and_no_failure() {
     let lengths = [31, 31, 31, 31, 31, 28, 0];
@@ -238,6 +258,7 @@ fn maximum_legal_event_batch_preserves_all_records_and_no_failure() {
     }
 }
 
+/// Count exhaustion, trailing bytes, missing records and oversized payloads match the locked iterator.
 #[test]
 fn count_and_trailing_byte_behavior_matches_the_exact_dependency_iterator() {
     for bytes in [
@@ -264,16 +285,21 @@ fn count_and_trailing_byte_behavior_matches_the_exact_dependency_iterator() {
     }
 }
 
+/// The full-batch callback forwards once to legacy iterator handlers without dropping valid records.
 #[test]
 fn full_report_callback_preserves_existing_iterator_only_handlers() {
     use core::cell::Cell;
 
     use trouble_host::prelude::EventHandler;
+    /// Iterator-only handler observing the default full-batch compatibility adapter.
     struct LegacyHandler {
+        /// Number of callback invocations.
         calls: Cell<usize>,
+        /// Successfully decoded entries in the most recent callback.
         entries: Cell<usize>,
     }
     impl EventHandler for LegacyHandler {
+        /// Consumes `reports`, counting successful entries and recording one callback invocation.
         fn on_adv_reports(
             &self,
             reports: bt_hci::param::LeAdvReportsIter<'_>,

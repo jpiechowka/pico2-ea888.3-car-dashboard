@@ -1,6 +1,8 @@
+//! Typed sample provenance, replay rejection, quality expiry and raw-statistics preservation.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot, SensorId};
 use dashboard_host_validation::samples::{DataMode, Quality, Quantity, Sample, SampleError, Source};
 
+/// Returns an unchecked coolant sample from OBD 0x7E8/PID05 with Celsius `value`, `sequence` and receipt `at` ms.
 fn coolant(
     value: f32,
     sequence: u64,
@@ -14,6 +16,7 @@ fn coolant(
     }
 }
 
+/// Vehicle startup and absent channels remain unknown, while typed admission cannot be replaced by demo injection.
 #[test]
 fn vehicle_startup_and_channel_absence_never_publish_zero_as_a_measurement() {
     let mut model = AcquisitionModel::new();
@@ -33,6 +36,7 @@ fn vehicle_startup_and_channel_absence_never_publish_zero_as_a_measurement() {
     assert_eq!(snapshot.metadata[SensorId::Water as usize].sequence, 1);
 }
 
+/// Freshness is inclusive at its deadline; stale/backdated presentation never mutates raw history.
 #[test]
 fn staleness_is_a_presentation_deadline_and_does_not_fabricate_history() {
     let mut model = AcquisitionModel::new();
@@ -46,6 +50,7 @@ fn staleness_is_a_presentation_deadline_and_does_not_fabricate_history() {
     assert_eq!(model.snapshot(), snapshot);
 }
 
+/// Replayed sequence/time, future receipts and mismatched PID/ECU reject without changing accepted state.
 #[test]
 fn sequence_time_and_source_checks_reject_replay_without_mutating_a_channel() {
     let mut model = AcquisitionModel::new();
@@ -77,6 +82,7 @@ fn sequence_time_and_source_checks_reject_replay_without_mutating_a_channel() {
     assert_eq!(model.snapshot(), before);
 }
 
+/// Faults suppress values and preserve raw statistics; only a newer valid sample restores availability.
 #[test]
 fn faults_suppress_values_preserve_statistics_and_recover_only_with_a_new_valid_sample() {
     let mut model = AcquisitionModel::new();
@@ -122,6 +128,7 @@ fn faults_suppress_values_preserve_statistics_and_recover_only_with_a_new_valid_
     assert_eq!(model.snapshot().quality(SensorId::Egt, 1_000_000), Quality::Unsupported);
 }
 
+/// Demo and vehicle samples cannot cross provenance modes; empty snapshots default to unavailable vehicle data.
 #[test]
 fn demo_is_explicit_and_cannot_cross_into_vehicle_or_masquerade_as_an_obd_source() {
     let demo_sample = Sample {
@@ -140,6 +147,7 @@ fn demo_is_explicit_and_cannot_cross_into_vehicle_or_masquerade_as_an_obd_source
     assert_eq!(DashboardSnapshot::EMPTY.mode, DataMode::Vehicle);
 }
 
+/// Demo batches increment each channel's own sequence and preflight exhaustion before any channel mutation.
 #[test]
 fn demo_batches_preserve_each_typed_channel_sequence_and_preflight_exhaustion() {
     let mut model = AcquisitionModel::demo();
@@ -190,6 +198,7 @@ fn demo_batches_preserve_each_typed_channel_sequence_and_preflight_exhaustion() 
     );
 }
 
+/// Every channel expires at its bounded deadline; unrelated/out-of-range CAN response identities reject.
 #[test]
 fn every_channel_has_a_bounded_deadline_and_unrelated_can_ids_are_rejected() {
     let mut demo = AcquisitionModel::demo();
@@ -215,6 +224,7 @@ fn every_channel_has_a_bounded_deadline_and_unrelated_can_ids_are_rejected() {
     }
 }
 
+/// Replayed measurements cannot refresh peak hold, and invalid payloads clear the configured peak immediately.
 #[test]
 fn configured_raw_peaks_reject_replays_and_clear_on_invalid_payload() {
     use dashboard_host_validation::alarms::RuleIndex;

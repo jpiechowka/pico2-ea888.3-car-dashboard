@@ -4,6 +4,8 @@ use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};
 use dashboard_host_validation::display::window::{FrameWindow, WINDOW_US};
 use dashboard_host_validation::input_trace::InputCounters;
 use dashboard_host_validation::telemetry_protocol;
+/// Emits two production frame-window reports and one synthetic OBD capability telemetry report to stdout.
+/// Uses fixed microsecond/millisecond fixtures without device I/O; invariant/encoding/output failures panic.
 fn main() {
     let mut window = FrameWindow::new(0);
     let frame = FrameTrace::finish(

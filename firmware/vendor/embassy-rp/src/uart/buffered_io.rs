@@ -1,6 +1,5 @@
 //! Internal buffered UART software operations, shared with host regression tests.
 //! Reader/writer ownership is supplied by the enclosing single-owner driver.
-#![allow(missing_docs)]
 use core::sync::atomic::{AtomicU8, Ordering};
 use core::task::{Context, Poll};
 
@@ -10,6 +9,8 @@ use embassy_sync::waitqueue::AtomicWaker;
 /// Claim a UART IRQ on exactly one core while either buffered half is alive.
 /// The caller holds the same critical section across ring initialization and
 /// interrupt enable; Drop releases the claim only after disabling the last IRQ.
+/// `owner` stores zero for unclaimed or core+1; `core` must be 0 or 1. `_cs`
+/// proves the caller's critical section. Panics on invalid core or another owner.
 pub fn claim_irq_core(
     owner: &AtomicU8,
     core: u8,
@@ -25,6 +26,8 @@ pub fn claim_irq_core(
     owner.store(claim, Ordering::Release);
 }
 
+/// ORs `bits` into sticky `errors` under a critical section, preserving prior
+/// receive faults even when IRQ and consumer observations interleave.
 pub fn latch_error(
     errors: &AtomicU8,
     bits: u8,
@@ -34,6 +37,8 @@ pub fn latch_error(
     });
 }
 
+/// Removes `amount` bytes from `reader`'s current contiguous span. Panics before
+/// advancing if the amount exceeds that span; caller retains exclusive RX consumption.
 pub fn consume_rx(
     reader: &mut Reader<'_>,
     amount: usize,
@@ -42,6 +47,11 @@ pub fn consume_rx(
     reader.pop_done(amount);
 }
 
+/// Copies a contiguous prefix from `reader` into `out`, observing sticky `errors`
+/// before and after `rearm`. Returns Ready(0) for empty output, Ready(Err(bits))
+/// for a fault, Pending only when no bytes were copied, or the copied count.
+/// A fault racing the copy may consume/copy bytes before returning Err; callers
+/// must invalidate protocol state. `rearm` must atomically preserve sticky masking.
 pub fn try_read(
     reader: &mut Reader<'_>,
     errors: &AtomicU8,
@@ -73,6 +83,9 @@ pub fn try_read(
     }
 }
 
+/// Registers `cx` with `waker`, then reads from `reader` into `out` using `errors`
+/// and `rearm` as in [`try_read`]. Returns the same poll result and retains no slice
+/// references; Pending copied zero bytes and can be dropped safely by the owner.
 pub fn poll_read(
     reader: &mut Reader<'_>,
     errors: &AtomicU8,
@@ -85,6 +98,9 @@ pub fn poll_read(
     try_read(reader, errors, out, rearm)
 }
 
+/// Registers `cx` with `waker` and queues a prefix of `input` through `writer`,
+/// invoking `pend` to kick TX. Returns Ready(0) for empty input without registration,
+/// a copied count, or Pending with no copied bytes; retains no caller slice.
 pub fn poll_write(
     writer: &mut Writer<'_>,
     waker: &AtomicWaker,
@@ -99,6 +115,9 @@ pub fn poll_write(
     try_write(writer, input, pend)
 }
 
+/// Copies a contiguous prefix of `input` into `writer` and calls `pend`, including
+/// when the ring is full. Returns the copied count or Pending if none fit; empty
+/// input returns Ready(0) without a kick. Acceptance is not physical transmission.
 pub fn try_write(
     writer: &mut Writer<'_>,
     input: &[u8],
@@ -116,6 +135,9 @@ pub fn try_write(
     if n == 0 { Poll::Pending } else { Poll::Ready(n) }
 }
 
+/// Registers `cx` with `waker` and returns Ready only when software `ring` is
+/// empty; otherwise calls `pend` and returns Pending. The hardware FIFO/shifter
+/// may still contain bytes and must be checked by the enclosing UART owner.
 pub fn poll_flush(
     ring: &RingBuffer,
     waker: &AtomicWaker,
@@ -131,6 +153,9 @@ pub fn poll_flush(
     }
 }
 
+/// Offers up to `budget` bytes from `reader` to `put`, removing only bytes it
+/// accepts. Returns the consumed count; false stops work without losing that byte.
+/// May cross the ring's wrap boundary but never exceeds the caller's IRQ budget.
 pub fn drain_tx(
     reader: &mut Reader<'_>,
     budget: usize,
@@ -154,6 +179,10 @@ pub fn drain_tx(
     total
 }
 
+/// Reads at most `budget` bytes into `writer`'s contiguous free span via `get`.
+/// Returns bytes published; an existing `errors` latch skips all work. `None`
+/// stops normally, while Err bits are latched and preserve any accepted prefix.
+/// The caller decides whether to re-pend for remaining hardware FIFO bytes.
 pub fn fill_rx(
     writer: &mut Writer<'_>,
     errors: &AtomicU8,
@@ -184,8 +213,11 @@ pub fn fill_rx(
 }
 
 #[cfg(test)]
+/// Native regression for nonblocking TX admission and ring reuse.
 mod tests {
     #[test]
+    /// Verifies bounded prefix acceptance, full-ring Pending and TX kicks, empty
+    /// writes without kicks, and recovery after a complete drain.
     fn nonblocking_write_preserves_full_ring_and_recovers_after_drain() {
         use super::*;
         let mut bytes = [0u8; 2];

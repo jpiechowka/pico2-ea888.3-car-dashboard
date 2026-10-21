@@ -1,35 +1,56 @@
+//! Bounded incremental UTF-8 decoding, terminal-control removal, secret redaction and log framing.
 use dashboard_helper_protocol::*;
 /// Trusted native ingestion data. Process output must be produced by StreamFramer;
 /// no raw pipe or control-frame bytes may bypass that single sanitizer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogInput {
+    /// Job stage owning this already-sanitized message.
     pub stage: StageId,
+    /// stdout, stderr or helper-produced source classification.
     pub source: Source,
+    /// Sanitized bounded text; native tool output must pass through StreamFramer first.
     pub text: String,
+    /// Carriage-return progress update rather than an ordinary newline record.
     pub progress: bool,
 }
 #[derive(Clone, Copy)]
+/// Incremental terminal escape parser, retained across raw chunks so split controls cannot bypass sanitization.
 enum Escape {
+    /// Ordinary printable content or a new escape introducer.
     Text,
+    /// ESC received, awaiting its sequence discriminator.
     Esc,
+    /// ESC intermediate-byte sequence, consumed through its final byte.
     EscIntermediate,
+    /// CSI control sequence, consumed through its final byte.
     Csi,
+    /// OSC/DCS/SOS/PM/APC string, consumed through BEL or string terminator.
     String,
+    /// ESC inside a control string, awaiting backslash termination.
     StringEsc,
 }
 /// One stream's bounded decoder/sanitizer/redactor. No Debug: secret patterns are private.
 pub struct StreamFramer {
+    /// At most three exact 64-byte lowercase hexadecimal secret patterns, excluded from Debug output.
     secrets: Vec<[u8; 64]>,
+    /// Pending incomplete UTF-8 scalar bytes, at most the decoder's four-byte scalar bound.
     utf8: Vec<u8>,
+    /// Current escape-removal state.
     escape: Escape,
+    /// Sanitized characters withheld to detect secrets split across chunks/lines, normally below 64 bytes.
     lookbehind: String,
+    /// Current sanitized line fragment, at most 256 UTF-8 bytes.
     line: String,
+    /// Previous framed character was CR, so a following LF is suppressed as the same delimiter.
     last_cr: bool,
+    /// finish completed; further pushes, registrations and finish calls are rejected.
     closed: bool,
 }
 impl StreamFramer {
     /// Register on every associated stream before delivering a newly generated nonce.
     /// Existing decoder/redactor state is retained; patterns live through output closure.
+    /// Returns success for unique lowercase 64-hex-byte `s`; closed, fourth-pattern and malformed/duplicate inputs fail
+    /// without changing registered patterns. Already-emitted text cannot be retroactively redacted.
     pub fn register_secret(
         &mut self,
         s: &str,
@@ -52,6 +73,8 @@ impl StreamFramer {
         Ok(())
     }
 
+    /// Returns an open framer with at most three validated unique `patterns`; malformed/duplicate/bounds errors reject
+    /// construction.
     pub fn new(patterns: &[&str]) -> Result<Self, Error> {
         if patterns.len() > 3 {
             return Err(Error::Bounds);
@@ -71,8 +94,12 @@ impl StreamFramer {
         Ok(frame)
     }
 
+    /// Returns pending decoder/lookbehind/line byte lengths, excluding allocated capacity and secret patterns.
     pub fn retained_bytes(&self) -> usize { self.utf8.len() + self.lookbehind.len() + self.line.len() }
 
+    /// Consumes up to 4096 raw `bytes`, delivering bounded owned `(text, progress)` fragments through `emit`.
+    /// Returns closed/bounds errors before consuming input; malformed UTF-8 becomes replacement characters,
+    /// incomplete scalars/escapes remain pending. Callback panics propagate after partial state/output effects.
     pub fn push(
         &mut self,
         bytes: &[u8],
@@ -114,6 +141,9 @@ impl StreamFramer {
         Ok(())
     }
 
+    /// Removes terminal escapes/control characters from decoded `c`, forwarding printable text and CR/LF/tab to `emit`
+    /// through redaction/framing. Escape state survives chunk boundaries and unclosed strings suppress following
+    /// payload.
     fn sanitize(
         &mut self,
         c: char,
@@ -166,6 +196,8 @@ impl StreamFramer {
         }
     }
 
+    /// Checks sanitized `c` against registered secret prefixes before framing output through `emit`.
+    /// Keeps a bounded suffix for cross-chunk matches and substitutes `[redacted]` for each complete exact pattern.
     fn redact(
         &mut self,
         c: char,
@@ -190,6 +222,8 @@ impl StreamFramer {
         }
     }
 
+    /// Adds sanitized/redacted `c` to a <=256-byte UTF-8 fragment, delivering completed fragments through `emit`.
+    /// CR emits progress, LF emits ordinary text, CRLF emits once; empty delimiter-only lines are omitted.
     fn frame(
         &mut self,
         c: char,
@@ -212,6 +246,10 @@ impl StreamFramer {
         self.line.push(c);
     }
 
+    /// Flushes pending decoder/redaction/line state through `emit`, then closes the stream; returns Closed if already
+    /// finished. A partial UTF-8 scalar becomes replacement text unless inside a discarded escape sequence; a
+    /// partial secret prefix is emitted because it cannot form a complete registered secret. Callback panics can
+    /// leave partial output/state.
     pub fn finish(
         &mut self,
         mut emit: impl FnMut(String, bool),

@@ -16,7 +16,12 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
 [Bluetooth setup](#bluetooth-prototype-in-studio) · [BLE discovery utility](#standalone-ble-discovery-utility) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
-[Architecture](#architecture) · [Validation](#firmware-build-and-validation)
+[Architecture](#architecture) · [Validation](#firmware-build-and-validation) ·
+[Rust documentation](docs/validation/rust-documentation.md)
+
+The [21 October Rust documentation audit](docs/validation/rust-documentation-audit-2026-10-21.md)
+records source coverage, tested corrections and validation limits. The
+documentation policy includes reproducible private-item and cross-target checks.
 
 [![Studio Views workspace with the shared dashboard preview](docs/images/gallery/workflows/editor.jpg)](docs/configurator/gallery.md#edit-and-repair)
 

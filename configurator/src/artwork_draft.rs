@@ -2,15 +2,23 @@
 use dashboard_startup_tools::{ConvertError, Options};
 
 #[derive(Clone, Copy, Debug)]
+/// Numeric importer control; discriminants index the six retained raw strings.
 pub enum Number {
+    /// Requested output sampling rate in frames per second.
     Fps,
+    /// Inclusive source clip start in milliseconds.
     Start,
+    /// Source clip end in milliseconds, interpreted by the converter options.
     End,
+    /// Sprite-sheet horizontal frame count.
     Columns,
+    /// Sprite-sheet vertical frame count.
     Rows,
+    /// Duration of each sprite-sheet frame in milliseconds.
     Frame,
 }
 impl Number {
+    /// Every numeric control in its storage and display order.
     pub const ALL: [Self; 6] = [
         Self::Fps,
         Self::Start,
@@ -20,6 +28,7 @@ impl Number {
         Self::Frame,
     ];
 
+    /// Return the static UI label, including units where applicable, for `self`.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Fps => "Output fps (1–20)",
@@ -32,8 +41,13 @@ impl Number {
     }
 }
 #[derive(Clone)]
-pub struct Numbers([String; 6]);
+/// Raw numeric input retained independently of the last valid conversion options.
+pub struct Numbers(
+    /// Strings indexed by [`Number`]; malformed text remains visible.
+    [String; 6],
+);
 impl Numbers {
+    /// Returns editable decimal strings from `options`; absent sheet settings use 1×1/100 ms.
     pub fn new(options: &Options) -> Self {
         Self([
             options.sample_fps.to_string(),
@@ -45,6 +59,7 @@ impl Numbers {
         ])
     }
 
+    /// Returns the exact retained string for `field`, including invalid input.
     pub fn text(
         &self,
         field: Number,
@@ -52,6 +67,8 @@ impl Numbers {
         &self.0[field as usize]
     }
 
+    /// Replace `field` with `text`; inputs over 32 UTF-8 bytes become an invalid sentinel.
+    /// No parsing or accepted-option mutation occurs.
     pub fn set(
         &mut self,
         field: Number,
@@ -64,6 +81,10 @@ impl Numbers {
         };
     }
 
+    /// Clone `base`, parse active numeric fields, and return fully validated options.
+    /// Sheet fields are ignored when `base.sheet` is absent. Whitespace is trimmed;
+    /// parse/narrowing failures return `ConvertError::Options`, and validation errors
+    /// propagate without modifying `base` or these raw strings.
     pub fn options(
         &self,
         base: &Options,
@@ -91,11 +112,15 @@ impl Numbers {
 /// Operation feedback belongs to one accepted project, including its Editor owner.
 #[derive(Clone)]
 pub struct ProjectFeedback {
+    /// Accepted configuration identity, including the owning editor instance.
     owner: crate::editor::AcceptedConfigKey,
+    /// Complete accepted-project revision, including startup/artwork changes.
     revision: crate::editor::Revision,
+    /// Feedback retained for this exact project snapshot.
     text: String,
 }
 impl ProjectFeedback {
+    /// Returns owned feedback `text` bound to `editor`'s accepted identity/revision.
     pub fn new(
         editor: &crate::editor::Editor,
         text: String,
@@ -107,6 +132,7 @@ impl ProjectFeedback {
         }
     }
 
+    /// Return stored feedback only while `editor` matches both identities; otherwise `""`.
     pub fn text<'a>(
         &'a self,
         editor: &crate::editor::Editor,

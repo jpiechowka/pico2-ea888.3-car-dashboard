@@ -1,6 +1,10 @@
+//! Deterministic complete defaults and private in-place initialization helpers.
+//! Warning examples are synthetic-only; source catalogue selections do not qualify vehicle traffic.
 use crate::*;
 
-/// Reviewed synthetic warning examples, not recommended limits for an engine.
+/// Return a default widget for `channel`, retaining caller-supplied `id`, `view` and `placement`.
+/// Caller geometry/IDs are not validated here. Warnings are reviewed synthetic examples,
+/// not recommended engine limits; boost warning defaults off. Built-in ASCII lengths are asserted.
 pub fn default_widget(
     channel: Channel,
     id: u16,
@@ -55,14 +59,16 @@ pub fn default_widget(
     }
 }
 
+/// Return the complete one-view, eight-cell landscape default with disabled BLE.
+/// Defaults are editable candidates; callers seeking runtime proof must still validate them.
 pub fn default_config() -> Config {
     let mut config = empty_config();
     fill_default_config(&mut config);
     config
 }
 
-// Legally initialized storage only. It is private and is not a validated
-// document or a public default. No placeholder may be published by a slot.
+/// Return legally initialized storage only, not an admitted document or public default.
+/// Private slots must replace and validate all placeholders before publication.
 pub(crate) const fn empty_config() -> Config {
     Config {
         version: 0,
@@ -108,6 +114,9 @@ pub(crate) const fn empty_config() -> Config {
     }
 }
 
+/// Replace every field in `config` in place with complete defaults, clearing old collections.
+/// Avoids a second full-size model temporary. Panics only on impossible reviewed built-in
+/// string/capacity drift; no previous candidate field survives a successful fill.
 pub(crate) fn fill_default_config(config: &mut Config) {
     config.ble = BleSettings::DEFAULT;
     config.version = VERSION;

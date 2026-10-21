@@ -10,14 +10,22 @@ use static_cell::StaticCell;
 use crate::{bridge, maintenance, metrics, storage};
 
 // Preserve the task identity in the concrete future for named stack admission.
+/// Runs the core1 catalogue/capture UI indefinitely with one model, decoder and
+/// affine byte lease. Reliable evidence precedes controls/save decisions; controls
+/// update generations before lossy scan reports. Renders at most every 50 ms using
+/// a FREE framebuffer, returns stale reply leases, and parks before acquisition
+/// during flash maintenance. Never cancel an outstanding affine exchange.
 pub async fn probe_ui_task_run() {
+    /// Sole in-place bounded live catalogue and inspection state.
     static MODEL: StaticCell<Probe> = StaticCell::new();
     let model = MODEL.init_with(Probe::new);
     model.boot = Some(bridge::BOOT.receive().await);
     model.radio_bus_hz = dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq());
     // Sole UI-owner state lives in place, like MODEL. Keeping these larger
     // values out of the async future avoids whole-future construction copies.
+    /// Sole in-place saved-slot workflow, confirmations and request identities.
     static CAPTURES: StaticCell<cap::CaptureUi> = StaticCell::new();
+    /// Reusable bounded capture codec workspace; no duplicate payload allocation.
     static DECODER: StaticCell<capture::Decoder> = StaticCell::new();
     let captures = CAPTURES.init_with(cap::CaptureUi::new);
     let decoder = DECODER.init_with(capture::Decoder::new);
@@ -143,6 +151,8 @@ pub async fn probe_ui_task_run() {
         Timer::after_millis(5).await;
     }
 }
+/// Returns save eligibility from `model`: a selected peer and paused radio are
+/// required; the revision binds any confirmation to that exact live generation.
 fn context(model: &Probe) -> cap::Context {
     cap::Context {
         revision: model.request.revision,
@@ -155,6 +165,8 @@ fn context(model: &Probe) -> cap::Context {
         },
     }
 }
+/// Applies `input` to live `model` at boot-relative `now`, publishing a new radio
+/// request when produced. Recover from terminal Fault also requests watchdog reset.
 fn live_input_apply(
     model: &mut Probe,
     input: Input,
@@ -167,6 +179,10 @@ fn live_input_apply(
         bridge::set_request(request);
     }
 }
+/// Applies confirmed capture `action` using `captures`, live `model`, affine
+/// `bytes`, reusable `decoder` and boot-relative `now`. Save freezes current latch
+/// and revision before queuing; failure restores any unsent lease and completes
+/// Busy/Changed instead. Local storage actions never initiate inspection traffic.
 fn action_apply(
     action: cap::Action,
     captures: &mut cap::CaptureUi,
@@ -244,6 +260,8 @@ fn action_apply(
         bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Busy));
     }
 }
+/// Returns current build digest/availability and configured clock/profile metadata
+/// for capture provenance; no clock, hardware capacity or RF behavior is measured.
 fn build_identity() -> capture::BuildIdentity {
     capture::BuildIdentity {
         source_digest: crate::BLE_PROBE_SOURCE_DIGEST,

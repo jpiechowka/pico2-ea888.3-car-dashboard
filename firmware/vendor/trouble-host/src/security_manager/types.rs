@@ -1,3 +1,9 @@
+//! SMP command encodings, pairing-feature admission and human-readable security metadata.
+//!
+//! Wire layouts follow Bluetooth Core Vol 3, Part H, §§3.5–3.6
+//! ([Security Manager specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html)).
+//! Raw AuthReq/distribution bytes retain reserved bits; feature decoding validates I/O, OOB and key size.
+
 use core::fmt::{Display, Formatter};
 
 use super::constants::ENCRYPTION_KEY_SIZE_128_BITS;
@@ -5,7 +11,7 @@ use crate::codec::{Decode, Encode, Type};
 use crate::security_manager::crypto::IoCap;
 use crate::{Error, IoCapabilities};
 
-/// Pairing Failed Reason
+/// SMP failure reason; `Success` is an internal sentinel and cannot decode from a failure PDU.
 // ([Vol 3] Part H, Section 3.5.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reason {
@@ -47,7 +53,9 @@ pub enum Reason {
 }
 
 impl TryFrom<u8> for Reason {
+    /// InvalidValue for zero or any unassigned failure code.
     type Error = Error;
+    /// Returns the failure represented by `val` (1 through 16); zero and unassigned codes are invalid.
     fn try_from(val: u8) -> Result<Self, Error> {
         Ok(match val {
             // Do not convert 0 to Success
@@ -73,6 +81,7 @@ impl TryFrom<u8> for Reason {
 }
 
 impl From<Reason> for u8 {
+    /// Returns the assigned SMP code for `val`, including zero for the internal success sentinel.
     fn from(val: Reason) -> u8 {
         match val {
             Reason::Success => 0x00,
@@ -97,6 +106,7 @@ impl From<Reason> for u8 {
 }
 
 impl AsRef<str> for Reason {
+    /// Returns a static diagnostic explanation of this outcome, without allocating.
     fn as_ref(&self) -> &str {
         match self {
             Reason::Success => "Success",
@@ -121,6 +131,7 @@ impl AsRef<str> for Reason {
 }
 
 impl core::fmt::Display for Reason {
+    /// Writes the outcome explanation to `f`; Returns the formatter's write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
@@ -128,6 +139,7 @@ impl core::fmt::Display for Reason {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for Reason {
+    /// Writes the static outcome explanation to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", self.as_ref())
     }
@@ -181,7 +193,7 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    /// Command payload size excluding command octet
+    /// Returns the exact payload length in bytes, excluding the opcode and L2CAP header.
     pub const fn payload_size(&self) -> u16 {
         match self {
             Command::PairingRequest => 6,
@@ -203,6 +215,7 @@ impl Command {
 }
 
 impl From<Command> for u8 {
+    /// Returns the assigned one-byte SMP opcode for `value`.
     fn from(value: Command) -> u8 {
         match value {
             Command::PairingRequest => 0x01,
@@ -224,8 +237,10 @@ impl From<Command> for u8 {
 }
 
 impl TryFrom<u8> for Command {
+    /// InvalidValue for zero or an unassigned opcode.
     type Error = Error;
 
+    /// Returns the SMP command for `value` (1 through 14); rejects all other octets.
     fn try_from(value: u8) -> Result<Command, Error> {
         let cmd = match value {
             0x01 => Command::PairingRequest,
@@ -249,6 +264,7 @@ impl TryFrom<u8> for Command {
 }
 
 impl AsRef<str> for Command {
+    /// Returns the static protocol name of this command, without allocating.
     fn as_ref(&self) -> &str {
         match self {
             Command::PairingRequest => "Pairing Request",
@@ -270,6 +286,7 @@ impl AsRef<str> for Command {
 }
 
 impl core::fmt::Display for Command {
+    /// Writes the protocol command name to `f`; Returns the formatter's write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
@@ -277,23 +294,30 @@ impl core::fmt::Display for Command {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for Command {
+    /// Writes the protocol command name to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", self.as_ref())
     }
 }
 
-/// A value for use in numeric comparison
+/// User-facing passkey or numeric-comparison value, intended to be 0 through 999999.
+/// Numeric comparison enforces this bound; configured/input passkeys require caller validation.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct PassKey(pub(crate) u32);
+pub struct PassKey(
+    /// Decimal value; the crate-private constructor does not itself validate the six-digit bound.
+    pub(crate) u32,
+);
 
 impl PassKey {
-    /// Get the underlying value as an integer.
+    /// Returns the decimal value without formatting or range validation.
     pub fn value(&self) -> u32 {
         self.0
     }
 }
 
 impl Display for PassKey {
+    /// Writes to `f` with at least six decimal digits, preserving leading zeros.
+    /// Returns the formatter's write result; an out-of-range internal value is not truncated.
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:06}", self.0)
     }
@@ -301,13 +325,17 @@ impl Display for PassKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for PassKey {
+    /// Writes the decimal value to `fmt`, padded to at least six digits.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{=u32:06}", self.0)
     }
 }
 
+/// Application confirmation outcome for a pending displayed comparison.
 pub enum AppEvent {
+    /// User accepted the displayed value.
     PassKeyConfirm,
+    /// User rejected or cancelled the displayed value.
     PassKeyCancel,
 }
 
@@ -323,7 +351,9 @@ pub(crate) enum UseOutOfBand {
 }
 
 impl TryFrom<u8> for UseOutOfBand {
+    /// InvalidValue for any octet except zero or one.
     type Error = Error;
+    /// Returns whether `val` advertises peer OOB data (0 absent, 1 present); rejects reserved values.
     fn try_from(val: u8) -> Result<Self, Error> {
         Ok(match val {
             0x00 => Self::NotPresent,
@@ -334,6 +364,7 @@ impl TryFrom<u8> for UseOutOfBand {
 }
 
 impl From<UseOutOfBand> for u8 {
+    /// Returns the SMP OOB flag for `val`: zero absent or one present.
     fn from(val: UseOutOfBand) -> u8 {
         match val {
             UseOutOfBand::NotPresent => 0x00,
@@ -343,6 +374,7 @@ impl From<UseOutOfBand> for u8 {
 }
 
 impl From<UseOutOfBand> for bool {
+    /// Returns true exactly when `val` advertises available peer OOB data.
     fn from(val: UseOutOfBand) -> bool {
         match val {
             UseOutOfBand::NotPresent => false,
@@ -362,7 +394,10 @@ pub(crate) enum BondingFlag {
 }
 
 impl TryFrom<u8> for BondingFlag {
+    /// InvalidValue when the low two bits are reserved (2 or 3).
     type Error = Error;
+    /// Returns the bonding mode from `val`'s low two bits; ignores all upper AuthReq flags.
+    /// Reserved low-bit values return InvalidValue.
     fn try_from(val: u8) -> Result<Self, Error> {
         Ok(match val & 0b0000_0011 {
             0x00 => Self::NoBonding,
@@ -373,6 +408,7 @@ impl TryFrom<u8> for BondingFlag {
 }
 
 impl From<BondingFlag> for u8 {
+    /// Returns `val`'s two-bit AuthReq encoding: zero for pairing only, one for bonding.
     fn from(val: BondingFlag) -> u8 {
         match val {
             BondingFlag::NoBonding => 0x00,
@@ -382,15 +418,17 @@ impl From<BondingFlag> for u8 {
 }
 
 impl AsRef<str> for BondingFlag {
+    /// Returns the static label for pairing-only versus persistent bonding intent.
     fn as_ref(&self) -> &str {
         match self {
-            BondingFlag::NoBonding => "Bonding",
-            BondingFlag::Bonding => "Pairing",
+            BondingFlag::NoBonding => "Pairing",
+            BondingFlag::Bonding => "Bonding",
         }
     }
 }
 
 impl core::fmt::Display for BondingFlag {
+    /// Writes the bonding-intent label to `f`; Returns the formatter's write result.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
@@ -398,6 +436,7 @@ impl core::fmt::Display for BondingFlag {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for BondingFlag {
+    /// Writes the bonding-intent label to `fmt`.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", self.as_ref())
     }
@@ -406,7 +445,10 @@ impl defmt::Format for BondingFlag {
 /// AuthReq octet
 // ([Vol 3] Part H, Section 3.5.1).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct AuthReq(u8);
+pub(crate) struct AuthReq(
+    /// Raw wire flags, including any reserved bits received from a peer.
+    u8,
+);
 
 /// Man in the middle (MITM) protection requested
 const AUTH_REQ_MITM: u8 = 0b0000_0100;
@@ -418,20 +460,20 @@ const AUTH_REQ_KEY_PRESS: u8 = 0b0001_0000;
 const AUTH_REQ_CT2: u8 = 0b0010_0000;
 
 impl AuthReq {
-    /// Build a AuthReq octet
+    /// Returns AuthReq with `bonding` and Secure Connections enabled; MITM/KP/CT2 start clear.
     pub fn new(bonding: BondingFlag) -> Self {
         AuthReq((bonding as u8) | AUTH_REQ_SECURE_CONNECTION)
     }
-    /// Build a AuthReq octet for LE Legacy Pairing
+    /// Returns AuthReq with only `bonding` set; Secure Connections and MITM start clear.
     pub fn new_legacy(bonding: BondingFlag) -> Self {
         AuthReq(bonding as u8)
     }
-    /// Set the MITM flag
+    /// Returns this value with MITM requested, preserving all other bits.
     pub fn with_mitm(mut self) -> Self {
         self.0 |= AUTH_REQ_MITM;
         self
     }
-    /// Bond requested
+    /// Returns the bonding request; reserved low-bit encodings conservatively become NoBonding.
     pub fn bond(&self) -> BondingFlag {
         if let Ok(v) = BondingFlag::try_from(self.0) {
             v
@@ -439,37 +481,41 @@ impl AuthReq {
             BondingFlag::NoBonding
         }
     }
-    /// Man in the middle (MITM) protection requested
+    /// Returns whether the MITM authentication-request bit is set.
     pub fn man_in_the_middle(&self) -> bool {
         (self.0 & AUTH_REQ_MITM) == AUTH_REQ_MITM
     }
-    /// LE Secure Connections supported
+    /// Returns whether the peer advertises LE Secure Connections support.
     pub fn secure_connection(&self) -> bool {
         (self.0 & AUTH_REQ_SECURE_CONNECTION) == AUTH_REQ_SECURE_CONNECTION
     }
-    ///  Keypress notification during Passkey entry protocol
+    /// Returns whether keypress notification support is advertised.
     pub fn key_press_notification(&self) -> bool {
         (self.0 & AUTH_REQ_KEY_PRESS) == AUTH_REQ_KEY_PRESS
     }
-    /// Support for the h7 function
+    /// Returns whether the CT2 bit advertises h7 support.
     pub fn ct2(&self) -> bool {
         (self.0 & AUTH_REQ_CT2) == AUTH_REQ_CT2
     }
 }
 
 impl From<u8> for AuthReq {
+    /// Returns raw `value` without rejecting reserved bonding/flag bits.
     fn from(value: u8) -> Self {
         Self(value)
     }
 }
 
 impl From<AuthReq> for u8 {
+    /// Returns `value`'s original raw flags, including reserved bits.
     fn from(value: AuthReq) -> u8 {
         value.0
     }
 }
 
 impl core::fmt::Display for AuthReq {
+    /// Writes interpreted bonding/MITM/SC/KP/CT2 flags to `f`; Returns its write result.
+    /// Reserved bits are omitted and reserved bonding encodings are displayed as pairing-only.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -485,6 +531,7 @@ impl core::fmt::Display for AuthReq {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for AuthReq {
+    /// Writes interpreted bonding/MITM/SC/KP/CT2 flags to `fmt`, omitting reserved bits.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
@@ -501,7 +548,10 @@ impl defmt::Format for AuthReq {
 /// Key Distribution Flags
 // ([Vol 3] Part H, Section 3.6.1).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct KeyDistributionFlags(u8);
+pub(crate) struct KeyDistributionFlags(
+    /// Raw encryption/identity/signing/link distribution bits; reserved bits are retained.
+    u8,
+);
 
 impl KeyDistributionFlags {
     /// Distribute Long Term Key (LTK)
@@ -513,53 +563,56 @@ impl KeyDistributionFlags {
     /// - LE/BR/EDR, Distribute Link Key derived from Long Term Key (LTK)
     /// - LESC, Zero / Ignore
     pub(crate) const LINK_KEY: u8 = 0b0000_1000;
-    /// Encryption key flag
+    /// Returns whether legacy LTK/EDIV/Rand distribution is requested.
     pub(crate) fn encryption_key(&self) -> bool {
         (self.0 & Self::ENCRYPTION_KEY) == Self::ENCRYPTION_KEY
     }
-    /// Identity key flag
+    /// Returns whether IRK and identity-address distribution is requested.
     pub(crate) fn identity_key(&self) -> bool {
         (self.0 & Self::IDENTITY_KEY) == Self::IDENTITY_KEY
     }
-    /// Signing key flag
+    /// Returns whether CSRK distribution is requested.
     pub(crate) fn signing_key(&self) -> bool {
         (self.0 & Self::SIGNING_KEY) == Self::SIGNING_KEY
     }
-    /// Link key flag
+    /// Returns whether cross-transport link-key derivation is requested.
     pub(crate) fn link_key(&self) -> bool {
         (self.0 & Self::LINK_KEY) == Self::LINK_KEY
     }
 
-    /// Set the encryption key flag
+    /// Requests legacy encryption-key distribution, preserving every other bit.
     pub(crate) fn set_encryption_key(&mut self) {
         self.0 |= Self::ENCRYPTION_KEY;
     }
-    /// Set the identity key flag   
+    /// Requests identity-key distribution, preserving every other bit.
     pub(crate) fn set_identity_key(&mut self) {
         self.0 |= Self::IDENTITY_KEY;
     }
-    /// Set the signing key flag
+    /// Requests signing-key distribution, preserving every other bit.
     pub(crate) fn set_signing_key(&mut self) {
         self.0 |= Self::SIGNING_KEY;
     }
-    /// Set the link key flag
+    /// Requests link-key derivation, preserving every other bit.
     pub(crate) fn set_link_key(&mut self) {
         self.0 |= Self::LINK_KEY;
     }
 }
 impl From<u8> for KeyDistributionFlags {
+    /// Returns raw distribution `value` without rejecting reserved bits.
     fn from(value: u8) -> Self {
         Self(value)
     }
 }
 
 impl From<KeyDistributionFlags> for u8 {
+    /// Returns `value`'s original raw distribution byte, including reserved bits.
     fn from(value: KeyDistributionFlags) -> u8 {
         value.0
     }
 }
 
 impl core::fmt::Display for KeyDistributionFlags {
+    /// Writes set ENC/ID/SGN/LNK flags to `f`; Returns its write result, omitting reserved bits.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -574,6 +627,7 @@ impl core::fmt::Display for KeyDistributionFlags {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for KeyDistributionFlags {
+    /// Writes set ENC/ID/SGN/LNK flags to `fmt`, omitting reserved bits.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
@@ -589,19 +643,27 @@ impl defmt::Format for KeyDistributionFlags {
 /// Pairing features used in pairing request and pairing response
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PairingFeatures {
+    /// Peer user-input/display capability used for association-model selection.
     pub(crate) io_capabilities: IoCapabilities,
+    /// Whether this peer possesses the other peer's OOB authentication data.
     pub(crate) use_oob: UseOutOfBand,
+    /// Bonding, MITM, Secure Connections and optional feature bits.
     pub(crate) security_properties: AuthReq,
+    /// Maximum encryption key length in bytes; decoded values are 7 through 16.
     pub(crate) maximum_encryption_key_size: u8,
+    /// Keys the initiator offers/requests to distribute after encryption.
     pub(crate) initiator_key_distribution: KeyDistributionFlags,
+    /// Keys the responder offers/requests to distribute after encryption.
     pub(crate) responder_key_distribution: KeyDistributionFlags,
 }
 
 impl PairingFeatures {
+    /// Returns the six-byte Pairing Request/Response payload length, excluding opcode.
     pub(crate) const fn payload_size() -> usize {
         Command::PairingRequest.payload_size() as usize
     }
 
+    /// Returns the f6 I/O triplet in AuthReq/OOB/I/O order, preserving the raw AuthReq byte.
     pub(crate) fn as_io_cap(&self) -> IoCap {
         IoCap::new(
             u8::from(self.security_properties),
@@ -612,6 +674,7 @@ impl PairingFeatures {
 }
 
 impl Default for PairingFeatures {
+    /// Returns no-I/O, no-OOB Secure Connections with a 16-byte key, no MITM/bonding/distribution.
     fn default() -> Self {
         Self {
             io_capabilities: IoCapabilities::NoInputNoOutput,
@@ -625,12 +688,15 @@ impl Default for PairingFeatures {
 }
 
 impl Type for PairingFeatures {
+    /// Returns the six-byte encoded feature payload length.
     fn size(&self) -> usize {
         Self::payload_size()
     }
 }
 
 impl Encode for PairingFeatures {
+    /// Writes the six wire fields into `dest`, leaving any suffix untouched; no field revalidation.
+    /// Returns InsufficientSpace without mutation when `dest` has fewer than six bytes.
     fn encode(&self, dest: &mut [u8]) -> Result<(), crate::codec::Error> {
         if dest.len() >= self.size() {
             dest[0] = self.io_capabilities.into();
@@ -647,6 +713,9 @@ impl Encode for PairingFeatures {
 }
 
 impl Decode<'_> for PairingFeatures {
+    /// Returns features from the first six bytes of `source`, ignoring a suffix.
+    /// Rejects invalid I/O/OOB values or key lengths outside 7 through 16 with InvalidValue;
+    /// short input returns InsufficientSpace. AuthReq and distribution reserved bits are retained.
     fn decode(source: &[u8]) -> Result<PairingFeatures, crate::codec::Error> {
         if source.len() >= Self::payload_size() {
             let io_capabilities = IoCapabilities::try_from(source[0]).map_err(|_| crate::codec::Error::InvalidValue)?;
@@ -675,6 +744,8 @@ impl Decode<'_> for PairingFeatures {
 
 #[cfg(not(feature = "defmt"))]
 impl core::fmt::Display for PairingFeatures {
+    /// Writes I/O, OOB, authentication, key size in bits and distribution flags to `f`.
+    /// Returns its write result; an internally forged key length above 31 can overflow in debug builds.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -691,6 +762,8 @@ impl core::fmt::Display for PairingFeatures {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for PairingFeatures {
+    /// Writes I/O, OOB, authentication, key size in bits and distribution flags to `fmt`.
+    /// An internally forged key length above 31 can overflow in debug builds.
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
@@ -743,18 +816,39 @@ pub enum SecurityMode3Level {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SecurityLevel {
     /// LE security mode 1
-    Mode1(SecurityMode1Level),
-    /// LE security mode 1
-    Mode2(SecurityMode2Level),
-    /// LE security mode 1
-    Mode3(SecurityMode3Level),
+    Mode1(
+        /// Encryption/authentication level.
+        SecurityMode1Level,
+    ),
+    /// LE security mode 2: data signing.
+    Mode2(
+        /// Signed-data authentication level.
+        SecurityMode2Level,
+    ),
+    /// LE security mode 3: broadcast isochronous security.
+    Mode3(
+        /// Broadcast_Code authentication level.
+        SecurityMode3Level,
+    ),
 }
 
 #[cfg(test)]
+/// Assigned wire values, rejected reserved endpoints and diagnostic bonding intent.
 mod tests {
+    extern crate std;
     use super::*;
 
+    /// Human-readable labels retain the distinction between pairing and retained bonding.
     #[test]
+    fn bonding_labels_match_wire_intent() {
+        assert_eq!(std::format!("{}", BondingFlag::NoBonding), "Pairing");
+        assert_eq!(std::format!("{}", BondingFlag::Bonding), "Bonding");
+        assert_eq!(u8::from(BondingFlag::NoBonding), 0);
+        assert_eq!(u8::from(BondingFlag::Bonding), 1);
+    }
+
+    #[test]
+    /// All assigned failure codes round-trip; zero and every reserved octet remain invalid.
     fn reason_variant() {
         assert!(u8::from(Reason::PasskeyEntryFailed) == 1);
         assert!(u8::from(Reason::OobNotAvailable) == 2);
@@ -790,12 +884,14 @@ mod tests {
         assert!(Reason::KeyRejected == Reason::try_from(15).unwrap());
         assert!(Reason::Busy == Reason::try_from(16).unwrap());
 
-        for n in (u8::from(Reason::Busy) + 1)..u8::MAX {
+        assert_eq!(Reason::try_from(0), Err(Error::InvalidValue));
+        for n in (u8::from(Reason::Busy) + 1)..=u8::MAX {
             assert!(Reason::try_from(n) == Err(Error::InvalidValue));
         }
     }
 
     #[test]
+    /// All five I/O capabilities round-trip and every higher octet, including 255, is rejected.
     fn io_capabilities_variants() {
         assert!(u8::from(IoCapabilities::DisplayOnly) == 0);
         assert!(u8::from(IoCapabilities::DisplayYesNo) == 1);
@@ -809,12 +905,13 @@ mod tests {
         assert!(IoCapabilities::NoInputNoOutput == 3u8.try_into().unwrap());
         assert!(IoCapabilities::KeyboardDisplay == 4u8.try_into().unwrap());
 
-        for n in (u8::from(IoCapabilities::KeyboardDisplay) + 1)..u8::MAX {
+        for n in (u8::from(IoCapabilities::KeyboardDisplay) + 1)..=u8::MAX {
             assert!(IoCapabilities::try_from(n) == Err(Error::InvalidValue));
         }
     }
 
     #[test]
+    /// All fourteen SMP opcodes retain specified payload lengths; zero/reserved opcodes are rejected.
     fn command_variants() {
         assert!(u8::from(Command::PairingRequest) == 0x01);
         assert!(u8::from(Command::PairingResponse) == 0x02);
@@ -846,7 +943,8 @@ mod tests {
         assert!(Command::PairingDhKeyCheck == Command::try_from(0x0d).unwrap());
         assert!(Command::KeypressNotification == Command::try_from(0x0e).unwrap());
 
-        for n in (u8::from(Command::KeypressNotification) + 1)..u8::MAX {
+        assert_eq!(Command::try_from(0), Err(Error::InvalidValue));
+        for n in (u8::from(Command::KeypressNotification) + 1)..=u8::MAX {
             assert!(Command::try_from(n) == Err(Error::InvalidValue));
         }
 

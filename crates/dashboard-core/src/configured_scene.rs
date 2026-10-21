@@ -18,15 +18,23 @@ use crate::widgets::value_text::draw_fitted_value;
 /// Only the visible badge identity is retained, never another warning owner.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WarningMarker {
+    /// No persistent acknowledgment badge; an active unsnoozed rule can still blink.
     None,
+    /// Active condition already acknowledged.
     ActiveAck,
+    /// Acknowledged active condition inside its snooze interval.
     ActiveSnoozed,
+    /// Retained condition requiring acknowledgment.
     Latched,
+    /// Retained condition already acknowledged.
     LatchedAck,
+    /// Retained condition inside its snooze interval.
     LatchedSnoozed,
+    /// Qualified cleared condition still requiring the configured acknowledgment.
     Cleared,
 }
 impl WarningMarker {
+    /// Returns the fixed badge text, or an empty string when no badge is needed.
     fn label(self) -> &'static str {
         match self {
             Self::None => "",
@@ -40,12 +48,19 @@ impl WarningMarker {
     }
 }
 
+/// Presentation-only projection of one rule; does not acknowledge or advance it.
 pub(crate) struct WidgetWarning {
+    /// Persistent badge selected independently of the instantaneous blink phase.
     pub marker: WarningMarker,
+    /// A latched rule currently lacks qualified data; retain its badge and explain the gap.
     pub unavailable: bool,
+    /// Current valid active warning should use the warning palette this frame.
     pub blink: bool,
 }
 impl WidgetWarning {
+    /// Returns the badge from `eligibility`; `valid` gates live blinking and
+    /// `blink_on` selects its already computed phase. Unavailable latched data
+    /// never becomes a qualified cleared condition here.
     pub fn new(
         eligibility: crate::warning_state::WarningEligibility,
         valid: bool,
@@ -86,14 +101,22 @@ impl WidgetWarning {
 /// 64-widget search is needed while drawing its eight visible slots.
 #[derive(Clone, Copy)]
 pub struct Layout<'a> {
+    /// Immutable validated owner of all indices and display policy.
     configuration: &'a ValidatedConfig,
+    /// Index of the selected view in the validated view table.
     view_index: usize,
+    /// Global widget indices in configuration order; only `count` entries are live.
     widgets: [u8; 8],
+    /// Number of visible widgets, at most eight.
     count: usize,
+    /// Show fallback configuration diagnostics without replacing transport status.
     pub fault: bool,
 }
 
 impl<'a> Layout<'a> {
+    /// Returns the lookup for stable view ID `view` in `configuration`, retaining
+    /// `fault` for the header. Returns `None` for an unknown view or more than
+    /// eight matching widgets (the latter is excluded by normal validation).
     pub fn new(
         configuration: &'a ValidatedConfig,
         view: u8,
@@ -118,10 +141,14 @@ impl<'a> Layout<'a> {
         Some(layout)
     }
 
+    /// Returns the selected view's validated borrowed label.
     pub fn name(&self) -> &str { &self.configuration.config().views[self.view_index].name }
 
+    /// Returns the stable view ID, not its table position.
     pub fn id(&self) -> u8 { self.configuration.config().views[self.view_index].id }
 
+    /// Returns whether visible `slot` has an active qualified rule in `samples`
+    /// at monotonic milliseconds `now`; absent slots/rules return false.
     pub fn alarm_active(
         &self,
         slot: usize,
@@ -133,10 +160,13 @@ impl<'a> Layout<'a> {
             .is_some_and(|i| samples.rule_active_at(i, now))
     }
 
+    /// Returns the immutable validated configuration backing this lookup.
     pub const fn configuration(&self) -> &'a ValidatedConfig { self.configuration }
 
+    /// Returns the number of occupied widget slots, in `0..=8`.
     pub const fn count(&self) -> usize { self.count }
 
+    /// Returns the widget at view-local `slot`, or `None` outside `0..count()`.
     pub fn widget(
         &self,
         slot: usize,
@@ -144,6 +174,8 @@ impl<'a> Layout<'a> {
         (slot < self.count).then(|| &self.configuration.config().widgets[self.widgets[slot] as usize])
     }
 
+    /// Returns the global widget/rule table index for view-local `slot`, or
+    /// `None` outside `0..count()`; this does not imply its rule is enabled.
     pub fn rule_index(
         &self,
         slot: usize,
@@ -154,6 +186,9 @@ impl<'a> Layout<'a> {
 
 /// Exact strings used both for pixels and retained equality. Units convert
 /// presentation only; histories, configured bounds and alarms stay canonical.
+/// Returns six text lanes for `widget` using qualified `snapshot` data at
+/// monotonic milliseconds `now`. `psi` resolves FollowBoost; `stoich` is the
+/// validated AFR conversion ratio and `fuel` supplies its assumption label.
 pub fn widget_text(
     widget: &Widget,
     snapshot: &DashboardSnapshot,
@@ -174,6 +209,12 @@ pub fn widget_text(
 }
 
 /// Format canonical presentation current while statistics remain in the snapshot.
+/// Returns primary, secondary, average, minimum, maximum and provenance lanes
+/// for `widget`. `snapshot` supplies raw statistics and quality at monotonic
+/// milliseconds `now`; `current` supplies the canonical display value, possibly
+/// smoothed, or `None` for `--` plus a quality label. `psi` resolves FollowBoost;
+/// `stoich` and `fuel` describe the validated AFR assumption, not an ECU target.
+/// Decimal precision is capped at three; unrepresentable AFR becomes `AFR --`.
 pub fn widget_text_with_value(
     widget: &Widget,
     snapshot: &DashboardSnapshot,
@@ -238,6 +279,8 @@ pub fn widget_text_with_value(
     text
 }
 
+/// Returns an unscaled font fitting ASCII `text` within pixel `width` and
+/// `height`, or the 4x6 fallback even when it cannot fit. Callers still clip.
 pub fn fitted_font(
     text: &str,
     width: u32,
@@ -247,6 +290,9 @@ pub fn fitted_font(
         .map_or(&embedded_graphics::mono_font::ascii::FONT_4X6, |value| value.font)
 }
 
+/// Paints the 26-pixel header into `display` using coherent `scene` telemetry
+/// and `layout` identity/fault state. Geometry follows the target; draw errors
+/// are discarded and can leave partial pixels.
 pub(crate) fn draw_header<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     scene: &DashboardScene<'_>,
@@ -298,6 +344,8 @@ pub(crate) fn draw_header<D: DrawTarget<Color = Rgb565>>(
         .ok();
 }
 
+/// Paints view-local `slot` from matching `layout` and `scene` into clipped
+/// `display` bounds; absent slots do nothing. Drawing errors are discarded.
 pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     scene: &DashboardScene<'_>,
@@ -313,6 +361,10 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
 /// Browser-only diagnostic projection: geometry still comes from a validated
 /// isolated widget. Arbitrary RGB565 colours cannot affect bounds or work, and
 /// remain visible under the caller's explicit INVALID watermark.
+/// Paints `slot` from coherent `scene` into `display` using `colors` and up to
+/// three `band_colors`; missing replacement colours retain validated colours.
+/// No layout/slot does nothing. Drawing errors are discarded; numeric settings
+/// and labels must remain those of the validated scene.
 pub fn draw_diagnostic_widget<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     scene: &DashboardScene<'_>,
@@ -338,10 +390,15 @@ pub fn draw_diagnostic_widget<D: DrawTarget<Color = Rgb565>>(
     }
 }
 
+/// Returns the native RGB565 pixel with the same packed bits as `color`.
 pub(crate) fn panel_color(color: dashboard_config::Color) -> Rgb565 {
     embedded_graphics::pixelcolor::raw::RawU16::new(color.0).into()
 }
 
+/// Paints `slot` from coherent `layout`/`scene` into `display`, using `palette`
+/// and optional colour-only `diagnostic_advanced` decorations. Clips all widget
+/// writes; missing placement/slot does nothing and target errors are discarded.
+/// Scene lookup expectations require the same validated widget binding.
 fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     scene: &DashboardScene<'_>,
@@ -595,6 +652,8 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     }
 }
 
+/// Returns a `color` style using 6x10 when byte-counted ASCII `text` fits pixel
+/// `width`, otherwise 4x6; the smaller fallback still requires clipping.
 fn footer_style(
     text: &str,
     width: u32,
@@ -607,7 +666,8 @@ fn footer_style(
     };
     MonoTextStyle::new(font, color)
 }
-/// Derive shape from the actual drawing target before creating clipped lanes.
+/// Returns portrait only when `display` is exactly 240x320 pixels; every other
+/// target size selects landscape before clipped lanes are constructed.
 pub fn target_geometry<D: Dimensions>(display: &D) -> dashboard_config::Geometry {
     if display.bounding_box().size == Size::new(240, 320) {
         dashboard_config::Geometry::Portrait
@@ -616,6 +676,8 @@ pub fn target_geometry<D: Dimensions>(display: &D) -> dashboard_config::Geometry
     }
 }
 
+/// Paints the fixed 240x26 header in `display` from `scene` telemetry and
+/// `layout` name/fault status; assumes portrait bounds and discards draw errors.
 fn draw_portrait_header<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     scene: &DashboardScene<'_>,
@@ -651,12 +713,23 @@ fn draw_portrait_header<D: DrawTarget<Color = Rgb565>>(
 /// overflow is explicit and never removes the primary lane or history area.
 #[derive(Clone, Copy, Debug)]
 pub struct PortraitContentLayout {
+    /// Absolute lanes for primary, secondary, average, minimum, maximum and provenance.
     pub text: [Rectangle; 6],
+    /// Bottom history lane, zero height when disabled or layout admission failed.
     pub graph: Rectangle,
+    /// Reference and band-label rows immediately below the primary lane.
     pub legend: Rectangle,
+    /// Original measured layout fits all strings; false can still retain fallback lanes.
     pub fits: bool,
 }
 
+/// Returns absolute content lanes inside `bounds` for six ASCII `text` strings.
+/// `warning_rows` is 0..=2, `legend_rows` 0..=4; `graph` reserves 16 pixels,
+/// `numeric` selects an 8-pixel rather than 28-pixel primary minimum, and `trend`
+/// reserves 12 pixels beside the value. Bounds dimensions must be <=320,
+/// origins in -320..=320 and each string <=64 bytes; invalid inputs or an
+/// impossible compact height return empty lanes with `fits=false`. Width or
+/// original height overflow retains compact lanes but reports `fits=false`.
 pub fn portrait_content_layout(
     bounds: Rectangle,
     text: [&str; 6],
@@ -794,6 +867,9 @@ pub fn portrait_content_layout(
     }
 }
 
+/// Paints ASCII `text` centered in `lane` on `display` using `color` and 4x6
+/// glyphs; empty text/zero height does nothing and width overflow becomes `FIT!`.
+/// Does not create a clip itself; callers supply one. Draw errors are discarded.
 pub(crate) fn compact_text<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     text: &str,
@@ -818,6 +894,10 @@ pub(crate) fn compact_text<D: DrawTarget<Color = Rgb565>>(
     .ok();
 }
 
+/// Paints coherent view `slot`, `widget`, `layout` and `scene` into the already
+/// clipped `display`/`interior`, using `palette`, `decorations` and `indication`.
+/// Keeps raw history/extrema, substitutes FIT! in overflowing lanes, and ignores
+/// target errors. Scene lookup expectations require matching validated bindings.
 #[allow(clippy::too_many_arguments)]
 fn draw_portrait_widget<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,

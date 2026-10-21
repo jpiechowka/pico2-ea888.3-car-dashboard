@@ -16,6 +16,7 @@ use dashboard_core::view_state::{WarningPage, WarningPager};
 
 /// Illustrative canonical values, never recommended vehicle operating limits.
 pub const WARNING_VALUES: [f32; 8] = [3.0, 150.0, 120.0, 130.0, 80.0, 1100.0, 10.0, 1.3];
+/// Milliseconds spanned by the fixed synthetic history seed, independent of configured history duration.
 const HISTORY_WINDOW_MS: u64 = (GRAPH_HISTORY_SIZE as u64 - 1) * GRAPH_SAMPLE_PERIOD_MS;
 
 /// Explicit synthetic inspection modes. Firmware demo always uses the shared
@@ -23,14 +24,20 @@ const HISTORY_WINDOW_MS: u64 = (GRAPH_HISTORY_SIZE as u64 - 1) * GRAPH_SAMPLE_PE
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SampleSet {
     #[default]
+    /// Shared elapsed-time demo generator rather than a fixed value override.
     Demo,
+    /// Shared canonical channel-domain lower bounds.
     Minimum,
+    /// Shared canonical channel-domain upper bounds.
     Maximum,
+    /// Alternating signs at the accepted one-million magnitude bound to stress text widths.
     WidthStress,
+    /// Valid numeric zero for every channel, not missing/unavailable samples.
     Zero,
 }
 
 impl SampleSet {
+    /// Returns canonical values in Channel::ALL order, or None to select the shared elapsed-time demo generator.
     pub fn values(self) -> Option<[f32; 8]> {
         match self {
             Self::Demo => None,
@@ -54,10 +61,12 @@ impl SampleSet {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// Synthetic appearance rendering options, separate from live simulation state and accepted configuration.
 pub struct PreviewOptions {
     /// Advances the synthetic history and warning-page clock. The generated
     /// timeline includes a fixed history window before the final rendered time.
     pub sample_ms: u64,
+    /// Physical-equivalent unit toggle affecting FollowBoost display only; input values remain canonical.
     pub boost_psi: bool,
     /// Demonstrate warning appearance with activation dwell compressed to 1 ms
     /// in a private simulation copy. This is not a firmware alarm timing test.
@@ -67,14 +76,32 @@ pub struct PreviewOptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Preview admission/rendering failure; none implies device or scanout evidence.
 pub enum PreviewError {
+    /// Required custom splash asset is absent, malformed, incompatible with geometry or undecodable.
     StartupAsset,
-    UnknownView(u8),
-    InvalidSample(Channel),
+    /// No valid layout/resolved orientation exists for the requested view.
+    UnknownView(
+        /// Requested configuration view ID.
+        u8,
+    ),
+    /// Synthetic override is nonfinite or exceeds the accepted magnitude bound.
+    InvalidSample(
+        /// First invalid channel in canonical channel order.
+        Channel,
+    ),
+    /// Synthetic timeline or source identity cannot be represented.
     TimeOverflow,
+    /// RGB565/RGBA byte lengths disagree or input has an incomplete word.
     BufferLength,
+    /// A retained frame prevents scratch reuse, or token cannot be submitted.
     PendingFrame,
-    UnsupportedPage(dashboard_config::ControlPage),
+    /// Compatibility error for a page unsupported by a caller's rendering route.
+    UnsupportedPage(
+        /// Requested logical control page.
+        dashboard_config::ControlPage,
+    ),
+    /// Candidate/invalid inspection lacks authority to submit or mismatches installed candidate proof.
     InspectionOnly,
 }
 
@@ -82,25 +109,44 @@ pub enum PreviewError {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PreviewMode {
     #[default]
+    /// Reconstructed bounded synthetic history for visual inspection.
     Appearance,
+    /// Borrowed persistent simulator acquisition/presentation state.
     Simulation,
 }
 
+/// Reused RGB565/RGBA scratch and presentation caches; pending submission retains exact bytes until ownership is
+/// released.
 pub struct Preview {
+    /// Last appearance or simulation rendering family.
     mode: PreviewMode,
+    /// Shared smoothing/range presentation cache, reset when continuity is not proven.
     presentation: dashboard_core::presentation::PresentationState,
+    /// Last simulator visibility epoch; None prohibits continuity reuse.
     simulation_epoch: Option<u64>,
+    /// One fixed 153600-byte panel-order big-endian RGB565 surface.
     framebuffer: Box<FrameBuffer>,
+    /// Logical shape of current pixels, including submitted but uncompleted frames.
     geometry: Geometry,
+    /// Current portrait widgets whose measured content lanes do not fit.
     fit_issues: Vec<u16>,
+    /// Reused opaque RGBA surface, 320*240*4 bytes in current logical row order.
     rgba: Vec<u8>,
+    /// Last prepared synthetic acquisition snapshot; startup/debug draw-only routes may retain older metadata.
     snapshot: Option<DashboardSnapshot>,
+    /// Last prepared warning page; not proof it was consumed by a canvas or physical display.
     warning: Option<WarningPage>,
+    /// Appearance-only warning rotation state.
     pager: WarningPager,
+    /// Previous appearance configuration for continuity/extrema decisions; cleared on simulation/startup paths.
     configuration: Option<Box<Config>>,
+    /// Previous appearance settings; None after live projection.
     options: Option<PreviewOptions>,
+    /// Last prepared acquisition timestamp; independent of browser paint or scanout time.
     rendered_at: Option<u64>,
+    /// Cache exhaustion observed during the last preparation, including isolated diagnostic widgets.
     prepared_status: CacheExhaustionStatus,
+    /// Submitted frame token and exact simulator source key protecting current bytes.
     pending: Option<(
         dashboard_core::display::pipeline::FrameToken,
         crate::simulator::SourceSessionKey,
@@ -108,10 +154,12 @@ pub struct Preview {
 }
 
 impl Default for Preview {
+    /// Returns a newly allocated empty appearance preview.
     fn default() -> Self { Self::new() }
 }
 
 impl Preview {
+    /// Returns empty landscape scratch with fixed RGB565/RGBA allocation, no snapshot and no pending frame authority.
     pub fn new() -> Self {
         Self {
             mode: PreviewMode::Appearance,
@@ -132,15 +180,20 @@ impl Preview {
         }
     }
 
+    /// Returns the most recently selected rendering family; startup/debug draw-only routes do not necessarily change
+    /// it.
     pub const fn mode(&self) -> PreviewMode { self.mode }
 
-    /// Logical dimensions belong to the published pixels, including pending frames.
+    /// Returns logical dimensions of current pixels, including submitted frames not yet consumed.
     pub const fn geometry(&self) -> Geometry { self.geometry }
 
-    /// Current sample strings with reserved warning space; runtime width can still vary.
+    /// Returns current portrait fit advisories using sampled strings and reserved warning space; future widths may
+    /// differ.
     pub fn fit_issues(&self) -> &[u16] { &self.fit_issues }
 
-    /// Same startup pixels as Pico; browser seeking makes no scanout timing claim.
+    /// Returns shared startup RGBA for `config`, eventual dashboard `view`, `profile` and `elapsed` milliseconds with
+    /// `reduced_motion`; no custom asset is supplied. Returns pending-frame/view/time/required-asset errors.
+    /// Seeking is synthetic and does not acknowledge presentation or establish scanout timing.
     pub fn render_startup(
         &mut self,
         config: &ValidatedConfig,
@@ -152,6 +205,10 @@ impl Preview {
         self.render_startup_asset(config, view, profile, elapsed, reduced_motion, None)
     }
 
+    /// Returns startup RGBA for `config`, dashboard `view`, `profile`, `elapsed` milliseconds and `reduced_motion`.
+    /// Parses optional encoded `asset` only for an active custom splash; missing/malformed/mismatched required artwork
+    /// fails. Returns PendingFrame before parsing; other errors follow validated startup rendering, without device
+    /// side effects.
     pub fn render_startup_asset(
         &mut self,
         config: &ValidatedConfig,
@@ -178,8 +235,10 @@ impl Preview {
         )
     }
 
-    /// Reuses admission for immutable project pixels; geometry is still checked
-    /// against the currently requested Splash before any pixels are published.
+    /// Returns startup RGBA using `config`, eventual `view`, `profile`, `elapsed` milliseconds, `reduced_motion` and
+    /// parsed `asset`. Checks custom Splash geometry even for previously admitted assets; Dashboard delegates to
+    /// synthetic appearance rendering. Returns pending-frame/asset/view/time errors. Does not advance acquisition
+    /// or complete a submitted frame.
     pub fn render_startup_validated(
         &mut self,
         config: &ValidatedConfig,
@@ -206,6 +265,10 @@ impl Preview {
         self.draw_startup_phase(config, profile, (phase, time), reduced_motion, asset)
     }
 
+    /// Returns RGBA for `frame` phase/elapsed milliseconds using `config`, `profile`, `reduced_motion` and optional
+    /// parsed `asset`. Returns StartupAsset for missing/incompatible/undecodable custom artwork; caller must
+    /// exclude pending submissions. Clears appearance continuity after success; draw-only metadata may retain the
+    /// previous snapshot/timestamp.
     fn draw_startup_phase(
         &mut self,
         config: &ValidatedConfig,
@@ -273,8 +336,9 @@ impl Preview {
         Ok(&self.rgba)
     }
 
-    /// Draw-only adapter for borrowed synthetic/unknown diagnostics and the
-    /// actual bindings. This never submits a simulator frame or advances it.
+    /// Returns landscape Debug RGBA drawn from borrowed `data` and actual control `map`, without advancing/submitting
+    /// simulation. If a frame is pending, returns its unchanged bytes instead; snapshot/timing metadata is not
+    /// refreshed by this adapter.
     pub fn render_debug(
         &mut self,
         data: &dashboard_core::debug_view::DebugData<'_>,
@@ -291,7 +355,8 @@ impl Preview {
         &self.rgba
     }
 
-    /// Compatibility entry point for synthetic appearance inspection.
+    /// Returns synthetic appearance RGBA for validated `config`, `view` ID and canonical `options`; delegates all
+    /// errors/state rules.
     pub fn render(
         &mut self,
         config: &ValidatedConfig,
@@ -301,9 +366,11 @@ impl Preview {
         self.render_appearance(config, view, options)
     }
 
-    /// Explicit synthetic transport accepts the rendered bytes before submission.
-    /// Call complete_frame only after the consumer accepts those bytes; tests may delay it.
-    /// LED duty continues using the previous completed scene until that completion.
+    /// Returns rendered RGBA retained under exact `token` and `simulation` source identity after synthetic submission.
+    /// Returns TimeOverflow for missing source identity, InspectionOnly for invalid state, PendingFrame for
+    /// occupied/rejected submission, or rendering errors. Synchronization may retire an old source first;
+    /// submission failure may leave fresh scratch. Consumer acceptance must precede complete_frame; LED duty
+    /// remains tied to the previous completed scene until then.
     pub fn render_simulation_submitted(
         &mut self,
         simulation: &mut crate::simulator::ControlSimulator,
@@ -328,8 +395,9 @@ impl Preview {
         Ok(&self.rgba)
     }
 
-    /// Read-only shared Dashboard/Debug/Logs projection, without advancing acquisition.
-    /// A submitted candidate protects its exact bytes until completion/source replacement.
+    /// Returns shared startup/Dashboard/Debug/Logs RGBA from borrowed `simulation` without advancing its acquisition.
+    /// Retires completed/replaced-source ownership first, then rejects a still-pending frame; returns layout/asset
+    /// errors otherwise. Rendering alone neither submits nor completes the displayed scene.
     pub fn render_simulation(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -353,6 +421,9 @@ impl Preview {
         self.render_projection(simulation, false, None)
     }
 
+    /// Retires pending ownership when `simulation` has a different source or confirms that token completed.
+    /// Resets presentation continuity when replacement has no completed frame; never writes pixels or completes the
+    /// simulator.
     fn synchronize_source(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -367,11 +438,15 @@ impl Preview {
         }
     }
 
+    /// Returns retained submission token, or None; source compatibility must still be checked with pending_pixels.
     pub fn pending_frame(&self) -> Option<dashboard_core::display::pipeline::FrameToken> {
         self.pending.map(|(t, _)| t)
     }
 
-    /// Valid but unapplied candidate inspection; never submit or complete pixels.
+    /// Returns inspection-only RGBA for `simulation` using exact installed `candidate` projection proof.
+    /// Returns PendingFrame for protected scratch, InspectionOnly for missing/mismatched proof, or projection errors.
+    /// Samples remain borrowed accepted data; candidate rules do not acquire accepted warning identity or completion
+    /// authority.
     pub fn render_candidate_simulation(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -387,15 +462,21 @@ impl Preview {
         self.render_projection(simulation, true, Some(installed.config()))
     }
 
-    /// Retained pixels are a capability of this token and source, never current scratch.
+    /// Returns retained RGBA only for exact pending `token` and live `simulation` source; None covers
+    /// missing/exhausted/replaced authority. An absent pending frame never authorizes scratch, even when the
+    /// simulator source identity is also absent.
     pub fn pending_pixels(
         &self,
         simulation: &crate::simulator::ControlSimulator,
         token: dashboard_core::display::pipeline::FrameToken,
     ) -> Option<&[u8]> {
-        (self.pending == simulation.source_key().map(|epoch| (token, epoch))).then_some(self.rgba.as_slice())
+        let source = simulation.source_key()?;
+        (self.pending == Some((token, source))).then_some(self.rgba.as_slice())
     }
 
+    /// Releases matching pending `token` and returns true; false leaves other/no submission unchanged.
+    /// Caller must already have confirmed consumer acceptance and simulator completion; this method checks only local
+    /// token identity.
     pub fn finish_pending(
         &mut self,
         token: dashboard_core::display::pipeline::FrameToken,
@@ -407,6 +488,9 @@ impl Preview {
         true
     }
 
+    /// Returns default-geometry projection of `simulation`, using inspection session when `inspection` and optional
+    /// `candidate` config. Delegates layout errors and cache/pixel effects; private caller must exclude pending
+    /// scratch.
     fn render_projection(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -416,6 +500,11 @@ impl Preview {
         self.render_projection_in(simulation, inspection, candidate, None)
     }
 
+    /// Returns RGBA from `simulation`; `inspection` selects isolated controls/time, `candidate` replaces visual config
+    /// without accepted rule identity, and `geometry_override` optionally replaces resolved shape. None preserves
+    /// accepted config/geometry. Returns UnknownView before drawing if no layout exists; resets continuity for
+    /// mode/epoch/page changes and refreshes metadata. Caller must exclude pending scratch; drawing does not
+    /// advance acquisition or authorize completion.
     fn render_projection_in(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -546,9 +635,12 @@ impl Preview {
         Ok(&self.rgba)
     }
 
-    /// Render through the same acquisition statistics, layout and DashboardScene
-    /// as firmware. Both complete pixel buffers are allocated once and reused.
-    /// All recoverable errors leave the previous complete render and pager intact.
+    /// Returns synthetic RGBA for validated `config`, `view` and `options` through shared acquisition/layout/rendering.
+    /// Rebuilds a fixed history plus one sample; canonical overrides must be finite with magnitude at most 1,000,000.
+    /// Returns pending/view/sample/time errors before replacing complete pixels/paging. Warning demonstration
+    /// compresses only private activation dwell, and source-compatible extrema persist across nonrewinding sample
+    /// options. Panics only if shared validation/buffer invariants are violated; no firmware, canvas or scanout
+    /// completion is asserted.
     pub fn render_appearance(
         &mut self,
         config: &ValidatedConfig,
@@ -677,21 +769,30 @@ impl Preview {
         Ok(&self.rgba)
     }
 
+    /// Returns current big-endian RGB565 scratch bytes; use pending_pixels for token-authorized transport consumption.
     pub fn rgb565(&self) -> &[u8] { &self.framebuffer[..] }
 
+    /// Returns current opaque RGBA scratch bytes without granting submission/completion authority.
     pub fn rgba(&self) -> &[u8] { &self.rgba }
 
+    /// Returns cache-identity exhaustion observed by the last preparation; draw-only startup/debug can retain prior
+    /// status.
     pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.prepared_status }
 
+    /// Returns last prepared acquisition snapshot, or None before preparation; draw-only startup/debug may retain older
+    /// data.
     pub fn snapshot(&self) -> Option<&DashboardSnapshot> { self.snapshot.as_ref() }
 
+    /// Returns last prepared warning page, or None; this is not necessarily the last consumed scene.
     pub fn warning_page(&self) -> Option<WarningPage> { self.warning }
 
+    /// Returns last acquisition-backed preparation time in synthetic milliseconds, or None; not browser draw duration.
     pub fn rendered_at_ms(&self) -> Option<u64> { self.rendered_at }
 
-    /// Inspection-only rendering. Each attempted widget is independently
-    /// validated after safe fallbacks; the rejected document itself is never
-    /// passed to firmware rendering/acquisition. Warning simulation is suspended.
+    /// Returns watermarked inspection RGBA of rejected `draft`/`view`, using `accepted` acquisition seed and canonical
+    /// `options`. Independently validates bounded widget fallbacks, disables warning simulation and never admits
+    /// the rejected document. Returns seed-render/buffer errors; errors before seed success retain old pixels,
+    /// later work may modify scratch.
     pub fn render_diagnostic(
         &mut self,
         accepted: &ValidatedConfig,
@@ -702,7 +803,10 @@ impl Preview {
         self.render_diagnostic_with_status(accepted, draft, view, options, ValidatedConfig::cache_identity_status)
     }
 
-    /// Separate scratch presentation of a candidate, reading accepted acquisition only.
+    /// Returns separate inspection scratch for `simulation` with optional rejected `draft`, borrowing accepted
+    /// acquisition only. Returns PendingFrame before reuse or projection/seed errors. Dashboard draft pixels carry
+    /// INVALID PREVIEW unless Off masks all pixels; Debug/Logs use inspection controls and optional draft
+    /// orientation. Never submits/completes accepted pixels.
     pub fn render_inspection(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -730,8 +834,9 @@ impl Preview {
         )
     }
 
-    // Keep status projection at the producer boundary; tests can exercise an
-    // exhausted publication without constructing or modifying identity proofs.
+    /// Returns diagnostic pixels for `accepted`, `draft`, `view` and `options`, observing each isolated config through
+    /// `status`. Private injection exercises cache-publication evidence without fabricating identity proofs;
+    /// delegates seed/buffer errors.
     fn render_diagnostic_with_status(
         &mut self,
         accepted: &ValidatedConfig,
@@ -743,6 +848,11 @@ impl Preview {
         self.render_diagnostic_source(accepted, draft, view, options, status, None)
     }
 
+    /// Returns bounded diagnostic RGBA for `draft`/`view`, with `accepted` seed, canonical `options`,
+    /// per-isolated-config `status` observer and optional `live` accepted simulator. None rebuilds fixed synthetic
+    /// history; warnings are disabled either way. Draws at most 64 widgets with bounded labels, safe validated
+    /// fallbacks and explicit watermark; candidate Off masks all. Returns seed/projection/buffer errors; observer
+    /// panics can leave scratch partially drawn and never publish acceptance.
     fn render_diagnostic_source(
         &mut self,
         accepted: &ValidatedConfig,
@@ -906,8 +1016,9 @@ impl Preview {
     }
 }
 
-/// Advisory uses the same measured lane allocator as the renderer, reserving
-/// warning lines even when this synthetic sample does not activate a warning.
+/// Returns IDs in portrait `config`/`view` whose current `scene` strings do not fit shared content lanes, reserving
+/// warning space. Nonportrait/missing orientation returns empty; unresolved rectangles/text are skipped. This is
+/// advisory for current strings only.
 fn portrait_fit_issues(
     scene: &DashboardScene<'_>,
     config: &ValidatedConfig,
@@ -951,8 +1062,8 @@ fn portrait_fit_issues(
         .collect()
 }
 
-/// Convert panel-order big-endian words, with bit replication to full 8-bit
-/// channels and opaque alpha. Length mismatches never partially write output.
+/// Converts big-endian `rgb565` words into opaque `rgba`, replicating channel bits to full eight-bit range.
+/// Returns BufferLength before any writes for odd input or output length other than twice input; empty buffers succeed.
 pub fn rgb565_to_rgba(
     rgb565: &[u8],
     rgba: &mut [u8],
@@ -971,6 +1082,7 @@ pub fn rgb565_to_rgba(
 }
 
 #[cfg(test)]
+/// Diagnostic isolated configurations contribute cache-publication evidence without admitting rejected documents.
 mod cache_tests {
     use dashboard_config::CacheIdentityStatus;
     use dashboard_core::cache_diagnostics::CacheExhaustionCause;
@@ -978,6 +1090,8 @@ mod cache_tests {
     use super::*;
 
     #[test]
+    /// Every isolated widget is observed, exhaustion remains visible, and invalid geometry is bounded before renderer
+    /// admission.
     fn diagnostic_preparation_observes_each_isolated_publication() {
         let accepted = validate(dashboard_config::default_config()).unwrap();
         let view = accepted.config().boot_view;

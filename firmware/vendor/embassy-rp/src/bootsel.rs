@@ -10,10 +10,10 @@
 use crate::Peri;
 use crate::flash::in_ram;
 
-/// Reads the BOOTSEL button. Returns true if the button is pressed.
+/// Borrows BOOTSEL ownership through `_p` and returns true when QSPI CS is sampled low.
+/// Panics off core0; follows flash-maintenance exclusion requirements.
 ///
-/// Reading isn't cheap, as this function waits for core 1 to finish it's current
-/// task and for any DMAs from flash to complete
+/// Reading parks core1 through its FIFO IRQ and waits for observed flash DMA; waits have no deadline.
 pub fn is_bootsel_pressed(_p: Peri<'_, crate::peripherals::BOOTSEL>) -> bool {
     let mut cs_status = Default::default();
 
@@ -23,10 +23,11 @@ pub fn is_bootsel_pressed(_p: Peri<'_, crate::peripherals::BOOTSEL>) -> bool {
     !cs_status.infrompad()
 }
 
+/// RAM-only CS tri-state/sample/restore sequence.
 mod ram_helpers {
     use rp_pac::io::regs::GpioStatus;
 
-    /// Temporally reconfigures the CS gpio and returns the GpioStatus.
+    /// Temporarily reconfigures the CS gpio and returns the GpioStatus.
 
     /// This function runs from RAM so it can disable flash XIP.
     ///
@@ -75,8 +76,9 @@ mod ram_helpers {
         core::mem::transmute(result)
     }
 
+    /// Unsupported-architecture stub; always panics and never returns a status.
+    /// # Safety
+    /// Same exclusive flash/CS ownership as the Arm implementation is required.
     #[cfg(not(target_arch = "arm"))]
-    pub unsafe fn read_cs_status() -> GpioStatus {
-        unimplemented!()
-    }
+    pub unsafe fn read_cs_status() -> GpioStatus { unimplemented!() }
 }

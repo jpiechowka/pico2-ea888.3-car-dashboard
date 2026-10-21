@@ -1,16 +1,23 @@
+//! Debounced tap/hold qualification, page-transition fencing and protected recovery priority.
 use dashboard_host_validation::controls::ControlGestures;
 use dashboard_host_validation::view_config::{ControlAction as Action, ControlMap, ControlPage as Page};
 
+/// A/B/X/Y sampled released levels.
 const RELEASED: [bool; 4] = [false; 4];
+/// Only A is physically held.
 const A: [bool; 4] = [true, false, false, false];
+/// Only the protected recovery button Y is held.
 const Y: [bool; 4] = [false, false, false, true];
 
+/// A short release bounce across navigation cannot rearm Y held since boot.
 #[test]
 fn page_change_release_bounce_cannot_rearm_boot_held_y() { page_change_bounce_trace(Y, true); }
 
+/// A short release bounce cannot turn an old page's held A into a new page action.
 #[test]
 fn page_change_release_bounce_cannot_rearm_old_screen_ordinary_key() { page_change_bounce_trace(A, false); }
 
+/// Navigation preserves pending release qualification so a later stable press can arm normally.
 #[test]
 fn page_change_preserves_pending_release_qualification_before_a_debounced_press() {
     let map = ControlMap::default();
@@ -28,6 +35,9 @@ fn page_change_preserves_pending_release_qualification_before_a_debounced_press(
     );
 }
 
+/// Exercises `levels` across navigation, requiring stable release before rearming.
+/// `boot_held` selects boot-held Y recovery versus an already qualified ordinary key.
+/// Panics if bounce produces an action or the subsequent legitimate hold fails.
 fn page_change_bounce_trace(
     levels: [bool; 4],
     boot_held: bool,
@@ -72,6 +82,8 @@ fn page_change_bounce_trace(
     }
 }
 
+/// Applies timestamped `samples` (milliseconds, A/B/X/Y pressed levels) to mutable `g`.
+/// Returns every batch in input order using fixed `map` and `page`, retaining gesture state between samples.
 fn trace(
     g: &mut ControlGestures,
     map: &ControlMap,
@@ -84,6 +96,7 @@ fn trace(
         .collect()
 }
 
+/// Default A hold and protected Y recovery fire at exact deadlines measured from first observation.
 #[test]
 fn exact_default_hold_and_y_recovery_deadlines() {
     for (levels, threshold) in [(A, 900), (Y, 2100)] {
@@ -110,6 +123,7 @@ fn exact_default_hold_and_y_recovery_deadlines() {
     }
 }
 
+/// All action/page/tap/hold combinations dispatch allowed actions and count incompatible ones as discarded.
 #[test]
 fn every_compatible_action_is_dispatched_for_tap_and_hold() {
     let actions = [
@@ -162,6 +176,7 @@ fn every_compatible_action_is_dispatched_for_tap_and_hold() {
     }
 }
 
+/// Bounce, duplicate timestamps and clock reversal cannot advance a gesture or duplicate its action.
 #[test]
 fn candidate_bounce_same_timestamp_and_regression_do_not_advance_gestures() {
     let map = ControlMap::default();
@@ -192,6 +207,7 @@ fn candidate_bounce_same_timestamp_and_regression_do_not_advance_gestures() {
     assert!(g.update(&map, Page::Dashboard, A, 930).actions.is_empty());
 }
 
+/// Release observed before hold threshold remains a tap even when release debounce finishes afterward.
 #[test]
 fn release_before_threshold_debounced_after_threshold_remains_a_tap() {
     let map = ControlMap::default();
@@ -206,6 +222,7 @@ fn release_before_threshold_debounced_after_threshold_remains_a_tap() {
     assert_eq!(batch.actions[0].action, Action::ToggleBoostUnits);
 }
 
+/// Protected recovery overrides simultaneous ordinary actions and requires their release before rearming.
 #[test]
 fn recovery_overrides_simultaneous_units_reset_and_disarms_other_held_keys() {
     let mut map = ControlMap::default();
@@ -242,6 +259,7 @@ fn recovery_overrides_simultaneous_units_reset_and_disarms_other_held_keys() {
     );
 }
 
+/// First real navigation wins in button order; self-navigation retains other compatible actions.
 #[test]
 fn transition_wins_in_button_order_and_self_navigation_keeps_other_actions() {
     for self_navigation in [false, true] {
@@ -278,6 +296,7 @@ fn transition_wins_in_button_order_and_self_navigation_keeps_other_actions() {
     }
 }
 
+/// Page changes suppress old held keys and releases until a stable release permits a new press.
 #[test]
 fn page_changes_cancel_old_releases_and_held_keys_until_release() {
     let map = ControlMap::default();
@@ -298,6 +317,7 @@ fn page_changes_cancel_old_releases_and_held_keys_until_release() {
     );
 }
 
+/// Hold duration clamps to 400..=1500 ms; unrepresentable microsecond observations discard recovery.
 #[test]
 fn invalid_hold_bounds_saturate_and_microsecond_overflow_fails_closed() {
     for (duration, threshold) in [(0, 400), (u16::MAX, 1500)] {
@@ -331,6 +351,7 @@ fn invalid_hold_bounds_saturate_and_microsecond_overflow_fails_closed() {
     assert_eq!(batch.discarded, 1);
 }
 
+/// Dashboard recovery beats navigation and suppresses the later release of an unfired tap.
 #[test]
 fn recovery_wins_over_navigation_and_cancels_an_unfired_held_tap_on_dashboard() {
     let mut map = ControlMap::default();
@@ -353,6 +374,7 @@ fn recovery_wins_over_navigation_and_cancels_an_unfired_held_tap_on_dashboard() 
     }
 }
 
+/// Returning navigation immediately disarms old-page releases even before the caller installs the page.
 #[test]
 fn a_returned_transition_immediately_cancels_other_old_page_releases() {
     let mut map = ControlMap::default();
@@ -376,6 +398,7 @@ fn a_returned_transition_immediately_cancels_other_old_page_releases() {
     }
 }
 
+/// Tap and hold observations retain the first press time and require stable debounce without repeat firing.
 #[test]
 fn tap_and_hold_use_first_observation_and_stable_debounce() {
     let map = ControlMap::default();
@@ -399,6 +422,7 @@ fn tap_and_hold_use_first_observation_and_stable_debounce() {
     }
 }
 
+/// Y held during boot/reset cannot recover until a full stable release followed by a new two-second hold.
 #[test]
 fn held_boot_and_reset_require_stable_release_before_recovery() {
     let map = ControlMap::default();
@@ -424,6 +448,7 @@ fn held_boot_and_reset_require_stable_release_before_recovery() {
     assert!(g.update(&map, Page::Dashboard, Y, 15000).recovery.is_none());
 }
 
+/// A late sampled release never invents a missed hold; disabled holds retain tap behavior.
 #[test]
 fn sampled_release_never_invents_hold_and_none_hold_keeps_long_tap() {
     for no_hold in [false, true] {

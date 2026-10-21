@@ -1,3 +1,8 @@
+//! Synchronous role-specific SMP machines, shared negotiated data and application/transport boundary.
+//!
+//! Input calls can enqueue packets/events and mutate bond storage before an error. They do not await
+//! controller completion. The manager validates incoming command sizes and owns timeout/waker routing.
+
 use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
 use rand_core::{CryptoRng, RngCore};
@@ -10,17 +15,27 @@ use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, Packet
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Link addresses, feature negotiation and bond result shared across one role's pairing phases.
 struct PairingData {
+    /// Actual local link address used by cryptographic checks, possibly an RPA.
     local_address: Address,
+    /// Peer address used for cryptographic checks/routing; current SC identity handling replaces it.
     peer_address: Address,
+    /// Local feature advertisement and negotiated key-distribution choices.
     local_features: PairingFeatures,
+    /// Last admitted peer Pairing Request/Response features.
     peer_features: PairingFeatures,
+    /// Selected association model; initialized to Just Works before feature exchange.
     pairing_method: PairingMethod,
+    /// Absolute Embassy monotonic pairing deadline; refreshed by the manager after progress.
     timeout_at: Instant,
+    /// Pending/completed encryption record, including transient nonbonded keys.
     bond_information: Option<BondInformation>,
 }
 
 impl PairingData {
+    /// Returns fresh negotiation state for link `local_address`/`peer_address`, advertised `local_io`
+    /// and deadline now plus `timeout`; no packet is sent and addresses are not validated.
     fn new(
         local_address: Address,
         peer_address: Address,
@@ -41,6 +56,7 @@ impl PairingData {
         }
     }
 
+    /// Returns true only when both feature advertisements request bonding.
     fn want_bonding(&self) -> bool {
         matches!(self.local_features.security_properties.bond(), BondingFlag::Bonding)
             && matches!(self.peer_features.security_properties.bond(), BondingFlag::Bonding)
@@ -55,15 +71,36 @@ pub mod legacy_peripheral;
 pub mod peripheral;
 mod util;
 
+/// One already-framed peer command or local application/controller event.
 pub(super) enum Input<'a> {
-    Command(Command, &'a [u8]),
-    Event(Event),
+    /// SMP input whose payload length was validated by the manager.
+    Command(
+        /// Decoded SMP opcode.
+        Command,
+        /// Body bytes without opcode or L2CAP header.
+        &'a [u8],
+    ),
+    /// Local state-machine input.
+    Event(
+        /// User decision, OOB material or encryption completion.
+        Event,
+    ),
 }
 
+/// Synchronous side effects used by pairing, with bounded queues and caller-owned cryptographic state.
+/// Error returns need not undo earlier packet, event or bond effects; callers must not infer encryption
+/// completion from successful queue admission.
 pub trait PairingOps<P: PacketPool> {
+    /// Consumes and queues `packet`; Returns queue/connection admission errors, not wire completion.
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error>;
+    /// Returns a cloned record for the current peer, or None; a record may still be rejected for reuse.
     fn find_bond(&self) -> Option<BondInformation>;
+    /// Requests encryption with an eligible retained key; Returns Some record after queue admission,
+    /// None for absent/rejected records, or the queue error. Must not silently substitute a fresh key.
     fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error>;
+    /// Requests encryption with `ltk`, intended `security_level` and persistence intent `is_bonded`.
+    /// Legacy `ediv`, wire-order `rand` and byte `encryption_key_len` identify/size the key when enabled.
+    /// Returns the pending bond record or an admission error; storage may change before a later error.
     fn try_enable_encryption(
         &mut self,
         ltk: &LongTermKey,
@@ -73,46 +110,70 @@ pub trait PairingOps<P: PacketPool> {
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
         #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error>;
+    /// Inserts/replaces `bond` in host storage; Returns capacity/admission errors, without external durability.
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error>;
+    /// Returns the current controller connection handle.
     fn connection_handle(&mut self) -> ConnHandle;
+    /// Queues application `event`; Returns bounded-queue admission failure if unavailable.
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error>;
+    /// Returns whether this connection permits retaining a newly negotiated bond.
     fn bonding_flag(&self) -> BondingFlag;
-    /// Whether OOB data is available for this connection.
+    /// Returns whether the application advertises possession of this peer's OOB authentication data.
     fn oob_available(&self) -> bool;
-    /// Get the configured passkey, if any.
-    /// When Some, this passkey should be used for PassKey Entry pairing instead of generating a random one.
+    /// Returns the optional fixed display passkey; implementations/callers must ensure 0 through 999999.
+    /// Currently consumed by the Secure Connections peripheral display path only.
     fn passkey(&self) -> Option<u32>;
-    /// The persistent LESC secret key.
+    /// Returns the persistent LESC private scalar, matching [`Self::public_key`].
     fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey;
-    /// The persistent LESC public key.
+    /// Returns the public point matching [`Self::secret_key`] and previously generated local OOB data.
     fn public_key(&self) -> &crate::security_manager::crypto::PublicKey;
-    /// The local Identity Resolving Key, if privacy is enabled.
-    /// If there is no local IRK, all zeros are returned.
+    /// Returns little-endian local IRK bytes, or sixteen zeros when privacy is unconfigured.
     fn local_irk(&self) -> [u8; 16];
-    /// The local identity address (public or static random), used for Identity Address Information.
-    /// This is distinct from the address used for pairing calculations, which may be an RPA.
+    /// Returns the public/static-random local identity for distribution, or an error if unconfigured.
+    /// This may differ from the RPA used in pairing calculations.
     fn local_identity_address(&self) -> Result<Address, Error>;
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Active role and algorithm; legacy fallback replaces this value but retains shared feature data.
 enum State {
-    Central(central::Pairing),
-    Peripheral(peripheral::Pairing),
+    /// Secure Connections initiator.
+    Central(
+        /// Initiator phase and terminal result.
+        central::Pairing,
+    ),
+    /// Secure Connections responder.
+    Peripheral(
+        /// Responder phase and terminal result.
+        peripheral::Pairing,
+    ),
     #[cfg(feature = "legacy-pairing")]
-    LegacyCentral(legacy_central::Pairing),
+    /// Legacy initiator after feature-based downgrade.
+    LegacyCentral(
+        /// Legacy confirm/random/key-distribution state.
+        legacy_central::Pairing,
+    ),
     #[cfg(feature = "legacy-pairing")]
-    LegacyPeripheral(legacy_peripheral::Pairing),
+    /// Legacy responder selected from peer capabilities.
+    LegacyPeripheral(
+        /// Legacy confirm/random/key-distribution state.
+        legacy_peripheral::Pairing,
+    ),
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// One pairing attempt bound to shared link/feature data and a role-specific state machine.
 pub struct Pairing {
+    /// Negotiated features, addresses, deadline and pending/completed bond.
     pairing_data: PairingData,
+    /// Algorithm/role phase and terminal outcome.
     state: State,
 }
 
 impl Pairing {
+    /// Returns whether this machine initiates pairing, including legacy central mode.
     pub(crate) fn is_central(&self) -> bool {
         match &self.state {
             State::Central(_) => true,
@@ -123,15 +184,18 @@ impl Pairing {
     }
 
     #[cfg(feature = "legacy-pairing")]
+    /// Returns whether the machine currently uses the Secure Connections central algorithm.
     pub(crate) fn is_lesc_central(&self) -> bool {
         matches!(&self.state, State::Central(_))
     }
 
     #[cfg(feature = "legacy-pairing")]
+    /// Returns whether the machine currently uses the Secure Connections peripheral algorithm.
     pub(crate) fn is_lesc_peripheral(&self) -> bool {
         matches!(&self.state, State::Peripheral(_))
     }
 
+    /// Returns None while unfinished, Some Ok on success, or the retained terminal error.
     pub(crate) fn result(&self) -> Option<Result<(), Error>> {
         match &self.state {
             State::Central(c) => c.result(),
@@ -143,6 +207,9 @@ impl Pairing {
         }
     }
 
+    /// Advances with peer `command` and body `payload`, performing bounded `ops` and drawing `rng`.
+    /// Returns terminal/state/crypto/queue errors; caller must validate exact payload size before entry
+    /// because role helpers index fixed fields. Prior effects are not rolled back.
     pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         command: Command,
@@ -153,6 +220,8 @@ impl Pairing {
         self.handle_input(Input::Command(command, payload), ops, rng)
     }
 
+    /// Advances with local `event`, performing `ops` and drawing `rng` as required.
+    /// Returns terminal/state/crypto/queue errors; errors may follow visible earlier side effects.
     pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         event: Event,
@@ -162,6 +231,8 @@ impl Pairing {
         self.handle_input(Input::Event(event), ops, rng)
     }
 
+    /// Routes `input` to the active role with shared state, `ops` and `rng`; Returns its result.
+    /// A role records transition failure as terminal; no cross-role retry or rollback occurs here.
     fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         input: Input<'_>,
@@ -178,6 +249,8 @@ impl Pairing {
         }
     }
 
+    /// Returns the retained bond's level only in a role state reached after encryption completion;
+    /// otherwise NoEncryption, including a missing bond or a failed procedure.
     pub(crate) fn security_level(&self) -> SecurityLevel {
         let is_encrypted = match &self.state {
             State::Central(c) => c.is_encrypted(),
@@ -198,10 +271,13 @@ impl Pairing {
         }
     }
 
+    /// Returns the borrowed pending/completed encryption record, or None before key admission.
     pub(crate) fn bond_information(&self) -> Option<&BondInformation> {
         self.pairing_data.bond_information.as_ref()
     }
 
+    /// Returns an idle central bound to `local_address`/`peer_address` with advertised `local_io`.
+    /// No packets are sent; the deadline starts at the far-future TIMEOUT_DISABLE interval.
     pub(crate) fn new_central(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
         Pairing {
             pairing_data: PairingData::new(
@@ -214,6 +290,9 @@ impl Pairing {
         }
     }
 
+    /// Starts central pairing for link `local_address`/`peer_address` with `local_io` through `ops`.
+    /// `user_initiated` permits fresh-pairing fallback after a rejected bond. Returns the machine
+    /// with active timeout or an initiation error; earlier queued work is not cancelled on failure.
     pub(crate) fn initiate_central<P: PacketPool, OPS: PairingOps<P>>(
         local_address: Address,
         peer_address: Address,
@@ -235,6 +314,8 @@ impl Pairing {
         })
     }
 
+    /// Returns a Secure Connections responder awaiting a request for `local_address`/`peer_address`,
+    /// advertising `local_io`, with the active timeout running and no packets sent.
     pub(crate) fn new_peripheral(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
         Pairing {
             pairing_data: PairingData::new(
@@ -248,6 +329,8 @@ impl Pairing {
     }
 
     #[cfg(feature = "legacy-pairing")]
+    /// Returns a legacy responder for `local_address`/`peer_address` and `local_io`, with active timeout.
+    /// Selection does not send a packet or admit peer features yet.
     pub(crate) fn new_legacy_peripheral(
         local_address: Address,
         peer_address: Address,
@@ -264,6 +347,9 @@ impl Pairing {
         }
     }
 
+    /// Sends Security Request through `ops` for `local_address`/`peer_address` with `local_io`.
+    /// `user_initiated` chooses local-I/O versus retained-bond authentication requirements.
+    /// Returns a timed responder awaiting Pairing Request, or packet/queue failure.
     pub(crate) fn initiate_peripheral<P: PacketPool, OPS: PairingOps<P>>(
         local_address: Address,
         peer_address: Address,
@@ -284,7 +370,8 @@ impl Pairing {
         })
     }
 
-    /// Switch from a LESC Central to a Legacy Central when the peer doesn't support SC.
+    /// Consumes a Secure Connections central; Returns legacy state preserving the exact sent request
+    /// reconstructed from local features and the existing deadline. Other roles return InvalidState.
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn switch_to_legacy_central(self) -> Result<Pairing, Error> {
         use crate::codec::Encode;
@@ -304,7 +391,8 @@ impl Pairing {
         }
     }
 
-    /// Switch from a LESC Peripheral to a Legacy Peripheral when the peer doesn't support SC.
+    /// Consumes a Secure Connections responder; Returns a legacy request-waiting machine preserving
+    /// shared data/deadline. Other roles return InvalidState; callers enforce downgrade policy.
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn switch_to_legacy_peripheral(self) -> Result<Pairing, Error> {
         let Pairing { pairing_data, state } = self;
@@ -317,6 +405,7 @@ impl Pairing {
         }
     }
 
+    /// Returns true only for Secure Connections central waiting on a retained-key encryption request.
     pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
         match &self.state {
             State::Central(c) => c.is_waiting_bonded_encryption(),
@@ -324,10 +413,12 @@ impl Pairing {
         }
     }
 
+    /// Returns the peer address retained in shared pairing data for manager routing.
     pub(crate) fn peer_address(&self) -> Address {
         self.pairing_data.peer_address
     }
 
+    /// Returns the active absolute deadline, or now plus TIMEOUT_DISABLE after a terminal result.
     pub(crate) fn timeout_at(&self) -> Instant {
         if self.result().is_some() {
             Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
@@ -336,10 +427,12 @@ impl Pairing {
         }
     }
 
+    /// Replaces the stored deadline with current monotonic time plus the SMP timeout interval.
     pub(crate) fn reset_timeout(&mut self) {
         self.pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
     }
 
+    /// Delegates timeout termination to the current role; completed states remain terminal unchanged.
     pub(crate) fn mark_timeout(&mut self) {
         match &mut self.state {
             State::Central(c) => c.mark_timeout(),
@@ -354,43 +447,71 @@ impl Pairing {
 
 /// OOB data for BLE pairing, exchanged via an out-of-band channel.
 ///
-/// For LESC: `random` is the random nonce r, `confirm` is c = f4(PKx, PKx, r, 0).
-/// For legacy: `random` is the TK value, `confirm` is unused (set to zero).
+/// Values are little-endian. For LESC, random is r and confirm is f4(PKx, PKx, r, 0).
+/// Both fields zero denote absent peer data in the current LESC API. Local confirm is not consumed.
+/// An absent peer value is rejected with OobNotAvailable if local OOB availability was advertised.
+/// For legacy, random is the shared TK and confirm is unused. The application authenticates the
+/// external exchange; Debug exposes this material and must not be used in secret-free logs.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OobData {
-    /// Random nonce (LESC) or TK value (legacy).
+    /// Sixteen little-endian random bytes (LESC) or shared temporary-key bytes (legacy).
     pub random: [u8; 16],
-    /// Confirm value (LESC only, zero for legacy).
+    /// Sixteen little-endian f4 commitment bytes (peer LESC verification); unused for legacy/local data.
     pub confirm: [u8; 16],
 }
 
+/// Local inputs delivered by the manager; successful queueing is distinct from accepting the input.
 pub enum Event {
-    LinkEncryptedResult(bool),
+    /// Controller encryption completion or failure.
+    LinkEncryptedResult(
+        /// True for enabled encryption, false for failure/disabled state.
+        bool,
+    ),
+    /// User accepts the displayed numeric comparison.
     PassKeyConfirm,
+    /// User rejects/cancels the displayed numeric comparison.
     PassKeyCancel,
-    PassKeyInput(u32),
-    OobDataReceived { local: OobData, peer: OobData },
+    /// User supplies the passkey; caller must enforce the six-digit range.
+    PassKeyInput(
+        /// Decimal input, intended 0 through 999999; constructors do not validate it.
+        u32,
+    ),
+    /// Externally exchanged material for the selected OOB phase.
+    OobDataReceived {
+        /// Local generated random, or legacy TK; local LESC confirm is unused.
+        local: OobData,
+        /// Peer LESC random/commitment or legacy material; zero LESC fields signal absence.
+        peer: OobData,
+    },
 }
 
 #[cfg(test)]
-mod tests {
+/// Deterministic in-memory packet exchange verifies pairing algorithms independently of an HCI controller.
+pub(super) mod tests {
     use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
     use super::*;
+    use crate::security_manager::Reason;
     use crate::{Identity, Packet};
 
     #[derive(Debug)]
-    pub(crate) struct TestPacket(pub(crate) heapless::Vec<u8, 128>);
+    /// Fixed-capacity test packet whose logical size is initialized to the complete pool MTU.
+    pub(crate) struct TestPacket(
+        /// Up to 128 owned packet bytes, including L2CAP headers.
+        pub(crate) heapless::Vec<u8, 128>,
+    );
 
     impl AsRef<[u8]> for TestPacket {
+        /// Returns the complete initialized packet byte slice.
         fn as_ref(&self) -> &[u8] {
             self.0.as_slice()
         }
     }
 
     impl AsMut<[u8]> for TestPacket {
+        /// Returns the complete initialized packet bytes for header/payload construction.
         fn as_mut(&mut self) -> &mut [u8] {
             self.0.as_mut_slice()
         }
@@ -399,36 +520,54 @@ mod tests {
     impl Packet for TestPacket {}
 
     #[derive(Debug)]
+    /// Test pool allocating independent 128-byte stack-backed packets without a global allocation cap.
     pub(crate) struct HeaplessPool;
 
     impl PacketPool for HeaplessPool {
+        /// Owned initialized packet storage used by all local exchanges.
         type Packet = TestPacket;
+        /// Packet capacity in bytes including the L2CAP/SMP headers.
         const MTU: usize = 128;
 
+        /// Returns a zeroed 128-byte packet; never reports pool exhaustion in this fixture.
         fn allocate() -> Option<Self::Packet> {
             let mut ret = TestPacket(heapless::Vec::new());
             ret.0.resize(Self::MTU, 0).unwrap();
             Some(ret)
         }
 
+        /// Returns isize::MAX as the synthetic pool capacity; no global resource limit is simulated.
         fn capacity() -> usize {
             isize::MAX as usize
         }
     }
 
+    /// Per-peer transcript and key material for controller-free pairing tests.
     pub(crate) struct TestOps<const N: usize> {
+        /// Accepted outbound packets, bounded by N; test cursors track delivery without removing them.
         pub(crate) sent_packets: heapless::Vec<TxPacket<HeaplessPool>, N>,
+        /// Requested LTKs, capacity 10; does not itself establish encryption.
         pub(crate) encryptions: heapless::Vec<LongTermKey, 10>,
+        /// User-visible events retained in order, capacity 10.
         pub(crate) connection_events: heapless::Vec<ConnectionEvent, 10>,
+        /// Optional previously retained record supplied to resumption paths.
         pub(crate) bond_information: Option<BondInformation>,
+        /// Whether local features request persistent bonding.
         pub(crate) bondable: bool,
+        /// Whether local features advertise possession of peer OOB data.
         pub(crate) oob_available: bool,
+        /// Synthetic local IRK bytes used by identity-distribution fixtures; zero disables local privacy.
+        pub(crate) local_irk: [u8; 16],
+        /// Optional fixed passkey consumed by the SC peripheral display path.
         pub(crate) passkey: Option<u32>,
+        /// Seeded local P-256 private scalar.
         pub(crate) secret_key: crate::security_manager::crypto::SecretKey,
+        /// Matching public point used to generate OOB commitments and exchange packets.
         pub(crate) public_key: crate::security_manager::crypto::PublicKey,
     }
 
     impl<const N: usize> TestOps<N> {
+        /// Returns empty transcripts and a deterministic keypair from `seed`; bonding/OOB start disabled.
         pub(crate) fn new(seed: u64) -> Self {
             let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(seed).into();
             let secret_key = crate::security_manager::crypto::SecretKey::new(&mut rng);
@@ -441,6 +580,7 @@ mod tests {
                 bondable: false,
                 oob_available: false,
                 passkey: None,
+                local_irk: [0; 16],
                 secret_key,
                 public_key,
             }
@@ -448,10 +588,14 @@ mod tests {
     }
 
     impl<const N: usize> PairingOps<HeaplessPool> for TestOps<N> {
+        /// Retains `packet` in send order; Returns OutOfMemory when the N-entry transcript is full.
         fn try_send_packet(&mut self, packet: TxPacket<HeaplessPool>) -> Result<(), Error> {
             self.sent_packets.push(packet).map_err(|_| Error::OutOfMemory)
         }
 
+        /// Records `ltk`; Returns a pending record with `security_level`, `is_bonded`, default identity
+        /// and optional legacy `ediv`, wire `rand`, byte `encryption_key_len`. Panics after 10 requests;
+        /// no controller completion or persistent bond mutation is simulated.
         fn try_enable_encryption(
             &mut self,
             ltk: &LongTermKey,
@@ -461,11 +605,11 @@ mod tests {
             #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
             #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
         ) -> Result<BondInformation, Error> {
-            self.encryptions.push(ltk.clone()).unwrap();
+            self.encryptions.push(*ltk).unwrap();
             Ok(BondInformation {
                 security_level,
                 identity: Identity::default(),
-                ltk: ltk.clone(),
+                ltk: *ltk,
                 is_bonded,
                 #[cfg(feature = "legacy-pairing")]
                 ediv,
@@ -476,32 +620,39 @@ mod tests {
             })
         }
 
+        /// Returns the configured retained record clone, or None; no peer filtering is simulated.
         fn find_bond(&self) -> Option<BondInformation> {
             self.bond_information.clone()
         }
 
+        /// Records the retained LTK and Returns its cloned record, or None when absent.
+        /// Panics when the 10-entry encryption transcript is full.
         fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
             if let Some(bond) = &self.bond_information {
-                self.encryptions.push(bond.ltk.clone()).unwrap();
+                self.encryptions.push(bond.ltk).unwrap();
                 Ok(Some(bond.clone()))
             } else {
                 Ok(None)
             }
         }
 
+        /// Ignores `bond`; Returns Ok without changing the fixture's configured retained record.
         fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
             Ok(())
         }
 
+        /// Returns synthetic controller handle 2 without mutation.
         fn connection_handle(&mut self) -> ConnHandle {
             ConnHandle::new(2)
         }
 
+        /// Appends `event` to its transcript; Returns Ok or panics when ten events are already retained.
         fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
             self.connection_events.push(event).unwrap();
             Ok(())
         }
 
+        /// Returns the fixture's requested bonding policy.
         fn bonding_flag(&self) -> BondingFlag {
             if self.bondable {
                 BondingFlag::Bonding
@@ -510,32 +661,39 @@ mod tests {
             }
         }
 
+        /// Returns the fixture's advertised possession of peer OOB data.
         fn oob_available(&self) -> bool {
             self.oob_available
         }
 
+        /// Returns the configured fixed passkey without validation, or None for random display.
         fn passkey(&self) -> Option<u32> {
             self.passkey
         }
 
+        /// Returns the borrowed deterministic private scalar.
         fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey {
             &self.secret_key
         }
 
+        /// Returns the borrowed public point corresponding to the fixture's private scalar.
         fn public_key(&self) -> &crate::security_manager::crypto::PublicKey {
             &self.public_key
         }
 
+        /// Returns configured synthetic IRK bytes; the default zeros simulate no local privacy.
         fn local_irk(&self) -> [u8; 16] {
-            [0; 16]
+            self.local_irk
         }
 
+        /// Returns the fixed static-random identity used by distribution fixtures.
         fn local_identity_address(&self) -> Result<Address, Error> {
             Ok(Address::random([0xff, 0x8f, 0x08, 0x05, 0xe4, 0xff]))
         }
     }
 
     #[test]
+    /// Just Works produces equal LTKs and reports unauthenticated encryption only after HCI success.
     fn just_works() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -593,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    /// Both displayed comparison values agree; accepting both produces one authenticated LTK/level.
     fn numeric_compare() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -685,6 +844,7 @@ mod tests {
     }
 
     #[test]
+    /// Matching user entry at two keyboards completes all 20 rounds and yields authenticated encryption.
     fn pass_key_entry_keyboard_only() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -771,6 +931,7 @@ mod tests {
     }
 
     #[test]
+    /// A peripheral-displayed passkey entered by the central yields matching authenticated keys.
     fn pass_key_entry_peripheral_display() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -855,6 +1016,7 @@ mod tests {
     }
 
     #[test]
+    /// A central-displayed passkey entered by the peripheral yields matching authenticated keys.
     fn pass_key_entry_central_display() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -934,7 +1096,14 @@ mod tests {
     }
 
     #[test]
+    /// Bilateral bondable Just Works distributes identities before reporting a retained unauthenticated bond.
     fn bondable_just_works() {
+        bondable_just_works_with_irk([0; 16]);
+    }
+
+    /// Completes bilateral bondable Just Works using synthetic `irk` for both peers; zero omits responder IRK distribution.
+    /// Panics unless LTK agreement, both retained bonds and final security levels match the protocol fixture.
+    pub(crate) fn bondable_just_works_with_irk(irk: [u8; 16]) {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
@@ -942,6 +1111,8 @@ mod tests {
         let mut central_ops = TestOps::<80>::new(0xBEEF);
         peripheral_ops.bondable = true;
         central_ops.bondable = true;
+        peripheral_ops.local_irk = irk;
+        central_ops.local_irk = irk;
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
         let mut central_pairing = Pairing::initiate_central(
@@ -1012,6 +1183,7 @@ mod tests {
     }
 
     #[test]
+    /// Central resumption requests the retained key without SMP packets and reports authentication on HCI success.
     fn bonded_central_initiates() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -1091,6 +1263,7 @@ mod tests {
     }
 
     #[test]
+    /// Peripheral Security Request triggers central retained-key reuse without a fresh Pairing Request.
     fn bonded_peripheral_initiates() {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
@@ -1182,6 +1355,10 @@ mod tests {
         );
     }
 
+    /// Delivers unconsumed transcripts from `central_ops`/`peripheral_ops` to the opposite
+    /// `peripheral_pairing`/`central_pairing`, drawing deterministic `rng` as needed.
+    /// Advances `num_central_data_sent`/`num_peripheral_data_sent` after successful deliveries;
+    /// stops at quiescence, panics on a transition error or more than 10000 productive passes.
     fn transmit_packets<const N: usize>(
         peripheral_ops: &mut TestOps<N>,
         central_ops: &mut TestOps<N>,
@@ -1234,6 +1411,7 @@ mod tests {
     }
 
     #[test]
+    /// Bilateral OOB commitments bind both public keys and yield matching authenticated encryption.
     fn oob_lesc_bilateral() {
         use crate::security_manager::crypto::Nonce;
 
@@ -1306,8 +1484,8 @@ mod tests {
         central_pairing
             .handle_event(
                 Event::OobDataReceived {
-                    local: central_oob.clone(),
-                    peer: peripheral_oob.clone(),
+                    local: central_oob,
+                    peer: peripheral_oob,
                 },
                 &mut central_ops,
                 &mut rng,
@@ -1611,6 +1789,7 @@ mod tests {
     }
 
     #[test]
+    /// A wrong peer OOB commitment terminates the central before any encryption request.
     fn oob_lesc_confirm_mismatch() {
         use crate::security_manager::crypto::Nonce;
 
@@ -1678,5 +1857,147 @@ mod tests {
             result,
             Err(Error::Security(crate::security_manager::Reason::ConfirmValueFailed))
         ));
+    }
+
+    /// Returns each role's admission result when both advertised peer OOB but receive no peer material.
+    /// Valid local commitments isolate the missing-peer case; neither role may request encryption.
+    fn missing_advertised_peer_oob_results() -> (Result<(), Error>, Result<(), Error>) {
+        use crate::security_manager::crypto::Nonce;
+        let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central = Address::random([0xff, 2, 2, 3, 4, 5]);
+        let mut p_ops = TestOps::<10>::new(0xDEAD);
+        let mut c_ops = TestOps::<10>::new(0xBEEF);
+        p_ops.oob_available = true;
+        c_ops.oob_available = true;
+        let local_c = OobData {
+            random: 1u128.to_le_bytes(),
+            confirm: Nonce(1)
+                .f4(c_ops.public_key.x(), c_ops.public_key.x(), 0)
+                .0
+                .to_le_bytes(),
+        };
+        let local_p = OobData {
+            random: 2u128.to_le_bytes(),
+            confirm: Nonce(2)
+                .f4(p_ops.public_key.x(), p_ops.public_key.x(), 0)
+                .0
+                .to_le_bytes(),
+        };
+        let missing = OobData {
+            random: [0; 16],
+            confirm: [0; 16],
+        };
+        let mut p = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut c =
+            Pairing::initiate_central(central, peripheral, &mut c_ops, IoCapabilities::NoInputNoOutput, true).unwrap();
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        transmit_packets(&mut p_ops, &mut c_ops, &mut rng, &mut p, &mut c, &mut 0, &mut 0);
+        let central_result = c.handle_event(
+            Event::OobDataReceived {
+                local: local_c,
+                peer: missing,
+            },
+            &mut c_ops,
+            &mut rng,
+        );
+        let peripheral_result = p.handle_event(
+            Event::OobDataReceived {
+                local: local_p,
+                peer: missing,
+            },
+            &mut p_ops,
+            &mut rng,
+        );
+        assert!(c_ops.encryptions.is_empty());
+        assert!(p_ops.encryptions.is_empty());
+        (central_result, peripheral_result)
+    }
+
+    /// A central advertising peer OOB cannot silently skip authentication when that material is absent.
+    #[test]
+    fn central_rejects_missing_advertised_peer_oob() {
+        assert_eq!(
+            missing_advertised_peer_oob_results().0,
+            Err(Error::Security(Reason::OobNotAvailable))
+        );
+    }
+
+    /// A peripheral advertising peer OOB cannot silently skip authentication when that material is absent.
+    #[test]
+    fn peripheral_rejects_missing_advertised_peer_oob() {
+        assert_eq!(
+            missing_advertised_peer_oob_results().1,
+            Err(Error::Security(Reason::OobNotAvailable))
+        );
+    }
+
+    /// Legacy peers agree on masked STK and durable responder key/EDIV/Rand for every admitted byte size.
+    /// HCI completion separates temporary encryption admission from bonded key distribution.
+    #[cfg(feature = "legacy-pairing")]
+    #[test]
+    fn legacy_pairing_preserves_negotiated_key_size_and_distributed_bond() {
+        for key_len in 7..=16 {
+            let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
+            let central = Address::random([0xff, 2, 2, 3, 4, 5]);
+            let mut p_ops = TestOps::<20>::new(0xDEAD);
+            let mut c_ops = TestOps::<20>::new(0xBEEF);
+            p_ops.bondable = true;
+            c_ops.bondable = true;
+            let mut p = Pairing::new_legacy_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
+            p.pairing_data.local_features.maximum_encryption_key_size = key_len;
+            let mut c =
+                Pairing::initiate_central(central, peripheral, &mut c_ops, IoCapabilities::NoInputNoOutput, true)
+                    .unwrap()
+                    .switch_to_legacy_central()
+                    .unwrap();
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+            let (mut c_sent, mut p_sent) = (0, 0);
+            transmit_packets(
+                &mut p_ops,
+                &mut c_ops,
+                &mut rng,
+                &mut p,
+                &mut c,
+                &mut c_sent,
+                &mut p_sent,
+            );
+            assert_eq!(c_ops.encryptions.len(), 1);
+            assert_eq!(p_ops.encryptions.len(), 1);
+            assert_eq!(c_ops.encryptions[0], p_ops.encryptions[0]);
+            assert_eq!(c.security_level(), SecurityLevel::NoEncryption);
+            assert_eq!(p.security_level(), SecurityLevel::NoEncryption);
+            assert_eq!(c.result(), None);
+            assert_eq!(p.result(), None);
+            if key_len < 16 {
+                assert_eq!(c_ops.encryptions[0].0 >> (u32::from(key_len) * 8), 0);
+            }
+            c.handle_event(Event::LinkEncryptedResult(true), &mut c_ops, &mut rng)
+                .unwrap();
+            p.handle_event(Event::LinkEncryptedResult(true), &mut p_ops, &mut rng)
+                .unwrap();
+            transmit_packets(
+                &mut p_ops,
+                &mut c_ops,
+                &mut rng,
+                &mut p,
+                &mut c,
+                &mut c_sent,
+                &mut p_sent,
+            );
+            assert_eq!(c.result(), Some(Ok(())));
+            assert_eq!(p.result(), Some(Ok(())));
+            let c_bond = c.bond_information().unwrap();
+            let p_bond = p.bond_information().unwrap();
+            assert!(c_bond.is_bonded && p_bond.is_bonded);
+            assert_eq!(c_bond.encryption_key_len, key_len);
+            assert_eq!(p_bond.encryption_key_len, key_len);
+            assert_eq!(
+                (c_bond.ltk, c_bond.ediv, c_bond.rand),
+                (p_bond.ltk, p_bond.ediv, p_bond.rand)
+            );
+            if key_len < 16 {
+                assert_eq!(c_bond.ltk.0 >> (u32::from(key_len) * 8), 0);
+            }
+        }
     }
 }

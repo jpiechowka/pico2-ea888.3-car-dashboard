@@ -4,15 +4,24 @@
 use crate::consts::*;
 
 #[derive(Clone)]
+/// Validated compact record stream retaining immutable firmware bytes.
 pub(crate) struct Firmware<'a> {
+    /// Unconsumed record bytes, excluding the version/count preamble.
     bytes: &'a [u8],
+    /// Declared records still to consume, including the mandatory final EOF.
     remaining: u8,
+    /// Persistent extended/segment/absolute address base selected by preceding records.
     address_base: u32,
+    /// Chip backplane upload base added to each firmware-relative destination.
     chip_base: u32,
+    /// Strict EOF consumed with no records or trailing bytes remaining.
     finished: bool,
 }
 
 impl<'a> Firmware<'a> {
+    /// Returns a parser over immutable `bytes` after validating every record against `chip_base`.
+    /// Rejects malformed version/count/EOF, unsupported record types, missing data and address overflow
+    /// including the trailing read/modify/write word. Validation performs no hardware writes.
     pub(crate) fn new(bytes: &'a [u8], chip_base: u32) -> Result<Self, ()> {
         let version_len = usize::from(*bytes.first().ok_or(())?);
         let version = bytes.get(1..1 + version_len).ok_or(())?;
@@ -38,6 +47,9 @@ impl<'a> Firmware<'a> {
         Ok(firmware)
     }
 
+    /// Returns the next nonempty destination/payload pair, None after strict EOF, or malformed-data error.
+    /// Address-mode records update persistent base; zero-byte data records are skipped.
+    /// On error parser position may already have advanced; callers must abandon that parser.
     pub(crate) fn next_data(&mut self) -> Result<Option<(u32, &'a [u8])>, ()> {
         while !self.finished {
             self.remaining = self.remaining.checked_sub(1).ok_or(())?;
@@ -57,9 +69,7 @@ impl<'a> Firmware<'a> {
                         .and_then(|v| v.checked_add(self.chip_base))
                         .ok_or(())?;
                     // The upload includes a read/modify/write of the last word.
-                    dest.checked_add(len as u32)
-                        .and_then(|v| v.checked_add(3))
-                        .ok_or(())?;
+                    dest.checked_add(len as u32).and_then(|v| v.checked_add(3)).ok_or(())?;
                     return Ok(Some((dest, payload)));
                 }
                 BTFW_HEX_LINE_TYPE_END_OF_DATA => {
@@ -74,7 +84,11 @@ impl<'a> Firmware<'a> {
                         return Err(());
                     }
                     self.address_base = u32::from(u16::from_be_bytes(pair))
-                        << if header[3] == BTFW_HEX_LINE_TYPE_EXTENDED_ADDRESS { 16 } else { 4 };
+                        << if header[3] == BTFW_HEX_LINE_TYPE_EXTENDED_ADDRESS {
+                            16
+                        } else {
+                            4
+                        };
                 }
                 BTFW_HEX_LINE_TYPE_ABSOLUTE_32BIT_ADDRESS => {
                     let word: [u8; 4] = payload.try_into().map_err(|_| ())?;
@@ -92,11 +106,13 @@ impl<'a> Firmware<'a> {
 }
 
 #[cfg(test)]
+/// Admission regressions for the compact CYW download format and retained firmware fixture.
 mod tests {
     extern crate std;
     use super::*;
     use std::vec::Vec;
 
+    /// Returns test bytes with version V and a u8 count for `records`; fixture count must fit255.
     fn image(records: &[&[u8]]) -> Vec<u8> {
         let mut bytes = std::vec![2, b'V', 0, records.len() as u8];
         for record in records {
@@ -105,10 +121,13 @@ mod tests {
         bytes
     }
 
+    /// Valid zero-address, empty end-of-data record.
     const EOF: &[u8] = &[0, 0, 0, 1];
+    /// One data byte42 at relative offset8.
     const DATA: &[u8] = &[1, 0, 8, 0, 42];
 
     #[test]
+    /// Extended/segment/absolute bases persist; zero-byte data cannot prematurely end a download.
     fn modes_persist_across_records_and_zero_data_is_not_eof() {
         for (mode, base) in [
             (&[2, 0, 0, 4, 0, 2][..], 0x20000),
@@ -126,6 +145,7 @@ mod tests {
     }
 
     #[test]
+    /// Rejects truncations, count/type/length inconsistencies, trailing bytes and upload-range overflow.
     fn all_truncations_counts_types_lengths_and_overflows_fail_closed() {
         let good = image(&[DATA, EOF]);
         for n in 0..good.len() {
@@ -145,7 +165,9 @@ mod tests {
             assert!(Firmware::new(&image(&[&record, EOF]), base).is_err());
         }
         for malformed in [
-            image(&[DATA]), image(&[EOF]), image(&[DATA, EOF, EOF]),
+            image(&[DATA]),
+            image(&[EOF]),
+            image(&[DATA, EOF, EOF]),
             image(&[DATA, &[0, 0, 1, 1]]),
             image(&[&[1, 0, 0, 4, 0], DATA, EOF]),
             image(&[&[2, 0, 1, 4, 0, 2], DATA, EOF]),
@@ -162,9 +184,13 @@ mod tests {
     }
 
     #[test]
+    /// Confirms the pinned binary remains parseable with its reviewed version and record/byte identity.
     fn pinned_radio_image_has_exact_records_version_and_no_trailing_data() {
         let bytes = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
-        assert_eq!(&bytes[1..usize::from(bytes[0])], b"CYW4343A2_001.003.016.0065.0000_Generic_SDIO_37MHz_wlbga_BU_RPI_dl_signed");
+        assert_eq!(
+            &bytes[1..usize::from(bytes[0])],
+            b"CYW4343A2_001.003.016.0065.0000_Generic_SDIO_37MHz_wlbga_BU_RPI_dl_signed"
+        );
         let mut parsed = Firmware::new(bytes, crate::CHIP.bluetooth_base_address).unwrap();
         let mut count = 0;
         let mut total = 0;

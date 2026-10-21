@@ -1,4 +1,9 @@
-//! Host-only, bounded verification. Never extracts or executes vendor/archive input.
+//! Host-only, bounded source-tree and gzip/tar provenance verification; no extraction or execution.
+//!
+//! Reviewed manifests define byte identity, not software correctness or publisher authentication.
+//! Keep inputs unchanged while checking: filesystem inspections and hashing are not an atomic
+//! snapshot. Symlinks, Windows reparse points and multi-link regular files are rejected; Windows
+//! link counts use [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
 mod archive;
 mod manifests;
 use std::collections::BTreeMap;
@@ -11,22 +16,39 @@ pub use manifests::{check_hal, check_radio};
 use serde::{Deserialize, Deserializer};
 use sha2_const_stable::Sha256;
 
+/// Maximum JSON manifest bytes, enforced before deserialization.
 pub const MANIFEST_LIMIT: usize = 1024 * 1024;
+/// Maximum bytes in each regular source file, compressed archive or uncompressed member.
 pub const FILE_LIMIT: u64 = 64 * 1024 * 1024;
+/// Maximum aggregate source-file bytes or all decompressed tar bytes, including padding.
 pub const TOTAL_LIMIT: u64 = 512 * 1024 * 1024;
+/// Maximum entries per hash map/tree/archive; directory entries count for traversals.
 pub const ENTRY_LIMIT: usize = 10_000;
+/// Maximum descended directory depth, with the supplied root at depth zero.
 const DEPTH_LIMIT: usize = 64;
+/// Maximum canonical relative path length in UTF-8 bytes.
 const PATH_LIMIT: usize = 4096;
+/// Verification result with a diagnostic string on failure; strings are not a versioned error protocol.
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Duplicate-rejecting map of validated slash-separated relative paths to lowercase SHA256 digests.
 #[derive(Debug, Default, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct Hashes(#[serde(deserialize_with = "unique_hashes")] pub BTreeMap<String, String>);
+pub(crate) struct Hashes(
+    /// Sorted validated entries; constructors inside this crate must preserve path/hash invariants.
+    #[serde(deserialize_with = "unique_hashes")]
+    pub BTreeMap<String, String>,
+);
+/// Deserialize `de` into at most ENTRY_LIMIT unique canonical path/digest pairs.
+/// Return the deserializer's error for bad paths/hashes, duplicate keys or excessive entries.
 fn unique_hashes<'de, D: Deserializer<'de>>(de: D) -> std::result::Result<BTreeMap<String, String>, D::Error> {
+    /// Map visitor that validates before insertion so duplicate JSON keys cannot overwrite evidence.
     struct Visitor;
     impl<'de> serde::de::Visitor<'de> for Visitor {
+        /// Owned, sorted canonical source path to lowercase SHA256 map.
         type Value = BTreeMap<String, String>;
 
+        /// Write the accepted map description to `f`; return any formatting-sink error.
         fn expecting(
             &self,
             f: &mut std::fmt::Formatter<'_>,
@@ -34,6 +56,8 @@ fn unique_hashes<'de, D: Deserializer<'de>>(de: D) -> std::result::Result<BTreeM
             f.write_str("unique canonical paths and SHA256 hashes")
         }
 
+        /// Consume `map`; return its validated entries or a parse/duplicate/limit error.
+        /// Errors discard the local partially collected map.
         fn visit_map<A: serde::de::MapAccess<'de>>(
             self,
             mut map: A,
@@ -51,18 +75,26 @@ fn unique_hashes<'de, D: Deserializer<'de>>(de: D) -> std::result::Result<BTreeM
     }
     de.deserialize_map(Visitor)
 }
+/// Generic original/overlay manifest; unknown JSON fields are rejected.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Maps {
+    /// Required nonempty upstream file inventory, also used for archive comparison.
     pub original: Hashes,
+    /// Reviewed replacements/additions, taking precedence only for current-tree verification.
     pub modified: Hashes,
 }
+/// Deserialize bounded JSON `bytes` as `T`; return size/serde errors without filesystem access.
+/// Individual schemas enforce their own unknown-field, duplicate-key and semantic constraints.
 pub(crate) fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     if bytes.len() > MANIFEST_LIMIT {
         return Err("manifest size limit".into());
     }
     serde_json::from_slice(bytes).map_err(|e| format!("manifest: {e}"))
 }
+/// Return success for a nonempty relative slash-separated `path` of at most 4096 bytes.
+/// Reject empty/dot/dot-dot components, backslash, colon and NUL. This checks lexical syntax,
+/// not filesystem case equivalence, Windows reserved names or containment against concurrent edits.
 pub(crate) fn canonical(path: &str) -> Result<()> {
     if path.is_empty()
         || path.len() > PATH_LIMIT
@@ -75,12 +107,15 @@ pub(crate) fn canonical(path: &str) -> Result<()> {
     }
     Ok(())
 }
+/// Return success only when `hash` is exactly 64 lowercase ASCII hexadecimal SHA256 characters.
 pub(crate) fn valid_hash(hash: &str) -> Result<()> {
     if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err("invalid SHA256".into());
     }
     Ok(())
 }
+/// Return an error for symlink `metadata` or any Windows reparse-point attribute.
+/// Hard-link multiplicity requires the later open-file checks and is not established here.
 fn reject_link(metadata: &Metadata) -> Result<()> {
     if metadata.file_type().is_symlink() {
         return Err("symlink rejected".into());
@@ -94,6 +129,9 @@ fn reject_link(metadata: &Metadata) -> Result<()> {
     }
     Ok(())
 }
+/// Inspect `path` and every lexical ancestor without first normalizing away linked components.
+/// Relative paths resolve against current_dir; missing/unreadable components or links return an error.
+/// Successful inspection is a point-in-time observation, not a lock against path replacement.
 pub(crate) fn checked_path(path: &Path) -> Result<()> {
     // Inspect lexical ancestors before any normalization can erase a linked component.
     let absolute = if path.is_absolute() {
@@ -106,6 +144,11 @@ pub(crate) fn checked_path(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Return a read-only regular file for `path`, after ancestor/link/type/size checks before and after open.
+/// Reject multi-link files; Unix also compares device/inode across open. Windows obtains the handle's
+/// link count but does not compare a pre-open file ID. Callers must keep the tree unchanged while
+/// verifying; concurrent replacement/writes are not made impossible by these checks.
+/// Return contextual filesystem/identity errors; maximum admitted size is FILE_LIMIT.
 pub(crate) fn open_regular(path: &Path) -> Result<File> {
     checked_path(path)?;
     let before = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
@@ -142,6 +185,9 @@ pub(crate) fn open_regular(path: &Path) -> Result<File> {
     checked_path(path)?;
     Ok(file)
 }
+/// Consume `reader` through EOF and return (lowercase SHA256, total bytes), bounded by `limit`.
+/// Return read/overflow/limit errors; a failed limit check may already have consumed an 8192-byte
+/// chunk. Interrupted reads are propagated, not retried; no partial digest is returned.
 pub(crate) fn hash_reader(
     reader: &mut impl Read,
     limit: u64,
@@ -162,7 +208,10 @@ pub(crate) fn hash_reader(
     }
     Ok((hex(hash.finalize()), total))
 }
+/// Return all 32 digest `bytes` as exactly 64 lowercase hexadecimal characters.
 pub(crate) fn hex(bytes: [u8; 32]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
+/// Open checked regular `path` and return at most MANIFEST_LIMIT bytes; probe one extra byte to
+/// distinguish an exact-size input from excess data. Return path/read/size errors without parsing.
 pub(crate) fn read_manifest(path: &Path) -> Result<Vec<u8>> {
     let file = open_regular(path)?;
     let mut bytes = Vec::new();
@@ -174,6 +223,12 @@ pub(crate) fn read_manifest(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+/// Verify current files below `root` against original-plus-overlay maps in bounded `json`.
+/// `ignore_target` skips only a real top-level target directory after link inspection; nested
+/// target paths remain source. Return success only for exact file inventory and hashes, within
+/// entry/depth/per-file/total limits. Empty directories need not appear in the manifest.
+/// Errors include invalid manifests, extra/missing/changed files, links and filesystem failures.
+/// Inputs must remain unchanged throughout; no extraction, mutation or execution occurs.
 pub fn verify_tree(
     root: &Path,
     json: &[u8],
@@ -182,6 +237,10 @@ pub fn verify_tree(
     let maps: Maps = parse(json)?;
     tree(root, &maps.original, &maps.modified, ignore_target)
 }
+/// Verify `root` using validated `original` and `modified` maps; overlay entries replace/add files.
+/// `ignore_target` admits one real top-level Cargo output directory, never links or nested targets.
+/// Return success only after consuming every expected file and enforcing resource/type/hash bounds.
+/// Directory entries count toward ENTRY_LIMIT, while only file bytes count toward TOTAL_LIMIT.
 pub(crate) fn tree(
     root: &Path,
     original: &Hashes,
@@ -258,6 +317,9 @@ pub(crate) fn tree(
     }
     Ok(())
 }
+/// Return checked regular archive `path` rewound to byte zero after matching lowercase `expected` SHA256.
+/// Reject malformed hashes, file/link/size/read mismatches or seek failure; no decompression occurs.
+/// Archive verification rehashes consumed compressed bytes separately to detect intervening changes.
 pub(crate) fn checked_archive(
     path: &Path,
     expected: &str,

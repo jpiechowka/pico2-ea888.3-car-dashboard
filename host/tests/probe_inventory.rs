@@ -1,3 +1,6 @@
+//! Real inventory orchestration against a scripted read-only client, including capacity, cancellation and partial
+//! evidence.
+
 #[path = "../../firmware/ble-probe/src/errors.rs"]
 mod errors;
 #[path = "../../firmware/ble-probe/src/inventory.rs"]
@@ -13,13 +16,33 @@ use dashboard_core::discovery::{Event, FailureReason, InspectionItem, InventoryS
 use inventory::InventoryClient;
 use trouble_host::prelude::Uuid;
 
+/// Recorded ATT procedure intent; no transport is attached.
 #[derive(Debug, PartialEq)]
 enum Request {
-    Type(u16, u16, u16),
-    Find(u16, u16),
-    Read(u16),
+    /// Read-by-type request with inclusive handle bounds and a short UUID.
+    Type(
+        /// First requested handle.
+        u16,
+        /// Last requested handle.
+        u16,
+        /// 16-bit attribute UUID.
+        u16,
+    ),
+    /// Find-information request over inclusive handles.
+    Find(
+        /// First requested handle.
+        u16,
+        /// Last requested handle.
+        u16,
+    ),
+    /// Read of one value handle.
+    Read(
+        /// Requested attribute handle.
+        u16,
+    ),
 }
 
+/// Arbitrary service adapter order preserves each service's final descriptor range.
 #[test]
 fn adapter_service_order_keeps_every_descriptor_range() {
     let mut fixture = Fixture::default();
@@ -41,6 +64,7 @@ fn adapter_service_order_keeps_every_descriptor_range() {
     assert!(complete(&events, InventoryStage::Descriptors));
 }
 
+/// All 24 service slots retain independent characteristic slices even with empty services and reverse order.
 #[test]
 fn all_service_slots_keep_empty_and_multi_characteristic_ranges_separate() {
     let mut fixture = Fixture::default();
@@ -77,6 +101,7 @@ fn all_service_slots_keep_empty_and_multi_characteristic_ranges_separate() {
     assert!(complete(&events, InventoryStage::Descriptors));
 }
 
+/// Hitting 64 characteristics cannot invent descriptor queries for an unvisited later service.
 #[test]
 fn capacity_at_service_boundary_never_queries_unvisited_service_rows() {
     let mut fixture = Fixture::default();
@@ -98,20 +123,32 @@ fn capacity_at_service_boundary_never_queries_unvisited_service_rows() {
     assert!(fixture.calls.borrow().contains(&Request::Find(292, 300)));
     assert!(!complete(&events, InventoryStage::Descriptors));
 }
+/// Scripted service/declaration/read rows and operation tracing with optional suspension or failure injection.
 #[derive(Default)]
 struct Fixture {
+    /// Service ranges in deliberately unconstrained adapter order.
     services: Vec<Service>,
+    /// Declaration handle/raw ATT value pairs, including malformed test bytes.
     declarations: Vec<(u16, Vec<u8>)>,
+    /// Descriptor handles returned as CCCD UUIDs.
     descriptors: Vec<u16>,
+    /// Per-handle bytes or exact failure returned by reads.
     values: Vec<(u16, Result<Vec<u8>, FailureReason>)>,
+    /// Database Hash handle/value returned by its UUID procedure; none is ATT Attribute Not Found.
     hash: Option<(u16, Vec<u8>)>,
+    /// Ordered procedure requests observed so far.
     calls: RefCell<Vec<Request>>,
+    /// Fail after delivering this descriptor handle; none permits normal completion.
     descriptor_error_after: Option<u16>,
+    /// Suspend service discovery indefinitely until the operation is dropped.
     services_pending: Cell<bool>,
+    /// Count service-operation guards dropped by normal completion or cancellation.
     services_dropped: Cell<usize>,
+    /// Service discovery failure injected before output mutation.
     services_error: Option<FailureReason>,
 }
 impl Fixture {
+    /// Appends short `uuid` service over inclusive `start`..=`end`; range validity is deliberately left to the fixture.
     fn service(
         &mut self,
         start: u16,
@@ -125,6 +162,8 @@ impl Fixture {
         });
     }
 
+    /// Appends a declaration at `declaration`, value handle one later, short `uuid` and optional `readable` property.
+    /// Panics on handle overflow in checked builds; callers provide nonterminal declaration handles.
     fn characteristic(
         &mut self,
         declaration: u16,
@@ -139,14 +178,22 @@ impl Fixture {
     }
 }
 impl InventoryClient for Fixture {
+    /// Already decoded service rows supplied directly to the production orchestrator.
     type Service = Service;
 
+    /// Replaces `output` from scripted rows and returns success or the configured pre-mutation failure.
+    /// Pending mode awaits forever; dropping the operation increments the completion guard exactly once.
     async fn services(
         &self,
         output: &mut heapless::Vec<Service, 24>,
     ) -> Result<(), FailureReason> {
-        struct Finished<'a>(&'a Cell<usize>);
+        /// Counts service-operation cleanup on return and cancellation.
+        struct Finished<'a>(
+            /// Borrowed cleanup counter; fixture keeps it alive through the future.
+            &'a Cell<usize>,
+        );
         impl Drop for Finished<'_> {
+            /// Increments the fixture cleanup counter on normal return or future cancellation.
             fn drop(&mut self) { self.0.set(self.0.get() + 1); }
         }
         let _finished = Finished(&self.services_dropped);
@@ -161,6 +208,9 @@ impl InventoryClient for Fixture {
         Ok(())
     }
 
+    /// Records `uuid` and inclusive `start`..=`end`, delivering declaration rows to `callback` until it breaks.
+    /// Returns Some on break, None on exhaustion or ATT0x0A for absent hash; panics for unsupported UUIDs.
+    /// The hash fixture intentionally forwards its stored handle unfiltered to exercise provenance rejection.
     async fn read_by_type(
         &self,
         start: u16,
@@ -187,6 +237,8 @@ impl InventoryClient for Fixture {
         Ok(None)
     }
 
+    /// Records inclusive `start`..=`end` and emits matching descriptor handles/CCCD UUIDs to `callback`.
+    /// Returns Some on break, None on exhaustion, or the injected error after delivering its retained prefix.
     async fn find_information(
         &self,
         start: u16,
@@ -207,6 +259,8 @@ impl InventoryClient for Fixture {
         Ok(None)
     }
 
+    /// Records `handle`, copying the scripted value (default ASCII x) into bounded `bytes`.
+    /// Returns copied prefix length or scripted failure before copying; a full buffer may truncate the value.
     async fn read_handle(
         &self,
         handle: u16,
@@ -225,6 +279,7 @@ impl InventoryClient for Fixture {
     }
 }
 
+/// Cancelling suspended service discovery drops its borrowed operation once and emits no events or follow-up queries.
 #[test]
 fn cancelled_service_discovery_drops_borrowed_operation_without_publishing_or_querying() {
     let mut fixture = Fixture::default();
@@ -253,6 +308,7 @@ fn cancelled_service_discovery_drops_borrowed_operation_without_publishing_or_qu
     assert_eq!(fixture.services_dropped.get(), 2);
 }
 
+/// Service hardware failure keeps its original code/stage/timing and prevents all later operations.
 #[test]
 fn service_error_has_original_stage_and_stops_before_later_operations() {
     let fixture = Fixture {
@@ -268,6 +324,8 @@ fn service_error_has_original_stage_and_stops_before_later_operations() {
     assert!(fixture.calls.borrow().is_empty());
     assert_eq!(fixture.services_dropped.get(), 1);
 }
+/// Polls production inventory once with synchronous `fixture` and revision 7.
+/// Returns capacity-or-failure result plus emitted prefix; panics if the scripted operation unexpectedly suspends.
 fn run(fixture: &Fixture) -> (Result<bool, dashboard_core::discovery::InspectionFailure>, Vec<Event>) {
     let events = RefCell::new(Vec::new());
     let emit = async |event| events.borrow_mut().push(event);
@@ -280,12 +338,14 @@ fn run(fixture: &Fixture) -> (Result<bool, dashboard_core::discovery::Inspection
     };
     (result, events.into_inner())
 }
+/// Returns whether `events` contain revision 7's completion marker for `expected` inventory stage.
 fn complete(
     events: &[Event],
     expected: InventoryStage,
 ) -> bool {
     events.iter().any(|event| matches!(event, Event::Item { revision: 7, item: InspectionItem::StageComplete(stage) } if *stage == expected))
 }
+/// Sixteen-read capacity cannot hide later descriptor enumeration or completed characteristic/descriptor stages.
 #[test]
 fn read_capacity_does_not_hide_final_descriptor_ranges_or_completed_discovery() {
     let mut fixture = Fixture::default();
@@ -314,6 +374,7 @@ fn read_capacity_does_not_hide_final_descriptor_ranges_or_completed_discovery() 
         16
     );
 }
+/// Descriptor capacity retains exactly 128 rows without erasing completed characteristic or empty-read stages.
 #[test]
 fn descriptor_capacity_does_not_hide_completed_characteristics_or_empty_reads() {
     let mut fixture = Fixture::default();
@@ -343,6 +404,7 @@ fn descriptor_capacity_does_not_hide_completed_characteristics_or_empty_reads() 
         128
     );
 }
+/// Standard values retain exact ATT outcomes; Database Hash uses the UUID procedure and never direct handle read.
 #[test]
 fn standard_values_preserve_exact_att_outcomes_and_hash_uses_uuid_procedure() {
     let mut fixture = Fixture::default();
@@ -386,6 +448,7 @@ fn standard_values_preserve_exact_att_outcomes_and_hash_uses_uuid_procedure() {
     assert!(complete(&events, InventoryStage::Reads));
 }
 
+/// Eight-row descriptor batches resume after the last retained handle without loss or duplicate emission.
 #[test]
 fn descriptor_batches_resume_after_last_retained_handle_without_duplicates() {
     let mut fixture = Fixture::default();
@@ -412,6 +475,7 @@ fn descriptor_batches_resume_after_last_retained_handle_without_duplicates() {
     assert!(calls.contains(&Request::Find(12, 14)));
     assert_eq!(calls.iter().filter(|r| matches!(r, Request::Find(..))).count(), 2);
 }
+/// Descriptor failure retains emitted prefix/range and completed characteristics, then prevents value reads.
 #[test]
 fn descriptor_error_retains_prefix_and_completed_characteristics_without_reading_values() {
     let mut fixture = Fixture::default();
@@ -444,6 +508,7 @@ fn descriptor_error_retains_prefix_and_completed_characteristics_without_reading
     );
     assert!(!fixture.calls.borrow().iter().any(|r| matches!(r, Request::Read(_))));
 }
+/// A value handle beyond the service end preserves two valid rows plus exact rejected bytes and stops later stages.
 #[test]
 fn rejected_terminal_declaration_keeps_two_valid_rows_and_stops_further_work() {
     let mut fixture = Fixture::default();
@@ -482,6 +547,8 @@ fn rejected_terminal_declaration_keeps_two_valid_rows_and_stops_further_work() {
     assert_eq!(fixture.calls.borrow().as_slice(), &[Request::Type(1, 6, 0x2803)]);
 }
 
+/// Malformed declaration lengths retain their original size and at most 19 evidence bytes; short values have no
+/// invented handle.
 #[test]
 fn rejected_length_evidence_is_bounded_and_short_values_are_not_invented() {
     for length in [0, 1, 2, 3, 4, 6, 18, 20, 255, 512] {
@@ -501,6 +568,7 @@ fn rejected_length_evidence_is_bounded_and_short_values_are_not_invented() {
     }
 }
 
+/// Malformed declaration failure preserves valid prefix, service range, last accepted pair and operation timing.
 #[test]
 fn malformed_characteristic_preserves_valid_prefix_and_query_context() {
     let mut fixture = Fixture::default();
@@ -530,6 +598,8 @@ fn malformed_characteristic_preserves_valid_prefix_and_query_context() {
     );
     assert_eq!(fixture.calls.borrow().as_slice(), &[Request::Type(1, 20, 0x2803)]);
 }
+/// An incomplete characteristic list cannot reinterpret unknown later declarations as descriptors or claim completed
+/// reads.
 #[test]
 fn incomplete_service_never_assigns_unknown_later_characteristics_as_descriptors() {
     let mut fixture = Fixture::default();
@@ -565,6 +635,7 @@ fn incomplete_service_never_assigns_unknown_later_characteristics_as_descriptors
             .any(|r| matches!(r, Request::Find(start, _) if *start >= 193))
     );
 }
+/// A UUID-query hash at another handle records NotFound for the discovered row without relabeling foreign bytes.
 #[test]
 fn hash_at_unexpected_handle_is_not_relabelled_as_the_discovered_characteristic() {
     let mut fixture = Fixture::default();
@@ -590,6 +661,7 @@ fn hash_at_unexpected_handle_is_not_relabelled_as_the_discovered_characteristic(
     assert_eq!(values[0].handle, 3);
     assert_eq!(values[0].failure, Some(FailureReason::NotFound));
 }
+/// Protected/unavailable ATT reads retain exact codes and continue the allowlist without security requests.
 #[test]
 fn all_protected_att_codes_and_unavailable_reads_continue_without_security_requests() {
     for code in [0x05, 0x08, 0x0C, 0x0F, 0x02, 0x0A] {
@@ -625,6 +697,7 @@ fn all_protected_att_codes_and_unavailable_reads_continue_without_security_reque
         assert!(complete(&events, InventoryStage::Reads));
     }
 }
+/// Hardware failure preserves its code/read handle and prevents the next permitted read and completion marker.
 #[test]
 fn transport_failure_records_failed_read_and_stops_before_next_request() {
     let mut fixture = Fixture::default();
@@ -640,6 +713,7 @@ fn transport_failure_records_failed_read_and_stops_before_next_request() {
     assert!(!complete(&events, InventoryStage::Reads));
 }
 
+/// A real 40ms publication suspension cannot inflate frozen read duration or terminal failure timing.
 #[test]
 fn read_timing_is_frozen_before_event_publication_waits() {
     for outcome in [
@@ -685,6 +759,8 @@ fn read_timing_is_frozen_before_event_publication_waits() {
     }
 }
 
+/// Exact slot1-style service bounds distinguish rejected value-handle 5 from valid end 5 without silently extending end
+/// 4.
 #[test]
 fn slot1_service_endpoint_is_not_silently_extended_to_accept_rejected_value() {
     for end in [4, 5] {

@@ -1,10 +1,14 @@
+//! Observed BLE name provenance across raw packet replacement, explicit inspection and peer identity boundaries.
+
 use dashboard_core::discovery::*;
 
+/// Public-address peer fixture in controller byte order.
 const PEER: Peer = Peer {
     address: [1, 2, 3, 4, 5, 6],
     random: false,
 };
 
+/// Returns a -60dBm `kind` report for `peer` with bounded raw `data` captured at `at_ms` milliseconds.
 fn report(
     peer: Peer,
     kind: ReportKind,
@@ -14,6 +18,7 @@ fn report(
     Advertisement::new(peer, kind, -60, data, at_ms)
 }
 
+/// Retained display name survives nameless reports while the separately stored raw advertisement remains current.
 #[test]
 fn name_survives_packets_without_name_and_raw_evidence_stays_current() {
     let mut catalog = Catalog::new();
@@ -25,6 +30,7 @@ fn name_survives_packets_without_name_and_raw_evidence_stays_current() {
     assert_eq!(device.advertisement_meta.unwrap().at_ms, 2);
 }
 
+/// An empty shortened-name response cannot erase a nonempty shortened advertisement name.
 #[test]
 fn empty_short_response_does_not_hide_nonempty_short_advertisement() {
     let mut catalog = Catalog::new();
@@ -33,6 +39,8 @@ fn empty_short_response_does_not_hide_nonempty_short_advertisement() {
     assert_eq!(catalog.devices()[0].name(), "TV");
 }
 
+/// Returns an explicitly inspecting probe with one `service` UUID and readable Device Name at handle 3.
+/// Fixture selection/UUID admission failure panics; no radio I/O occurs.
 fn inspecting(service: u16) -> Probe {
     let mut p = Probe::new();
     p.event(Event::Report {
@@ -59,6 +67,7 @@ fn inspecting(service: u16) -> Probe {
     p
 }
 
+/// Publishes current-generation Device Name `data` with `result` into `p`; non-Ok outcomes carry Disconnected evidence.
 fn value(
     p: &mut Probe,
     result: ReadResult,
@@ -78,6 +87,7 @@ fn value(
     });
 }
 
+/// Publishes cleanup-complete inspection termination into `p` for `revision` at `at_ms` milliseconds.
 fn end(
     p: &mut Probe,
     revision: u32,
@@ -91,6 +101,7 @@ fn end(
     });
 }
 
+/// GAP name becomes reusable only after clean inspection end, survives scan return and is cleared by recovery.
 #[test]
 fn explicit_admitted_gap_name_is_retained_after_return_to_scan() {
     let mut p = inspecting(0x1800);
@@ -113,6 +124,7 @@ fn explicit_admitted_gap_name_is_retained_after_return_to_scan() {
     assert!(p.selected_device().unwrap().name().is_empty());
 }
 
+/// Failed/empty/truncated/wrong-service names and stale-generation/time completions cannot name the peer.
 #[test]
 fn failed_empty_truncated_foreign_or_stale_gap_evidence_does_not_name_peer() {
     for (service, result, data) in [
@@ -137,6 +149,8 @@ fn failed_empty_truncated_foreign_or_stale_gap_evidence_does_not_name_peer() {
     }
 }
 
+/// Complete names outrank short names; regressed/malformed packets and differing address types cannot overwrite
+/// identity.
 #[test]
 fn cache_respects_complete_names_time_and_exact_peer_identity() {
     let mut catalog = Catalog::new();

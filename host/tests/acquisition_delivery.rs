@@ -1,9 +1,11 @@
+//! Producer-owned sample/statistics/reset publication under coalescing and concurrent watch delivery.
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot, ResetRequests, SensorId};
 use dashboard_host_validation::sensor_state::{PeakMode, SensorState};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 
+/// A high sample overwritten in the watch remains in producer extrema while the receiver gets the latest current value.
 #[test]
 fn between_frame_peak_survives_coalesced_publication() {
     let watch = Watch::<CriticalSectionRawMutex, DashboardSnapshot, 1>::new();
@@ -20,6 +22,7 @@ fn between_frame_peak_survives_coalesced_publication() {
     assert!(receiver.try_changed().is_none());
 }
 
+/// Multiple regular/irregular receiver schedules yield the same producer statistics as the direct sensor reference.
 #[test]
 fn display_cadence_never_changes_statistics() {
     for periods in [&[50][..], &[25][..], &[16, 17, 17][..], &[1, 250, 37, 3, 1000][..]] {
@@ -65,6 +68,7 @@ fn display_cadence_never_changes_statistics() {
     }
 }
 
+/// Only the latest issued reset generation acknowledges once; unsolicited, older and future acknowledgments fail.
 #[test]
 fn reset_success_waits_for_the_latest_requested_generation() {
     let mut requests = ResetRequests::default();
@@ -79,6 +83,8 @@ fn reset_success_waits_for_the_latest_requested_generation() {
     assert!(!requests.acknowledge(2));
 }
 
+/// Invalid/old batches preserve state; a partial-valid batch can later fill its rejected channel without replaying
+/// others.
 #[test]
 fn invalid_and_out_of_order_samples_are_isolated_per_channel() {
     let mut model = AcquisitionModel::demo();
@@ -104,6 +110,8 @@ fn invalid_and_out_of_order_samples_are_isolated_per_channel() {
     assert_eq!(model.snapshot().sensor(SensorId::Oil), after.sensor(SensorId::Oil));
 }
 
+/// Coalesced reset commands apply atomically, preserve sample identity and prevent replay/old publication from
+/// restoring history.
 #[test]
 fn reset_generation_is_acknowledged_atomically_and_replays_do_nothing() {
     let commands = Signal::<CriticalSectionRawMutex, u64>::new();
@@ -139,6 +147,7 @@ fn reset_generation_is_acknowledged_atomically_and_replays_do_nothing() {
     assert!(!model.reset_statistics(0));
 }
 
+/// Immutable snapshots evaluate peak/trend expiry against reader time, with exact boundaries and future-time rejection.
 #[test]
 fn snapshot_indicators_expire_without_a_new_measurement() {
     let mut model = AcquisitionModel::demo();
@@ -158,6 +167,8 @@ fn snapshot_indicators_expire_without_a_new_measurement() {
     assert_eq!(DashboardSnapshot::EMPTY.sensor(SensorId::Oil).get_trend_at(0), None);
 }
 
+/// A concurrent publisher reaches its latest sequence within a bounded wait and never exposes mixed-channel
+/// generations.
 #[test]
 fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
     let watch = Watch::<CriticalSectionRawMutex, DashboardSnapshot, 1>::new();
@@ -189,6 +200,7 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
     });
 }
 
+/// Guards snapshot copy and single-owner model sizes; native limits do not establish physical stack high-water.
 #[test]
 fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     assert!(
@@ -201,6 +213,7 @@ fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     assert!(core::mem::size_of::<AcquisitionModel>() <= 12_288 + 4096);
 }
 
+/// Public manually assembled snapshots lack deduplication identity without falsely reporting issuer exhaustion.
 #[test]
 fn untracked_public_snapshots_do_not_invent_diagnostic_events() {
     use dashboard_host_validation::cache_diagnostics::CacheExhaustionSeen;
@@ -218,6 +231,8 @@ fn untracked_public_snapshots_do_not_invent_diagnostic_events() {
     );
 }
 
+/// Timer-only history publication reaches the receiver without advancing accepted sample identity or permitting
+/// duplicate delivery.
 #[test]
 fn timer_only_publication_is_accepted_without_advancing_sample_identity() {
     let mut model = AcquisitionModel::demo();
@@ -231,6 +246,8 @@ fn timer_only_publication_is_accepted_without_advancing_sample_identity() {
     assert!(!displayed.accept(scrolled), "duplicate publication remains suppressed");
 }
 
+/// Freshness gaps retain earlier qualified buckets and raw extrema until normal eviction, then admit a new recovered
+/// sample.
 #[test]
 fn freshness_gap_preserves_prior_qualified_buckets_until_eviction() {
     let mut model = AcquisitionModel::demo();
@@ -249,6 +266,7 @@ fn freshness_gap_preserves_prior_qualified_buckets_until_eviction() {
     assert_eq!(recovered.sensors[1].minimum(), Some(1.0));
 }
 
+/// Two unit views share canonical channel history; a replacement owner starts empty and blocks older-owner publication.
 #[test]
 fn configured_dual_units_share_channel_history_and_new_owner_clears_it() {
     use dashboard_host_validation::view_config::{Channel, default_config, validate};

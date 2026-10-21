@@ -13,25 +13,31 @@ use crate::spinlock::{Spinlock, SpinlockValid};
 ///
 /// This mutex is safe to share between different executors and interrupts.
 pub struct SpinlockRawMutex<const N: usize> {
+    /// Zero-sized marker; exclusion resides in the globally numbered hardware lock.
     _phantom: PhantomData<()>,
 }
 unsafe impl<const N: usize> Send for SpinlockRawMutex<N> {}
 unsafe impl<const N: usize> Sync for SpinlockRawMutex<N> {}
 
 impl<const N: usize> SpinlockRawMutex<N> {
-    /// Create a new `SpinlockRawMutex`.
-    pub const fn new() -> Self {
-        Self { _phantom: PhantomData }
-    }
+    /// Returns a mutex using hardware lock `N`; construction does not claim or reserve it.
+    pub const fn new() -> Self { Self { _phantom: PhantomData } }
 }
 
 unsafe impl<const N: usize> RawMutex for SpinlockRawMutex<N>
 where
     Spinlock<N>: SpinlockValid,
 {
+    /// Static initializer; every instance with the same N shares one hardware lock.
     const INIT: Self = Self::new();
 
-    fn lock<R>(&self, f: impl FnOnce() -> R) -> R {
+    /// Runs `f` with hardware lock N and local IRQs masked, then returns its result.
+    /// Acquisition spins without timeout; recursive same-lock use deadlocks. Panic/unwind in `f`
+    /// skips release and IRQ restoration, so this implementation assumes aborting target panics.
+    fn lock<R>(
+        &self,
+        f: impl FnOnce() -> R,
+    ) -> R {
         // Store the initial interrupt state in stack variable
         let interrupts_active = cortex_m::register::primask::read().is_active();
 

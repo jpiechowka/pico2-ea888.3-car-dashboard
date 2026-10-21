@@ -1,3 +1,4 @@
+//! Calendar fields without an external datetime dependency; epoch conversions validate ranges.
 /// Errors regarding the [`DateTime`] struct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -45,14 +46,20 @@ pub struct DateTime {
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(missing_docs)]
 pub enum DayOfWeek {
+    /// Sunday, hardware weekday code 0.
     Sunday = 0,
+    /// Monday, hardware weekday code 1.
     Monday = 1,
+    /// Tuesday, hardware weekday code 2.
     Tuesday = 2,
+    /// Wednesday, hardware weekday code 3.
     Wednesday = 3,
+    /// Thursday, hardware weekday code 4.
     Thursday = 4,
+    /// Friday, hardware weekday code 5.
     Friday = 5,
+    /// Saturday, hardware weekday code 6.
     Saturday = 6,
 }
 
@@ -60,15 +67,15 @@ impl DateTime {
     /// Convert to Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
     ///
     /// # Errors
-    /// Returns an error for invalid calendar fields or years outside 1970..=4095.
-    pub fn timestamp_millis(&self) -> Result<u64, Error> {
-        crate::datetime::epoch::datetime_to_millis(self)
-    }
+    /// Returns milliseconds for valid calendar fields in 1970..=4095, otherwise a field/range error.
+    /// Weekday is ignored; this representation has whole-second precision.
+    pub fn timestamp_millis(&self) -> Result<u64, Error> { crate::datetime::epoch::datetime_to_millis(self) }
 
     /// Create from Unix timestamp (milliseconds since 1970-01-01 00:00:00 UTC)
     ///
     /// # Errors
-    /// Returns error if timestamp cannot be represented as valid DateTime.
+    /// Returns calendar fields for `millis` in 1970..=4095, otherwise InvalidTimestamp.
+    /// Subsecond remainder is discarded; weekday is derived from the date.
     pub fn from_timestamp_millis(millis: u64) -> Result<Self, Error> {
         crate::datetime::epoch::millis_to_datetime(millis)
     }

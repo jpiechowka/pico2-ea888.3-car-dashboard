@@ -1,4 +1,9 @@
+//! Runtime operating-system and architecture admission for the Windows helper.
 #[cfg(windows)]
+/// Returns `(supported, description)` from native OS version/architecture probes.
+/// Support requires Windows major 10/build ≥10240, native AMD64, and an x86-64
+/// helper build. Version query failure reports unsupported; the text remains
+/// diagnostic evidence and does not establish installed tool or USB capability.
 pub(crate) fn host() -> (bool, String) {
     use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
     use windows_sys::Win32::System::SystemInformation::{
@@ -30,4 +35,5 @@ pub(crate) fn host() -> (bool, String) {
     )
 }
 #[cfg(not(windows))]
+/// Returns unsupported plus compile-target OS/architecture text on non-Windows hosts.
 pub(crate) fn host() -> (bool, String) { (false, format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)) }

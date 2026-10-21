@@ -4,38 +4,63 @@ use super::telemetry::{FrameTrace, TelemetryError};
 use crate::input_trace::InputCounters;
 use crate::metrics::{Distribution, Histogram};
 
+/// Minimum elapsed microseconds before a report closes the current window.
 pub const WINDOW_US: u64 = 30_000_000;
+/// Number of timing distributions in the versioned export order.
 pub const METRICS: usize = 9;
 // Metric indices are the versioned RTT format: interval, render, queue,
 // transfer, blocked, sample age, oldest input age, latest consume age, overlap.
+/// Snapshot of a closed observation window, including idle windows with no frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowReport {
+    /// Nonzero monotonically increasing report ID; never wraps.
     pub sequence: u64,
+    /// Inclusive observation-window start in monotonic microseconds.
     pub start_us: u64,
+    /// Report timestamp in microseconds; also the next window's start.
     pub end_us: u64,
+    /// Accepted completed traces in this window, not render attempts.
     pub frames: u32,
+    /// Sum of accepted RGB565 payload bytes, excluding bus commands.
     pub payload_bytes: u64,
+    /// Sum of observed active render cycles, or `None` if any are absent/overflow.
     pub active_cycles: Option<u64>,
+    /// Saturating count of rejected frame/report operations in this window.
     pub rejected: u64,
+    /// Microsecond distributions: completion interval, render, queue, transfer,
+    /// blocked, sample age, oldest input age, latest consume age, render/transfer overlap.
     pub metrics: [Distribution; METRICS],
     /// Lifetime counters, not per-window deltas. The collector detects reset.
     pub inputs: InputCounters,
 }
 
+/// Single-owner accumulator with fixed histogram storage and checked counts.
 pub struct FrameWindow {
+    /// Current window's start in monotonic microseconds.
     start_us: u64,
+    /// Most recent accepted completion or report-call timestamp.
     last_us: u64,
+    /// Last exported report ID, zero before first export.
     sequence: u64,
+    /// Last accepted trace, retained across windows to preserve idle intervals.
     previous: Option<FrameTrace>,
+    /// Last represented input batch ID, retained across windows to reject replay.
     last_input: u64,
+    /// Accepted traces since the last successful report.
     frames: u32,
+    /// Checked RGB565 payload byte sum for the current window.
     payload_bytes: u64,
+    /// Checked cycle sum; once unavailable it stays absent until window reset.
     active_cycles: Option<u64>,
+    /// Saturating current-window rejected-operation count.
     rejected: u64,
+    /// Fixed logarithmic timing histograms in [`WindowReport::metrics`] order.
     metrics: [Histogram<976>; METRICS],
 }
 
 impl FrameWindow {
+    /// Returns an empty accumulator starting at monotonic `start_us` microseconds.
+    /// No prior transfer/input identity or physical timing is inferred.
     pub const fn new(start_us: u64) -> Self {
         Self {
             start_us,
@@ -51,6 +76,9 @@ impl FrameWindow {
         }
     }
 
+    /// Adds validated `trace` if time, generation and input identity advance.
+    /// Returns success or clock/metadata/counter error; errors increment only
+    /// the saturating rejection count, preserving distributions and frame totals.
     pub fn record(
         &mut self,
         trace: FrameTrace,
@@ -62,6 +90,10 @@ impl FrameWindow {
         result
     }
 
+    /// Preflights `trace` then commits its timing samples and totals. Returns
+    /// clock/metadata/counter errors without partial histogram mutation; absent
+    /// or overflowing cycle sums only invalidate cycle availability. The internal
+    /// histogram assertion cannot fail while the preflight frame-count bound holds.
     fn accept(
         &mut self,
         trace: FrameTrace,
@@ -127,6 +159,11 @@ impl FrameWindow {
         Ok(())
     }
 
+    /// Closes a window at monotonic `now_us` with supplied lifetime `inputs`
+    /// counters. Returns `None` before 30 seconds, otherwise a report and resets
+    /// window totals while retaining prior frame/input identities. Reversed time
+    /// or report-ID overflow returns an error and increments rejections; a valid
+    /// call advances the observation clock even when no report is emitted.
     pub fn report(
         &mut self,
         now_us: u64,
@@ -171,10 +208,13 @@ impl FrameWindow {
 }
 
 #[cfg(test)]
+/// Counter exhaustion regressions for atomic admission and cycle availability.
 mod tests {
     use super::*;
     use crate::display::pipeline::{BufferId, FrameToken};
     use crate::display::telemetry::RenderTrace;
+    /// Returns unit after checking count/byte overflow leaves bins unchanged,
+    /// cycle overflow preserves timing, and report IDs never wrap; panics on drift.
     #[test]
     fn count_sum_and_export_identity_exhaustion_do_not_partially_mutate() {
         let trace = FrameTrace::finish(

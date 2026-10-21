@@ -1,3 +1,4 @@
+//! Two-buffer lease ownership, immutable presentation identity and delayed completion guards.
 use std::cell::Cell;
 use std::future::{Future, poll_fn};
 use std::pin::pin;
@@ -5,6 +6,7 @@ use std::task::{Context, Poll, Waker};
 
 use dashboard_host_validation::display::pipeline::{BufferId, BufferState, FrameLifecycle, after_first_poll};
 
+/// Rendering may overlap the other buffer's transfer, but in-flight storage cannot be reacquired.
 #[test]
 fn two_buffers_overlap_but_inflight_storage_cannot_be_reacquired() {
     let mut lifecycle = FrameLifecycle::new();
@@ -26,6 +28,7 @@ fn two_buffers_overlap_but_inflight_storage_cannot_be_reacquired() {
     assert!(lifecycle.begin(BufferId::A).is_ok());
 }
 
+/// Wrong, duplicate and stale lifecycle events cannot release or advance a current buffer lease.
 #[test]
 fn old_wrong_duplicate_and_out_of_order_events_leave_ownership_unchanged() {
     let mut lifecycle = FrameLifecycle::new();
@@ -50,6 +53,7 @@ fn old_wrong_duplicate_and_out_of_order_events_leave_ownership_unchanged() {
     assert_eq!(lifecycle.state(BufferId::A), BufferState::InFlight(next_a));
 }
 
+/// Timeout quarantines queued or started storage and blocks further transfers until reset.
 #[test]
 fn timeout_quarantines_the_exact_buffer_without_releasing_it() {
     for started in [false, true] {
@@ -71,6 +75,7 @@ fn timeout_quarantines_the_exact_buffer_without_releasing_it() {
     }
 }
 
+/// Start notification runs once after the first payload poll for both immediate and delayed completion.
 #[test]
 fn started_callback_runs_after_the_first_payload_poll_once() {
     for immediate in [false, true] {
@@ -102,6 +107,7 @@ fn started_callback_runs_after_the_first_payload_poll_once() {
     }
 }
 
+/// A bounded channel moves the exclusive lease and retains completion while the other buffer changes.
 #[test]
 fn bounded_channel_moves_the_lease_and_retains_delayed_completion() {
     use dashboard_host_validation::display::FrameBuffer;
@@ -144,6 +150,7 @@ fn bounded_channel_moves_the_lease_and_retains_delayed_completion() {
     assert_eq!(a.buffer()[0], 55);
 }
 
+/// Queued orientation survives new UI selection and discarded later renders until its own completion.
 #[test]
 fn queued_orientation_survives_new_selection_and_delayed_completion() {
     use dashboard_config::Orientation;
@@ -186,6 +193,7 @@ fn queued_orientation_survives_new_selection_and_delayed_completion() {
     assert_eq!(desired, Orientation::LandscapeInverted);
 }
 
+/// Submission panics when immutable orientation and damage-plan geometry disagree.
 #[test]
 #[should_panic(expected = "frame orientation and plan geometry differ")]
 fn queued_request_rejects_geometry_mismatch() {
@@ -209,6 +217,7 @@ fn queued_request_rejects_geometry_mismatch() {
     );
 }
 
+/// Off waits for the rotated clear frame; old popup completions and post-recovery completions cannot darken it.
 #[test]
 fn dark_transition_remains_bound_to_the_rotated_clear_frame() {
     use dashboard_config::Orientation;

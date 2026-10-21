@@ -1,3 +1,4 @@
+//! Legacy lambda cell with an explicitly assumed 14.7 gasoline-equivalent AFR reference.
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -8,6 +9,11 @@ use crate::ui::{BLACK, CENTERED, LABEL_FONT, VALUE_FONT};
 use crate::widgets::primitives::{draw_cell_background, draw_history_graph, draw_value_with_outline};
 
 #[allow(clippy::too_many_arguments)]
+/// Draws lambda-ratio `lambda` and `state` raw history into `display` at bounded
+/// panel `x`, `y`, width `w`, height `h`. `shake_offset` shifts only the value;
+/// `bg_override` selects background or defaults black. Returns that background.
+/// Caller supplies qualified values, `w >= 16`, fitting legacy-cell geometry and
+/// clipping; arbitrary geometry can overflow and target errors are discarded.
 pub fn draw_lambda_cell<D>(
     display: &mut D,
     x: u32,

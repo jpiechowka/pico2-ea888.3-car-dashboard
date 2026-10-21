@@ -1,6 +1,8 @@
+//! Default fixture, exhaustive bounds, catalogue qualification and fuel validation.
 use dashboard_config::*;
 
 #[test]
+/// Default IDs/channel placements match the approved table and the committed EAV fixture byte-for-byte.
 fn reviewed_default_has_one_overview_and_eight_fixed_channel_cells() {
     let config = default_config();
     assert_eq!(config.views.len(), 1);
@@ -34,6 +36,7 @@ fn reviewed_default_has_one_overview_and_eight_fixed_channel_cells() {
     );
 }
 
+/// Apply `edit` to candidate `config` and assert rejection identifies `field`; panics on acceptance/mismatch.
 fn check(
     mut config: Config,
     field: Field,
@@ -44,6 +47,7 @@ fn check(
 }
 
 #[test]
+/// Exhaust landscape byte coordinates/spans and independently verify pixel rectangles and occupancy masks.
 fn exhaustive_geometry_uses_exact_nonoverlapping_pixel_cells() {
     for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
         for column in 0..=255_u8 {
@@ -75,6 +79,7 @@ fn exhaustive_geometry_uses_exact_nonoverlapping_pixel_cells() {
 }
 
 #[test]
+/// Zero/duplicate IDs and invalid text reject with precise context; maximum admitted IDs/text remain accepted.
 fn ids_labels_messages_and_field_locations_are_explicit() {
     check(default_config(), Field::ViewId, |c| c.views[0].id = 0);
     check(default_config(), Field::ViewId, |c| {
@@ -114,6 +119,7 @@ fn ids_labels_messages_and_field_locations_are_explicit() {
 }
 
 #[test]
+/// Nonfinite thresholds, bad hysteresis and out-of-range timing reject even when warning rules are disabled.
 fn thresholds_domains_and_timing_bounds_apply_even_to_disabled_rules() {
     for channel in Channel::ALL {
         let mut config = default_config();
@@ -195,6 +201,7 @@ fn thresholds_domains_and_timing_bounds_apply_even_to_disabled_rules() {
 }
 
 #[test]
+/// Each catalogue definition binds to its channel and rejects forged evidence/access/decoder metadata.
 fn every_definition_is_channel_bound_and_metadata_cannot_be_forged() {
     for id in DEFINITIONS {
         let def = definition(id);
@@ -237,6 +244,7 @@ fn every_definition_is_channel_bound_and_metadata_cannot_be_forged() {
 }
 
 #[test]
+/// Disabled/unqualified definitions and unavailable routes never resolve to live OBD work.
 fn source_resolver_never_turns_catalogue_candidates_into_live_queries() {
     for id in DEFINITIONS {
         let def = definition(id);
@@ -292,6 +300,7 @@ fn source_resolver_never_turns_catalogue_candidates_into_live_queries() {
 }
 
 #[test]
+/// Per-channel polling/freshness limits and physical addressing remain enforced, including disabled definitions.
 fn polling_freshness_and_routes_cannot_relax_reviewed_limits() {
     for channel in Channel::ALL {
         for period in [0, minimum_period(channel) - 1, 10_001, u16::MAX] {
@@ -341,6 +350,7 @@ fn polling_freshness_and_routes_cannot_relax_reviewed_limits() {
 }
 
 #[test]
+/// Invalid blend inputs reject; illustrative mass/volume curves decrease monotonically and reference endpoints admit.
 fn fuel_rejects_invalid_inputs_and_decreases_monotonically_by_either_basis() {
     for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 4.99, 25.01] {
         check(default_config(), Field::FuelRatio, |c| {
@@ -361,6 +371,7 @@ fn fuel_rejects_invalid_inputs_and_decreases_monotonically_by_either_basis() {
             previous = ratio;
         }
     }
+    /// Expected failing field and mutation applied to an otherwise valid illustrative blend.
     type InvalidBlend = (Field, fn(&mut Blend));
     let invalid: &[InvalidBlend] = &[
         (Field::FuelPercent, |b| b.percent = -0.001),

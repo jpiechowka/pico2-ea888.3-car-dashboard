@@ -1,5 +1,7 @@
+//! Trace-capability, bounded evidence and monotonic playback regressions without a browser clock.
 use dashboard_configurator::timing::{Playback, TraceCapture, TraceError, TraceSample, TraceStatus};
 
+/// Returns a two-widget observation submitted 1 ms and presented 2 ms after `input`.
 fn trace_sample(input: f64) -> TraceSample {
     TraceSample {
         input_ms: input,
@@ -13,6 +15,7 @@ fn trace_sample(input: f64) -> TraceSample {
 }
 
 #[test]
+/// Assert duplicate/foreign permits cannot consume another callback's outstanding slot.
 fn timing_duplicate_and_foreign_owner_permits_cannot_complete_other_work() {
     let mut trace = TraceCapture::default();
     trace.start(0.0).unwrap();
@@ -37,6 +40,7 @@ fn timing_duplicate_and_foreign_owner_permits_cannot_complete_other_work() {
 }
 
 #[test]
+/// Assert restart invalidates old permits, stop allows in-range late evidence and abandon is single-use.
 fn timing_restart_stop_and_abandon_keep_callback_accounting_explicit() {
     let mut trace = TraceCapture::default();
     trace.start(0.0).unwrap();
@@ -56,6 +60,7 @@ fn timing_restart_stop_and_abandon_keep_callback_accounting_explicit() {
 }
 
 #[test]
+/// Assert invalid timestamps do not create evidence and a rejected completion still consumes its permit.
 fn timing_invalid_sample_finishes_permit_without_inventing_evidence() {
     let mut trace = TraceCapture::default();
     assert_eq!(trace.start(f64::NAN), Err(TraceError::InvalidTime));
@@ -72,6 +77,7 @@ fn timing_invalid_sample_finishes_permit_without_inventing_evidence() {
 }
 
 #[test]
+/// Assert render/long-task capacities are independent and all overflow shares one drop count.
 fn timing_sample_and_long_task_limits_are_independent() {
     let mut trace = TraceCapture::default();
     trace.start(0.0).unwrap();
@@ -92,6 +98,7 @@ fn timing_sample_and_long_task_limits_are_independent() {
 }
 
 #[test]
+/// Assert exported evidence preserves timings/counters while omitting the live owner capability.
 fn timing_export_keeps_sample_shape_and_exposes_no_owner_authority() {
     let mut trace = TraceCapture::default();
     trace.start(0.0).unwrap();
@@ -106,6 +113,7 @@ fn timing_export_keeps_sample_shape_and_exposes_no_owner_authority() {
 }
 
 #[test]
+/// Assert identical elapsed playback across sampling intervals, pauses and resumed anchors.
 fn elapsed_time_dropped_frames_pause_and_restart_do_not_depend_on_fps() {
     for interval in [1, 14, 25, 50, 1000] {
         let mut clock = Playback::new(118_000);
@@ -121,6 +129,7 @@ fn elapsed_time_dropped_frames_pause_and_restart_do_not_depend_on_fps() {
 }
 
 #[test]
+/// Assert nonfinite/backward observations preserve time and large elapsed advances saturate.
 fn invalid_clock_rollback_and_overflow_never_rewind_or_wrap() {
     let mut clock = Playback::new(1);
     clock.start(f64::NAN);
@@ -137,6 +146,7 @@ fn invalid_clock_rollback_and_overflow_never_rewind_or_wrap() {
 }
 
 #[test]
+/// Assert repeated Play, jitter and invalid pause timestamps cannot re-anchor or rewind playback.
 fn jitter_repeated_start_and_invalid_pause_keep_deterministic_elapsed_time() {
     for step in [1, 3, 16, 17, 33, 50, 250, 1000] {
         let mut clock = Playback::new(42);

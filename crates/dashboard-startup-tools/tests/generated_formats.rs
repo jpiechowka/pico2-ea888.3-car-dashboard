@@ -1,9 +1,12 @@
+//! Seeded source/asset corruption checks with deterministic reproduction and guarded row decoding.
 #[path = "../../../test-support/generated.rs"]
 mod generated;
 use dashboard_config::Geometry;
 use dashboard_config::startup_asset::{Asset, Validator};
 use dashboard_startup_tools::*;
 
+/// Return a valid one-pixel red fixture: PNG when `kind` is Png, otherwise a 100 ms GIF.
+/// Tests call this only with PNG/GIF; encoder failures panic instead of weakening the fixture.
 fn source(kind: SourceKind) -> Vec<u8> {
     let mut bytes = Vec::new();
     if kind == SourceKind::Png {
@@ -29,6 +32,8 @@ fn source(kind: SourceKind) -> Vec<u8> {
     }
     bytes
 }
+/// Assert direct/incremental admission agreement for `bytes`, sticky rejection and guarded row bounds.
+/// Accepted assets must finish within 4096 validator steps and decode exactly their native row count.
 fn check_asset(bytes: &[u8]) {
     let direct = Asset::parse(bytes);
     let mut incremental = match Validator::new(bytes) {
@@ -70,7 +75,10 @@ fn check_asset(bytes: &[u8]) {
 }
 
 #[test]
+/// Mutate both source formats and resealed native assets; accepted conversions remain deterministic.
+/// Cases default to 128 per format/geometry; DASHBOARD_FORMAT_CASES clamps parsed counts to 1..=2048.
 fn seeded_source_and_resealed_asset_mutations_preserve_decode_contracts() {
+    /// Stable xorshift seed retained in panic reproduction context.
     const SEED: u32 = 0x17EA_5A02;
     let mut rng = SEED;
     let count = std::env::var("DASHBOARD_FORMAT_CASES").map_or(128, |v| v.parse::<usize>().unwrap().clamp(1, 2048));

@@ -9,6 +9,10 @@ preserves these bytes across platforms. The current
 [20 October source audit](../../docs/dependencies/full-code-audit-2026-10-20.md)
 extend the historical UART, multicore, flash and PWM work below with runtime
 and cancellation fixes. Shared helpers are compiled by host/native tests.
+The [21 October Rust documentation audit](../../docs/validation/rust-documentation-audit-2026-10-21.md)
+adds complete item contracts and tested boundary, ownership and protocol fixes
+across HAL, CYW43 and Trouble. Their individual `LOCAL_PATCHES.md` files are the
+current correction ledgers; the historical sections below retain dated evidence.
 
 Run `cargo run --locked -p dashboard-provenance -- hal --vendor-root firmware/vendor`
 from the repository root, or `python scripts/check_vendor.py` from `firmware`.

@@ -5,6 +5,8 @@ use dashboard_helper_protocol::{BuildOptions, Mode, Optimization};
 
 use super::*;
 
+/// Invalidates `ui`'s helper option-bound state before applying `change` to build
+/// selection. Raw invalid custom values stay inspectable until normalization succeeds.
 fn edit(
     ui: Ui,
     change: impl FnOnce(&mut BuildSelection),
@@ -12,13 +14,19 @@ fn edit(
     helper::options_changed(ui);
     ui.build.update(change);
 }
+/// Returns `hz` in MHz with three decimal places; input is an integer frequency in hertz.
 fn mhz(hz: u32) -> String { format!("{:.3} MHz", f64::from(hz) / 1_000_000.) }
+/// Returns the first build-recipe blocking message from `ui`'s editor readiness or
+/// option normalization, or `None` when local recipe preparation may proceed.
 fn issue(ui: Ui) -> Option<String> {
     if let Some(block) = ui.editor.with(|e| e.action_readiness().block) {
         return Some(dashboard_configurator::build_flash::BuildIssue::Editor(block).message());
     }
     ui.build.with(|s| s.normalized().err().map(|e| e.message()))
 }
+/// Captures `ui`'s current accepted project and normalized options, then requests a
+/// browser download of its PowerShell build recipe. Admission/download errors emit
+/// bounded events; this neither runs the script nor builds or flashes a device.
 fn export_recipe(ui: Ui) {
     let prepared = ui.build.with_untracked(|s| ui.editor.with_untracked(|e| s.prepare(e)));
     match prepared {
@@ -62,6 +70,8 @@ fn export_recipe(ui: Ui) {
         }
     }
 }
+/// Returns shared-catalogue observation guidance for `s`, or custom-clock validation
+/// limits when no catalogue profile is selected; observations do not establish safety.
 fn profile_note(s: &BuildSelection) -> &'static str {
     let Some(p) = selected_profile(s) else {
         return "Custom clocks use the firmware's exact PLL and SPI checks. Validation does not establish hardware \
@@ -89,18 +99,31 @@ fn profile_note(s: &BuildSelection) -> &'static str {
         _ => "Experimental profile. Hardware stability and display timing remain unverified.",
     }
 }
+/// Returns a build-option checkbox in `ui` with visible `label` and explanatory `help`.
+/// `read` projects the current option; `write` mutates it after helper authority invalidation.
 #[component]
 fn BuildToggle(
+    /// Shared build selection, accepted project and helper authorization state.
     ui: Ui,
+    /// Visible option label.
     label: &'static str,
+    /// Explanation of the option's build/runtime effect.
     help: &'static str,
+    /// Pure projection of the current option value.
     read: fn(&BuildOptions) -> bool,
+    /// Mutation of the selected option using the requested boolean.
     write: fn(&mut BuildOptions, bool),
 ) -> impl IntoView {
     view! { <label class="build-toggle"><input type="checkbox" prop:checked=move ||ui.build.with(|s|read(&s.options)) on:change=move |e|{let v=event_target_checked(&e);edit(ui,|s|write(&mut s.options,v));}/><span><strong>{label}</strong><small>{help}</small></span></label> }
 }
+/// Returns normalized `clock` frequencies/divisors, voltage setpoint and ideal
+/// RGB565 payload estimates. Labels distinguish requested/actual rates and keep
+/// payload ceilings separate from rendering, scanout and measured FPS.
 #[component]
-fn ClockFacts(clock: ResolvedClock) -> impl IntoView {
+fn ClockFacts(
+    /// Normalized requested/actual clocks, divisors and voltage setpoint; no measured timing data.
+    clock: ResolvedClock
+) -> impl IntoView {
     let estimate = transfer_estimate(&clock);
     let voltage = clock.voltage.millivolts();
     view! {
@@ -118,8 +141,14 @@ fn ClockFacts(clock: ResolvedClock) -> impl IntoView {
         </details>
     }
 }
+/// Returns `ui`'s build selection, normalization diagnostics, recipe export and helper
+/// controls. Build/flash callbacks recheck accepted-project and device authority;
+/// displaying this workspace starts no build, USB inspection or flash operation.
 #[component]
-pub fn BuildFlash(ui: Ui) -> impl IntoView {
+pub fn BuildFlash(
+    /// Shared build selection, accepted project and helper authorization state.
+    ui: Ui
+) -> impl IntoView {
     view! {
         <div class="build-studio">
             <div class="section-heading"><div><p class="eyebrow">"YOUR PICO 2 W"</p><h1>"Build & Flash"</h1></div><span class="chip">"LOCAL BUILD"</span></div>

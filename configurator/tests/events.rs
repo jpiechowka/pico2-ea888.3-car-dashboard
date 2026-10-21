@@ -1,7 +1,10 @@
+//! Bounded event retention, console admission and state-transition notice regressions.
+
 use dashboard_configurator::event_adapters::*;
 use dashboard_configurator::events::*;
 
 #[test]
+/// Display labels remain readable while serialized category tags retain protocol identity.
 fn event_categories_have_readable_labels_without_changing_wire_tags() {
     assert_eq!(Category::ImportExport.label(), "Import / export");
     assert_eq!(Category::HostTools.label(), "Host tools");
@@ -10,6 +13,8 @@ fn event_categories_have_readable_labels_without_changing_wire_tags() {
     assert_eq!(encoded, "\"ImportExport\"");
 }
 
+/// Returns an editor acceptance fixture borrowing `message`, with `severity` and monotonic `elapsed_ms`; the wall clock
+/// and subject are absent.
 fn input(
     message: &str,
     severity: Severity,
@@ -27,6 +32,7 @@ fn input(
 }
 
 #[test]
+/// The 512-record ring reports eviction separately from filtering limits and retires the evicted sequence.
 fn rolling_storage_reports_eviction_and_exact_filtered_omissions() {
     let mut store = EventStore::default();
     let anchor = store.record(input("old", Severity::Info, 0)).unwrap().seq;
@@ -46,6 +52,7 @@ fn rolling_storage_reports_eviction_and_exact_filtered_omissions() {
 }
 
 #[test]
+/// Message and subject truncation preserves UTF-8 boundaries and distinguishes exact-capacity input from truncation.
 fn utf8_message_and_subject_caps_preserve_boundaries_and_flags() {
     for tail in ["é", "€", "🦀"] {
         let mut store = EventStore::default();
@@ -67,6 +74,8 @@ fn utf8_message_and_subject_caps_preserve_boundaries_and_flags() {
 }
 
 #[test]
+/// Identical errors share sequence/count, while category, severity, code, subject or message changes create distinct
+/// records.
 fn exact_errors_coalesce_but_all_key_differences_remain_visible() {
     let mut store = EventStore::default();
     let first = store.record(input("failure", Severity::Error, 10)).unwrap();
@@ -94,6 +103,7 @@ fn exact_errors_coalesce_but_all_key_differences_remain_visible() {
 }
 
 #[test]
+/// The 64-key coalescer and 512-record ring independently retire old repeat identities.
 fn oldest_coalescer_key_is_evicted_and_event_eviction_removes_keys() {
     let mut store = EventStore::default();
     for n in 0..65 {
@@ -121,6 +131,7 @@ fn oldest_coalescer_key_is_evicted_and_event_eviction_removes_keys() {
 }
 
 #[test]
+/// Truncated messages or subjects cannot establish exact repeat identity, including repeated oversized input.
 fn truncated_causes_never_claim_exact_equality_even_for_same_oversized_input() {
     let mut store = EventStore::default();
     let prefix = "x".repeat(512);
@@ -140,6 +151,7 @@ fn truncated_causes_never_claim_exact_equality_even_for_same_oversized_input() {
 }
 
 #[test]
+/// Clearing visible history preserves sequence monotonicity, lifetime counters and console rate limits.
 fn clear_keeps_sequence_counters_and_console_rate_lineage() {
     let mut store = EventStore::default();
     store.set_debug_console(true);
@@ -159,6 +171,8 @@ fn clear_keeps_sequence_counters_and_console_rate_lineage() {
 }
 
 #[test]
+/// Debug/Trace share ten console emissions per second; suppressed rows produce a retained summary without limiting
+/// warnings.
 fn debug_trace_share_opt_in_rolling_budget_and_info_summaries_stay_retained() {
     let mut store = EventStore::default();
     assert_eq!(
@@ -202,6 +216,8 @@ fn debug_trace_share_opt_in_rolling_budget_and_info_summaries_stay_retained() {
 }
 
 #[test]
+/// Backward elapsed time cannot reopen console allowance or regress repeat time; wall-clock observations remain
+/// independent.
 fn backward_elapsed_and_wall_clocks_cannot_rewind_history_or_reopen_console() {
     let mut store = EventStore::default();
     store.set_debug_console(true);
@@ -221,6 +237,7 @@ fn backward_elapsed_and_wall_clocks_cannot_rewind_history_or_reopen_console() {
 }
 
 #[test]
+/// Rejected event codes leave sequence, elapsed-time baseline and console emission budget untouched.
 fn invalid_codes_do_not_consume_identity_or_console_allowance() {
     let mut store = EventStore::default();
     store.set_debug_console(true);
@@ -236,6 +253,7 @@ fn invalid_codes_do_not_consume_identity_or_console_allowance() {
 }
 
 #[test]
+/// JSONL escapes control bytes and round-trips full-width timestamps, preserving an absent wall clock as null.
 fn jsonl_escapes_control_data_and_keeps_exact_integer_and_optional_timestamps() {
     let mut store = EventStore::default();
     let message = "<script>\"\\\n\r\0🦀";
@@ -257,6 +275,7 @@ fn jsonl_escapes_control_data_and_keeps_exact_integer_and_optional_timestamps() 
 }
 
 #[test]
+/// Case-insensitive search composes with category/severity filters and reports bounded-query truncation.
 fn severity_category_and_bounded_search_filter_retained_records() {
     let mut store = EventStore::default();
     for severity in [Severity::Info, Severity::Warn, Severity::Error] {
@@ -274,6 +293,7 @@ fn severity_category_and_bounded_search_filter_retained_records() {
 }
 
 #[test]
+/// Serialization escape expansion can exceed the two-MiB export cap; failure returns no partial document.
 fn escape_expansion_can_exceed_jsonl_limit_and_returns_no_partial_success() {
     let mut store = EventStore::default();
     let message = "\0".repeat(512);
@@ -292,9 +312,14 @@ fn escape_expansion_can_exceed_jsonl_limit_and_returns_no_partial_success() {
     assert!(smaller.len() < 2 * 1024 * 1024);
 }
 
+/// In-memory console sink retaining emitted rows for adapter assertions.
 #[derive(Default)]
-struct CapturedConsole(Vec<(Severity, String)>);
+struct CapturedConsole(
+    /// Emission-order severity and formatted text pairs.
+    Vec<(Severity, String)>,
+);
 impl ConsoleSink for CapturedConsole {
+    /// Appends `text` with `severity` to the captured console rows.
     fn write(
         &mut self,
         severity: Severity,
@@ -305,6 +330,7 @@ impl ConsoleSink for CapturedConsole {
 }
 
 #[test]
+/// Console output follows current store admission, opt-in settings and repeat/rate suppression.
 fn adapter_emits_only_current_store_admission_and_disabled_console_is_quiet() {
     let mut store = EventStore::default();
     let mut console = CapturedConsole::default();
@@ -325,6 +351,7 @@ fn adapter_emits_only_current_store_admission_and_disabled_console_is_quiet() {
 }
 
 #[test]
+/// Console formatting removes row-control characters while retained event payloads preserve the original text.
 fn console_control_characters_cannot_forge_another_row() {
     let mut store = EventStore::default();
     let mut console = CapturedConsole::default();
@@ -346,6 +373,7 @@ fn console_control_characters_cannot_forge_another_row() {
 }
 
 #[test]
+/// Draft, preference and preset storage track independent failures and emit each recovery once.
 fn storage_areas_fail_and_recover_independently() {
     use dashboard_configurator::editor::StorageFailure;
     let mut adapter = AdapterState::default();
@@ -371,6 +399,8 @@ fn storage_areas_fail_and_recover_independently() {
 }
 
 #[test]
+/// Import notices expose bounded failure reasons and format-specific byte caps without echoing rejected private
+/// payloads.
 fn import_mapping_retains_fixed_rejection_reasons_without_input_content() {
     use dashboard_configurator::editor::{Editor, EditorError, ImportFormat};
     let mut editor = Editor::default();
@@ -403,6 +433,8 @@ fn import_mapping_retains_fixed_rejection_reasons_without_input_content() {
 }
 
 #[test]
+/// Validation notices track validity transitions; repeated invalid typing and selection changes do not imply accepted
+/// edits.
 fn repeated_invalid_keystrokes_and_navigation_emit_no_acceptance() {
     use dashboard_configurator::editor::{Editor, RawField, Selection};
     let mut editor = Editor::default();
@@ -431,6 +463,7 @@ fn repeated_invalid_keystrokes_and_navigation_emit_no_acceptance() {
 }
 
 #[test]
+/// Synthetic quality and control changes emit notices, while unchanged observations and routine advancement stay quiet.
 fn simulator_changes_use_shared_quality_control_and_reset_state() {
     use dashboard_configurator::config::ButtonId;
     use dashboard_configurator::editor::Editor;
@@ -461,6 +494,7 @@ fn simulator_changes_use_shared_quality_control_and_reset_state() {
 }
 
 #[test]
+/// Rendering lanes independently emit first failure and one recovery, suppressing routine success and repeated failure.
 fn routine_renderer_success_is_quiet_and_failure_recovers_once() {
     let mut adapter = AdapterState::default();
     assert!(adapter.render(RenderLane::Appearance, true).is_none());
@@ -473,6 +507,7 @@ fn routine_renderer_success_is_quiet_and_failure_recovers_once() {
 }
 
 #[test]
+/// Paused history counts new insertions and reports an evicted anchor; resuming or clearing does not reuse sequences.
 fn paused_log_counts_insertions_and_reports_anchor_eviction_without_identity_reset() {
     let mut store = EventStore::default();
     store.record(input("anchor", Severity::Info, 0)).unwrap();
@@ -494,6 +529,7 @@ fn paused_log_counts_insertions_and_reports_anchor_eviction_without_identity_res
 }
 
 #[test]
+/// Wall-clock conversion rejects nonfinite, fractional and out-of-range values while retaining exact signed timestamps.
 fn malformed_browser_wall_clock_never_saturates_into_plausible_timestamp() {
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, i64::MAX as f64, 1.5] {
         assert_eq!(checked_wall_clock(value), None);
@@ -503,6 +539,7 @@ fn malformed_browser_wall_clock_never_saturates_into_plausible_timestamp() {
 }
 
 #[test]
+/// Clipboard, download and serialization failures map to bounded warning notices without local path details.
 fn transfer_failures_are_bounded_fixed_events_not_recursive_exports() {
     for failure in [
         TransferFailure::Clipboard,
@@ -517,6 +554,7 @@ fn transfer_failures_are_bounded_fixed_events_not_recursive_exports() {
 }
 
 #[test]
+/// A field session reports its last accepted revision once and cannot attribute an unrelated transaction to itself.
 fn field_commit_is_deferred_and_external_replacement_cannot_claim_the_field() {
     use dashboard_configurator::editor::{Edit, Editor, RawField};
     let mut editor = Editor::default();
@@ -544,6 +582,7 @@ fn field_commit_is_deferred_and_external_replacement_cannot_claim_the_field() {
 }
 
 #[test]
+/// Wrong or duplicate frame completion emits rejection without changing completed warning or LED state.
 fn mapped_completion_rejection_preserves_real_presented_state() {
     use dashboard_configurator::editor::Editor;
     use dashboard_configurator::preview::Preview;
@@ -573,6 +612,7 @@ fn mapped_completion_rejection_preserves_real_presented_state() {
 }
 
 #[test]
+/// Reset request and owner acknowledgment produce separate notices; duplicate acknowledgment is silent.
 fn mapped_reset_request_and_acknowledgment_follow_real_owner() {
     use dashboard_configurator::config::ButtonId;
     use dashboard_configurator::editor::Editor;
@@ -599,6 +639,7 @@ fn mapped_reset_request_and_acknowledgment_follow_real_owner() {
 }
 
 #[test]
+/// Changed rendering failure causes remain visible before a single successful recovery notice.
 fn distinct_renderer_failures_remain_visible_before_recovery() {
     let mut adapter = AdapterState::default();
     let first = adapter
@@ -618,6 +659,7 @@ fn distinct_renderer_failures_remain_visible_before_recovery() {
 }
 
 #[test]
+/// A successful storage read leaves the failed-write recovery obligation outstanding.
 fn successful_storage_read_cannot_claim_recovery_of_failed_write() {
     use dashboard_configurator::editor::StorageFailure;
     let mut adapter = AdapterState::default();
@@ -631,6 +673,7 @@ fn successful_storage_read_cannot_claim_recovery_of_failed_write() {
 }
 
 #[test]
+/// Forced conflict replacement reports its actual read/write failure, then emits recovery only after a successful save.
 fn draft_conflict_replacement_reports_actual_failure_then_one_recovery() {
     use dashboard_configurator::editor::{Editor, SaveStatus, StorageFailure};
     for failure in [
@@ -705,6 +748,8 @@ fn draft_conflict_replacement_reports_actual_failure_then_one_recovery() {
 }
 
 #[test]
+/// Preset reload failures and recovery use the read lane; successful reload cannot recover the independent failed
+/// write.
 fn preset_reload_reports_read_failure_and_recovery_without_recovering_failed_write() {
     use dashboard_configurator::appearance_presets::{PresetError, PresetStatus, PresetStore};
     use dashboard_configurator::editor::StorageFailure;
@@ -763,6 +808,8 @@ fn preset_reload_reports_read_failure_and_recovery_without_recovering_failed_wri
     }
 }
 #[test]
+/// Input outcome changes emit bounded notices, and invalid inspection reports suppressed commands without dispatching
+/// them.
 fn synthetic_input_and_inspection_outcomes_are_bounded_quiet_and_distinct_from_dispatch() {
     use dashboard_configurator::config::*;
     use dashboard_configurator::event_adapters::{SimulationObservation, simulation_changes};

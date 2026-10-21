@@ -1,3 +1,4 @@
+//! Optional TE edge observations; software timestamps are not scanout measurements.
 use core::cell::RefCell;
 
 use dashboard_pico2::display::te::TeObservations;
@@ -8,12 +9,17 @@ use embassy_time::Instant;
 
 // Probe-visible bounded history, with the same monotonic microsecond time base
 // as FRAME_TRACES. No copying/formatting or logging inside the edge loop.
+/// Bounded TE history sharing frame-trace monotonic microsecond units.
 pub static TE_OBSERVATIONS: Mutex<CriticalSectionRawMutex, RefCell<TeObservations>> =
     Mutex::new(RefCell::new(TeObservations::new()));
 
+/// Invalidates interval continuity across flash IRQ masking without canceling the
+/// pin future; the pending result is discarded and fresh edge evidence is required.
 pub fn mark_maintenance_gap() { TE_OBSERVATIONS.lock(|edges| edges.borrow_mut().mark_gap()); }
 
 #[embassy_executor::task]
+/// Owns `pin` on core0 indefinitely, awaiting rising edges and recording wake-time
+/// microseconds. Never cancel/switch the live waiter to manufacture an interval.
 pub async fn observe_te(mut pin: Input<'static>) {
     loop {
         // Keep one core0 waiter; the reviewed HAL disarms its originating IRQ

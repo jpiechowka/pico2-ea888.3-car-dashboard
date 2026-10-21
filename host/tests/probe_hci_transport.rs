@@ -6,14 +6,24 @@ use bt_hci::param::LeAdvReports;
 use bt_hci::{ControllerToHostPacket, FromHciBytes, FromHciBytesError, PacketKind};
 use bt_hci_transport::PacketToHost;
 
+/// Layer at which the synthetic transport-to-report path rejected a packet.
 #[derive(Debug, PartialEq)]
 enum FrameError {
+    /// Packet-kind/header/payload read failed after all input was consumed.
     Transport,
+    /// Transport left unconsumed bytes; takes precedence over any simultaneous read error.
     TrailingBytes,
-    Envelope(FromHciBytesError),
+    /// Complete transport event had a malformed LE/report envelope.
+    Envelope(
+        /// Exact dependency size/value category.
+        FromHciBytesError,
+    ),
+    /// Parsed packet, event or LE subevent was not a legacy advertising report.
     UnexpectedEvent,
 }
 
+/// Returns one wire record with raw event `kind`, `length` data bytes and RSSI -94 dBm.
+/// `seed` identifies the address and starts wrapping payload bytes; panics if `length` exceeds 255.
 fn record(
     kind: u8,
     length: usize,
@@ -25,6 +35,8 @@ fn record(
     bytes
 }
 
+/// Returns a framed HCI LE legacy-report event containing counted `records` in order.
+/// Panics when record count or total event parameters exceed their one-byte fields.
 fn event(records: &[Vec<u8>]) -> Vec<u8> {
     let mut params = vec![2, u8::try_from(records.len()).unwrap()];
     for record in records {
@@ -35,6 +47,9 @@ fn event(records: &[Vec<u8>]) -> Vec<u8> {
     bytes
 }
 
+/// Decodes `wire` through the locked transport into caller-owned `buffer`.
+/// Returns reports borrowing that buffer, or the exact rejecting layer; unread bytes take precedence.
+/// Failed decoding may partially overwrite scratch bytes. Inner records are checked lazily by the returned iterator.
 fn decode<'a>(
     wire: &[u8],
     buffer: &'a mut [u8],
@@ -62,6 +77,7 @@ fn decode<'a>(
         .reports)
 }
 
+/// All 40,960 length/kind/RSSI combinations preserve raw data through the actual locked decoder path.
 #[test]
 fn all_single_lengths_kinds_and_rssi_patterns_survive_actual_transport_and_report_decoders() {
     let mut cases = 0;
@@ -90,6 +106,7 @@ fn all_single_lengths_kinds_and_rssi_patterns_survive_actual_transport_and_repor
     assert_eq!(cases, 40_960);
 }
 
+/// Mixed reports and a maximum 255-parameter-byte event retain record order and exact payload lengths.
 #[test]
 fn mixed_batches_and_maximum_event_preserve_lengths_order_and_payloads() {
     for lengths in [
@@ -119,6 +136,7 @@ fn mixed_batches_and_maximum_event_preserve_lengths_order_and_payloads() {
     }
 }
 
+/// Every truncated record inside a truthful outer envelope produces one terminal inner size error.
 #[test]
 fn every_truncated_single_record_is_an_inner_size_error() {
     for length in 0..=31 {
@@ -135,6 +153,7 @@ fn every_truncated_single_record_is_an_inner_size_error() {
     }
 }
 
+/// A truncated third record retains two valid prefixes and terminates the iterator after one error.
 #[test]
 fn malformed_batch_retains_prefix_and_terminates_once() {
     for keep in 0..41 {
@@ -151,6 +170,7 @@ fn malformed_batch_retains_prefix_and_terminates_once() {
     }
 }
 
+/// Outer truncation, padding, length mismatch and short buffers reject before any report iterator is returned.
 #[test]
 fn outer_truncation_padding_and_wrong_lengths_do_not_reach_the_report_iterator() {
     for length in 0..=31 {
@@ -197,6 +217,7 @@ fn outer_truncation_padding_and_wrong_lengths_do_not_reach_the_report_iterator()
     }
 }
 
+/// Characterizes dependency acceptance of oversized data and ignored trailing records without claiming wire validity.
 #[test]
 fn current_parser_permissiveness_is_explicit_not_mistaken_for_wire_validation() {
     // Characterize the locked decoder; these are not legal legacy data lengths.
@@ -231,6 +252,7 @@ fn current_parser_permissiveness_is_explicit_not_mistaken_for_wire_validation() 
     assert_eq!(result[1].as_ref().unwrap_err(), &FromHciBytesError::InvalidSize);
 }
 
+/// Declared-length truncation is a size error, while an invalid event kind retains its value-error category.
 #[test]
 fn declared_data_length_and_invalid_kind_keep_inner_error_categories() {
     for declared in 0..=u8::MAX {

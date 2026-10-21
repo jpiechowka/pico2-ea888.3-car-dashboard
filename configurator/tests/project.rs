@@ -1,7 +1,11 @@
+//! Complete project, original backing, orientation repair and validated-asset integration contracts.
+
 use dashboard_configurator::config::default_config;
 use dashboard_configurator::config::startup::{StartupProfile, StartupTheme};
 use dashboard_configurator::editor::*;
 #[test]
+/// Startup edits advance project stamp/history while preserving acquisition config identity; pending JSON denies
+/// mutation.
 fn startup_is_an_accepted_undoable_project_edit_without_restarting_acquisition() {
     let mut editor = Editor::new(default_config()).unwrap();
     let key = editor.accepted_config_key();
@@ -30,6 +34,8 @@ fn startup_is_an_accepted_undoable_project_edit_without_restarting_acquisition()
     assert!(editor.accepted_project().is_err());
 }
 #[test]
+/// Complete storage/import preserves startup atomically; dashboard-only import retains startup and failed/stale imports
+/// preserve history.
 fn project_import_and_storage_roundtrip_are_atomic_and_legacy_import_keeps_startup() {
     use dashboard_config_tools::project::ExportMode;
     let mut source = Editor::default();
@@ -67,6 +73,8 @@ fn project_import_and_storage_roundtrip_are_atomic_and_legacy_import_keeps_start
 }
 
 #[test]
+/// Prepared import requires a live token and blocks snapshots until accepted; saved envelope must match its exact
+/// prepared project.
 fn prepared_project_import_stays_blocked_until_current_admission_and_restores_envelope() {
     let mut editor = Editor::default();
     let mut source = Editor::default();
@@ -94,9 +102,13 @@ fn prepared_project_import_stays_blocked_until_current_admission_and_restores_en
     assert!(Editor::from_prepared_project_saved(Editor::default().accepted_project().unwrap(), save.json()).is_err());
 }
 use std::sync::Arc;
+/// Returns landscape artwork with recipe `label` and an external original reference; valid GIF conversion/fixture
+/// failures panic.
 fn backed_artwork(label: &str) -> Arc<dashboard_config_tools::project::Artwork> {
     backed_artwork_in(label, dashboard_config::Geometry::Landscape)
 }
+/// Returns valid GIF-derived artwork for `geometry` and `label`, externalized to an
+/// immutable identity pin without browser storage; conversion/recipe failures panic.
 fn backed_artwork_in(
     label: &str,
     geometry: dashboard_config::Geometry,
@@ -139,6 +151,8 @@ fn backed_artwork_in(
     )
 }
 #[test]
+/// Captured saves retain original pins beyond 32-entry history eviction; dropping the final owner releases backing
+/// without copying bytes.
 fn artwork_handles_follow_history_and_captured_save_without_original_arrays() {
     let mut editor = Editor::default();
     let first = backed_artwork("first");
@@ -180,6 +194,7 @@ fn artwork_handles_follow_history_and_captured_save_without_original_arrays() {
 }
 
 #[test]
+/// Artwork admission selects Custom; replacement/undo cannot revive old feedback or accept an obsolete worker token.
 fn actual_artwork_publication_scopes_feedback_and_stale_join_keeps_current_project() {
     use dashboard_configurator::artwork_draft::ProjectFeedback;
     let mut editor = Editor::default();
@@ -221,6 +236,8 @@ fn actual_artwork_publication_scopes_feedback_and_stale_join_keeps_current_proje
 }
 
 #[test]
+/// Shape change keeps original/artwork handles but blocks snapshots until undo or matching splash override repairs
+/// admission.
 fn orientation_mismatch_retains_artwork_blocks_snapshots_and_undo_restores_exact_project() {
     use dashboard_config_tools::project::ExportMode;
     use dashboard_configurator::config::Orientation;
@@ -252,6 +269,7 @@ fn orientation_mismatch_retains_artwork_blocks_snapshots_and_undo_restores_exact
 }
 
 #[test]
+/// Geometry changes retire conversion tokens, and even fresh callbacks cannot admit wrong-shape pixels.
 fn stale_geometry_conversion_cannot_replace_project() {
     use dashboard_configurator::config::Orientation;
     let mut e = Editor::default();
@@ -273,6 +291,8 @@ fn stale_geometry_conversion_cannot_replace_project() {
 }
 
 #[test]
+/// Matching reconversion admits a portrait project; undo restores the previous retained artwork and its mismatch before
+/// orientation undo.
 fn matching_reconversion_is_atomic_and_undo_keeps_the_retained_original() {
     use dashboard_configurator::config::{Geometry, Orientation};
     let mut e = Editor::default();
@@ -295,6 +315,8 @@ fn matching_reconversion_is_atomic_and_undo_keeps_the_retained_original() {
 }
 
 #[test]
+/// Undo/Redo may repair artwork mismatch while exports remain blocked; raw/JSON/startup/import/pointer blockers still
+/// deny history mutation.
 fn history_commands_repair_retained_artwork_mismatch_without_admitting_exports() {
     use dashboard_config::{Geometry, Orientation};
     use dashboard_config_tools::project::ExportMode;
@@ -390,6 +412,8 @@ fn history_commands_repair_retained_artwork_mismatch_without_admitting_exports()
 }
 
 #[test]
+/// Validated shared asset ownership preserves Arc bytes through history and matches raw decoding across
+/// time/shape/reduced-motion cases.
 fn validated_artwork_view_keeps_exact_pixels_timing_geometry_and_history() {
     use dashboard_config::startup::{StartupProfile, StartupStatus};
     use dashboard_config::{Geometry, Orientation};
@@ -463,8 +487,11 @@ fn validated_artwork_view_keeps_exact_pixels_timing_geometry_and_history() {
 }
 
 #[test]
+/// Maximum four-frame asset cached parsing matches raw decoding at every frame/loop boundary, including
+/// still/reduced-motion modes.
 fn validated_maximum_animation_matches_raw_frame_boundaries() {
     #[path = "support/display_fixture.rs"]
+    /// Deterministic maximum-size EASA asset fixture shared with identity/performance tests.
     mod fixture;
     use dashboard_config::startup::{StartupProfile, StartupStatus, StartupTheme};
     use dashboard_configurator::preview::Preview;

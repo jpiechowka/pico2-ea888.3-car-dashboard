@@ -1,3 +1,5 @@
+//! ATT MTU negotiation, ingress correlation and retained disconnect diagnostics with native fake links.
+
 extern crate std;
 use super::*;
 use crate::mock_controller::MockController;
@@ -7,6 +9,7 @@ use crate::{Connection, Stack};
 use bt_hci::param::BdAddr;
 use core::future::Future;
 use embassy_futures::block_on;
+/// Runs `f` with an accepted fake link, then synthesizes terminal cleanup and drains pending outbound ownership; fixture setup failures panic.
 fn mtu_link(
     f: impl FnOnce(
         &Stack<'_, MockController, DefaultPacketPool>,
@@ -16,7 +19,7 @@ fn mtu_link(
 ) {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();
-    let host = BleHost::new(&stack.controller, &stack.host_state);
+    let host = BleHost::new(&stack.controller, stack.host_state);
     let mgr = host.connections();
     mgr.connect(
         ConnHandle::new(0),
@@ -39,6 +42,7 @@ fn mtu_link(
         drop(p);
     }
 }
+/// Injects borrowed L2CAP `bytes` as a complete first ACL fragment for handle zero into `host`; returns actual ingress admission errors.
 fn mtu_acl(host: &BleHost<'_, MockController, DefaultPacketPool>, bytes: &[u8]) -> Result<(), Error> {
     host.handle_acl(
         AclPacket::new(
@@ -51,6 +55,7 @@ fn mtu_acl(host: &BleHost<'_, MockController, DefaultPacketPool>, bytes: &[u8]) 
     )
 }
 #[test]
+/// A peer requesting the minimum MTU receives local pool capacity while the negotiated MTU remains 23.
 fn mtu_response_advertises_local_receive_capacity() {
     mtu_link(|_, host, conn| {
         mtu_acl(host, &[3, 0, 4, 0, 2, 23, 0]).unwrap();
@@ -60,6 +65,7 @@ fn mtu_response_advertises_local_receive_capacity() {
     });
 }
 #[test]
+/// Requests/responses across zero, minimum and oversized MTUs clamp to 23..local capacity and mark the exchange complete.
 fn mtu_values_negotiate_default_minimum_and_local_maximum() {
     use core::{
         pin::pin,
@@ -98,6 +104,7 @@ fn mtu_values_negotiate_default_minimum_and_local_maximum() {
     }
 }
 #[test]
+/// Terminal status remains queryable when a full event queue rejects the disconnect notification.
 fn mtu_terminal_reason_survives_full_event_queue() {
     use core::{
         future::Future,
@@ -132,6 +139,7 @@ fn mtu_terminal_reason_survives_full_event_queue() {
     });
 }
 #[test]
+/// Notifications and indications during MTU setup preserve request correlation; indications receive exactly one confirmation.
 fn mtu_constructor_handles_unsolicited_values_without_extra_confirmation() {
     use core::{
         pin::pin,
@@ -163,6 +171,7 @@ fn mtu_constructor_handles_unsolicited_values_without_extra_confirmation() {
     }
 }
 #[test]
+/// Malformed MTU response closes the bearer and wakes construction before the terminal controller event, retaining the local cause.
 fn mtu_local_malformed_acl_reports_disconnected_before_controller_event() {
     use core::{
         future::Future,
@@ -187,6 +196,7 @@ fn mtu_local_malformed_acl_reports_disconnected_before_controller_event() {
 }
 
 #[test]
+/// Only ATT Request Not Supported falls back to MTU23; every other raw error propagates and successful fallback avoids duplicate exchange.
 fn mtu_error_fallback_only_for_request_not_supported() {
     use core::{
         pin::pin,
@@ -222,10 +232,11 @@ fn mtu_error_fallback_only_for_request_not_supported() {
     }
 }
 #[test]
+/// First local error and terminal status survive cleanup and retained owners; actual slot reuse resets both.
 fn mtu_diagnostics_survive_terminal_and_reset_only_on_slot_reuse() {
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();
-    let host = BleHost::new(&stack.controller, &stack.host_state);
+    let host = BleHost::new(&stack.controller, stack.host_state);
     let mgr = host.connections();
     let handle = ConnHandle::new(0);
     let connect = || {
@@ -263,6 +274,7 @@ fn mtu_diagnostics_survive_terminal_and_reset_only_on_slot_reuse() {
 }
 
 #[test]
+/// A peer-initiated exchange before application acceptance supplies the later client MTU without another request.
 fn mtu_peer_exchange_before_accept_skips_duplicate_request() {
     use core::{
         pin::pin,
@@ -270,7 +282,7 @@ fn mtu_peer_exchange_before_accept_skips_duplicate_request() {
     };
     let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
     let stack = crate::new(MockController::new(), &mut resources).build();
-    let host = BleHost::new(&stack.controller, &stack.host_state);
+    let host = BleHost::new(&stack.controller, stack.host_state);
     let mgr = host.connections();
     let handle = ConnHandle::new(0);
     mgr.connect(
@@ -297,6 +309,7 @@ fn mtu_peer_exchange_before_accept_skips_duplicate_request() {
     mgr.disconnected(handle, Status::SUCCESS).unwrap();
 }
 #[test]
+/// Crossed requests advertise identical local capacity but do not complete the client until its own response arrives.
 fn mtu_crossed_exchange_waits_for_own_response_and_advertises_symmetric_capacity() {
     use core::{
         pin::pin,
@@ -320,6 +333,7 @@ fn mtu_crossed_exchange_waits_for_own_response_and_advertises_symmetric_capacity
     });
 }
 #[test]
+/// Both MTU opcodes reject every tested non-three-byte shape and retain InvalidValue as the local close cause.
 fn mtu_malformed_fixed_shape_records_local_error() {
     for opcode in [2, 3] {
         for length in [1, 2, 4, 5] {
@@ -334,6 +348,7 @@ fn mtu_malformed_fixed_shape_records_local_error() {
     }
 }
 #[test]
+/// Remote close wakes pending MTU construction with Disconnected and retains only the controller reason.
 fn mtu_remote_disconnect_keeps_reason_without_local_error() {
     use core::{
         pin::pin,
@@ -356,6 +371,7 @@ fn mtu_remote_disconnect_keeps_reason_without_local_error() {
     });
 }
 #[test]
+/// Response allocation exhaustion closes the bearer with OutOfMemory; later terminal status remains a separate observation.
 fn mtu_pool_exhaustion_keeps_first_local_error_before_terminal_reason() {
     use core::{
         pin::pin,
@@ -390,6 +406,7 @@ fn mtu_pool_exhaustion_keeps_first_local_error_before_terminal_reason() {
 }
 
 #[test]
+/// Every nonzero HCI completion status reports error without terminal state, reason, event or disconnect metric publication.
 fn mtu_hci_failed_disconnect_keeps_link_nonterminal_and_reports_status() {
     use core::{
         pin::pin,
@@ -417,6 +434,7 @@ fn mtu_hci_failed_disconnect_keeps_link_nonterminal_and_reports_status() {
     }
 }
 #[test]
+/// Successful HCI completion preserves all 256 raw reason bytes and increments terminal metrics exactly once.
 fn mtu_hci_successful_disconnect_retains_every_raw_reason() {
     for reason in 0..=u8::MAX {
         mtu_link(|_, host, conn| {
@@ -431,6 +449,7 @@ fn mtu_hci_successful_disconnect_retains_every_raw_reason() {
     }
 }
 #[test]
+/// Late rejected ACL packets after local/terminal close cannot replace the genuine disconnect diagnostic.
 fn mtu_late_acl_after_local_cleanup_does_not_record_false_cause() {
     mtu_link(|_, host, conn| {
         conn.disconnect();
@@ -449,6 +468,7 @@ fn mtu_late_acl_after_local_cleanup_does_not_record_false_cause() {
 }
 
 #[test]
+/// Idle, queued-duplicate and consumed-duplicate ATT responses reject at ingress, close the bearer and prevent subsequent requests.
 fn client_idle_or_duplicate_responses_close_the_bearer_at_ingress() {
     use core::{
         pin::pin,
@@ -496,6 +516,7 @@ fn client_idle_or_duplicate_responses_close_the_bearer_at_ingress() {
 }
 
 #[test]
+/// Overlapping requests fail Busy without canceling the owner; dropping active read or MTU construction closes ambiguous correlation.
 fn client_overlapping_requests_fail_busy_and_cancellation_closes_bearer() {
     use core::{
         pin::pin,
@@ -533,6 +554,7 @@ fn client_overlapping_requests_fail_busy_and_cancellation_closes_bearer() {
 }
 
 #[test]
+/// Interleaved notifications and matching ATT errors preserve correlation, allowing subsequent reads to return their exact values.
 fn client_matching_errors_notifications_and_sequential_reads_remain_usable() {
     use core::{
         pin::pin,
@@ -578,6 +600,7 @@ fn client_matching_errors_notifications_and_sequential_reads_remain_usable() {
 }
 
 #[test]
+/// A wrong response opcode or mismatched error request closes the bearer with UnexpectedGattResponse.
 fn client_wrong_response_opcode_or_error_request_closes_bearer() {
     use core::{
         pin::pin,
@@ -599,6 +622,7 @@ fn client_wrong_response_opcode_or_error_request_closes_bearer() {
 }
 
 #[test]
+/// A second client fails Busy; dropping an idle client releases ownership without closing the accepted link.
 fn client_connection_allows_one_live_client_and_releases_clean_owner() {
     use core::{
         pin::pin,

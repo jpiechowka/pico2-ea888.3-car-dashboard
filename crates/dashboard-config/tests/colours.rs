@@ -1,6 +1,8 @@
+//! RGB565 storage, conservative contrast and dormant-role validation.
 use dashboard_config::*;
 
 #[test]
+/// Hidden roles still require usable contrast, and popup foreground/background cannot become identical.
 fn invisible_palette_is_rejected_even_when_role_is_currently_hidden() {
     let mut raw = default_config();
     raw.widgets[0].colors.value = raw.widgets[0].colors.background;
@@ -18,7 +20,9 @@ fn invisible_palette_is_rejected_even_when_role_is_currently_hidden() {
 }
 
 #[test]
+/// All RGB565 codes match an independent floating-point reference without false 3:1 admission.
 fn quantized_contrast_matches_independent_srgb_reference_conservatively() {
+    /// Return relative linear-sRGB luminance of represented RGB565 color `c`, using independent f64 math.
     fn luminance(c: Color) -> f64 {
         let channels = c.rgb888().map(|v| {
             let s = f64::from(v) / 255.;
@@ -47,6 +51,7 @@ fn quantized_contrast_matches_independent_srgb_reference_conservatively() {
 }
 
 #[test]
+/// Every palette role roundtrips through accessors and enforces its documented contrast exemption or requirement.
 fn every_stored_role_has_the_expected_visibility_contract() {
     for role in ColorRole::ALL {
         let mut raw = default_config();
@@ -66,6 +71,7 @@ fn every_stored_role_has_the_expected_visibility_contract() {
 }
 
 #[test]
+/// Custom quantized widget and popup colors survive current binary and optional JSON roundtrips.
 fn palette_changes_preserve_binary_and_json_roundtrips() {
     let mut raw = default_config();
     raw.widgets[0].colors.background = Color::rgb(0, 16, 32);
@@ -83,6 +89,7 @@ fn palette_changes_preserve_binary_and_json_roundtrips() {
 }
 
 #[test]
+/// Eight populated views with large IDs/text/palettes remain inside declared file ceilings.
 fn maximum_palette_document_stays_inside_binary_and_json_file_limits() {
     let mut raw = default_config();
     raw.views.clear();
@@ -137,6 +144,7 @@ fn maximum_palette_document_stays_inside_binary_and_json_file_limits() {
 
 #[cfg(not(feature = "json"))]
 #[test]
+/// The device-only decoder rejects a v1 envelope instead of enabling host migration implicitly.
 fn device_rejects_v1_without_json_migration_and_loads_default_with_fault() {
     let bytes = include_bytes!("fixtures/v1-default.eav");
     assert!(matches!(decode(bytes), Err(ConfigError::Version)));

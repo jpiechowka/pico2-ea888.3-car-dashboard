@@ -1,8 +1,11 @@
+//! Packet provenance, repeated GATT instances and bounded standard-read evidence regressions.
 use dashboard_core::discovery::*;
 
+/// Returns the Bluetooth16 UUID represented by little-endian `value`; panics only if that fixed-width parse fails.
 fn uuid(value: u16) -> Uuid { Uuid::from_wire(&value.to_le_bytes()).unwrap() }
 
 #[test]
+/// Verifies advertisement replacement preserves scan-response bytes/time/RSSI independently.
 fn updating_one_packet_does_not_retimestamp_the_other() {
     let peer = Peer {
         address: [1, 2, 3, 4, 5, 6],
@@ -28,6 +31,7 @@ fn updating_one_packet_does_not_retimestamp_the_other() {
 }
 
 #[test]
+/// Retains protected-read results separately for repeated DIS instances with exact handles/error/timing.
 fn repeated_dis_instances_retain_separate_handle_values_and_exact_errors() {
     let mut inspection = Inspection::new();
     for start in [1, 10] {
@@ -61,6 +65,7 @@ fn repeated_dis_instances_retain_separate_handle_values_and_exact_errors() {
 }
 
 #[test]
+/// Checks descriptor ranges require complete next-declaration knowledge and never wrap a final handle.
 fn descriptor_ranges_end_before_the_next_declaration_and_never_wrap() {
     let service = Service {
         start: 1,
@@ -95,6 +100,7 @@ fn descriptor_ranges_end_before_the_next_declaration_and_never_wrap() {
 }
 
 #[test]
+/// Checks service/read-property allowlists and exact fixed-width standard characteristic lengths.
 fn standard_reads_are_service_scoped_and_binary_lengths_are_validated() {
     assert!(may_read(uuid(0x1800), uuid(0x2A00), 2));
     assert!(may_read(uuid(0x1800), uuid(0x2A01), 2));

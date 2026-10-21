@@ -12,18 +12,27 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
 use super::idb::{CURRENT, ORIGINALS as BLOBS, PINS, PROJECTS, database, request, settled};
+/// Origin-wide mutex for blob/pin/project read-modify-write operations.
 const LOCK: &str = "ea888-original-store";
+/// Prefix identifying tab-lifetime Web Locks during crash-safe pin collection.
 const PREFIX: &str = "ea888-original-tab-";
 // Current + 32 undo/redo entries + one captured export + one incoming import.
+/// Distinct live original references per tab: current + 32 history + export + import.
 const MAX_TAB_PINS: usize = 35;
+/// Maximum active pin-owning tabs admitted by maintenance.
 const MAX_TABS: usize = 8;
 thread_local! {
+    /// Cached lifetime-lock name and acquisition promise, including a failed acquisition.
     static OWNER: RefCell<Option<(String,js_sys::Promise)>> = const { RefCell::new(None) };
+    /// Weak handles deduplicated by source reference; strong Rust owners pin browser bytes.
     static REFERENCES: RefCell<Vec<Weak<OriginalReference>>> = const { RefCell::new(Vec::new()) };
+    /// Per-tab exclusion of concurrent source-byte materializations.
     static MATERIALIZING: RefCell<bool> = const { RefCell::new(false) };
 }
+/// Per-tab lease preventing simultaneous large source-byte copies into Wasm memory.
 pub struct Materialization;
 impl Materialization {
+    /// Returns an exclusive materialization lease, or a JS error while another lease lives.
     pub fn acquire() -> Result<Self, JsValue> {
         MATERIALIZING.with(|busy| {
             let mut busy = busy.borrow_mut();
@@ -37,21 +46,29 @@ impl Materialization {
     }
 }
 impl Drop for Materialization {
+    /// Releases per-tab source materialization ownership.
     fn drop(&mut self) { MATERIALIZING.with(|busy| *busy.borrow_mut() = false); }
 }
+/// Returns reflected property `key` from `value`, propagating JS getter/reflection errors.
 fn get(
     value: &JsValue,
     key: &str,
 ) -> Result<JsValue, JsValue> {
     js_sys::Reflect::get(value, &key.into())
 }
+/// Returns the navigator Web Locks property, or a JS error without window/access.
+/// Missing/unsupported managers fail when their methods are subsequently required.
 fn locks() -> Result<JsValue, JsValue> { get(web_sys::window().ok_or(JsValue::NULL)?.navigator().as_ref(), "locks") }
+/// Returns callable property `name` of `value`; getter errors or nonfunctions fail.
 fn method(
     value: &JsValue,
     name: &str,
 ) -> Result<js_sys::Function, JsValue> {
     get(value, name)?.dyn_into()
 }
+/// Returns this tab's UUID-based lifetime-lock name after acquisition. Caches the
+/// acquisition promise; crypto/locks/native rejection fails without inventing identity.
+/// The held promise never resolves, so the browser releases the lock on tab destruction.
 async fn owner() -> Result<String, JsValue> {
     let existing = OWNER.with(|o| o.borrow().clone());
     let (id, ready) = if let Some(owner) = existing {
@@ -91,19 +108,31 @@ async fn owner() -> Result<String, JsValue> {
     JsFuture::from(ready).await?;
     Ok(id)
 }
+/// Acquisition cancellation guard; an already acquired operation keeps its lock until settlement.
 struct LockWait {
+    /// Abort signal supplied to the queued Web Locks request.
     controller: web_sys::AbortController,
+    /// Prevents an expired/cancelled queued callback from starting the operation.
     retired: Rc<std::cell::Cell<bool>>,
 }
 impl Drop for LockWait {
+    /// Retires queued work and aborts acquisition; does not cancel work already started.
     fn drop(&mut self) {
         self.retired.set(true);
         self.controller.abort();
     }
 }
+/// Runs `operation` under the origin mutex and returns its result. Acquisition has
+/// a 10-second browser timeout; queued cancellation prevents entry, while already
+/// acquired work retains the lock until its future settles even if the caller drops.
+/// API/acquisition failures return JS errors. See [Web Locks](https://www.w3.org/TR/web-locks/).
 pub async fn locked<T: 'static>(operation: impl Future<Output = Result<T, JsValue>> + 'static) -> Result<T, JsValue> {
     locked_with_timeout(operation, super::idb::DEADLINE_MS).await
 }
+/// Runs `operation` under the origin mutex with acquisition delay `timeout_ms` in
+/// milliseconds and returns its output. Deadline/cancellation retires queued work;
+/// acquired operations have no execution deadline. Native/API failures return JS errors,
+/// and a detached cleanup task retains the callback/timer until the lock request settles.
 async fn locked_with_timeout<T: 'static>(
     operation: impl Future<Output = Result<T, JsValue>> + 'static,
     timeout_ms: i32,
@@ -161,6 +190,8 @@ async fn locked_with_timeout<T: 'static>(
     result.borrow_mut().take().ok_or(JsValue::NULL)?
 }
 
+/// Returns an existing equal live handle or registers `reference` weakly, removing
+/// expired entries; retaining the returned Arc pins its browser blob during maintenance.
 fn register(reference: Arc<OriginalReference>) -> Arc<OriginalReference> {
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
@@ -173,6 +204,8 @@ fn register(reference: Arc<OriginalReference>) -> Arc<OriginalReference> {
         }
     })
 }
+/// Returns distinct keys of live registered references, pruning expired weak handles;
+/// errors above 35 keys instead of silently dropping history/export/import pins.
 fn current_pins() -> Result<BTreeSet<String>, JsValue> {
     let keys = REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
@@ -188,6 +221,8 @@ fn current_pins() -> Result<BTreeSet<String>, JsValue> {
         Ok(keys)
     }
 }
+/// Returns the JS value for `key` in `store` through `db`'s readonly transaction;
+/// an absent record is undefined and native/request/timeout failures propagate.
 async fn read(
     db: &web_sys::IdbDatabase,
     store: &str,
@@ -196,6 +231,8 @@ async fn read(
     let tx = db.transaction_with_str(store)?;
     request(&tx.object_store(store)?.get(&key.into())?).await
 }
+/// Returns bounded keys from `store` in `db`, including overflow sentinels: at most
+/// 10 pin-owner keys or 283 blob keys. Callers reject excess; native/request errors propagate.
 async fn keys(
     db: &web_sys::IdbDatabase,
     store: &str,
@@ -213,6 +250,8 @@ async fn keys(
     .await?
     .dyn_into()
 }
+/// Returns `value` as an exact 64-byte lowercase hexadecimal source key; nonstrings,
+/// wrong lengths, uppercase or nonhex bytes return a JS error.
 fn key(value: JsValue) -> Result<String, JsValue> {
     let key = value.as_string().ok_or(JsValue::NULL)?;
     if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
@@ -220,7 +259,22 @@ fn key(value: JsValue) -> Result<String, JsValue> {
     }
     Ok(key)
 }
-/// Called only while the origin mutation lock is held. Pin writes and blob GC commit together.
+/// Keeps maintenance rollback owned from transaction creation through settlement.
+struct MaintenanceGuard<'a>(
+    /// Transaction whose queued writes must not survive an early setup error.
+    &'a web_sys::IdbTransaction,
+);
+impl Drop for MaintenanceGuard<'_> {
+    /// Attempts rollback; completed/committing transactions can reject abort.
+    fn drop(&mut self) { let _ = self.0.abort(); }
+}
+/// Maintains pins and blob GC through `db` for lifetime-lock owner `id`, optionally
+/// publishing `incoming` key/blob. Caller must hold the origin mutation lock and keep
+/// incoming source references strongly pinned. Retains live-tab pins and stored project
+/// source; samples own Rust pins after all awaits. Returns errors on malformed keys,
+/// owner/tab/pin/blob bounds, browser APIs or settlement. Writes share one transaction;
+/// setup errors abort queued writes before dispatch. Settlement timeout/cancellation
+/// attempts abort, but cannot prove rollback once native commit has started.
 async fn maintain(
     db: &web_sys::IdbDatabase,
     id: &str,
@@ -290,6 +344,7 @@ async fn maintain(
     stores.push(&BLOBS.into());
     stores.push(&PINS.into());
     let tx = db.transaction_with_str_sequence_and_mode(&stores, web_sys::IdbTransactionMode::Readwrite)?;
+    let _rollback = MaintenanceGuard(&tx);
     let pins = tx.object_store(PINS)?;
     let blobs = tx.object_store(BLOBS)?;
     let values = js_sys::Array::new();
@@ -315,9 +370,15 @@ async fn maintain(
     }
     settled(&tx).await
 }
+/// Returns `art` with embedded originals externalized under the origin lock, or
+/// unchanged without embedded bytes. Browser/pin/identity failures return JS errors;
+/// accepted editor publication remains the caller's responsibility.
 pub async fn externalize(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
     locked(async move { externalize_locked(art).await }).await
 }
+/// Returns `art` with a registered external reference after blob/pin commit, or
+/// unchanged without embedded bytes. Caller holds the origin mutex; source/Blob/store
+/// failures propagate without returning an uncommitted replacement artwork handle.
 async fn externalize_locked(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
     let Some(source) = art.original() else { return Ok(art) };
     let reference = register(Arc::new(
@@ -336,6 +397,8 @@ async fn externalize_locked(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> 
     result?;
     Ok(external)
 }
+/// Returns `project` after externalizing any embedded original artwork; absent artwork
+/// passes through. Storage/source/project-admission failures return JS errors.
 pub async fn prepare(project: Project) -> Result<Project, JsValue> {
     if let Some(art) = project.artwork().cloned() {
         let art = externalize(art).await?;
@@ -344,7 +407,11 @@ pub async fn prepare(project: Project) -> Result<Project, JsValue> {
         Ok(project)
     }
 }
-/// Caller holds the origin lock from the current-record read through pin publication.
+/// Returns `project` with restored browser-original ownership described by `record`.
+/// Caller holds the origin mutex from record read through pin publication. Validates
+/// source key/recipe identity and stored Blob length, then commits pins; byte digest is
+/// deferred to materialization/conversion. Missing external metadata externalizes any
+/// embedded source. Missing/corrupt source or browser/project failures return JS errors.
 pub async fn restore_locked(
     project: Project,
     record: &JsValue,
@@ -385,6 +452,9 @@ pub async fn restore_locked(
         .with_artwork(Arc::new(art.externalized(reference).map_err(|_| JsValue::NULL)?))
         .map_err(|_| JsValue::NULL)
 }
+/// Returns the stored Blob for `art`'s external reference after locked pin maintenance
+/// and length checking. Missing reference/blob, wrong size or browser failure errors;
+/// this does not read bytes or verify their digest.
 pub async fn blob(art: Arc<Artwork>) -> Result<web_sys::Blob, JsValue> {
     let reference = art.original_reference().ok_or(JsValue::NULL)?.clone();
     let id = owner().await?;
@@ -404,7 +474,9 @@ pub async fn blob(art: Arc<Artwork>) -> Result<web_sys::Blob, JsValue> {
     })
     .await
 }
-/// Verify backing bytes before they become a new conversion source.
+/// Returns the external original Blob for `art` after reading its bytes and checking
+/// exact recipe length/SHA-256 under a materialization lease. Busy, missing/corrupt
+/// backing data and browser failures return JS errors before conversion may start.
 pub async fn verified_blob(art: Arc<Artwork>) -> Result<web_sys::Blob, JsValue> {
     let _lease = Materialization::acquire()?;
     let blob = blob(art.clone()).await?;
@@ -417,6 +489,10 @@ pub async fn verified_blob(art: Arc<Artwork>) -> Result<web_sys::Blob, JsValue> 
     }
     Ok(blob)
 }
+/// Returns `project` with its external original copied/verified into shared Rust bytes,
+/// or unchanged without an external reference. Caller must hold a materialization lease
+/// to bound concurrent byte copies. Missing/changed source or project validation errors
+/// propagate; browser reads may complete after caller cancellation.
 pub async fn materialize(project: Project) -> Result<Project, JsValue> {
     let Some(art) = project.artwork().cloned().filter(|a| a.original_reference().is_some()) else {
         return Ok(project);
@@ -434,9 +510,14 @@ pub async fn materialize(project: Project) -> Result<Project, JsValue> {
 }
 
 #[cfg(feature = "browser-tests")]
-thread_local! { static ABORT_MAINTENANCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! {
+/// Test-only abort injection after all maintenance writes are queued.
+static ABORT_MAINTENANCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 #[cfg(feature = "browser-tests")]
+/// Returns success after same-origin cross-document lock timeout/cancellation and
+/// real-IDB pin/GC rollback regressions. Mutates test storage and creates an iframe;
+/// JS failures return errors and fixture assumptions may panic. Isolated origin only.
 pub(super) async fn browser_cases() -> Result<(), JsValue> {
     // A second same-origin document holds the lock while production waits.
     let document = web_sys::window().unwrap().document().unwrap();
@@ -534,6 +615,24 @@ pub(super) async fn browser_cases() -> Result<(), JsValue> {
         maintain(&db, &id, None).await?;
         if !read(&db, BLOBS, &old).await?.is_undefined() {
             return Err("released original was not collected".into());
+        }
+        // A malformed later key must not commit earlier queued GC deletions or
+        // the pin rewrite when maintenance returns an error before settled().
+        let orphan = "00".repeat(32);
+        let malformed = "zz-invalid-key";
+        let tx = db.transaction_with_str_and_mode(BLOBS, web_sys::IdbTransactionMode::Readwrite)?;
+        let store = tx.object_store(BLOBS)?;
+        store.put_with_key(&"retained evidence".into(), &orphan.clone().into())?;
+        store.put_with_key(&"malformed evidence".into(), &malformed.into())?;
+        settled(&tx).await?;
+        let rejected = maintain(&db, &id, None).await;
+        let preserved = !read(&db, BLOBS, &orphan).await?.is_undefined();
+        let tx = db.transaction_with_str_and_mode(BLOBS, web_sys::IdbTransactionMode::Readwrite)?;
+        tx.object_store(BLOBS)?.delete(&orphan.into())?;
+        tx.object_store(BLOBS)?.delete(&malformed.into())?;
+        settled(&tx).await?;
+        if rejected.is_ok() || !preserved {
+            return Err("failed original maintenance committed partial garbage collection".into());
         }
         db.close();
         Ok(())

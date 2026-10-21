@@ -1,3 +1,4 @@
+//! Legacy relative-boost cell with explicit alternate units and optional decorative feedback.
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -8,6 +9,12 @@ use crate::ui::{BLACK, CENTERED, LABEL_FONT, LABEL_STYLE_ORANGE, LABEL_STYLE_WHI
 use crate::widgets::primitives::draw_cell_background;
 
 #[allow(clippy::too_many_arguments)]
+/// Draws into `display` at bounded panel pixel `x`, `y`, width `w`, height `h`.
+/// `boost_bar` and `max_boost` are relative bar; `show_psi` selects primary units.
+/// `show_easter_egg` replaces maximum text with decorative feedback whose colors
+/// follow `blink_on`; `shake_offset` moves only the primary value horizontally.
+/// Caller supplies fitting geometry/values and clipping; arithmetic is not an
+/// arbitrary-coordinate API and target errors are discarded.
 pub fn draw_boost_cell<D>(
     display: &mut D,
     x: u32,

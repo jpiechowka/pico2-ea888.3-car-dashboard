@@ -2,6 +2,8 @@
 use axum::body::HttpBody;
 
 use super::*;
+/// Returns the sole UTF-8 value named `name` in `headers`, or `None` when missing,
+/// non-text or repeated. Security-sensitive callers must treat absence as rejection.
 pub(super) fn one<'a>(
     headers: &'a HeaderMap,
     name: &str,
@@ -10,6 +12,9 @@ pub(super) fn one<'a>(
     let first = values.next()?.to_str().ok()?;
     if values.next().is_some() { None } else { Some(first) }
 }
+/// Returns whether lowercase-hex 64-byte `actual` matches trusted `expected`.
+/// Caller must supply the generated 64-byte expected capability; equal-format input
+/// uses a complete XOR fold, though length/format rejection is deliberately early.
 pub(super) fn equal_capability(
     actual: &str,
     expected: &str,
@@ -18,6 +23,9 @@ pub(super) fn equal_capability(
         && actual.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         && actual.bytes().zip(expected.bytes()).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
 }
+/// Returns JSON `value` with `status`, no-store/security headers and connection close.
+/// Optional already-admitted `origin` adds CORS/Vary headers. A malformed header
+/// value in `origin` panics; callers supply only validated fixed origin strings.
 pub(super) fn response(
     status: StatusCode,
     value: Value,
@@ -43,6 +51,8 @@ pub(super) fn response(
     }
     response
 }
+/// Returns the standard one-field JSON error response for `code` and `status`,
+/// forwarding already-admitted `origin` to [`response`].
 pub(super) fn error(
     status: StatusCode,
     code: &str,
@@ -50,6 +60,8 @@ pub(super) fn error(
 ) -> Response<Body> {
     response(status, json!({"error":code}), origin)
 }
+/// Returns the HTTP error response for job-store `e`: conflicts map to 409,
+/// expiry to 410, unavailable/not-found to 404, others to 400. `origin` must be admitted.
 pub(super) fn store_error(
     e: Error,
     origin: Option<&str>,
@@ -62,6 +74,9 @@ pub(super) fn store_error(
     };
     error(status, &e.to_string(), origin)
 }
+/// Returns a validated polling request from exact decimal `after` and `limit`
+/// parameters in `query`. Missing/duplicate/unknown keys, nondecimal/overflow values
+/// and malformed pairs return schema errors; protocol range failures propagate.
 pub(super) fn poll_query(query: Option<&str>) -> Result<PollRequest, Error> {
     let mut after = None;
     let mut limit = None;
@@ -83,6 +98,9 @@ pub(super) fn poll_query(query: Option<&str>) -> Result<PollRequest, Error> {
     p.validate()?;
     Ok(p)
 }
+/// Returns at most `maximum` bytes from `body` within a ten-second Tokio deadline.
+/// Non-data frames, read failures, overflow or timeout return `Err(())`; no partial
+/// bytes escape. Cancellation drops the owned body without retaining partial input.
 pub(super) async fn bounded_body(
     mut body: Body,
     maximum: usize,
@@ -102,6 +120,8 @@ pub(super) async fn bounded_body(
     .await
     .map_err(|_| ())?
 }
+/// Returns true only if `body` ends within ten seconds with exclusively empty data
+/// frames. Payload/trailers/read failure/timeout return false; cancellation drops it.
 pub(super) async fn empty_body(mut body: Body) -> bool {
     tokio::time::timeout(Duration::from_secs(10), async {
         while let Some(frame) = std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await {
@@ -118,6 +138,10 @@ pub(super) async fn empty_body(mut body: Body) -> bool {
 
 /// Shared JSON framing for authenticated routes. Schema decoding stays with each
 /// operation, and diagnostics retain their smaller independent request budget.
+/// Returns `request` body bytes when the single content type is exactly
+/// `application/json` and streaming bytes fit `maximum`. Wrong media type returns
+/// 415/ExpectedJson; declared size, stream failure and timeout return 413/`bound_code`.
+/// Content-Length is only an early hint; the stream limit remains authoritative.
 pub(super) async fn json_body(
     request: Request<Body>,
     maximum: usize,

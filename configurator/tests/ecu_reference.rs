@@ -1,4 +1,6 @@
+//! Offline catalogue filtering, binding projection and nonmutating navigation regressions.
 use dashboard_configurator::workspace::{TabKey, Workspace, WorkspaceState};
+/// Checks retained version-one preferences and wraparound keyboard access to ECU Reference.
 #[test]
 fn reference_tab_extends_keyboard_navigation_without_changing_old_preferences() {
     assert_eq!(Workspace::ALL.len(), 6, "ECU Reference must be reachable");
@@ -15,6 +17,7 @@ fn reference_tab_extends_keyboard_navigation_without_changing_old_preferences() 
 
 use dashboard_configurator::config::{DEFINITIONS, DefinitionId};
 use dashboard_configurator::ecu_reference::{ENTRIES, MAX_QUERY_BYTES, ReferenceState, Section, Status};
+/// Checks multi-term case-insensitive filtering, conflicts and unknown selection preserve the open detail.
 #[test]
 fn searches_conflicts_and_filters_without_losing_selected_detail() {
     let mut state = ReferenceState::default();
@@ -33,6 +36,7 @@ fn searches_conflicts_and_filters_without_losing_selected_detail() {
     assert!(!state.select("does-not-exist"));
     assert_eq!(state.selected().id, id);
 }
+/// Checks UTF-8 truncation, all shipped definition links, unique IDs and documentary status boundaries.
 #[test]
 fn query_is_utf8_bounded_and_definition_links_are_total() {
     let mut state = ReferenceState::default();
@@ -58,6 +62,7 @@ fn query_is_utf8_bounded_and_definition_links_are_total() {
     assert_eq!(state.selected().status, Status::Conflict);
 }
 
+/// Checks navigation preserves invalid raw text, unfinished JSON, accepted identity and undo history.
 #[test]
 fn reference_navigation_keeps_raw_and_pending_json_without_an_undo_entry() {
     use dashboard_configurator::config::default_config;
@@ -130,6 +135,8 @@ fn reference_navigation_keeps_raw_and_pending_json_without_an_undo_entry() {
     assert!(WorkspaceState::from_preferences(Some(&encoded)).1.is_none());
 }
 
+/// Checks textual service bytes and availability preserve authoritative catalogue metadata, including disabled and
+/// unresolved definitions.
 #[test]
 fn runtime_binding_details_are_read_only_and_preserve_unavailable_reasons() {
     let mut state = ReferenceState::default();

@@ -1,6 +1,9 @@
+//! Retained startup timing drafts and stale asynchronous authority regressions.
+
 use dashboard_config_tools::project::ExportMode;
 use dashboard_configurator::editor::*;
 
+/// Sets raw startup `field` to `text` in `e` under its current stamp; fixture rejection panics.
 fn draft(
     e: &mut Editor,
     field: StartupNumber,
@@ -9,6 +12,8 @@ fn draft(
     e.set_startup_number(e.stamp(), field, text).unwrap();
 }
 #[test]
+/// Malformed/overflow/out-of-range timing stays visible without altering accepted profile/config/history; snapshots
+/// remain blocked.
 fn invalid_text_is_retained_while_accepted_pixels_and_exports_stay_guarded() {
     let mut e = Editor::default();
     let profile = e.startup_profile();
@@ -31,6 +36,7 @@ fn invalid_text_is_retained_while_accepted_pixels_and_exports_stay_guarded() {
     }
 }
 #[test]
+/// Multiple timing fields apply as one history entry; discard preserves accepted timing and prior history.
 fn correction_applies_one_history_entry_and_discard_keeps_history() {
     let mut e = Editor::default();
     let old = e.startup_profile();
@@ -58,6 +64,7 @@ fn correction_applies_one_history_entry_and_discard_keeps_history() {
     assert!(e.accepted_project().is_ok());
 }
 #[test]
+/// Timing edits retire prior save/import/stamp authority, and pending JSON independently blocks timing changes.
 fn stale_import_save_and_draft_callbacks_cannot_join_after_edits_or_discard() {
     let mut e = Editor::default();
     let project = e.accepted_project().unwrap();
@@ -90,6 +97,7 @@ fn stale_import_save_and_draft_callbacks_cannot_join_after_edits_or_discard() {
     );
 }
 #[test]
+/// Overlong ASCII/Unicode input stays explicitly invalid despite display truncation; repaired zero durations admit.
 fn oversized_and_unicode_drafts_are_bounded_and_cannot_accept_a_truncated_number() {
     let mut e = Editor::default();
     draft(&mut e, StartupNumber::StatusMilliseconds, &"0".repeat(33));
@@ -110,6 +118,7 @@ fn oversized_and_unicode_drafts_are_bounded_and_cannot_accept_a_truncated_number
 }
 
 #[test]
+/// Timing entry cancels an active pointer, while identical Apply retires draft identity without an undo entry.
 fn timing_edit_cancels_placement_and_same_value_apply_retires_the_draft() {
     let mut e = Editor::default();
     let widget = e.preview().config().widgets[0].clone();

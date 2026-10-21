@@ -1,14 +1,19 @@
+//! Synthetic alarm qualification, hysteresis/dwell and producer-owned warning publication.
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::{AlarmEngine, Context, EgtLocation, Limit, Rule, Status};
 use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::samples::{SensorId, Source};
 
+/// Returns a demo-only rule for sensor `id` and canonical `limit`, with 500ms
+/// activation/300ms clearing dwell; panics if the fixture policy is invalid.
 fn policy(
     id: SensorId,
     limit: Limit,
 ) -> Rule {
     Rule::new(id, Source::Demo, limit, 500, 300, "synthetic test only").unwrap()
 }
+/// Returns an engine enabling only `id` with canonical `limit` and the synthetic
+/// fixture's dwell policy; panics if rule/engine validation fails.
 fn engine(
     id: SensorId,
     limit: Limit,
@@ -17,6 +22,8 @@ fn engine(
     rules[id as usize] = Some(policy(id, limit));
     AlarmEngine::new(rules).unwrap()
 }
+/// Publishes `value` in `id`'s canonical unit into demo `model` at milliseconds
+/// `at`, retaining nominal other channels; panics if batch admission fails.
 fn samples(
     model: &mut AcquisitionModel,
     id: SensorId,
@@ -27,6 +34,9 @@ fn samples(
     values[id as usize] = value;
     assert!(model.ingest_batch(values, at));
 }
+/// Returns context only for `id`, bound to `model`'s latest source/sequence/time,
+/// with running/warm/no-cut, 80% load, target lambda 0.8 and measured manifold EGT.
+/// Panics if that sensor has never received a timestamped sample.
 fn context(
     model: &AcquisitionModel,
     id: SensorId,
@@ -48,6 +58,7 @@ fn context(
     contexts
 }
 
+/// New qualified samples drive exact activation/clear dwell; repeatedly evaluating one sample cannot finish activation.
 #[test]
 fn hysteresis_and_dwell_require_new_samples_not_repeated_render_ticks() {
     let id = SensorId::Water;
@@ -71,6 +82,8 @@ fn hysteresis_and_dwell_require_new_samples_not_repeated_render_ticks() {
     }
 }
 
+/// Invalid threshold geometry, wrong quantity, unknown provenance, zero dwell and empty policy labels fail rule
+/// admission.
 #[test]
 fn invalid_rules_cannot_enable_thresholds_or_claim_an_unknown_source() {
     for limit in [
@@ -120,6 +133,7 @@ fn invalid_rules_cannot_enable_thresholds_or_claim_an_unknown_source() {
     );
 }
 
+/// Lambda deviation requires fresh matching source/sequence plus running, warm, loaded, no-cut and target context.
 #[test]
 fn lambda_requires_matching_fresh_running_warm_loaded_non_fuel_cut_context() {
     let id = SensorId::Lambda;
@@ -177,6 +191,8 @@ fn lambda_requires_matching_fresh_running_warm_loaded_non_fuel_cut_context() {
     }
 }
 
+/// Disabled rules, freshness gaps and clock reversal suppress active output and restart sustained-condition
+/// qualification.
 #[test]
 fn disabled_unknown_stale_gap_and_clock_failure_suppress_alarms() {
     let id = SensorId::Water;
@@ -199,6 +215,7 @@ fn disabled_unknown_stale_gap_and_clock_failure_suppress_alarms() {
     );
 }
 
+/// Rejected context consumes its sample identity, preventing later context repair from backdating activation dwell.
 #[test]
 fn invalid_context_consumes_a_sample_and_cannot_backdate_dwell_on_repair() {
     let id = SensorId::Battery;
@@ -223,6 +240,7 @@ fn invalid_context_consumes_a_sample_and_cannot_backdate_dwell_on_repair() {
     assert!(engine.update(&model.snapshot(), &context(&model, id), 1000).active(id));
 }
 
+/// A context observation gap resets voltage dwell even while the voltage's own freshness window remains open.
 #[test]
 fn unobserved_context_gap_breaks_dwell_even_when_the_voltage_is_fresh() {
     let id = SensorId::Battery;
@@ -234,6 +252,8 @@ fn unobserved_context_gap_breaks_dwell_even_when_the_voltage_is_fresh() {
     }
 }
 
+/// Each missing/invalid context field clears an active lambda alarm and cannot be repaired by replaying the same
+/// sample.
 #[test]
 fn every_context_failure_clears_an_active_alarm_and_requires_new_data() {
     let id = SensorId::Lambda;
@@ -286,6 +306,8 @@ fn every_context_failure_clears_an_active_alarm_and_requires_new_data() {
     }
 }
 
+/// Voltage alarms require running context; EGT accepts measured manifold provenance only, excluding
+/// modeled/catalyst/unknown.
 #[test]
 fn voltage_needs_running_and_egt_needs_measured_manifold_provenance() {
     for id in [SensorId::Battery, SensorId::Egt] {
@@ -324,6 +346,7 @@ fn voltage_needs_running_and_egt_needs_measured_manifold_provenance() {
     }
 }
 
+/// Threshold chatter restarts dwell; metadata faults and exact context-age limits cannot preserve qualification.
 #[test]
 fn chatter_clock_sequence_faults_and_context_age_have_exact_boundaries() {
     let id = SensorId::Water;
@@ -368,6 +391,7 @@ fn chatter_clock_sequence_faults_and_context_age_have_exact_boundaries() {
     );
 }
 
+/// Allowed sample/context skew cannot fill an unobserved interval or start dwell before both observations exist.
 #[test]
 fn context_skew_cannot_bridge_a_gap_or_backdate_sustained_condition() {
     let id = SensorId::Battery;
@@ -397,6 +421,7 @@ fn context_skew_cannot_bridge_a_gap_or_backdate_sustained_condition() {
     }
 }
 
+/// A sample seen during clock reversal is consumed, requiring new data before recovery can start dwell again.
 #[test]
 fn clock_fault_consumes_rejected_data_before_recovery() {
     let id = SensorId::Water;
@@ -421,6 +446,8 @@ fn clock_fault_consumes_rejected_data_before_recovery() {
     );
 }
 
+/// Acquisition evaluates intervening normal/fault samples before watch coalescing, so unseen interruptions still reset
+/// dwell.
 #[test]
 fn acquisition_evaluates_normal_samples_and_faults_before_watch_coalescing() {
     use dashboard_host_validation::samples::Quality;
@@ -450,6 +477,8 @@ fn acquisition_evaluates_normal_samples_and_faults_before_watch_coalescing() {
     );
 }
 
+/// Independent priority/pixel oracles verify feedback precedence and full restoration of both buffers after warning
+/// clear.
 #[test]
 fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
     use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
@@ -528,6 +557,7 @@ fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
     }
 }
 
+/// Activation and clearing follow producer samples identically across 20/40/60Hz and irregular display schedules.
 #[test]
 fn producer_alarm_timing_is_independent_of_twenty_forty_sixty_and_irregular_display_rates() {
     for schedule in [vec![50], vec![25], vec![16, 17, 17], vec![3, 199, 7, 51, 317]] {

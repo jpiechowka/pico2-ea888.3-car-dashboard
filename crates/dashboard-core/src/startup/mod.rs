@@ -1,11 +1,16 @@
 //! Startup presentation, independent of acquisition and transfer ownership.
+/// Procedural artwork and startup status facts, rendered directly into the owned framebuffer.
 mod scene;
+/// Completion identities, dwell deadlines and startup input suppression.
 mod state;
 pub use dashboard_config::startup::*;
 pub use scene::{StartupFacts, draw};
 pub use state::{Exit, Phase, Startup};
 
 /// Decode directly into the existing caller-owned framebuffer; no scratch image.
+/// Selects a frame from `asset` at `elapsed` milliseconds using `looping`; `reduced`
+/// holds its reduced-motion frame. Returns decode success/error while mutating
+/// `frame` in the asset's geometry; an error can leave earlier rows replaced.
 pub fn draw_custom(
     asset: dashboard_config::startup_asset::Asset<'_>,
     elapsed: u64,
@@ -17,6 +22,10 @@ pub fn draw_custom(
 }
 
 /// Reject equal-byte-count artwork of the wrong logical shape before decoding.
+/// Requires `asset` geometry to equal `geometry`; mismatch returns Pixels before
+/// touching `frame`. Otherwise decodes the frame selected by `elapsed` milliseconds,
+/// `looping` and `reduced` directly into `frame`. Returns success or a decoder error;
+/// row failures may leave a partially replaced framebuffer which must not be published as complete.
 pub fn draw_custom_in(
     asset: dashboard_config::startup_asset::Asset<'_>,
     elapsed: u64,
@@ -36,6 +45,9 @@ pub fn draw_custom_in(
 }
 
 /// Resolve exactly once for the screen whose pixels will be submitted.
+/// Returns orientation from `config` and `profile` for startup `phase`, normal
+/// `page` and stable `view_id`. Missing Dashboard views and Debug/Logs inherit
+/// the device default; Status and Splash use their respective profile overrides.
 pub fn screen_orientation(
     config: &dashboard_config::Config,
     profile: StartupProfile,

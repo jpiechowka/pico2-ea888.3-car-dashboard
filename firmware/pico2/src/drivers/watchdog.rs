@@ -5,13 +5,22 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, pac};
 use embassy_time::{Duration, Instant};
 
+/// Exclusive core0 watchdog owner with boot evidence and a retained last-stage record.
 pub struct RecoveryWatchdog {
+    /// HAL timer handle; only `feed` is used after the corrected RP2350 start.
     watchdog: Watchdog,
+    /// Immutable raw reset/ROM/scratch evidence captured before this boot writes it.
     boot: BootEvidence,
+    /// This boot's last supervised stage/time or first recorded failure.
     current: ResetRecord,
 }
 
 impl RecoveryWatchdog {
+    /// Consumes `peripheral`, captures old evidence, starts a 15-second boot
+    /// deadline, and returns the sole feeding owner. Immediately repairs the
+    /// locked HAL's RP2040 reset mask for RP2350 and writes this boot's record.
+    /// Panics if reset mask, tick/reference clock, enable or debug-pause checks fail.
+    /// A TIMER reason alone does not distinguish expiry from a ROM reboot.
     pub fn start(peripheral: Peri<'static, WATCHDOG>) -> Self {
         let mut watchdog = Watchdog::new(peripheral);
         let raw_reason = pac::WATCHDOG.reason().read().0;
@@ -55,6 +64,8 @@ impl RecoveryWatchdog {
         owner
     }
 
+    /// Records the current boot-relative millisecond supervision observation and
+    /// reloads a two-second deadline; the retained time is not a future reset time.
     pub fn feed(&mut self) {
         let previous = self.current;
         self.current.supervised(Instant::now().as_millis());
@@ -64,11 +75,15 @@ impl RecoveryWatchdog {
         self.watchdog.feed(Duration::from_secs(2));
     }
 
+    /// Returns the pre-start reset evidence without rereading mutable scratch state.
     pub const fn boot_evidence(&self) -> BootEvidence { self.boot }
 
+    /// Returns the conservative classification label derived from captured boot evidence.
     pub const fn reset_label(&self) -> &'static str { self.boot_evidence().label() }
 
     /// Call before logging or pending forever, while this core0 owner can run.
+    /// Records `cause` with the current boot-relative milliseconds, preserving an
+    /// already latched failure; does not feed or trigger the watchdog.
     pub fn record_failure(
         &mut self,
         cause: RecoveryCause,
@@ -80,6 +95,8 @@ impl RecoveryWatchdog {
         }
     }
 
+    /// Writes invalidation, payload and commit to the owned scratch registers with
+    /// peripheral ordering barriers. Must not race an RP2350 ROM reboot request.
     fn persist_record(&mut self) {
         // Core0 startup/supervisor owns these writes. RP2350 ROM reboot uses
         // scratch2/3 as parameters and may invalidate this record; never call it
@@ -94,6 +111,8 @@ impl RecoveryWatchdog {
     }
 }
 
+/// Returns the boot-type byte from a validated secure-Arm ROM GS response, or
+/// `None` if the entry/response is unavailable or malformed; performs no reboot.
 fn rom_boot_type() -> Option<u8> {
     // The locked HAL's function wrapper transmutes lookup results unchecked.
     // Check the secure-Arm GS entry before constructing its function pointer.

@@ -1,3 +1,4 @@
+//! Legacy voltage cell; caller provides clipping and already qualified statistics.
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -8,6 +9,12 @@ use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, VALUE_FONT_MEDIUM, WHITE};
 use crate::widgets::primitives::{draw_cell_background, draw_history_graph, draw_trend_arrow, draw_value_with_outline};
 
 #[allow(clippy::too_many_arguments)]
+/// Draws voltage/extrema/history into `display` at pixel `x`, `y`, width `w` and
+/// height `h`, with `voltage`, `min_voltage`, `max_voltage` in volts and `state`
+/// providing trend/peak/history. Uses `bg_color`; `is_critical` chooses contrast
+/// for extrema text. Returns the background used. Caller supplies bounded panel
+/// coordinates, `w >= 16`, adequate legacy-cell height and a clipped target;
+/// arbitrary geometry can overflow arithmetic. Target errors are discarded.
 pub fn draw_batt_cell<D>(
     display: &mut D,
     x: u32,

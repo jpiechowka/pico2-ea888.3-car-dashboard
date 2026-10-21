@@ -25,10 +25,18 @@ use crate::warning_state::{CommandResult, WarningCommand, WarningEligibility};
 
 #[cfg(not(target_has_atomic = "32"))]
 compile_error!("graph cache identities require 32-bit atomics");
-struct OriginIssuer(AtomicU32);
+/// Process-wide non-reusing run-origin issuer; relaxed atomics provide uniqueness only.
+struct OriginIssuer(
+    /// Next origin to issue; `u32::MAX` is permanent exhaustion.
+    AtomicU32,
+);
 impl OriginIssuer {
+    /// Returns an issuer starting at nonzero `next`; internal callers must not
+    /// supply zero because a successful issuance asserts a nonzero identity.
     const fn new(next: u32) -> Self { Self(AtomicU32::new(next)) }
 
+    /// Returns a unique origin and atomically advances the next value, or `Err(())`
+    /// at sticky exhaustion. Panics if constructed at zero; does not synchronize data.
     fn issue(&self) -> Result<NonZeroU32, ()> {
         self.0
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
@@ -36,9 +44,12 @@ impl OriginIssuer {
             .map_err(|_| ())
     }
 }
+/// Shared issuer across all borrowed/owned acquisition models in this process/boot.
 static ORIGIN_ISSUER: OriginIssuer = OriginIssuer::new(1);
 
+/// Number of canonical channels, indexed in [`SensorId::ALL`] order.
 pub const SENSOR_COUNT: usize = 8;
+/// Per-channel presentation age caps in milliseconds, copied from shared schema.
 const DEFAULT_FRESHNESS: [u16; SENSOR_COUNT] = {
     let mut caps = [0; SENSOR_COUNT];
     let mut i = 0;
@@ -48,6 +59,7 @@ const DEFAULT_FRESHNESS: [u16; SENSOR_COUNT] = {
     }
     caps
 };
+/// Empty channel statistics, with channel-specific trend thresholds for EGT/volts/lambda.
 const SENSOR_BASE: [SensorState; SENSOR_COUNT] = [
     SensorState::new(),
     SensorState::new(),
@@ -59,19 +71,26 @@ const SENSOR_BASE: [SensorState; SENSOR_COUNT] = [
     SensorState::with_trend_threshold(0.1),
 ];
 
+/// UI-side reset identity tracking; only the newest request can acknowledge success.
 #[derive(Default)]
 pub struct ResetRequests {
+    /// Greatest issued nonzero reset request ID; zero before first request.
     requested: u64,
+    /// Greatest accepted acknowledgment, initially zero.
     acknowledged: u64,
 }
 
 impl ResetRequests {
+    /// Returns a fresh request ID and records it as newest; panics before mutation
+    /// when the counter is exhausted, preventing reset-identity reuse.
     pub fn request(&mut self) -> u64 {
         self.requested = self.requested.checked_add(1).expect("reset generation exhausted");
         self.requested
     }
 
     /// Show success once, only after the latest actual request is acknowledged.
+    /// Returns true for exact latest `generation` not already acknowledged;
+    /// stale, zero, future or duplicate replies return false without mutation.
     pub fn acknowledge(
         &mut self,
         generation: u64,
@@ -87,28 +106,46 @@ impl ResetRequests {
 /// Private origin and checked counter; absence disables transport deduplication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PublicationIdentity {
+    /// Non-reused acquisition origin, ordering independent owner instances.
     origin: NonZeroU32,
+    /// Nonzero checked publication revision, independent of raw sample sequence.
     revision: core::num::NonZeroU64,
+    /// Exhaustion causes participate even if their change did not advance publication.
     diagnostics: CacheExhaustionStatus,
 }
 
+/// Coherent acquisition publication; consumers evaluate freshness at their own
+/// monotonic time and never advance producer warning dwell by redrawing.
 #[derive(Clone, Copy, Debug)]
 pub struct DashboardSnapshot {
+    /// Last-good canonical values/statistics by channel; not inherently fresh.
     pub sensors: [SensorSnapshot; SENSOR_COUNT],
+    /// Source, sample identity and quality corresponding to each channel's statistics.
     pub metadata: [SampleMeta; SENSOR_COUNT],
+    /// Explicit vehicle/synthetic source admission mode.
     pub mode: DataMode,
+    /// Checked raw sample/fault publication count; timing-only changes do not advance it.
     pub sequence: u64,
+    /// Latest applied statistics-reset request, zero before any reset.
     pub reset_generation: u64,
+    /// Legacy per-channel alarm state; disabled for configured owners.
     pub(crate) alerts: Alerts,
+    /// Configured per-widget episodes and command acknowledgment state.
     pub(crate) rule_alerts: RuleAlerts,
+    /// Configured sample age limits in milliseconds, additionally capped per channel.
     pub(crate) freshness: [u16; SENSOR_COUNT],
+    /// Bounded union of exhausted identity domains affecting this publication.
     cache_exhaustion: CacheExhaustionStatus,
+    /// Unique run origin, absent after issuer exhaustion or on EMPTY.
     origin: Option<NonZeroU32>,
+    /// Checked publication revision; zero is sticky exhausted/untracked sentinel.
     publication: u64,
+    /// Per-widget held raw extrema; producer ticking owns expiry.
     peaks: PeakSnapshot,
 }
 
 impl DashboardSnapshot {
+    /// Vehicle-mode absence with alarms disabled and no trusted transport/cache identity.
     pub const EMPTY: Self = Self {
         sensors: [SensorSnapshot::EMPTY; SENSOR_COUNT],
         metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
@@ -126,6 +163,7 @@ impl DashboardSnapshot {
 
     /// Transport equality includes diagnostic-only transitions without advancing
     /// the raw sample sequence (or warning dwell).
+    /// Returns exact deduplication proof, or `None` without an origin/nonzero revision.
     pub fn publication_identity(&self) -> Option<PublicationIdentity> {
         Some(PublicationIdentity {
             origin: self.origin?,
@@ -136,15 +174,21 @@ impl DashboardSnapshot {
 
     /// Independent of measurement sequence and reset generation. None means
     /// exhaustion: publish/accept conservatively forever, without ID reuse.
+    /// Returns the nonzero revision when available, including the final `u64::MAX` value.
     pub fn publication_revision(&self) -> Option<u64> { core::num::NonZeroU64::new(self.publication).map(|r| r.get()) }
 
+    /// Returns acquisition-run identity for warning commands, or `None` when untracked.
     pub fn warning_run_id(&self) -> Option<u64> { self.origin.map(|v| u64::from(v.get())) }
 
     /// MAX is terminal identity exhaustion; acknowledgment is disabled.
+    /// Returns the configured engine's event watermark; zero precedes any activation.
     pub const fn warning_event_serial(&self) -> u64 { self.rule_alerts.event_serial }
 
+    /// Returns the last configured warning-command result, or EMPTY before any result.
     pub const fn warning_command_result(&self) -> CommandResult { self.rule_alerts.result }
 
+    /// Returns effective raw status and remembered episode flags for widget
+    /// `index` at monotonic `now` milliseconds; does not expire producer snoozes.
     pub fn warning_eligibility(
         &self,
         index: RuleIndex,
@@ -153,6 +197,9 @@ impl DashboardSnapshot {
         self.rule_alerts.eligibility(index, self, now)
     }
 
+    /// Returns held canonical extremum for widget `index` only if its channel
+    /// is currently value-qualified at `now` milliseconds; otherwise `None`.
+    /// Producer tick owns hold deadlines; this read does not recompute their expiry.
     pub fn peak_at(
         &self,
         index: RuleIndex,
@@ -162,10 +209,14 @@ impl DashboardSnapshot {
         self.peaks.value(index)
     }
 
+    /// Returns raw held extrema/presence; callers separately apply channel freshness.
     pub const fn peaks(&self) -> &PeakSnapshot { &self.peaks }
 
+    /// Returns bounded exhaustion metadata without changing rendering correctness.
     pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.cache_exhaustion }
 
+    /// Returns legacy alerts qualified at `now_ms` milliseconds, suppressing
+    /// stale/future/unavailable samples without advancing alarm dwell.
     pub fn alerts_at(
         &self,
         now_ms: u64,
@@ -173,6 +224,8 @@ impl DashboardSnapshot {
         self.alerts.at(self, now_ms)
     }
 
+    /// Returns raw configured status for widget `index` at `now_ms` milliseconds;
+    /// expired/reversed/unavailable data becomes Unavailable, disabled stays Disabled.
     pub fn rule_status_at(
         &self,
         index: RuleIndex,
@@ -181,6 +234,8 @@ impl DashboardSnapshot {
         self.rule_alerts.status_at(index, self, now_ms)
     }
 
+    /// Returns whether widget `index` has qualified raw Active status at `now_ms`
+    /// milliseconds; remembered latches alone do not count as active measurements.
     pub fn rule_active_at(
         &self,
         index: RuleIndex,
@@ -189,6 +244,7 @@ impl DashboardSnapshot {
         self.rule_status_at(index, now_ms) == Status::Active
     }
 
+    /// Returns whether legacy channel `id` is raw Active at `now_ms` milliseconds.
     pub fn alarm_active_at(
         &self,
         id: SensorId,
@@ -197,6 +253,8 @@ impl DashboardSnapshot {
         self.alerts.status_at(self, id, now_ms) == crate::alarms::Status::Active
     }
 
+    /// Returns effective quality for channel `id` at monotonic `now_ms`
+    /// milliseconds using configured and channel age caps; does not validate provenance.
     pub fn quality(
         &self,
         id: SensorId,
@@ -205,6 +263,8 @@ impl DashboardSnapshot {
         self.metadata[id as usize].quality_with_freshness(id, now_ms, u64::from(self.freshness[id as usize]))
     }
 
+    /// Returns canonical value for `id` at monotonic `now_ms` milliseconds only
+    /// when finite, source/mode-qualified, timestamp-consistent and fresh; else `None`.
     pub fn value_at(
         &self,
         id: SensorId,
@@ -221,6 +281,7 @@ impl DashboardSnapshot {
         )
     }
 
+    /// Returns retained statistics for `id`; use [`Self::value_at`] for live values.
     pub fn sensor(
         &self,
         id: SensorId,
@@ -228,6 +289,10 @@ impl DashboardSnapshot {
         &self.sensors[id as usize]
     }
 
+    /// Replaces this snapshot with `incoming` and returns true unless both have
+    /// identity proof and incoming is older or exactly duplicate. Equal revision
+    /// with changed diagnostic metadata is accepted. Missing proof on either side
+    /// conservatively accepts, so exhaustion never freezes state or reuses an ID.
     pub fn accept(
         &mut self,
         incoming: Self,
@@ -245,6 +310,8 @@ impl DashboardSnapshot {
 
 // Runtime transport proof, like graph proof, is not semantic snapshot data.
 impl PartialEq for DashboardSnapshot {
+    /// Returns semantic equality with `other`, excluding origin/publication proofs
+    /// but including quality, exhaustion metadata, alarms, held peaks and statistics.
     fn eq(
         &self,
         other: &Self,
@@ -265,11 +332,21 @@ impl PartialEq for DashboardSnapshot {
 // Alternatives share storage; boxing is unavailable on the MCU. Legacy is
 // retained solely for existing protocol/pixel replay fixtures.
 #[allow(clippy::large_enum_variant)]
+/// Exclusive policy variant; inline storage avoids allocation on firmware.
 enum Alarms {
-    Legacy(AlarmEngine),
-    Configured(RuleEngineState),
+    /// Historical per-channel replay/demo policy.
+    Legacy(
+        /// Mutable engine with immutable built-in/source-scoped rules.
+        AlarmEngine,
+    ),
+    /// Per-widget policy bound to the enclosing owner's validated configuration.
+    Configured(
+        /// Mutable episode state; its configuration handle lives in the owner.
+        RuleEngineState,
+    ),
 }
 impl Alarms {
+    /// Returns whether any policy slot is enabled, independent of source availability.
     fn enabled(&self) -> bool {
         match self {
             Self::Legacy(e) => e.enabled(),
@@ -277,6 +354,9 @@ impl Alarms {
         }
     }
 
+    /// Applies source/time-checked `inputs`, verified optional `contexts`, and
+    /// monotonic `now` milliseconds to the active variant. `config` must be the
+    /// immutable configured handle; panics if absent for a configured engine.
     fn update_inputs(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -300,28 +380,46 @@ impl Alarms {
     }
 }
 
+/// Indivisible mutable state owned alongside an immutable configuration handle.
 struct AcquisitionState {
+    /// Single-owner per-channel statistics and sampling rings.
     sensors: [SensorState; SENSOR_COUNT],
+    /// Per-channel accepted provenance, ordering and quality metadata.
     metadata: [SampleMeta; SENSOR_COUNT],
+    /// Explicit source-admission mode, fixed during owner construction.
     mode: DataMode,
+    /// Checked raw sample/fault publication counter; panic at exhaustion.
     sequence: u64,
+    /// Greatest applied statistics-reset request ID.
     reset_generation: u64,
+    /// Legacy or configured mutable policy storage, fixed during construction.
     alarms: Alarms,
+    /// Optional verified operating context attached to each channel's latest sample.
     contexts: [Option<Context>; SENSOR_COUNT],
+    /// Exact configured source per channel; `None` disables typed configured admission.
     expected_sources: [Option<Source>; SENSOR_COUNT],
+    /// Configured sample freshness milliseconds, bounded again at read time.
     freshness: [u16; SENSOR_COUNT],
+    /// Non-reused acquisition identity; absent permanently after issuer exhaustion.
     origin: Option<NonZeroU32>,
+    /// Checked publication revision, with sticky zero on exhaustion.
     publication: u64,
+    /// Raw per-widget extrema retained before snapshot coalescing.
     peaks: PeakHolds,
+    /// Greatest observed mutation/tick time in milliseconds for peak reversal handling.
     last_ms: u64,
 }
 
 impl AcquisitionState {
+    /// Flash-constructible configured storage before immutable policy initialization.
     const CONFIGURED_BASE: Self = Self::base(Alarms::Configured(RuleEngineState::EMPTY));
+    /// Flash-constructible legacy vehicle storage, with all alarms disabled.
     const LEGACY_BASE: Self = Self::base(Alarms::Legacy(AlarmEngine::DISABLED));
 
     // Valid flash-backed construction storage. No origin or dynamic policy work
     // occurs until the enclosing owner has installed its immutable handle.
+    /// Returns empty construction storage with selected `alarms` variant; no origin
+    /// is issued until the enclosing immutable configuration binding is installed.
     const fn base(alarms: Alarms) -> Self {
         Self {
             sensors: SENSOR_BASE,
@@ -340,6 +438,8 @@ impl AcquisitionState {
         }
     }
 
+    /// Advances transport publication revision; overflow becomes sticky zero so
+    /// consumers fall back to unconditional acceptance without affecting samples.
     fn publish_change(&mut self) {
         // Zero is sticky exhaustion; every subsequent snapshot is untracked.
         if self.publication != 0 {
@@ -347,6 +447,9 @@ impl AcquisitionState {
         }
     }
 
+    /// Invalidates existing history of channel `index` when its last-good sample
+    /// is stale or future-dated relative to `now` milliseconds. Panics for index >=8;
+    /// internal callers use the canonical channel arrays.
     fn prepare_history(
         &mut self,
         index: usize,
@@ -361,6 +464,10 @@ impl AcquisitionState {
         }
     }
 
+    /// Advances history/highlight/held-peak/snooze expiry at `now` milliseconds
+    /// using immutable optional `config`; reversed time clears held peaks and
+    /// invalidates alarm freshness, without inventing measurements. Publication
+    /// advances only for changed presentation state. Configured variant requires config.
     fn tick(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -413,6 +520,9 @@ impl AcquisitionState {
 
     // Build the final policy directly. Creating a legacy owner and replacing
     // its alarms kept several complete sampling-ring copies live on ARM.
+    /// Returns fresh state in `mode` with exact `expected_sources`, millisecond
+    /// `freshness` caps and chosen `alarms`. Issues one origin; exhaustion leaves
+    /// identity absent while all numeric/state operations remain available.
     fn with_policy(
         mode: DataMode,
         expected_sources: [Option<Source>; SENSOR_COUNT],
@@ -437,6 +547,9 @@ impl AcquisitionState {
         }
     }
 
+    /// Admits typed `sample` at monotonic `now_ms` using immutable optional `config`,
+    /// with no operating context. Returns the contextual admission result; rules
+    /// requiring context remain unavailable rather than inferring engine conditions.
     fn ingest_sample(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -448,6 +561,11 @@ impl AcquisitionState {
 
     /// Context must come from verified operating signals. Absent context keeps
     /// contextual rules unavailable; no inference from voltage or lambda alone.
+    /// Checks typed `sample` at `now_ms` milliseconds against immutable `config`
+    /// and optional verified `context`. Returns future/source/order errors before
+    /// mutation. Invalid numeric input consumes sample/status sequence, clears graph/
+    /// peak validity and updates alarms, returning InvalidValue while retaining
+    /// last-good values/statistics. Panics before mutation on raw sequence exhaustion.
     fn ingest_contextual(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -518,6 +636,10 @@ impl AcquisitionState {
         if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
     }
 
+    /// Publishes non-Valid/non-Stale `quality` for `sensor` at `at_ms` milliseconds,
+    /// using immutable `config` to clear matching holds/update alarms. Returns true
+    /// when changed; rejects regressed/identical status or unsupported quality.
+    /// Retains last-good statistics/source; panics before mutation on sequence exhaustion.
     fn mark_fault(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -547,6 +669,11 @@ impl AcquisitionState {
         true
     }
 
+    /// Admits Demo `values` in canonical channel order at `captured_ms`, using
+    /// immutable optional `config`. Returns whether any channel accepted a newer
+    /// finite/bounded sample; Vehicle mode returns false. Invalid/stale entries
+    /// leave their channel unchanged. Preflights global/all channel counters and
+    /// panics on exhaustion before partial mutation, then updates synthetic contexts.
     fn ingest_batch(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -606,6 +733,9 @@ impl AcquisitionState {
     }
 
     /// Acknowledged in the next published snapshot. Replays cannot reset twice.
+    /// Applies newer `generation`, clearing derived statistics and held peaks while
+    /// retaining raw values/quality/source. Returns true when applied, false for
+    /// zero/older/duplicate generations; alarm episode state is not reset.
     fn reset_statistics(
         &mut self,
         generation: u64,
@@ -622,6 +752,8 @@ impl AcquisitionState {
         true
     }
 
+    /// Returns the union of issuer, graph and warning exhaustion plus immutable
+    /// optional `config` identity status; reading does not restore or consume IDs.
     fn cache_exhaustion_status(
         &self,
         config: Option<&ValidatedConfig>,
@@ -650,6 +782,8 @@ impl AcquisitionState {
     // Keep publication scratch out of the async acquisition poll frame, which
     // is also resident while the much larger Vehicle constructor runs.
     #[inline(never)]
+    /// Returns a coherent copy with immutable optional `config` exhaustion metadata
+    /// and exact graph proofs where available. Does not tick freshness or hold expiry.
     fn snapshot(
         &self,
         config: Option<&ValidatedConfig>,
@@ -678,6 +812,9 @@ impl AcquisitionState {
         }
     }
 
+    /// Re-evaluates all enabled policy inputs at `now_ms` milliseconds from current
+    /// qualified values/contexts, using immutable `config` for configured rules.
+    /// Advances publication only for changed alerts; repeated samples cannot advance dwell.
     fn update_alarms(
         &mut self,
         config: Option<&ValidatedConfig>,
@@ -720,7 +857,9 @@ impl AcquisitionState {
     }
 }
 
+/// Restricts configuration handles to immutable borrows and owned validated boxes.
 mod sealed {
+    /// Private marker preventing externally switchable configuration providers.
     pub trait Sealed {}
     impl Sealed for &dashboard_config::ValidatedConfig {}
     #[cfg(feature = "alloc")]
@@ -729,13 +868,16 @@ mod sealed {
 
 /// An immutable configuration binding; only borrowed and boxed validated documents qualify.
 pub trait ConfigurationHandle: sealed::Sealed {
+    /// Returns the same immutable validated document for this handle's lifetime.
     fn configuration(&self) -> &ValidatedConfig;
 }
 impl ConfigurationHandle for &ValidatedConfig {
+    /// Returns the borrowed validated document without copying or rebinding it.
     fn configuration(&self) -> &ValidatedConfig { self }
 }
 #[cfg(feature = "alloc")]
 impl ConfigurationHandle for alloc::boxed::Box<ValidatedConfig> {
+    /// Returns the boxed validated document as a shared borrow.
     fn configuration(&self) -> &ValidatedConfig { self }
 }
 
@@ -798,25 +940,36 @@ impl ConfigurationHandle for alloc::boxed::Box<ValidatedConfig> {
 /// owner.tick(&config, 0);
 /// ```
 pub struct AcquisitionOwner<C: ConfigurationHandle> {
+    /// Immutable policy binding, absent only for legacy source/replay owners.
     configuration: Option<C>,
+    /// Mutable sampling/quality/policy state that cannot be replaced independently.
     state: AcquisitionState,
 }
+/// Firmware-friendly owner borrowing an immutable validated configuration when configured.
 pub type AcquisitionModel<'cfg> = AcquisitionOwner<&'cfg ValidatedConfig>;
 #[cfg(feature = "alloc")]
+/// Allocating host/browser owner with the same state implementation and boxed configuration.
 pub type OwnedAcquisitionModel = AcquisitionOwner<alloc::boxed::Box<ValidatedConfig>>;
 
 impl Default for AcquisitionModel<'_> {
+    /// Returns an empty legacy Vehicle owner with alarms disabled.
     fn default() -> Self { Self::new() }
 }
 impl<'cfg> AcquisitionModel<'cfg> {
+    /// Returns an empty Vehicle owner with generic typed-source checks and no
+    /// configured source policy or enabled alarms; does not issue ECU requests.
     pub fn new() -> Self {
         let mut owner = Self::session_base::<false>(None);
         owner.initialize_for_session(0);
         owner
     }
 
+    /// Returns an empty synthetic owner with legacy demo alarm fixtures; no data
+    /// is generated until explicitly ingested.
     pub fn demo() -> Self { Self::legacy(DataMode::Demo, demo_rules()) }
 
+    /// Returns unconfigured state in `mode` using per-channel `rules`; panics for
+    /// slot-mismatched rules. Issuer exhaustion disables proof, not data handling.
     fn legacy(
         mode: DataMode,
         rules: [Option<crate::alarms::Rule>; 8],
@@ -832,6 +985,9 @@ impl<'cfg> AcquisitionModel<'cfg> {
         }
     }
 
+    /// Returns a Vehicle owner immutably bound to `config`, resolving allowed
+    /// sources for response CAN ID `ecu` and request ID ecu-8. Invalid/unqualified
+    /// routes resolve absent, not live support. Performs no transport operation.
     pub fn configured(
         config: &'cfg ValidatedConfig,
         ecu: u16,
@@ -844,6 +1000,8 @@ impl<'cfg> AcquisitionModel<'cfg> {
     // Diagnostics construction only; neither base nor finishing is a public
     // acquisition operation. None remains valid issuer exhaustion after finish.
     #[inline(always)]
+    /// Returns construction-only empty storage bound to `config`. Panics unless
+    /// CONFIGURED matches config presence; caller must initialize once before use.
     pub(crate) fn session_base<const CONFIGURED: bool>(config: Option<&'cfg ValidatedConfig>) -> Self {
         assert!(
             CONFIGURED == config.is_some(),
@@ -861,6 +1019,9 @@ impl<'cfg> AcquisitionModel<'cfg> {
         }
     }
 
+    /// Finishes freshly constructed session storage for responder `ecu`, issuing
+    /// one origin and binding configured sources when present. Construction-only:
+    /// must not be rerun on a populated owner's sampling/policy state.
     pub(crate) fn initialize_for_session(
         &mut self,
         ecu: u16,
@@ -873,6 +1034,9 @@ impl<'cfg> AcquisitionModel<'cfg> {
         }
     }
 
+    /// Returns exact admitted OBD sources from immutable `config` for response
+    /// `ecu` and checked ecu-8 request; disabled, candidate, non-OBD or mismatched
+    /// routes become `None` rather than inheriting a generic PID.
     fn configured_sources(
         config: &ValidatedConfig,
         ecu: u16,
@@ -888,6 +1052,9 @@ impl<'cfg> AcquisitionModel<'cfg> {
     }
 }
 impl<C: ConfigurationHandle> AcquisitionOwner<C> {
+    /// Returns a fresh owner holding immutable `configuration` in `mode` with
+    /// supplied per-channel `sources`; initializes policy/history without an
+    /// intermediate legacy state allocation.
     fn with_configuration(
         configuration: C,
         mode: DataMode,
@@ -901,6 +1068,9 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         owner
     }
 
+    /// Initializes fresh configured storage for `mode` and exact `sources`, using
+    /// its already installed immutable handle. Panics for absent configuration or
+    /// wrong policy variant; must run only once during construction.
     fn initialize_bound_policy(
         &mut self,
         mode: DataMode,
@@ -924,14 +1094,21 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         }
     }
 
+    /// Returns a synthetic owner bound to immutable `config` (borrowed or boxed)
+    /// with Demo sources for all channels; preserves the configuration's policy/history.
     pub fn demo_configured(config: C) -> Self {
         Self::with_configuration(config, DataMode::Demo, [Some(Source::Demo); SENSOR_COUNT])
     }
 
+    /// Returns the immutable bound document, or `None` for legacy owners.
     pub fn configuration(&self) -> Option<&ValidatedConfig> {
         self.configuration.as_ref().map(ConfigurationHandle::configuration)
     }
 
+    /// Admits typed `sample` at monotonic `now_ms` milliseconds without operating
+    /// context. Returns success or sample error. Future/source/order rejection
+    /// preserves state; invalid numeric input publishes InvalidPayload and clears
+    /// graph/holds while retaining last-good statistics. Panics on sequence exhaustion.
     pub fn ingest_sample(
         &mut self,
         sample: Sample,
@@ -945,6 +1122,9 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
     }
 
     /// Context must come from verified operating signals, with matching source and time.
+    /// Admits `sample` with optional `context` at monotonic `now_ms` milliseconds.
+    /// Returns the same admission/error semantics as [`Self::ingest_sample`]; context
+    /// qualification belongs to the rule engine and is not inferred from the value.
     pub fn ingest_contextual(
         &mut self,
         sample: Sample,
@@ -959,6 +1139,10 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         )
     }
 
+    /// In Demo mode, ingests canonical `values` in sensor order at `captured_ms`
+    /// milliseconds; returns whether any valid newer entry was accepted. Vehicle
+    /// mode rejects batches. Invalid entries are ignored, unlike typed invalid-value
+    /// fault publication. Panics before mutation if any required sequence exhausts.
     pub fn ingest_batch(
         &mut self,
         values: [f32; SENSOR_COUNT],
@@ -971,6 +1155,9 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         )
     }
 
+    /// Marks `sensor` with fault `quality` at monotonic `at_ms` milliseconds,
+    /// preserving last-good statistics but clearing history/holds/context. Returns
+    /// false for Valid/Stale, regressed or duplicate statuses; panics on sequence exhaustion.
     pub fn mark_fault(
         &mut self,
         sensor: SensorId,
@@ -986,6 +1173,8 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
     }
 
     /// Advance freshness and invalidate expired dwell without inventing measurements.
+    /// Uses monotonic `now_ms` milliseconds; clock reversal clears held peaks and
+    /// graph continuity and makes policy data unavailable rather than rewinding dwell.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -997,6 +1186,9 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
     }
 
     /// Call after admitting all iteration inputs, then tick timed expiries and publish.
+    /// Applies fenced `command` at monotonic `now_ms` milliseconds after updating
+    /// alarm qualification; returns accepted/rejected rule masks. Legacy owners
+    /// reject every command; configured commands require current run/event identity.
     pub fn apply_warning_command(
         &mut self,
         command: WarningCommand,
@@ -1019,6 +1211,9 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         result
     }
 
+    /// Applies newer reset `generation` and returns true, clearing derived
+    /// statistics/holds while retaining current values and alarm episodes. Returns
+    /// false for zero/duplicate/older requests; acknowledgment appears in snapshots.
     pub fn reset_statistics(
         &mut self,
         generation: u64,
@@ -1026,14 +1221,18 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         self.state.reset_statistics(generation)
     }
 
+    /// Returns current bounded exhaustion causes without issuing IDs or mutating state.
     pub fn cache_exhaustion_status(&self) -> CacheExhaustionStatus {
         self.state.cache_exhaustion_status(self.configuration())
     }
 
     #[inline(never)]
+    /// Returns a coherent presentation copy; caller ticks timed state before
+    /// publication and readers still qualify freshness against their current clock.
     pub fn snapshot(&self) -> DashboardSnapshot { self.state.snapshot(self.configuration()) }
 }
 
+/// Legacy highlight policy: temperature maxima, voltage range, none for boost/lambda.
 const PEAK_MODES: [PeakMode; SENSOR_COUNT] = [
     PeakMode::None,
     PeakMode::Maximum,
@@ -1046,6 +1245,7 @@ const PEAK_MODES: [PeakMode; SENSOR_COUNT] = [
 ];
 
 #[cfg(test)]
+/// Construction, identity exhaustion and retained-render correctness regressions.
 mod cache_tests {
     extern crate std;
     use std::boxed::Box;
@@ -1058,6 +1258,8 @@ mod cache_tests {
     use crate::render::FpsMode;
     use crate::vehicle_status::VehicleStatus;
 
+    /// Returns unit after checking construction variant/handle agreement and fresh
+    /// initialization; panics if mismatched variants are accepted or bindings drift.
     #[test]
     fn fixed_construction_variant_matches_only_its_bound_configuration() {
         let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
@@ -1085,6 +1287,8 @@ mod cache_tests {
         assert_eq!(configured.state.mode, DataMode::Vehicle);
     }
 
+    /// Returns unit after comparing initial sources/history/quality across owner
+    /// constructors; panics if configured initialization diverges from its policy.
     #[test]
     fn constructor_initial_fields_preserve_history_policy_and_empty_runtime_state() {
         let mut raw = dashboard_config::default_config();
@@ -1151,6 +1355,8 @@ mod cache_tests {
         assert_eq!(demo.snapshot().warning_event_serial(), 0);
     }
 
+    /// Returns unit after publication overflow disables deduplication while samples,
+    /// ticks and reset acknowledgments continue; panics on ID reuse or frozen state.
     #[test]
     fn publication_exhaustion_disables_deduplication_without_freezing_state() {
         let mut model = AcquisitionModel::demo();
@@ -1177,6 +1383,8 @@ mod cache_tests {
     }
 
     #[cfg(feature = "alloc")]
+    /// Returns unit after exhausted borrowed/owned models retain their distinct
+    /// immutable policies and coherent samples; panics on configuration aliasing.
     #[test]
     fn exhausted_origins_preserve_owned_and_borrowed_policy_binding() {
         use dashboard_config::{default_config, validate};
@@ -1219,6 +1427,8 @@ mod cache_tests {
         assert_eq!(exhausted.issue(), Err(()));
     }
 
+    /// Returns unit after the final issued origin remains valid and exhaustion
+    /// diagnostics stay sticky through resets/invalid data; panics on false reporting.
     #[test]
     fn actual_origin_failure_is_sticky_and_last_success_has_no_diagnostic() {
         let issuer = OriginIssuer::new(u32::MAX - 1);
@@ -1239,6 +1449,8 @@ mod cache_tests {
         );
     }
 
+    /// Returns unit after graph-proof exhaustion publishes diagnostics without a
+    /// new sample and both retained framebuffers match full redraws; panics on reuse.
     #[test]
     fn exhausted_revision_publishes_without_sample_and_never_freezes_either_buffer() {
         let mut model = AcquisitionModel::demo();
@@ -1304,8 +1516,11 @@ mod cache_tests {
 }
 
 #[cfg(test)]
+/// Warning-run exhaustion and borrowed/boxed command-path equivalence regressions.
 mod warning_tests {
     use super::*;
+    /// Returns one validated latched boost rule with 100 ms dwell and reachable
+    /// acknowledgment; panics if the fixture no longer satisfies shared validation.
     fn config() -> ValidatedConfig {
         let mut c = dashboard_config::default_config();
         c.widgets.truncate(1);
@@ -1318,6 +1533,8 @@ mod warning_tests {
         c.controls.screens[0].buttons[0].tap = dashboard_config::ControlAction::AcknowledgeWarnings;
         dashboard_config::validate(c).unwrap()
     }
+    /// Returns unit after an exhausted run retains warning visibility but rejects
+    /// acknowledgment identity; panics if untracked commands alter the episode.
     #[test]
     fn exhausted_run_keeps_warning_visibility_and_rejects_commands() {
         let c = config();
@@ -1345,6 +1562,8 @@ mod warning_tests {
         assert!(!e.acknowledged);
     }
     #[cfg(feature = "alloc")]
+    /// Returns unit after borrowed/boxed owners apply equivalent run-adjusted
+    /// commands and episode eligibility; panics on facade behavior divergence.
     #[test]
     fn owned_alias_uses_the_same_command_and_episode_implementation() {
         let c = config();

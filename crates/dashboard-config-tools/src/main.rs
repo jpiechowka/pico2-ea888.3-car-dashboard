@@ -1,9 +1,16 @@
+//! Configuration CLI: bounded import, canonical encoding and explicit output publication.
+
 use std::path::Path;
 
 use dashboard_config::{default_config, to_json, validate};
 use dashboard_config_tools::{compile, import, sha256_hex};
 mod publication;
 
+/// Dispatch process arguments; return diagnostics for usage, admission or filesystem errors.
+///
+/// `default`/`compile` replace only the explicitly selected output after complete
+/// encoding; `inspect`/profile/options commands write stdout. Invalid inputs never
+/// silently become defaults. A broken compiled-in default is an internal panic.
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let usage = "usage: dashboard-config default <output.json|output.eav> | compile <input.json|input.eav> \
@@ -64,10 +71,14 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-// The unoptimized CLI decode/migration path exceeds Windows' 1 MiB main stack.
-// Only this host CLI worker gets a fixed 2 MiB reserve; firmware limits stay separate.
+/// Host CLI worker reserve, bytes; unoptimized migration exceeds Windows' 1 MiB default.
+/// Firmware stack bounds are independent of this host-only allowance.
 const CLI_STACK_BYTES: usize = 2 * 1024 * 1024;
 
+/// Run the CLI on its reserved worker stack; print failures and exit with code 1.
+///
+/// Spawn failures and unwind panics become diagnostics. Process-aborting faults,
+/// including stack overflow/abort panic builds, cannot be recovered by `join`.
 fn main() {
     let result = std::thread::Builder::new()
         .name("dashboard-config-cli".into())

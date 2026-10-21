@@ -1,3 +1,5 @@
+//! Control-session action matrices, observation conservation and completed-frame shutdown/recovery fences.
+
 use dashboard_config::{ButtonId, ControlAction, ControlMap, ValidatedConfig};
 use dashboard_core::control_session::ControlSession;
 use dashboard_core::controls::{ControlBatch, ControlEvent};
@@ -8,8 +10,10 @@ use dashboard_core::pages::Page;
 use dashboard_core::render::FpsMode;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+/// Returns validated stock settings; panics if the shared default becomes invalid.
 fn config() -> ValidatedConfig { dashboard_config::validate(dashboard_config::default_config()).unwrap() }
 
+/// Every acknowledgment feedback renders its exact label; pending/busy feedback persists while final results expire.
 #[test]
 fn every_warning_feedback_constructs_draws_and_expires_without_losing_its_meaning() {
     use dashboard_core::dashboard::Overlay;
@@ -39,6 +43,8 @@ fn every_warning_feedback_constructs_draws_and_expires_without_losing_its_meanin
         assert_eq!(controls.overlay(&c).is_some(), remains_pending);
     }
 }
+/// Applies one button-A `action` to `s` under `c` at `now` milliseconds with an empty log history.
+/// Returns resulting control effects; panics if fixture time cannot convert to microseconds or admission fails.
 fn apply_action(
     s: &mut ControlSession,
     c: &ValidatedConfig,
@@ -62,6 +68,7 @@ fn apply_action(
         now,
     )
 }
+/// Protected recovery returns Debug to Dashboard/Full and clears feedback after a dimming action.
 #[test]
 fn brightness_recovery_and_round_trip() {
     let c = config();
@@ -89,6 +96,7 @@ fn brightness_recovery_and_round_trip() {
     assert_eq!(s.backlight().compare(), 10000);
     assert!(s.popup().is_none());
 }
+/// Statistics-reset intent keeps its observation separate and displays feedback only after producer acknowledgment.
 #[test]
 fn reset_waits_for_acknowledgment() {
     let c = config();
@@ -102,6 +110,7 @@ fn reset_waits_for_acknowledgment() {
     assert_eq!(s.popup(), Some(dashboard_core::popup::Popup::Reset(2)));
 }
 
+/// Returns equal observed/accepted timestamps of `now` microseconds with `events` represented inputs; no validation.
 fn observation(
     now: u64,
     events: u32,
@@ -112,6 +121,7 @@ fn observation(
         events,
     }
 }
+/// Returns validated stock settings plus empty view 9; fixture capacity/admission failure panics.
 fn multi_config() -> ValidatedConfig {
     let mut c = dashboard_config::default_config();
     c.views
@@ -124,17 +134,27 @@ fn multi_config() -> ValidatedConfig {
     dashboard_config::validate(c).unwrap()
 }
 
+/// Independently expected visible state, captured before applying one matrix action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ExpectedState {
+    /// Selected Dashboard/Debug/Logs screen.
     page: Page,
+    /// Stable configured view ID, preserved across screen navigation.
     view: u8,
+    /// Logical brightness including pending Off.
     brightness: dashboard_core::backlight::Brightness,
+    /// Actual PWM compare in 0..=10000, which can lag logical Off.
     compare: u16,
+    /// Selected FPS text mode.
     fps: FpsMode,
+    /// Physical boost-unit toggle, true for PSI.
     boost_psi: bool,
+    /// Current timed feedback, or none.
     popup: Option<dashboard_core::popup::Popup>,
+    /// Frozen log sequence anchor; none follows newest records.
     anchor: Option<u64>,
 }
+/// Returns validated views 1/9/12 for forward/backward wrapping; fixture admission failure panics.
 fn matrix_config() -> ValidatedConfig {
     let mut c = multi_config().config().clone();
     c.views
@@ -147,6 +167,7 @@ fn matrix_config() -> ValidatedConfig {
     dashboard_config::validate(c).unwrap()
 }
 impl ExpectedState {
+    /// Returns a nonmutating copy of all action-relevant visible state from `s`.
     fn capture(s: &ControlSession) -> Self {
         Self {
             page: s.page(),
@@ -161,6 +182,8 @@ impl ExpectedState {
     }
 }
 
+/// Seeds `s` under `c` on `page`, with Debug at 95% or Logs anchored at 28.
+/// Returns the 30-entry log history used by actions; panics if baseline state differs.
 fn matrix_setup(
     s: &mut ControlSession,
     c: &ValidatedConfig,
@@ -201,6 +224,7 @@ fn matrix_setup(
 
 /// Independent expected outcomes, including deliberate no-ops. Both matrices
 /// compare the entire state and every effect field against this action table.
+/// Checks resulting `s` and `effect` against `before` plus `action`; panics on any state/count/observation mismatch.
 fn assert_action_result(
     s: &ControlSession,
     effect: &dashboard_core::control_session::ControlEffects,
@@ -325,6 +349,7 @@ fn assert_action_result(
         "reset {page:?}/{action:?}"
     );
 }
+/// Exhausts every button action against all three pages, checking full state and independent effects/ignored counts.
 #[test]
 fn all_compatible_actions_and_invalid_page_pairs() {
     use ControlAction::*;
@@ -368,6 +393,7 @@ fn all_compatible_actions_and_invalid_page_pairs() {
         }
     }
 }
+/// Unit/FPS changes and wrapped view selection survive a full screen round trip; view feedback expires at 1500ms.
 #[test]
 fn default_dashboard_actions_and_view_preservation() {
     let c = multi_config();
@@ -388,6 +414,7 @@ fn default_dashboard_actions_and_view_preservation() {
     s.expire_feedback(1507);
     assert!(s.popup().is_none());
 }
+/// Debug brightness saturates at 100%, decrements by 5% and toggles off/on after feedback expiry.
 #[test]
 fn debug_defaults_saturate_and_toggle() {
     let c = config();
@@ -405,6 +432,7 @@ fn debug_defaults_saturate_and_toggle() {
     apply_action(&mut s, &c, ControlAction::ToggleBacklight, 1505);
     assert_ne!(s.backlight().compare(), 0);
 }
+/// Log actions ignore empty/no-op requests and move through actual sequence IDs before restoring live mode.
 #[test]
 fn logs_actions_use_actual_history() {
     let c = config();
@@ -437,6 +465,8 @@ fn logs_actions_use_actual_history() {
     assert!(s.log_anchor().is_none());
     assert_eq!(action(&mut s, ControlAction::LogsLive, 6).ignored, 1);
 }
+/// A custom encoder page transition consumes one click and counts lower-priority button/motion/remaining clicks as
+/// ignored.
 #[test]
 fn custom_click_transition_wins_over_motion_and_buttons() {
     let c = multi_config();
@@ -464,6 +494,8 @@ fn custom_click_transition_wins_over_motion_and_buttons() {
     assert_eq!(result.observations.unwrap().events, 1);
     assert_eq!(result.ignored, 9);
 }
+/// Stable button identity order chooses navigation; navigating to the current page does not suppress a later brightness
+/// action.
 #[test]
 fn raw_button_order_and_self_navigation() {
     let c = config();
@@ -515,6 +547,7 @@ fn raw_button_order_and_self_navigation() {
         dashboard_core::backlight::Brightness::Percent(95)
     );
 }
+/// Reverse input arrival timestamps preserve the aggregate time span/count, with bounded maximum rotation/click work.
 #[test]
 fn reverse_timestamps_aggregate_without_loss_and_maximum_batch_is_bounded() {
     let c = multi_config();
@@ -544,6 +577,7 @@ fn reverse_timestamps_aggregate_without_loss_and_maximum_batch_is_bounded() {
     assert_eq!(s.view_id(), 9);
     assert_eq!(s.backlight().brightness(), dashboard_core::backlight::Brightness::Off);
 }
+/// Invalid counts/timestamp intervals, regressed clocks and overflowing observation aggregation cannot execute actions.
 #[test]
 fn malformed_observations_overflow_and_time_regression_have_no_effect() {
     let c = multi_config();
@@ -610,6 +644,7 @@ fn malformed_observations_overflow_and_time_regression_have_no_effect() {
     assert_eq!(result.ignored, 1);
     assert_eq!(s.view_id(), 1);
 }
+/// Replacement feedback cancels pending Off; a late statistics acknowledgment on Debug produces no popup.
 #[test]
 fn ordinary_feedback_interrupts_pending_off_and_ack_off_dashboard_is_quiet() {
     let c = config();
@@ -625,12 +660,14 @@ fn ordinary_feedback_interrupts_pending_off_and_ack_off_dashboard_is_quiet() {
     assert!(s.popup().is_none());
 }
 
+/// Returns a buffer-A token with caller-selected `sequence`; does not enforce monotonicity or reserve a buffer.
 fn frame(sequence: u64) -> dashboard_core::display::pipeline::FrameToken {
     dashboard_core::display::pipeline::FrameToken {
         buffer: dashboard_core::display::pipeline::BufferId::A,
         sequence,
     }
 }
+/// Protected recovery cancels every shutdown phase on each screen, retains view/FPS/units and ignores late completions.
 #[test]
 fn recovery_cancels_all_shutdown_phases_on_every_screen_and_retains_preferences() {
     for page in Page::ALL {
@@ -703,6 +740,7 @@ fn recovery_cancels_all_shutdown_phases_on_every_screen_and_retains_preferences(
         }
     }
 }
+/// Off waits two seconds from feedback completion and then the exact clear-frame completion before zero duty.
 #[test]
 fn off_requires_completed_feedback_then_completed_clear() {
     let c = config();
@@ -725,6 +763,7 @@ fn off_requires_completed_feedback_then_completed_clear() {
     s.backlight_mut().frame_completed(frame(2), 6502);
     assert_eq!(s.backlight().compare(), 0);
 }
+/// One-view navigation and disabled bindings consume no actions and account for every ignored input event.
 #[test]
 fn single_view_and_none_bindings_are_ignored() {
     let c = config();
@@ -754,6 +793,7 @@ fn single_view_and_none_bindings_are_ignored() {
     );
 }
 
+/// Encoder mappings obey the full page/action oracle; brightness saturation accepts only the first effective click.
 #[test]
 fn encoder_custom_actions_respect_every_page_pair_and_count_saturated_clicks() {
     use ControlAction::*;
@@ -824,6 +864,7 @@ fn encoder_custom_actions_respect_every_page_pair_and_count_saturated_clicks() {
     assert_eq!(effect.observations.unwrap().events, 1);
     assert_eq!(s.backlight().compare(), 10000);
 }
+/// Missing or count-mismatched encoder observations preserve state and account for all supplied events as ignored.
 #[test]
 fn missing_and_mismatched_encoder_metadata_are_counted_without_execution() {
     let c = multi_config();
@@ -855,6 +896,7 @@ fn missing_and_mismatched_encoder_metadata_are_counted_without_execution() {
     }
 }
 
+/// Future input timestamps and millisecond-to-microsecond overflow reject even protected recovery without mutation.
 #[test]
 fn future_observations_and_consumption_overflow_fail_closed() {
     let c = multi_config();
@@ -898,6 +940,7 @@ fn future_observations_and_consumption_overflow_fail_closed() {
     assert!(!result.recovered);
 }
 
+/// Recovery with maximum event count still counts independently discarded motion without saturated-total subtraction.
 #[test]
 fn priority_discard_counts_do_not_subtract_from_a_saturated_total() {
     let c = config();
@@ -916,6 +959,7 @@ fn priority_discard_counts_do_not_subtract_from_a_saturated_total() {
     assert_eq!(effect.observations.unwrap().events, u32::MAX);
 }
 
+/// Submillisecond timestamps inside the current clock bucket remain valid for ordinary inputs and recovery.
 #[test]
 fn observations_in_current_millisecond_bucket_are_accepted_including_recovery() {
     let c = multi_config();
@@ -958,6 +1002,7 @@ fn observations_in_current_millisecond_bucket_are_accepted_including_recovery() 
     assert_eq!(s.view_id(), 9);
 }
 
+/// Acknowledge emits intent/observation without implying producer success or creating a pending statistics reset.
 #[test]
 fn acknowledge_emits_intent_without_success_or_statistics_reset() {
     let c = config();
@@ -971,6 +1016,7 @@ fn acknowledge_emits_intent_without_success_or_statistics_reset() {
     assert!(s.popup().is_none());
 }
 
+/// Pending/busy warning feedback has no timer expiry; a final result expires and cannot confirm statistics reset.
 #[test]
 fn warning_feedback_remains_pending_until_result_and_never_confirms_reset() {
     use dashboard_host_validation::popup::Popup;

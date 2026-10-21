@@ -1,67 +1,13 @@
-//! # Clock configuration for the RP2040 and RP235x microcontrollers.
+//! Boot-time clock tree configuration and cached frequency metadata in hertz.
 //!
-//! # Clock Configuration API
-//!
-//! This module provides both high-level convenience functions and low-level manual
-//! configuration options for the RP2040 clock system.
-//!
-//! ## High-Level Convenience Functions
-//!
-//! For most users, these functions provide an easy way to configure clocks:
-//!
-//! - `ClockConfig::system_freq(125_000_000)` - Set system clock to a specific frequency with automatic voltage scaling
-//! - `ClockConfig::crystal(12_000_000)` - Default configuration with 12MHz crystal giving 125MHz system clock
-//!
-//! ## Manual Configuration
-//!
-//! For advanced users who need precise control:
-//!
-//! ```rust,ignore
-//! // Start with default configuration and customize it
-//! let mut config = ClockConfig::default();
-//!
-//! // Set custom PLL parameters
-//! config.xosc = Some(XoscConfig {
-//!     hz: 12_000_000,
-//!     sys_pll: Some(PllConfig {
-//!         refdiv: 1,
-//!         fbdiv: 200,
-//!         post_div1: 6,
-//!         post_div2: 2,
-//!     }),
-//!     // ... other fields
-//! });
-//!
-//! // Set voltage for overclocking
-//! config.core_voltage = CoreVoltage::V1_15;
-//! ```
-//!
-//! ## Examples
-//!
-//! ### Standard 125MHz (rp2040) or 150Mhz (rp235x) configuration
-//! ```rust,ignore
-//! let config = ClockConfig::crystal(12_000_000);
-//! ```
-//!
-//! Or using the default configuration:
-//! ```rust,ignore
-//! let config = ClockConfig::default();
-//! ```
-//!
-//! ### Overclock to 200MHz
-//! ```rust,ignore
-//! let config = ClockConfig::system_freq(200_000_000);
-//! ```
-//!
-//! ### Manual configuration for advanced scenarios
-//! ```rust,ignore
-//! use embassy_rp::clocks::{ClockConfig, XoscConfig, PllConfig, CoreVoltage};
-//!
-//! // Start with defaults and customize
-//! let mut config = ClockConfig::default();
-//! config.core_voltage = CoreVoltage::V1_15;
-//! // Set other parameters as needed...
-//! ```
+//! [`ClockConfig::crystal`] targets a 12 MHz board crystal by default;
+//! [`ClockConfig::system_freq`] searches PLL ratios and may return a nearby rate.
+//! Reported frequencies are calculated, not measured. ROSC rates are caller estimates;
+//! atomics publish individual clocks, not a coherent runtime reconfiguration snapshot.
+//! Initialization is one-shot and may leave hardware partially configured on panic.
+//! Voltage/frequency choices do not establish electrical or thermal qualification.
+//! See the [SDK PLL sequence](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pll/pll.c)
+//! and [RP2350 clock registers](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2350/hardware_regs/include/hardware/regs/clocks.h).
 
 use core::arch::asm;
 use core::marker::PhantomData;
@@ -76,7 +22,9 @@ use crate::pac::common::{RW, Reg};
 use crate::{Peri, pac, reset};
 
 // VCO range from 750 MHz to 1600 MHz (RP2040 datasheet 20 February 2025 2.18.1, RP2350 datasheet 29 July 2025 8.6.1)
+/// Minimum admitted PLL VCO rate in hertz.
 static VCO_MIN: u32 = 750_000_000;
+/// Maximum admitted PLL VCO rate in hertz.
 static VCO_MAX: u32 = 1_600_000_000;
 
 // NOTE: all gpin handling is commented out for future reference.
@@ -96,23 +44,35 @@ pub enum ClockError {
     UnexpectedCoreVoltageRead,
 }
 
+/// Independently published boot-time rates; zero means absent or not yet initialized.
 struct Clocks {
+    /// Crystal oscillator frequency in hertz; zero before initialization or when omitted.
     xosc: AtomicU32,
+    /// System clock frequency in hertz; zero before initialization or when omitted.
     sys: AtomicU32,
+    /// Reference clock frequency in hertz; zero before initialization or when omitted.
     reference: AtomicU32,
+    /// System PLL frequency in hertz; zero before initialization or when omitted.
     pll_sys: AtomicU32,
+    /// USB PLL frequency in hertz; zero before initialization or when omitted.
     pll_usb: AtomicU32,
+    /// USB peripheral clock frequency in hertz; zero before initialization or when omitted.
     usb: AtomicU32,
+    /// ADC peripheral clock frequency in hertz; zero before initialization or when omitted.
     adc: AtomicU32,
     // See above re gpin handling being commented out
     // gpin0: AtomicU32,
     // gpin1: AtomicU32,
+    /// Estimated ring oscillator frequency in hertz; zero before initialization or when omitted.
     rosc: AtomicU32,
+    /// UART/SPI peripheral clock frequency in hertz; zero before initialization or when omitted.
     peri: AtomicU32,
     #[cfg(feature = "rp2040")]
+    /// RTC clock admitted to 16 bits frequency in hertz; zero before initialization or when omitted.
     rtc: AtomicU16,
 }
 
+/// Global calculated rates; relaxed loads require completed startup for a coherent tree.
 static CLOCKS: Clocks = Clocks {
     xosc: AtomicU32::new(0),
     sys: AtomicU32::new(0),
@@ -173,7 +133,7 @@ pub enum CoreVoltage {
     V1_05 = 0b1010,
     /// 1.10V - Default voltage level
     V1_10 = 0b1011,
-    /// 1.15V - Required for overclocking to 133-200MHz
+    /// 1.15 V regulator selector; selecting it does not qualify an overclock.
     V1_15 = 0b1100,
     /// 1.20V
     V1_20 = 0b1101,
@@ -231,8 +191,8 @@ pub enum CoreVoltage {
 }
 
 impl CoreVoltage {
-    /// Get the recommended Brown-Out Detection (BOD) setting for this voltage.
-    /// Sets the BOD threshold to approximately 80% of the core voltage.
+    /// Returns the policy BOD selector for this voltage; does not write hardware.
+    /// Ratios vary by chip/voltage (approximately 72-94% on RP235x).
     fn recommended_bod(self) -> u8 {
         #[cfg(feature = "rp2040")]
         match self {
@@ -265,8 +225,9 @@ impl CoreVoltage {
             CoreVoltage::V1_15 => 0b01001, // 0.860V (~75% of 1.15V)
             CoreVoltage::V1_20 => 0b01010, // 0.903V (~75% of 1.20V)
             CoreVoltage::V1_25 => 0b01010, // 0.903V (~72% of 1.25V)
-            CoreVoltage::V1_30 => 0b01011, // 0.946V (~73% of 1.30V)
-                                            // all others: 0.946V (see CoreVoltage: we do not support setting Voltages higher than 1.30V at this point)
+            CoreVoltage::V1_30 => 0b01011, /* 0.946V (~73% of 1.30V)
+                                             * all others: 0.946V (see CoreVoltage: we do not support setting
+                                             * Voltages higher than 1.30V at this point) */
         }
     }
 }
@@ -274,27 +235,28 @@ impl CoreVoltage {
 /// Clock configuration.
 #[non_exhaustive]
 pub struct ClockConfig {
-    /// Ring oscillator configuration.
+    /// Ring oscillator setup/estimated rate; `None` leaves it unconfigured and records zero.
     pub rosc: Option<RoscConfig>,
-    /// External oscillator configuration.
+    /// Crystal and PLL setup; `None` records all three frequencies as zero.
     pub xosc: Option<XoscConfig>,
     /// Reference clock configuration.
     pub ref_clk: RefClkConfig,
     /// System clock configuration.
     pub sys_clk: SysClkConfig,
-    /// Peripheral clock source configuration.
+    /// UART/SPI clock source; `None` leaves those peripherals in reset.
     pub peri_clk_src: Option<PeriClkSrc>,
-    /// USB clock configuration.
+    /// USB clock setup; `None` leaves USB in reset.
     pub usb_clk: Option<UsbClkConfig>,
-    /// ADC clock configuration.
+    /// ADC clock setup; `None` leaves ADC in reset.
     pub adc_clk: Option<AdcClkConfig>,
-    /// RTC clock configuration.
+    /// RTC clock setup; `None` leaves RTC in reset.
     #[cfg(feature = "rp2040")]
     pub rtc_clk: Option<RtcClkConfig>,
     /// Core voltage scaling. Defaults to 1.10V.
     pub core_voltage: CoreVoltage,
     /// Voltage stabilization delay in microseconds.
-    /// If not set, defaults will be used based on voltage level.
+    /// `None`: 1000 us at 1.15 V, 2000 us at 1.20-1.30 V, otherwise zero.
+    /// Applied only when voltage changes; cycles use the configured ROSC estimate.
     pub voltage_stabilization_delay_us: Option<u32>,
     // See above re gpin handling being commented out
     // gpin0: Option<(u32, Gpin<'static, AnyPin>)>,
@@ -302,16 +264,9 @@ pub struct ClockConfig {
 }
 
 impl Default for ClockConfig {
-    /// Creates a minimal default configuration with safe values.
-    ///
-    /// This configuration uses the ring oscillator (ROSC) as the clock source
-    /// and sets minimal defaults that guarantee a working system. It's intended
-    /// as a starting point for manual configuration.
-    ///
-    /// Most users should use one of the more specific configuration functions:
-    /// - `ClockConfig::crystal()` - Standard configuration with external crystal
-    /// - `ClockConfig::rosc()` - Configuration using only the internal oscillator
-    /// - `ClockConfig::system_freq()` - Configuration for a specific system frequency
+    /// Returns an incomplete manual template: no oscillator is configured, although
+    /// reference/system sources select ROSC. Fill the source configuration before
+    /// `init`, otherwise its nonzero reference-frequency assertion panics.
     fn default() -> Self {
         Self {
             rosc: None,
@@ -340,10 +295,9 @@ impl Default for ClockConfig {
 }
 
 impl ClockConfig {
-    /// Clock configuration derived from external crystal.
-    ///
-    /// This uses default settings for most parameters, suitable for typical use cases.
-    /// For manual control of PLL parameters, use `new_manual()` or modify the struct fields directly.
+    /// Returns a tree based on `crystal_hz`, without validating or touching hardware.
+    /// Fixed PLL ratios yield 125 MHz (RP2040) or 150 MHz (RP235x) system and 48 MHz
+    /// USB/ADC only with a 12 MHz crystal. Other crystals require reviewing all ratios.
     pub fn crystal(crystal_hz: u32) -> Self {
         Self {
             rosc: Some(RoscConfig {
@@ -409,7 +363,8 @@ impl ClockConfig {
         }
     }
 
-    /// Clock configuration from internal oscillator.
+    /// Returns a ROSC-only tree estimating 140 MHz system/peripheral and 46.7 MHz ADC.
+    /// USB is omitted; the estimate is uncalibrated and is not a guaranteed silicon rate.
     pub fn rosc() -> Self {
         Self {
             rosc: Some(RoscConfig {
@@ -452,39 +407,13 @@ impl ClockConfig {
         }
     }
 
-    /// Configure clocks derived from an external crystal with specific system frequency.
-    ///
-    /// This function calculates optimal PLL parameters to achieve the requested system
-    /// frequency. This only works for the usual 12MHz crystal. In case a different crystal is used,
-    /// You will have to set the PLL parameters manually.
-    ///
-    /// # Arguments
-    ///
-    /// * `sys_freq_hz` - The desired system clock frequency in Hz
-    ///
-    /// # Returns
-    ///
-    /// A ClockConfig configured to achieve the requested system frequency using the
-    /// the usual 12Mhz crystal, or an error if no valid parameters can be found.
-    ///
-    /// # Note on core voltage:
-    ///
-    /// **For RP2040**:
-    /// To date the only officially documented core voltages (see Datasheet section 2.15.3.1. Instances) are:
-    /// - Up to 133MHz: V1_10 (default)
-    /// - Above 133MHz: V1_15, but in the context of the datasheet covering reaching up to 200Mhz
-    /// That way all other frequencies below 133MHz or above 200MHz are not explicitly documented and not covered here.
-    /// In case You want to go below 133MHz or above 200MHz and want a different voltage, You will have to set that manually and with caution.
-    ///
-    /// **For RP235x**:
-    /// At this point in time there is no official manufacturer endorsement for running the chip on other core voltages and/or other clock speeds than the defaults.
-    /// Using this function is experimental and may not work as expected or even damage the chip.
-    ///
-    /// # Returns
-    ///
-    /// A Result containing either the configured ClockConfig or a ClockError.
+    /// Returns a 12 MHz crystal tree targeting `hz`; nearest achievable PLL rate is
+    /// accepted without a tolerance bound. `Err(InvalidPllParameters)` means no candidate.
+    /// RP2040 selects 1.15 V above requested 133 MHz, otherwise 1.10 V; RP235x stays
+    /// at 1.10 V. This policy does not validate overclock safety or every peripheral rate.
     pub fn system_freq(hz: u32) -> Result<Self, ClockError> {
         // Start with the standard configuration from crystal()
+        /// Board crystal assumed by automatic PLL search, in hertz.
         const DEFAULT_CRYSTAL_HZ: u32 = 12_000_000;
         let mut config = Self::crystal(DEFAULT_CRYSTAL_HZ);
 
@@ -519,8 +448,9 @@ impl ClockConfig {
         #[cfg(feature = "_rp235x")]
         {
             config.core_voltage = match hz {
-                // There is no official support for running the chip on other core voltages and/or other clock speeds than the defaults.
-                // So for now we have not way of knowing what the voltage should be. Change this if the manufacturer provides more information.
+                // There is no official support for running the chip on other core voltages and/or other clock speeds
+                // than the defaults. So for now we have not way of knowing what the voltage should be.
+                // Change this if the manufacturer provides more information.
                 _ => CoreVoltage::V1_10, // Use default voltage (V1_10)
             };
         }
@@ -528,39 +458,15 @@ impl ClockConfig {
         Ok(config)
     }
 
-    /// Configure with manual PLL settings for full control over system clock
-    ///
-    /// This method provides a simple way to configure the system with custom PLL parameters
-    /// without needing to understand the full nested configuration structure.
-    ///
-    /// # Arguments
-    ///
-    /// * `xosc_hz` - The frequency of the external crystal in Hz
-    /// * `pll_config` - The PLL configuration parameters to achieve desired frequency
-    /// * `core_voltage` - Voltage scaling for overclocking (required for >133MHz)
-    ///
-    /// # Returns
-    ///
-    /// A ClockConfig configured with the specified PLL parameters
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// // Configure for 200MHz operation
-    /// let config = Config::default();
-    /// config.clocks = ClockConfig::manual_pll(
-    ///     12_000_000,
-    ///     PllConfig {
-    ///         refdiv: 1,    // Reference divider (12 MHz / 1 = 12 MHz)
-    ///         fbdiv: 100,   // Feedback divider (12 MHz * 100 = 1200 MHz VCO)
-    ///         post_div1: 3, // First post divider (1200 MHz / 3 = 400 MHz)
-    ///         post_div2: 2, // Second post divider (400 MHz / 2 = 200 MHz)
-    ///     },
-    ///     CoreVoltage::V1_15
-    /// );
-    /// ```
+    /// Returns a crystal tree using `xosc_hz`, system `pll_config` and `core_voltage`.
+    /// Panics if system PLL ratios are invalid. USB PLL retains fixed ratios for a
+    /// 12 MHz crystal; a different input needs separate USB/ADC/RTC review. No MMIO.
     #[cfg(feature = "rp2040")]
-    pub fn manual_pll(xosc_hz: u32, pll_config: PllConfig, core_voltage: CoreVoltage) -> Self {
+    pub fn manual_pll(
+        xosc_hz: u32,
+        pll_config: PllConfig,
+        core_voltage: CoreVoltage,
+    ) -> Self {
         // Validate PLL parameters
         assert!(pll_config.is_valid(xosc_hz), "Invalid PLL parameters");
 
@@ -641,52 +547,59 @@ pub struct RoscConfig {
     pub hz: u32,
     /// Oscillator range.
     pub range: RoscRange,
-    /// Drive strength for oscillator.
+    /// Eight oscillator stage drive selectors, each encoded in three bits.
     pub drive_strength: [u8; 8],
-    /// Output divider.
+    /// Encoded oscillator divider; 0 denotes divide-by-32, otherwise 1..=31.
     pub div: u16,
 }
 
 /// Crystal oscillator configuration.
 pub struct XoscConfig {
-    /// Final frequency of the oscillator.
+    /// Input crystal frequency in hertz (used without measurement).
     pub hz: u32,
-    /// Configuring PLL for the system clock.
+    /// System PLL ratios; `None` leaves the reset PLL unavailable.
     pub sys_pll: Option<PllConfig>,
-    /// Configuring PLL for the USB clock.
+    /// USB PLL ratios; `None` leaves the reset PLL unavailable.
     pub usb_pll: Option<PllConfig>,
-    /// Multiplier for the startup delay.
+    /// Startup delay multiplier: register cycles are `(hz / 1000 * multiplier + 128) / 256`.
+    /// Must fit intermediate arithmetic and the hardware delay field; no range check.
     pub delay_multiplier: u32,
 }
 
 /// PLL configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PllConfig {
-    /// Reference divisor.
+    /// Input reference divisor, 1..=63.
     pub refdiv: u8,
-    /// Feedback divisor.
+    /// VCO feedback multiplier, 16..=320.
     pub fbdiv: u16,
-    /// Output divisor 1.
+    /// First VCO output divisor, 1..=7 and at least `post_div2`.
     pub post_div1: u8,
-    /// Output divisor 2.
+    /// Second output divisor, 1..=7 and at most `post_div1`.
     pub post_div2: u8,
 }
 
 impl PllConfig {
-    /// Calculate the output frequency for this PLL configuration
-    /// given an input frequency.
+    /// Returns integer output hertz for `input_hz`, truncating reference division first.
     ///
     /// # Panics
     /// Panics if [`Self::is_valid`] rejects the configuration.
-    pub fn output_frequency(&self, input_hz: u32) -> u32 {
+    pub fn output_frequency(
+        &self,
+        input_hz: u32,
+    ) -> u32 {
         assert!(self.is_valid(input_hz), "invalid PLL configuration");
         let ref_freq = input_hz / self.refdiv as u32;
         let vco_freq = ref_freq * self.fbdiv as u32;
         vco_freq / ((self.post_div1 * self.post_div2) as u32)
     }
 
-    /// Check if this PLL configuration is valid for the given input frequency.
-    pub fn is_valid(&self, input_hz: u32) -> bool {
+    /// Returns whether `input_hz` and ratios satisfy divisor/reference/VCO bounds.
+    /// Uses wide VCO arithmetic; does not establish achievable physical operation.
+    pub fn is_valid(
+        &self,
+        input_hz: u32,
+    ) -> bool {
         // Check divisor constraints
         if self.refdiv < 1 || self.refdiv > 63 {
             return false;
@@ -715,7 +628,7 @@ impl PllConfig {
         // Calculate VCO frequency
         let vco_freq = ref_freq as u64 * self.fbdiv as u64;
 
-        // Check before narrowing: extreme but well-shaped inputs can overflowu32.
+        // Check before narrowing: extreme but well-shaped inputs can overflow u32.
         vco_freq >= VCO_MIN as u64 && vco_freq <= VCO_MAX as u64
     }
 }
@@ -724,7 +637,7 @@ impl PllConfig {
 pub struct RefClkConfig {
     /// Reference clock source.
     pub src: RefClkSrc,
-    /// Reference clock divider.
+    /// Integer divider 1..=4; initialization panics outside this range.
     pub div: u8,
 }
 
@@ -768,16 +681,16 @@ pub enum SysClkSrc {
 pub struct SysClkConfig {
     /// SYS clock source.
     pub src: SysClkSrc,
-    /// SYS clock divider.
+    /// Encoded integer divider; zero means the maximum field value plus one.
     #[cfg(feature = "rp2040")]
     pub div_int: u32,
-    /// SYS clock fraction.
+    /// Fractional divider bits: /256 on RP2040, /65536 on RP235x.
     #[cfg(feature = "rp2040")]
     pub div_frac: u8,
-    /// SYS clock divider.
+    /// Encoded integer divider; zero means the maximum field value plus one.
     #[cfg(feature = "_rp235x")]
     pub div_int: u16,
-    /// SYS clock fraction.
+    /// Fractional divider bits: /256 on RP2040, /65536 on RP235x.
     #[cfg(feature = "_rp235x")]
     pub div_frac: u16,
 }
@@ -805,9 +718,9 @@ pub enum UsbClkSrc {
 pub struct UsbClkConfig {
     /// USB clock source.
     pub src: UsbClkSrc,
-    /// USB clock divider.
+    /// Integer divider 1..=4; initialization panics outside this range.
     pub div: u8,
-    /// USB clock phase.
+    /// Initial enable delay in input-clock cycles, 0..=3.
     pub phase: u8,
 }
 
@@ -834,9 +747,9 @@ pub enum AdcClkSrc {
 pub struct AdcClkConfig {
     /// ADC clock source.
     pub src: AdcClkSrc,
-    /// ADC clock divider.
+    /// Integer divider 1..=4; initialization panics outside this range.
     pub div: u8,
-    /// ADC clock phase.
+    /// Initial enable delay in input-clock cycles, 0..=3.
     pub phase: u8,
 }
 
@@ -865,39 +778,24 @@ pub enum RtcClkSrc {
 pub struct RtcClkConfig {
     /// RTC clock source.
     pub src: RtcClkSrc,
-    /// RTC clock divider.
+    /// Raw 24-bit integer divider; zero encodes 65536. Resulting whole hertz must be 1..=65535.
     pub div_int: u32,
-    /// RTC clock divider fraction.
+    /// Fractional divider in units of 1/256.
     pub div_frac: u8,
-    /// RTC clock phase.
+    /// Initial enable delay in input-clock cycles, 0..=3.
     pub phase: u8,
 }
 
-/// Find valid PLL parameters (refdiv, fbdiv, post_div1, post_div2) for a target output frequency
-/// based on the input frequency.
-///
-/// This function searches for the best PLL configuration to achieve the requested target frequency
-/// while staying within the VCO frequency range of 750MHz to 1600MHz. It prioritizes stability
-/// over exact frequency matching by using larger divisors where possible.
-///
-/// # Parameters
-///
-/// * `input_hz`: The input frequency in Hz (typically the crystal frequency, e.g. 12MHz for th most common one used on rp2040 boards)
-/// * `target_hz`: The desired output frequency in Hz (e.g. 125MHz for standard RP2040 operation)
-///
-/// # Returns
-///
-/// * `Some(PllConfig)` if valid parameters were found
-/// * `None` if no valid parameters could be found for the requested combination
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // Find parameters for 133MHz system clock from 12MHz crystal
-/// let pll_params = find_pll_params(12_000_000, 133_000_000).unwrap();
-/// ```
-fn find_pll_params(input_hz: u32, target_hz: u32) -> Option<PllConfig> {
+/// Returns PLL ratios for `input_hz` and desired `target_hz`, or `None` without a VCO candidate.
+/// Searches fixed refdiv=1, descending feedback/postdiv ratios: exact integer rate
+/// first, then minimum absolute integer-hertz error without a tolerance limit.
+/// Ties retain the first candidate; no hardware or voltage validation is performed.
+fn find_pll_params(
+    input_hz: u32,
+    target_hz: u32,
+) -> Option<PllConfig> {
     // Fixed reference divider for system PLL
+    /// Fixed reference divider used by this search.
     const PLL_SYS_REFDIV: u8 = 1;
 
     // Calculate reference frequency
@@ -969,7 +867,14 @@ fn find_pll_params(input_hz: u32, target_hz: u32) -> Option<PllConfig> {
     best_config
 }
 
-/// safety: must be called exactly once at bootup
+/// Applies `config`, resets dependent peripherals and publishes calculated clock rates.
+/// Panics on missing selected sources, invalid ratios/dividers or PLL timeout; no rollback.
+/// XOSC/mux/reset waits are unbounded. PLL lock limit counts one million polls, not time.
+/// Invalid delay arithmetic can overflow; phase/ROSC fields are not fully validated.
+///
+/// # Safety
+/// Call exactly once during boot, before drivers/other cores/IRQs depend on these clocks.
+/// Hardware crystal, voltage and clock limits must match `config`; cached rates are estimates.
 pub(crate) unsafe fn init(config: ClockConfig) {
     // Reset everything except:
     // - QSPI (we're using it to run this code!)
@@ -984,7 +889,7 @@ pub(crate) unsafe fn init(config: ClockConfig) {
     peris.set_pll_usb(false);
     peris.set_usbctrl(false);
     peris.set_syscfg(false);
-    //peris.set_rtc(false);
+    // peris.set_rtc(false);
     reset::reset(peris);
 
     // Disable resus that may be enabled from previous software
@@ -1047,8 +952,9 @@ pub(crate) unsafe fn init(config: ClockConfig) {
             #[cfg(feature = "rp2040")]
             vreg.vreg().modify(|w| w.set_vsel(target_vsel));
             #[cfg(feature = "_rp235x")]
-            // For rp235x changes to the voltage regulator are protected by a password, see datasheet section 6.4 Power Management (POWMAN) Registers
-            // The password is "5AFE" (0x5AFE), it must be set in the top 16 bits of the register
+            // For rp235x changes to the voltage regulator are protected by a password, see datasheet section 6.4 Power
+            // Management (POWMAN) Registers The password is "5AFE" (0x5AFE), it must be set in the top 16
+            // bits of the register
             vreg.vreg().modify(|w| {
                 w.0 = (w.0 & 0x0000FFFF) | (0x5AFE << 16); // Set the password
                 w.set_vsel(target_vsel);
@@ -1092,17 +998,21 @@ pub(crate) unsafe fn init(config: ClockConfig) {
             start_xosc(config.hz, config.delay_multiplier);
 
             let pll_sys_freq = match config.sys_pll {
-                Some(sys_pll_config) => match configure_pll(pac::PLL_SYS, config.hz, sys_pll_config) {
-                    Ok(freq) => freq,
-                    Err(e) => panic!("Failed to configure PLL_SYS: {:?}", e),
-                },
+                Some(sys_pll_config) => {
+                    match configure_pll(pac::PLL_SYS, config.hz, sys_pll_config) {
+                        Ok(freq) => freq,
+                        Err(e) => panic!("Failed to configure PLL_SYS: {:?}", e),
+                    }
+                }
                 None => 0,
             };
             let pll_usb_freq = match config.usb_pll {
-                Some(usb_pll_config) => match configure_pll(pac::PLL_USB, config.hz, usb_pll_config) {
-                    Ok(freq) => freq,
-                    Err(e) => panic!("Failed to configure PLL_USB: {:?}", e),
-                },
+                Some(usb_pll_config) => {
+                    match configure_pll(pac::PLL_USB, config.hz, usb_pll_config) {
+                        Ok(freq) => freq,
+                        Err(e) => panic!("Failed to configure PLL_USB: {:?}", e),
+                    }
+                }
                 None => 0,
             };
 
@@ -1116,7 +1026,8 @@ pub(crate) unsafe fn init(config: ClockConfig) {
     CLOCKS.pll_usb.store(pll_usb_freq, Ordering::Relaxed);
 
     let (ref_src, ref_aux, clk_ref_freq) = {
-        use {ClkRefCtrlAuxsrc as Aux, ClkRefCtrlSrc as Src};
+        use ClkRefCtrlAuxsrc as Aux;
+        use ClkRefCtrlSrc as Src;
         let div = config.ref_clk.div as u32;
         assert!(div >= 1 && div <= 4);
         match config.ref_clk.src {
@@ -1161,7 +1072,8 @@ pub(crate) unsafe fn init(config: ClockConfig) {
     }
 
     let (sys_src, sys_aux, clk_sys_freq) = {
-        use {ClkSysCtrlAuxsrc as Aux, ClkSysCtrlSrc as Src};
+        use ClkSysCtrlAuxsrc as Aux;
+        use ClkSysCtrlSrc as Src;
         let (src, aux, freq) = match config.sys_clk.src {
             SysClkSrc::Ref => (Src::CLK_REF, Aux::CLKSRC_PLL_SYS, clk_ref_freq),
             SysClkSrc::PllSys => (Src::CLKSRC_CLK_SYS_AUX, Aux::CLKSRC_PLL_SYS, pll_sys_freq),
@@ -1172,7 +1084,11 @@ pub(crate) unsafe fn init(config: ClockConfig) {
             // SysClkSrc::Gpin0 => (Src::CLKSRC_CLK_SYS_AUX, Aux::CLKSRC_GPIN0, gpin0_freq),
             // SysClkSrc::Gpin1 => (Src::CLKSRC_CLK_SYS_AUX, Aux::CLKSRC_GPIN1, gpin1_freq),
         };
-        (src, aux, divided_clock_frequency(freq, config.sys_clk.div_int as u64, config.sys_clk.div_frac as u64))
+        (
+            src,
+            aux,
+            divided_clock_frequency(freq, config.sys_clk.div_int as u64, config.sys_clk.div_frac as u64),
+        )
     };
     assert!(clk_sys_freq != 0);
     CLOCKS.sys.store(clk_sys_freq, Ordering::Relaxed);
@@ -1276,15 +1192,6 @@ pub(crate) unsafe fn init(config: ClockConfig) {
     // rp2040 specific clocks
     #[cfg(feature = "rp2040")]
     if let Some(conf) = config.rtc_clk {
-        c.clk_rtc_div().write(|w| {
-            w.set_int(conf.div_int);
-            w.set_frac(conf.div_frac);
-        });
-        c.clk_rtc_ctrl().write(|w| {
-            w.set_phase(conf.phase);
-            w.set_enable(true);
-            w.set_auxsrc(ClkRtcCtrlAuxsrc::from_bits(conf.src as _));
-        });
         let rtc_in_freq = match conf.src {
             RtcClkSrc::PllUsb => pll_usb_freq,
             RtcClkSrc::PllSys => pll_sys_freq,
@@ -1295,11 +1202,17 @@ pub(crate) unsafe fn init(config: ClockConfig) {
             // RtcClkSrc::Gpin1 => gpin1_freq,
         };
         assert!(rtc_in_freq != 0);
-        assert!(config.sys_clk.div_int <= 0x1000000);
-        CLOCKS.rtc.store(
-            ((rtc_in_freq as u64 * 256) / (conf.div_int as u64 * 256 + conf.div_frac as u64)) as u16,
-            Ordering::Relaxed,
-        );
+        let rtc_freq = rtc_clock_frequency(rtc_in_freq, conf.div_int, conf.div_frac);
+        c.clk_rtc_div().write(|w| {
+            w.set_int(conf.div_int);
+            w.set_frac(conf.div_frac);
+        });
+        c.clk_rtc_ctrl().write(|w| {
+            w.set_phase(conf.phase);
+            w.set_enable(true);
+            w.set_auxsrc(ClkRtcCtrlAuxsrc::from_bits(conf.src as _));
+        });
+        CLOCKS.rtc.store(rtc_freq, Ordering::Relaxed);
     } else {
         peris.set_rtc(false);
         CLOCKS.rtc.store(0, Ordering::Relaxed);
@@ -1316,6 +1229,7 @@ pub(crate) unsafe fn init(config: ClockConfig) {
     reset::unreset_wait(peris);
 }
 
+/// Programs oscillator fields from `config` and returns its claimed hertz, without waiting or measurement.
 fn configure_rosc(config: RoscConfig) -> u32 {
     let p = pac::ROSC;
 
@@ -1347,15 +1261,11 @@ fn configure_rosc(config: RoscConfig) -> u32 {
     config.hz
 }
 
-/// ROSC clock frequency.
-pub fn rosc_freq() -> u32 {
-    CLOCKS.rosc.load(Ordering::Relaxed)
-}
+/// Returns cached ROSC hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn rosc_freq() -> u32 { CLOCKS.rosc.load(Ordering::Relaxed) }
 
-/// XOSC clock frequency.
-pub fn xosc_freq() -> u32 {
-    CLOCKS.xosc.load(Ordering::Relaxed)
-}
+/// Returns cached XOSC hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn xosc_freq() -> u32 { CLOCKS.xosc.load(Ordering::Relaxed) }
 
 // See above re gpin handling being commented out
 // pub fn gpin0_freq() -> u32 {
@@ -1365,46 +1275,30 @@ pub fn xosc_freq() -> u32 {
 //     CLOCKS.gpin1.load(Ordering::Relaxed)
 // }
 
-/// PLL SYS clock frequency.
-pub fn pll_sys_freq() -> u32 {
-    CLOCKS.pll_sys.load(Ordering::Relaxed)
-}
+/// Returns cached PLL SYS hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn pll_sys_freq() -> u32 { CLOCKS.pll_sys.load(Ordering::Relaxed) }
 
-/// PLL USB clock frequency.
-pub fn pll_usb_freq() -> u32 {
-    CLOCKS.pll_usb.load(Ordering::Relaxed)
-}
+/// Returns cached PLL USB hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn pll_usb_freq() -> u32 { CLOCKS.pll_usb.load(Ordering::Relaxed) }
 
-/// SYS clock frequency.
-pub fn clk_sys_freq() -> u32 {
-    CLOCKS.sys.load(Ordering::Relaxed)
-}
+/// Returns cached SYS hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn clk_sys_freq() -> u32 { CLOCKS.sys.load(Ordering::Relaxed) }
 
-/// REF clock frequency.
-pub fn clk_ref_freq() -> u32 {
-    CLOCKS.reference.load(Ordering::Relaxed)
-}
+/// Returns cached REF hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn clk_ref_freq() -> u32 { CLOCKS.reference.load(Ordering::Relaxed) }
 
-/// Peripheral clock frequency.
-pub fn clk_peri_freq() -> u32 {
-    CLOCKS.peri.load(Ordering::Relaxed)
-}
+/// Returns cached Peripheral hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn clk_peri_freq() -> u32 { CLOCKS.peri.load(Ordering::Relaxed) }
 
-/// USB clock frequency.
-pub fn clk_usb_freq() -> u32 {
-    CLOCKS.usb.load(Ordering::Relaxed)
-}
+/// Returns cached USB hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn clk_usb_freq() -> u32 { CLOCKS.usb.load(Ordering::Relaxed) }
 
-/// ADC clock frequency.
-pub fn clk_adc_freq() -> u32 {
-    CLOCKS.adc.load(Ordering::Relaxed)
-}
+/// Returns cached ADC hertz; zero means absent/uninitialized, not a measured stopped clock.
+pub fn clk_adc_freq() -> u32 { CLOCKS.adc.load(Ordering::Relaxed) }
 
-/// RTC clock frequency.
+/// Returns cached RTC hertz; zero means absent/uninitialized, not a measured stopped clock.
 #[cfg(feature = "rp2040")]
-pub fn clk_rtc_freq() -> u16 {
-    CLOCKS.rtc.load(Ordering::Relaxed)
-}
+pub fn clk_rtc_freq() -> u16 { CLOCKS.rtc.load(Ordering::Relaxed) }
 
 /// The core voltage of the chip.
 ///
@@ -1458,7 +1352,12 @@ pub fn core_voltage() -> Result<CoreVoltage, ClockError> {
     }
 }
 
-fn start_xosc(crystal_hz: u32, delay_multiplier: u32) {
+/// Starts the crystal at assumed `crystal_hz` with `delay_multiplier`; waits indefinitely for stable.
+/// Delay arithmetic may overflow or truncate for unsupported values; hardware must match the input.
+fn start_xosc(
+    crystal_hz: u32,
+    delay_multiplier: u32,
+) {
     let startup_delay = (((crystal_hz / 1000) * delay_multiplier) + 128) / 256;
     pac::XOSC.startup().write(|w| w.set_delay(startup_delay as u16));
     pac::XOSC.ctrl().write(|w| {
@@ -1468,9 +1367,15 @@ fn start_xosc(crystal_hz: u32, delay_multiplier: u32) {
     while !pac::XOSC.status().read().stable() {}
 }
 
-/// PLL (Phase-Locked Loop) configuration
+/// Configures PLL register bank `p` using `input_freq` hertz and `config` ratios.
+/// Returns output hertz or `PllLockTimedOut` after one million failed lock polls;
+/// timeout leaves VCO powered with output disabled. Invalid ratios panic before PLL writes.
 #[inline(always)]
-fn configure_pll(p: pac::pll::Pll, input_freq: u32, config: PllConfig) -> Result<u32, ClockError> {
+fn configure_pll(
+    p: pac::pll::Pll,
+    input_freq: u32,
+    config: PllConfig,
+) -> Result<u32, ClockError> {
     // Calculate reference frequency
     let ref_freq = input_freq / config.refdiv as u32;
 
@@ -1540,7 +1445,7 @@ fn configure_pll(p: pac::pll::Pll, input_freq: u32, config: PllConfig) -> Result
     while !p.cs().read().lock() {
         timeout -= 1;
         if timeout == 0 {
-            // PLL failed to lock, return 0 to indicate failure
+            // PLL failed to lock; leave its post-divider disabled and report failure.
             return Err(ClockError::PllLockTimedOut);
         }
     }
@@ -1566,13 +1471,15 @@ fn configure_pll(p: pac::pll::Pll, input_freq: u32, config: PllConfig) -> Result
 
 /// General purpose input clock pin.
 pub trait GpinPin: crate::gpio::Pin {
-    /// Pin number.
+    /// Clock input index (0 or 1), not the GPIO number.
     const NR: usize;
 }
 
+/// Implements the clock-input index for each supported pin token.
 macro_rules! impl_gpinpin {
     ($name:ident, $gpin_num:expr) => {
         impl GpinPin for crate::peripherals::$name {
+            /// Clock input index (0 or 1), not the GPIO number.
             const NR: usize = $gpin_num;
         }
     };
@@ -1588,12 +1495,14 @@ impl_gpinpin!(PIN_22, 1);
 
 /// General purpose clock input driver.
 pub struct Gpin<'d, T: GpinPin> {
+    /// Owned GPIO routed to clock input until drop.
     gpin: Peri<'d, AnyPin>,
+    /// Retains the compile-time GPIO-to-clock-input mapping.
     _phantom: PhantomData<T>,
 }
 
 impl<'d, T: GpinPin> Gpin<'d, T> {
-    /// Create new gpin driver.
+    /// Returns ownership of `gpin` routed to its GPIN function; does not select it as a clock source.
     pub fn new(gpin: Peri<'d, T>) -> Self {
         #[cfg(feature = "rp2040")]
         gpin.gpio().ctrl().write(|w| w.set_funcsel(0x08));
@@ -1615,6 +1524,7 @@ impl<'d, T: GpinPin> Gpin<'d, T> {
 }
 
 impl<'d, T: GpinPin> Drop for Gpin<'d, T> {
+    /// Restores pad defaults and disconnects the GPIO function; does not reconfigure clock consumers.
     fn drop(&mut self) {
         self.gpin.pad_ctrl().write(|_| {});
         self.gpin
@@ -1626,16 +1536,16 @@ impl<'d, T: GpinPin> Drop for Gpin<'d, T> {
 
 /// General purpose clock output pin.
 pub trait GpoutPin: crate::gpio::Pin {
-    /// Pin number.
+    /// Returns clock-output index 0..=3, not the GPIO number.
     fn number(&self) -> usize;
 }
 
+/// Implements clock-output index lookup for each supported GPIO token.
 macro_rules! impl_gpoutpin {
     ($name:ident, $gpout_num:expr) => {
         impl GpoutPin for crate::peripherals::$name {
-            fn number(&self) -> usize {
-                $gpout_num
-            }
+            /// Returns the fixed clock-output index for this pin.
+            fn number(&self) -> usize { $gpout_num }
         }
     };
 }
@@ -1682,11 +1592,12 @@ pub enum GpoutSrc {
 
 /// General purpose clock output driver.
 pub struct Gpout<'d, T: GpoutPin> {
+    /// Owned output GPIO and its associated clock-output index.
     gpout: Peri<'d, T>,
 }
 
 impl<'d, T: GpoutPin> Gpout<'d, T> {
-    /// Create new general purpose clock output.
+    /// Returns ownership of `gpout` routed to GPOUT; retains prior clock source/divider/enable registers.
     pub fn new(gpout: Peri<'d, T>) -> Self {
         #[cfg(feature = "rp2040")]
         gpout.gpio().ctrl().write(|w| w.set_funcsel(0x08));
@@ -1703,9 +1614,15 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         Self { gpout }
     }
 
-    /// Set clock divider.
+    /// Writes raw integer `int` and fractional `frac` divider fields without disabling output.
+    /// Zero integer encodes the field maximum plus one; fractional units are 1/256
+    /// (RP2040) or 1/65536 (RP235x). RP2040 `int` must fit 24 bits.
     #[cfg(feature = "rp2040")]
-    pub fn set_div(&self, int: u32, frac: u8) {
+    pub fn set_div(
+        &self,
+        int: u32,
+        frac: u8,
+    ) {
         let c = pac::CLOCKS;
         c.clk_gpout_div(self.gpout.number()).write(|w| {
             w.set_int(int);
@@ -1713,9 +1630,15 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         });
     }
 
-    /// Set clock divider.
+    /// Writes raw integer `int` and fractional `frac` divider fields without disabling output.
+    /// Zero integer encodes the field maximum plus one; fractional units are 1/256
+    /// (RP2040) or 1/65536 (RP235x). RP2040 `int` must fit 24 bits.
     #[cfg(feature = "_rp235x")]
-    pub fn set_div(&self, int: u16, frac: u16) {
+    pub fn set_div(
+        &self,
+        int: u16,
+        frac: u16,
+    ) {
         let c = pac::CLOCKS;
         c.clk_gpout_div(self.gpout.number()).write(|w| {
             w.set_int(int);
@@ -1723,15 +1646,18 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         });
     }
 
-    /// Set clock source.
-    pub fn set_src(&self, src: GpoutSrc) {
+    /// Selects `src` immediately; switch while disabled to avoid clock glitches.
+    pub fn set_src(
+        &self,
+        src: GpoutSrc,
+    ) {
         let c = pac::CLOCKS;
         c.clk_gpout_ctrl(self.gpout.number()).modify(|w| {
             w.set_auxsrc(ClkGpoutCtrlAuxsrc::from_bits(src as _));
         });
     }
 
-    /// Enable clock.
+    /// Requests clean clock-output enable; does not wait for a physical edge.
     pub fn enable(&self) {
         let c = pac::CLOCKS;
         c.clk_gpout_ctrl(self.gpout.number()).modify(|w| {
@@ -1739,7 +1665,7 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         });
     }
 
-    /// Disable clock.
+    /// Requests clean clock-output disable; does not wait for hardware acknowledgment.
     pub fn disable(&self) {
         let c = pac::CLOCKS;
         c.clk_gpout_ctrl(self.gpout.number()).modify(|w| {
@@ -1747,25 +1673,14 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
         });
     }
 
-    /// Clock frequency.
+    /// Returns calculated output hertz from cached source rate and current divider, even if disabled.
+    /// LPOSC returns zero because no rate is cached. Raw selectors outside `GpoutSrc`
+    /// panic; this performs no frequency measurement.
     pub fn get_freq(&self) -> u32 {
         let c = pac::CLOCKS;
         let src = c.clk_gpout_ctrl(self.gpout.number()).read().auxsrc();
 
-        let base = match src {
-            ClkGpoutCtrlAuxsrc::CLKSRC_PLL_SYS => pll_sys_freq(),
-            // See above re gpin handling being commented out
-            // ClkGpoutCtrlAuxsrc::CLKSRC_GPIN0 => gpin0_freq(),
-            // ClkGpoutCtrlAuxsrc::CLKSRC_GPIN1 => gpin1_freq(),
-            ClkGpoutCtrlAuxsrc::CLKSRC_PLL_USB => pll_usb_freq(),
-            ClkGpoutCtrlAuxsrc::ROSC_CLKSRC => rosc_freq(),
-            ClkGpoutCtrlAuxsrc::XOSC_CLKSRC => xosc_freq(),
-            ClkGpoutCtrlAuxsrc::CLK_SYS => clk_sys_freq(),
-            ClkGpoutCtrlAuxsrc::CLK_USB => clk_usb_freq(),
-            ClkGpoutCtrlAuxsrc::CLK_ADC => clk_adc_freq(),
-            ClkGpoutCtrlAuxsrc::CLK_REF => clk_ref_freq(),
-            _ => unreachable!(),
-        };
+        let base = gpout_source_frequency(src);
 
         let div = c.clk_gpout_div(self.gpout.number()).read();
         let int = div.int() as u64;
@@ -1776,6 +1691,7 @@ impl<'d, T: GpoutPin> Gpout<'d, T> {
 }
 
 impl<'d, T: GpoutPin> Drop for Gpout<'d, T> {
+    /// Disables clock output, restores pad defaults and disconnects the GPIO function.
     fn drop(&mut self) {
         self.disable();
         self.gpout.pad_ctrl().write(|_| {});
@@ -1790,11 +1706,12 @@ impl<'d, T: GpoutPin> Drop for Gpout<'d, T> {
 ///
 /// This will not produce random values if the ROSC is stopped or run at some
 /// harmonic of the bus frequency. With default clock settings these are not
-/// issues.
+/// issues. No conditioning or online entropy test is performed; the CryptoRng marker
+/// does not provide measured entropy assurance for arbitrary clock settings.
 pub struct RoscRng;
 
 impl RoscRng {
-    /// Get a random u8
+    /// Returns eight consecutive ROSC bit samples packed most-significant bit first.
     pub fn next_u8() -> u8 {
         let random_reg = pac::ROSC.randombit();
         let mut acc = 0;
@@ -1805,36 +1722,41 @@ impl RoscRng {
         acc
     }
 
-    /// Get a random u32
-    pub fn next_u32(&mut self) -> u32 {
-        rand_core_09::impls::next_u32_via_fill(self)
-    }
+    /// Returns four sampled bytes interpreted little-endian by rand_core.
+    pub fn next_u32(&mut self) -> u32 { rand_core_09::impls::next_u32_via_fill(self) }
 
-    /// Get a random u64
-    pub fn next_u64(&mut self) -> u64 {
-        rand_core_09::impls::next_u64_via_fill(self)
-    }
+    /// Returns eight sampled bytes interpreted little-endian by rand_core.
+    pub fn next_u64(&mut self) -> u64 { rand_core_09::impls::next_u64_via_fill(self) }
 
-    /// Fill a slice with random bytes
-    pub fn fill_bytes(&mut self, dest: &mut [u8]) {
+    /// Fills `dest` with eight ROSC reads per byte; empty slices perform no reads.
+    pub fn fill_bytes(
+        &mut self,
+        dest: &mut [u8],
+    ) {
         dest.fill_with(Self::next_u8)
     }
 }
 
 impl rand_core_06::RngCore for RoscRng {
-    fn next_u32(&mut self) -> u32 {
-        self.next_u32()
-    }
+    /// Returns four sampled bytes via the inherent ROSC generator.
+    fn next_u32(&mut self) -> u32 { self.next_u32() }
 
-    fn next_u64(&mut self) -> u64 {
-        self.next_u64()
-    }
+    /// Returns eight sampled bytes via the inherent ROSC generator.
+    fn next_u64(&mut self) -> u64 { self.next_u64() }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    /// Fills `dest` from raw ROSC samples without health testing.
+    fn fill_bytes(
+        &mut self,
+        dest: &mut [u8],
+    ) {
         self.fill_bytes(dest);
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core_06::Error> {
+    /// Fills `dest` and returns `Ok(())`; oscillator entropy failures are not detected.
+    fn try_fill_bytes(
+        &mut self,
+        dest: &mut [u8],
+    ) -> Result<(), rand_core_06::Error> {
         self.fill_bytes(dest);
         Ok(())
     }
@@ -1843,36 +1765,50 @@ impl rand_core_06::RngCore for RoscRng {
 impl rand_core_06::CryptoRng for RoscRng {}
 
 impl rand_core_09::RngCore for RoscRng {
-    fn next_u32(&mut self) -> u32 {
-        self.next_u32()
-    }
+    /// Returns four sampled bytes via the inherent ROSC generator.
+    fn next_u32(&mut self) -> u32 { self.next_u32() }
 
-    fn next_u64(&mut self) -> u64 {
-        self.next_u64()
-    }
+    /// Returns eight sampled bytes via the inherent ROSC generator.
+    fn next_u64(&mut self) -> u64 { self.next_u64() }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    /// Fills `dest` from raw ROSC samples without health testing.
+    fn fill_bytes(
+        &mut self,
+        dest: &mut [u8],
+    ) {
         self.fill_bytes(dest);
     }
 }
 
 impl rand_core_09::CryptoRng for RoscRng {}
 
-/// Enter the `DORMANT` sleep state. This will stop *all* internal clocks
-/// and can only be exited through resets, dormant-wake GPIO interrupts,
-/// and RTC interrupts. If RTC is clocked from an internal clock source
-/// it will be stopped and not function as a wakeup source.
+/// Enters ROSC dormant after gating ADC/USB/peripheral clocks and stopping PLLs/XOSC.
+/// Returns after a configured dormant wake and restores saved clocks, with unbounded stability waits.
+/// Call only after quiescing both cores, IRQ users and DMA: this global sequence can power down SRAM.
+/// Configure wake sources first; RP2040 RTC needs an external clock to continue. RP235x LPOSC/
+/// POWMAN are not managed here. No wake source or failed oscillator relock can leave this blocked.
 #[cfg(all(target_arch = "arm"))]
 pub fn dormant_sleep() {
-    struct Set<T: Copy, F: Fn()>(Reg<T, RW>, T, F);
+    /// Restores a saved register and then runs its stabilization callback on drop.
+    struct Set<T: Copy, F: Fn()>(
+        /// Register to restore.
+        Reg<T, RW>,
+        /// Value captured before the temporary change.
+        T,
+        /// Post-restore callback, potentially waiting indefinitely for stabilization.
+        F,
+    );
 
     impl<T: Copy, F: Fn()> Drop for Set<T, F> {
+        /// Restores the saved value and waits through its callback, without a timeout.
         fn drop(&mut self) {
             self.0.write_value(self.1);
             self.2();
         }
     }
 
+    /// Updates `reg` using `f`; returns a guard restoring the old value then invoking
+    /// the callback returned by `f`. A callback panic prevents returning the guard.
     fn set_with_post_restore<T: Copy, After: Fn(), F: FnOnce(&mut T) -> After>(
         reg: Reg<T, RW>,
         f: F,
@@ -1884,7 +1820,11 @@ pub fn dormant_sleep() {
         })
     }
 
-    fn set<T: Copy, F: FnOnce(&mut T)>(reg: Reg<T, RW>, f: F) -> Set<T, impl Fn()> {
+    /// Updates `reg` through `f`; returns a guard restoring the old register value on drop.
+    fn set<T: Copy, F: FnOnce(&mut T)>(
+        reg: Reg<T, RW>,
+        f: F,
+    ) -> Set<T, impl Fn()> {
         set_with_post_restore(reg, |r| {
             f(r);
             || ()
@@ -1908,7 +1848,7 @@ pub fn dormant_sleep() {
             w.set_freq_range(pac::rosc::vals::FreqRange::LOW);
         }),
         // div=32
-        set(pac::ROSC.div(), |w| w.set_div(pac::rosc::vals::Div(0xaa0))),
+        set(pac::ROSC.div(), |w| w.set_div(pac::rosc::vals::Div(0xAA0))),
     );
     while !pac::ROSC.status().read().stable() {}
     // switch over to rosc as the system clock source. this will change clock sources for
@@ -1982,15 +1922,65 @@ pub fn dormant_sleep() {
                 coma = in (reg) 0x636f6d61,
             );
         } else {
-            pac::ROSC.dormant().write_value(rp_pac::rosc::regs::Dormant(0x636f6d61));
+            pac::ROSC.dormant().write_value(rp_pac::rosc::regs::Dormant(0x636F6D61));
         }
     }
 }
 
-fn divided_clock_frequency(base: u32, int: u64, frac: u64) -> u32 {
+/// Returns cached hertz for output selector `src`, or zero for unmeasured LPOSC.
+/// Unsupported raw register selectors panic.
+fn gpout_source_frequency(src: ClkGpoutCtrlAuxsrc) -> u32 {
+    match src {
+        ClkGpoutCtrlAuxsrc::CLKSRC_PLL_SYS => pll_sys_freq(),
+        // See above re gpin handling being commented out
+        // ClkGpoutCtrlAuxsrc::CLKSRC_GPIN0 => gpin0_freq(),
+        // ClkGpoutCtrlAuxsrc::CLKSRC_GPIN1 => gpin1_freq(),
+        ClkGpoutCtrlAuxsrc::CLKSRC_PLL_USB => pll_usb_freq(),
+        ClkGpoutCtrlAuxsrc::ROSC_CLKSRC => rosc_freq(),
+        ClkGpoutCtrlAuxsrc::XOSC_CLKSRC => xosc_freq(),
+        ClkGpoutCtrlAuxsrc::CLK_SYS => clk_sys_freq(),
+        ClkGpoutCtrlAuxsrc::CLK_USB => clk_usb_freq(),
+        ClkGpoutCtrlAuxsrc::CLK_ADC => clk_adc_freq(),
+        ClkGpoutCtrlAuxsrc::CLK_REF => clk_ref_freq(),
+        #[cfg(feature = "rp2040")]
+        ClkGpoutCtrlAuxsrc::CLK_RTC => clk_rtc_freq() as u32,
+        #[cfg(feature = "_rp235x")]
+        ClkGpoutCtrlAuxsrc::LPOSC_CLKSRC => 0,
+        _ => unreachable!(),
+    }
+}
+
+/// Returns RTC hertz from source `base`, integer `int` and fractional `frac` divider fields.
+/// Panics for divider/rate values not representable by the retained RTC API.
+#[cfg(feature = "rp2040")]
+fn rtc_clock_frequency(
+    base: u32,
+    int: u32,
+    frac: u8,
+) -> u16 {
+    assert!(int <= 0x00FF_FFFF, "RTC divider exceeds its 24-bit field");
+    // CLK_RTC_DIV documents zero as divide-by-2^16, unlike SYS/GPOUT.
+    let int = if int == 0 { 65_536 } else { int };
+    let hz = (base as u64 * 256) / (int as u64 * 256 + frac as u64);
+    assert!(
+        hz > 0 && hz <= u16::MAX as u64,
+        "RTC frequency must fit nonzero u16 hertz"
+    );
+    hz as u16
+}
+
+/// Returns floor hertz for source `base`, raw integer `int` and fractional `frac`.
+/// Inputs must fit hardware fields; integer zero encodes max+1, fractions use chip-specific width.
+fn divided_clock_frequency(
+    base: u32,
+    int: u64,
+    frac: u64,
+) -> u32 {
     #[cfg(feature = "rp2040")]
+    /// Number of fractional divider bits on this chip family.
     const FRAC_BITS: u32 = 8;
     #[cfg(feature = "_rp235x")]
+    /// Number of fractional divider bits on this chip family.
     const FRAC_BITS: u32 = 16;
     // SYS and GPOUT encode the maximum integer divisor as zero.
     let int = if int == 0 { 1u64 << (32 - FRAC_BITS) } else { int };
@@ -1998,18 +1988,53 @@ fn divided_clock_frequency(base: u32, int: u64, frac: u64) -> u32 {
 }
 
 #[cfg(test)]
+/// Pure clock arithmetic/policy regressions; no oscillator or voltage measurements.
 mod tests {
+    extern crate std;
+
     use super::*;
 
+    /// Accepted public output sources must not panic when frequency metadata is unavailable.
     #[test]
+    fn gpout_supported_uncached_sources() {
+        #[cfg(feature = "rp2040")]
+        assert_eq!(
+            gpout_source_frequency(ClkGpoutCtrlAuxsrc::CLK_RTC),
+            clk_rtc_freq() as u32
+        );
+        #[cfg(feature = "_rp235x")]
+        assert_eq!(gpout_source_frequency(ClkGpoutCtrlAuxsrc::LPOSC_CLKSRC), 0);
+    }
+
+    /// Checks RTC zero encoding, fractional rate and rejection before narrowing or field truncation.
+    #[cfg(feature = "rp2040")]
+    #[test]
+    fn rtc_divider_boundaries() {
+        assert_eq!(rtc_clock_frequency(48_000_000, 1024, 0), 46_875);
+        assert_eq!(rtc_clock_frequency(65_536_000, 0, 0), 1000);
+        assert_eq!(rtc_clock_frequency(48_000, 1, 128), 32_000);
+        assert_eq!(rtc_clock_frequency(65_535, 1, 0), 65_535);
+        for (base, int) in [(65_536, 1), (1, 2), (48_000_000, 0x1000000)] {
+            assert!(std::panic::catch_unwind(|| rtc_clock_frequency(base, int, 0)).is_err());
+        }
+    }
+
+    #[test]
+    /// Rejects extreme references without narrowing an overflowing VCO.
     fn pll_validation_rejects_overflowing_vco() {
-        let config = PllConfig { refdiv: 1, fbdiv: 320, post_div1: 7, post_div2: 7 };
+        let config = PllConfig {
+            refdiv: 1,
+            fbdiv: 320,
+            post_div1: 7,
+            post_div2: 7,
+        };
         assert!(!config.is_valid(800_000_000));
         assert!(!config.is_valid(u32::MAX));
     }
 
     #[cfg(feature = "_rp235x")]
     #[test]
+    /// Checks fractional division and maximum-divisor zero encoding.
     fn rp2350_fractional_clock_and_zero_integer_encoding() {
         assert_eq!(divided_clock_frequency(150_000_000, 1, 32768), 100_000_000);
         assert_eq!(divided_clock_frequency(150_000_000, 2, 0), 75_000_000);
@@ -2019,6 +2044,7 @@ mod tests {
 
     #[cfg(feature = "rp2040")]
     #[test]
+    /// Checks exact stock/USB/overclock ratios and nearest-rate search bounds.
     fn test_find_pll_params() {
         #[cfg(feature = "rp2040")]
         {
@@ -2083,6 +2109,7 @@ mod tests {
 
     #[cfg(feature = "rp2040")]
     #[test]
+    /// Checks each PLL ratio/reference/VCO admission boundary.
     fn test_pll_config_validation() {
         // Test PLL configuration validation logic
         let valid_config = PllConfig {
@@ -2142,6 +2169,7 @@ mod tests {
 
     #[cfg(feature = "rp2040")]
     #[test]
+    /// Checks manual ratios, selected voltage and resulting calculated frequency.
     fn test_manual_pll_helper() {
         {
             // Test the new manual_pll helper method
@@ -2182,6 +2210,7 @@ mod tests {
 
     #[cfg(feature = "rp2040")]
     #[test]
+    /// Checks automatic RP2040 voltage policy across requested-rate thresholds.
     fn test_auto_voltage_scaling() {
         {
             // Test automatic voltage scaling based on frequency

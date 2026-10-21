@@ -12,10 +12,11 @@ pub mod stepper;
 pub mod uart;
 pub mod ws2812;
 
-// Programs using this helper must stall on an empty TX FIFO with the output idle.
-// Clear the sticky flag first so an earlier idle period cannot complete a transfer.
+/// Waits for `sm` to drain its TX FIFO and newly stall, clearing a preexisting sticky stall first.
+/// The loaded program must stall on empty TX with idle output; FIFO empty alone is not wire completion.
+/// Polls at1 us intervals without a deadline. Cancellation leaves the state machine running.
 pub(crate) async fn wait_tx_idle<PIO: crate::pio::Instance, const SM: usize>(
-    sm: &mut crate::pio::StateMachine<'_, PIO, SM>,
+    sm: &mut crate::pio::StateMachine<'_, PIO, SM>
 ) {
     sm.tx().stalled();
     while !sm.tx().empty() || !sm.tx().stalled() {

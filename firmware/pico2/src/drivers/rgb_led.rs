@@ -3,12 +3,14 @@ use dashboard_core::status_led::LedDuty;
 
 /// Compare is light duty because the owned outputs are inverted. Clamp at the
 /// hardware full-light endpoint TOP+1, preserving each channel independently.
+/// Returns red/green/blue compares from `duty`, independently bounded to 0..=10000.
 pub fn compares(duty: LedDuty) -> [u16; 3] { [duty.red.min(10000), duty.green.min(10000), duty.blue.min(10000)] }
 
 #[cfg(target_arch = "arm")]
 pub use hardware::RgbLed;
 
 #[cfg(target_arch = "arm")]
+/// ARM-only PWM ownership; host callers can exercise the shared compare calculation.
 mod hardware {
     use embassy_rp::Peri;
     use embassy_rp::peripherals::{PIN_26, PIN_27, PIN_28, PWM_SLICE5, PWM_SLICE6};
@@ -19,10 +21,15 @@ mod hardware {
     /// Kept in Core0's dashboard future for the application lifetime. Off never
     /// disables/drops a slice (Drop reconnects pads with pull-down).
     pub struct RgbLed<'d> {
+        /// Slice5 A/B outputs for active-low GP26 red and GP27 green.
         red_green: Pwm<'d>,
+        /// Slice6 A output for active-low GP28 blue.
         blue: Pwm<'d>,
+        /// Last applied red/green/blue compares, suppressing redundant reconfiguration.
         applied: [u16; 3],
     }
+    /// Returns enabled, inverted PWM with TOP 9999 and divider 1; `a` and `b`
+    /// are already-clamped light-duty compares supplied by this module.
     fn config(
         a: u16,
         b: u16,
@@ -39,6 +46,9 @@ mod hardware {
         config
     }
     impl<'d> RgbLed<'d> {
+        /// Consumes `slice5` with `red`/`green` pins and `slice6` with `blue`.
+        /// Returns an all-off owner; pin mux release follows inverted zero-duty
+        /// configuration in the locked HAL. Keep it alive even while LEDs are off.
         pub fn new(
             slice5: Peri<'d, PWM_SLICE5>,
             red: Peri<'d, PIN_26>,
@@ -55,6 +65,8 @@ mod hardware {
             }
         }
 
+        /// Applies independently clamped `duty` channels, updating only slices
+        /// whose compares changed. Zero leaves the inverted PWM outputs enabled.
         pub fn apply(
             &mut self,
             duty: LedDuty,

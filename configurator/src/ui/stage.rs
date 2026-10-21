@@ -1,21 +1,34 @@
+//! Pointer-owned placement and revision-checked publication of shared-renderer canvas pixels.
+
 use dashboard_configurator::geometry::{self, ContentRect, DragGesture, GrabOffset};
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 use leptos::leptos_dom::helpers::request_animation_frame_with_handle;
 
 use super::*;
 
+/// One captured pointer gesture tied to the rendered geometry and editor token.
 #[derive(Clone, Copy)]
 pub struct Drag {
+    /// Reducer authority; another pointer or changed revision cannot commit it.
     token: PointerToken,
+    /// Geometry of the canvas from which the gesture started.
     geometry: Geometry,
+    /// Widget cell footprint, or 1×1 for a library insertion.
     span: Span,
+    /// Grab position within the widget in shared display coordinates.
     offset: GrabOffset,
+    /// CSS-pixel threshold state distinguishing selection from an actual drag.
     gesture: DragGesture,
+    /// Whether pointer start changed the persistent selected widget.
     selection_changed: bool,
+    /// Latest mapped placement; None outside the grid or below the drag threshold.
     position: Option<Placement>,
+    /// Whether the candidate placement passes current draft drop validation.
     valid: bool,
 }
 
+/// Returns the mounted canvas bounds in CSS viewport pixels for `ui`, or None
+/// before mounting; geometry helpers reject unusable dimensions.
 fn content_rect(ui: Ui) -> Option<ContentRect> {
     let canvas = ui.canvas.get_untracked()?;
     let r = canvas.get_bounding_client_rect();
@@ -27,6 +40,9 @@ fn content_rect(ui: Ui) -> Option<ContentRect> {
     })
 }
 
+/// Begins a primary-button gesture from `event` for `target` in `ui` only with
+/// coherent canvas identity/geometry and no active drag. Acquires pointer capture
+/// before reducer selection; failures release capture or leave layout unchanged.
 fn start(
     ui: Ui,
     event: web_sys::PointerEvent,
@@ -127,6 +143,8 @@ fn start(
     }
 }
 
+/// Schedules persistence in `ui` when `drag` changed selection, the project is
+/// dirty and ready, and no storage conflict exists; layout edits use the normal save path.
 fn save_selection(
     ui: Ui,
     drag: Drag,
@@ -143,6 +161,8 @@ fn save_selection(
     }
 }
 
+/// Cancels the active reducer pointer in `ui`, clears drag/capture, and persists
+/// an admitted selection change; stale pointer cancellation cannot commit placement.
 pub fn cancel(ui: Ui) {
     let drag = ui.drag.get_untracked();
     let mut cancelled = false;
@@ -158,6 +178,8 @@ pub fn cancel(ui: Ui) {
     }
 }
 
+/// Clears `ui` capture ownership before best-effort browser release, making
+/// reentrant lost-capture events harmless; browser release errors are ignored.
 fn release_capture(ui: Ui) {
     let owner = ui.capture.get_untracked();
     ui.capture.set(None);
@@ -166,6 +188,8 @@ fn release_capture(ui: Ui) {
     }
 }
 
+/// Cancels `ui` dragging only when `event` belongs to its captured pointer;
+/// unrelated pointer cancellation leaves the owner intact.
 pub fn cancel_event(
     ui: Ui,
     event: web_sys::PointerEvent,
@@ -179,6 +203,9 @@ pub fn cancel_event(
     }
 }
 
+/// Updates the drop candidate in `ui` from `event` CSS coordinates for the owning
+/// pointer. Stale canvas/token/geometry cancels; invalid or outside placements never
+/// mutate the project and remain distinguishable in the drop guide.
 pub fn drag_move(
     ui: Ui,
     event: web_sys::PointerEvent,
@@ -218,6 +245,9 @@ pub fn drag_move(
     ui.drag.set(Some(drag));
 }
 
+/// Resamples the owning `event`, releases `ui` capture, then asks the editor to
+/// commit its placement; absent placement cancels. Reducer admission rechecks the
+/// full drop even when the displayed guide was valid.
 pub fn drag_end(
     ui: Ui,
     event: web_sys::PointerEvent,
@@ -253,6 +283,9 @@ pub fn drag_end(
     }
 }
 
+/// Installs `ui` effects that cancel stale drags and sample playback every 50 ms
+/// from monotonic elapsed time. Cleanup stops the interval and preserves paused time;
+/// startup clamps to its duration, and timer creation failure disables playback.
 pub fn install_playback(ui: Ui) {
     Effect::new(move |_| {
         let current = ui.canvas_current();
@@ -315,6 +348,8 @@ pub fn install_playback(ui: Ui) {
     });
 }
 
+/// Adds `channel` to the first free 1×1 cell of `ui`'s selected view through editor
+/// admission; a full grid produces a notice without changing the project.
 fn add(
     ui: Ui,
     channel: Channel,
@@ -332,8 +367,13 @@ fn add(
     }
 }
 
+/// Returns searchable sensor insertion controls for `ui`, supporting captured
+/// pointer drags and keyboard/button insertion; inspection disables mutation buttons.
 #[component]
-pub fn Library(ui: Ui) -> impl IntoView {
+pub fn Library(
+    /// Shared canvas publication, layout editor and pointer-transaction ownership.
+    ui: Ui
+) -> impl IntoView {
     let search = RwSignal::new(String::new());
     view! {
         <aside class="library panel"><div class="panel-heading"><p class="eyebrow">"SENSOR LIBRARY"</p><h2>"Start with a signal."</h2><p>"Drag onto the grid, or use + to add."</p></div>
@@ -351,6 +391,8 @@ pub fn Library(ui: Ui) -> impl IntoView {
     }
 }
 
+/// Returns percentage-based overlay CSS for `placement` within `geometry`, or
+/// display:none when the footprint cannot be represented in that grid.
 fn style(
     geometry: Geometry,
     placement: Placement,
@@ -366,8 +408,15 @@ fn style(
     })
 }
 
+/// Returns `ui`'s shared-renderer canvas, diagnostic banners and matching hit targets.
+/// Coalesced animation callbacks recheck source identity before rendering; only a
+/// successful canvas write publishes geometry/identity. Failures disable hit targets.
+/// Inspection rendering preserves timing candidates and does not acknowledge scanout.
 #[component]
-pub fn Canvas(ui: Ui) -> impl IntoView {
+pub fn Canvas(
+    /// Shared canvas publication, layout editor and pointer-transaction ownership.
+    ui: Ui
+) -> impl IntoView {
     let preview = RwSignal::new(Preview::default());
     let revision = Memo::new(move |_| ui.editor.with(Editor::revision));
     let json = Memo::new(move |_| json_editor::projection(ui));

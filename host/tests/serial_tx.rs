@@ -1,5 +1,7 @@
+//! Owned serial TX pump completion/cancellation boundaries without real UART traffic.
 use dashboard_host_validation::diagnostics::serial_tx::{Completion, Error, Pump, Work};
 
+/// Exhausts bounded payload/chunk widths: each byte is queued once and Sent requires flush then observed wire idle.
 #[test]
 fn every_partial_write_is_exactly_once_and_completion_requires_flush_and_wire_idle() {
     for length in 1..=24 {
@@ -27,6 +29,7 @@ fn every_partial_write_is_exactly_once_and_completion_requires_flush_and_wire_id
     }
 }
 
+/// Bad lengths and busy starts leave the original token/payload intact through successful completion.
 #[test]
 fn invalid_lengths_and_overlapping_starts_preserve_the_original_transfer() {
     let mut tx = Pump::new();
@@ -41,6 +44,7 @@ fn invalid_lengths_and_overlapping_starts_preserve_the_original_transfer() {
     assert_eq!(tx.wire_idle(3), Ok(Completion::Sent(3)));
 }
 
+/// Abort at every queued prefix stops further writes but still drains/flushes before releasing the pump without Sent.
 #[test]
 fn aborted_transfer_drains_queued_bytes_without_sending_the_remainder_or_acknowledging() {
     for written in 0..=14 {
@@ -61,6 +65,7 @@ fn aborted_transfer_drains_queued_bytes_without_sending_the_remainder_or_acknowl
     }
 }
 
+/// Impossible write counts, timeout and backward time quarantine the pump against every subsequent operation.
 #[test]
 fn clock_timeout_zero_and_impossible_write_counts_quarantine_the_port() {
     for invalid in [0, 15, usize::MAX] {
@@ -81,6 +86,7 @@ fn clock_timeout_zero_and_impossible_write_counts_quarantine_the_port() {
     assert_eq!(tx.start(2, &[1], 20), Err(Error::Quarantined));
 }
 
+/// The inclusive 100ms transfer deadline remains usable near u64::MAX without deadline-addition overflow.
 #[test]
 fn near_maximum_time_uses_elapsed_duration_without_overflow() {
     let mut tx = Pump::new();

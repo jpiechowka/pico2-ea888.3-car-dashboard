@@ -30,10 +30,15 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::vehicle_status::VehicleStatus;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+/// Final canonical sensor-order values: bar, five Celsius channels, volts and lambda.
 const VALUES: [f32; 8] = [1.20, 95., 90., 80., 30., 700., 13.8, 1.00];
+/// Synthetic sawtooth amplitudes in the same canonical units as VALUES.
 const AMPLITUDES: [f32; 8] = [0.30, 6., 5., 5., 4., 50., 0.4, 0.04];
+/// Final boot-relative observation time in milliseconds; its sawtooth phase is zero.
 const NOW_MS: u64 = 118_000;
 
+/// Emits eight channel and 18 gauge/span cases to the sole CLI directory, with full/cropped PPMs, configs and coverage
+/// TSV. Returns argument/I/O errors; replaces existing named files and can leave partial output on failure.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let directory = args.next().ok_or("expected output directory")?;
@@ -91,6 +96,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Writes `stem` config/full/cropped images under `directory` and appends one row to `manifest` for
+/// `channel`/`kind`/`span`. Returns I/O errors after any earlier writes; invalid fixtures panic. Uses admitted 50ms
+/// synthetic history with warnings disabled.
 fn render(
     directory: &Path,
     manifest: &mut impl Write,
@@ -180,6 +188,8 @@ fn render(
     Ok(())
 }
 
+/// Writes caller-bounded landscape `rect` from `frame` as RGB888 P6 to `path`; coordinates are not clipped.
+/// Returns create/write/flush errors, possibly after partial replacement; invalid coordinates can panic.
 fn ppm(
     path: &Path,
     frame: &AlignedFrame,

@@ -1,3 +1,9 @@
+//! Association-model selection and fixed-size SMP payload construction.
+//!
+//! Selection follows Bluetooth Core Vol 3, Part H, §§2.3.3 and 2.3.5
+//! ([Security Manager specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html)).
+//! OOB selection does not establish that the application's out-of-band channel is trusted.
+
 use crate::prelude::SecurityLevel;
 use crate::security_manager::crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
@@ -6,39 +12,54 @@ use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// User interaction assigned to one peer during passkey entry.
 pub enum PassKeyEntryAction {
+    /// Show the six-digit value for entry at the other peer.
     Display,
+    /// Obtain the value entered by the user.
     Input,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Association model selected from both peers' advertised capabilities.
 pub enum PairingMethod {
+    /// Encryption without authenticated peer identity.
     JustWorks,
+    /// User confirms that both displays show the same six-digit value.
     NumericComparison,
+    /// Passkey entry with the indicated role at each peer.
     PassKeyEntry {
+        /// Initiating peer's user interaction.
         central: PassKeyEntryAction,
+        /// Responding peer's user interaction.
         peripheral: PassKeyEntryAction,
     },
+    /// Authenticate using externally exchanged data; transfer trust is application-owned.
     OutOfBand,
 }
 
 impl PairingMethod {
+    /// Central displays and peripheral accepts entry.
     const CENTRAL_DISPLAYS: Self = Self::PassKeyEntry {
         central: PassKeyEntryAction::Display,
         peripheral: PassKeyEntryAction::Input,
     };
 
+    /// Peripheral displays and central accepts entry.
     const PERIPHERAL_DISPLAYS: Self = Self::PassKeyEntry {
         central: PassKeyEntryAction::Input,
         peripheral: PassKeyEntryAction::Display,
     };
 
+    /// Both peers obtain the same externally known passkey through input.
     const BOTH_INPUT: Self = Self::PassKeyEntry {
         central: PassKeyEntryAction::Input,
         peripheral: PassKeyEntryAction::Input,
     };
 
+    /// Returns the nominal completed level: unauthenticated for Just Works, authenticated otherwise.
+    /// OOB callers must ensure their external authentication channel warrants this level.
     pub fn security_level(&self) -> SecurityLevel {
         match self {
             PairingMethod::JustWorks => SecurityLevel::Encrypted,
@@ -47,6 +68,9 @@ impl PairingMethod {
     }
 }
 
+/// Returns the Secure Connections model for `central` and `peripheral` feature advertisements.
+/// Either OOB flag takes precedence; absent OOB, neither requesting MITM selects Just Works.
+/// This selects a model only; it does not validate the negotiated key size or execute pairing.
 pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
     if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
         PairingMethod::OutOfBand
@@ -76,8 +100,8 @@ pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatur
 }
 
 #[cfg(feature = "legacy-pairing")]
-/// LE Legacy Pairing method selection.
-/// Key difference from LESC: no Numeric Comparison. DisplayYesNo/DisplayYesNo maps to JustWorks.
+/// Returns the legacy model for `central` and `peripheral` feature advertisements.
+/// OOB requires both flags; numeric comparison is unavailable, including two DisplayYesNo peers.
 pub fn choose_legacy_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
     if matches!(central.use_oob, UseOutOfBand::Present) && matches!(peripheral.use_oob, UseOutOfBand::Present) {
         PairingMethod::OutOfBand
@@ -106,11 +130,16 @@ pub fn choose_legacy_pairing_method(central: PairingFeatures, peripheral: Pairin
     }
 }
 
+/// Returns an allocated packet with the L2CAP/SMP header for `command`; payload bytes remain unset.
+/// Returns OutOfMemory if the pool is exhausted. Panics if a pool packet cannot hold the header;
+/// callers must also provide capacity for the command's complete fixed-size payload.
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;
     TxPacket::new(packet, command)
 }
 
+/// Returns Pairing Random containing `nonce` in little-endian wire order.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_pairing_random<P: PacketPool>(nonce: &Nonce) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::PairingRandom)?;
     let response = packet.payload_mut();
@@ -118,6 +147,8 @@ pub fn make_pairing_random<P: PacketPool>(nonce: &Nonce) -> Result<TxPacket<P>, 
     Ok(packet)
 }
 
+/// Returns Pairing Public Key with `public_key` as little-endian X followed by Y, without a SEC1 tag.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`]; no curve validation occurs.
 pub fn make_public_key_packet<P: PacketPool>(public_key: &PublicKey) -> Result<TxPacket<P>, Error> {
     let mut x = [0u8; 32];
     let mut y = [0u8; 32];
@@ -134,6 +165,8 @@ pub fn make_public_key_packet<P: PacketPool>(public_key: &PublicKey) -> Result<T
     Ok(packet)
 }
 
+/// Returns Pairing DHKey Check containing `check` in little-endian wire order.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_dhkey_check_packet<P: PacketPool>(check: &Check) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet(Command::PairingDhKeyCheck)?;
     let response = packet.payload_mut();
@@ -142,6 +175,9 @@ pub fn make_dhkey_check_packet<P: PacketPool>(check: &Check) -> Result<TxPacket<
     Ok(packet)
 }
 
+/// Returns f5's (MacKey, LTK) from shared `dh_key`, initiator `central_nonce` and responder
+/// `peripheral_nonce`, binding `central_address` and `peripheral_address` in that order.
+/// Addresses are the actual pairing-link addresses, which may differ from stored identities.
 pub fn make_mac_and_ltk(
     dh_key: &DHKey,
     central_nonce: &Nonce,
@@ -152,6 +188,8 @@ pub fn make_mac_and_ltk(
     dh_key.f5(*central_nonce, *peripheral_nonce, central_address, peripheral_address)
 }
 
+/// Returns Pairing Confirm containing `confirm` in little-endian wire order.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_confirm_packet<P: PacketPool>(confirm: &Confirm) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::PairingConfirm)?;
     let response = packet.payload_mut();
@@ -160,6 +198,8 @@ pub fn make_confirm_packet<P: PacketPool>(confirm: &Confirm) -> Result<TxPacket<
 }
 
 #[cfg(feature = "legacy-pairing")]
+/// Returns Encryption Information containing `ltk` in little-endian wire order.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_encryption_information_packet<P: PacketPool>(ltk: &LongTermKey) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::EncryptionInformation)?;
     let payload = packet.payload_mut();
@@ -168,6 +208,8 @@ pub fn make_encryption_information_packet<P: PacketPool>(ltk: &LongTermKey) -> R
 }
 
 #[cfg(feature = "legacy-pairing")]
+/// Returns Central Identification with little-endian `ediv` and the eight wire-order `rand` bytes.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_central_identification_packet<P: PacketPool>(ediv: u16, rand: &[u8; 8]) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::CentralIdentification)?;
     let payload = packet.payload_mut();
@@ -176,6 +218,8 @@ pub fn make_central_identification_packet<P: PacketPool>(ediv: u16, rand: &[u8; 
     Ok(packet)
 }
 
+/// Returns Identity Information containing the already little-endian `irk` bytes unchanged.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_identity_information_packet<P: PacketPool>(irk: &[u8; 16]) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::IdentityInformation)?;
     let payload = packet.payload_mut();
@@ -183,6 +227,9 @@ pub fn make_identity_information_packet<P: PacketPool>(irk: &[u8; 16]) -> Result
     Ok(packet)
 }
 
+/// Returns Identity Address Information using `addr`'s wire-order bytes, type 0 for PUBLIC and type 1
+/// for every other kind. Caller must supply a public/static-random identity, not an RPA or HCI alias.
+/// Allocation failure and undersized-pool panics follow [`prepare_packet`].
 pub fn make_identity_address_information_packet<P: PacketPool>(addr: &Address) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::IdentityAddressInformation)?;
     let payload = packet.payload_mut();
@@ -197,12 +244,14 @@ pub fn make_identity_address_information_packet<P: PacketPool>(addr: &Address) -
 }
 
 #[cfg(test)]
+/// Association tables distinguish legacy and Secure Connections OOB/display rules.
 mod tests {
     use super::*;
     use crate::security_manager::types::{AuthReq, BondingFlag};
 
     #[cfg(feature = "legacy-pairing")]
     #[test]
+    /// Two yes/no displays require Just Works in legacy but numeric comparison in Secure Connections.
     fn legacy_no_numeric_comparison() {
         // In legacy pairing, DisplayYesNo + DisplayYesNo should be JustWorks (not NumericComparison)
         let central = PairingFeatures {
@@ -234,6 +283,7 @@ mod tests {
 
     #[cfg(feature = "legacy-pairing")]
     #[test]
+    /// Legacy mixed keyboard/display roles follow the initiator/responder association table.
     fn legacy_keyboard_display_combos() {
         let make = |io: IoCapabilities| PairingFeatures {
             io_capabilities: io,
@@ -262,9 +312,10 @@ mod tests {
     }
 
     #[test]
+    /// Every I/O pair selects Secure Connections OOB iff either peer advertises peer OOB data.
     fn oob_used() {
-        for p_oob in 0..1 {
-            for c_oob in 0..1 {
+        for p_oob in 0..=1 {
+            for c_oob in 0..=1 {
                 let p_oob = if p_oob == 1 {
                     UseOutOfBand::Present
                 } else {
@@ -285,7 +336,7 @@ mod tests {
                             responder_key_distribution: 0.into(),
                             maximum_encryption_key_size: 16,
                         };
-                        let mut central = peripheral.clone();
+                        let mut central = peripheral;
                         central.use_oob = c_oob;
                         central.io_capabilities = c.try_into().unwrap();
                         if p_oob == UseOutOfBand::NotPresent && c_oob == UseOutOfBand::NotPresent {
@@ -293,6 +344,11 @@ mod tests {
                         } else {
                             assert_eq!(choose_pairing_method(central, peripheral), PairingMethod::OutOfBand);
                         }
+                        #[cfg(feature = "legacy-pairing")]
+                        assert_eq!(
+                            choose_legacy_pairing_method(central, peripheral) == PairingMethod::OutOfBand,
+                            p_oob == UseOutOfBand::Present && c_oob == UseOutOfBand::Present,
+                        );
                     }
                 }
             }

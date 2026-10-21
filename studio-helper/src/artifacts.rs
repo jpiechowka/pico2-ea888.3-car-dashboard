@@ -8,20 +8,31 @@ use dashboard_helper_protocol::*;
 
 use crate::build_input::{AcceptedInput, FrozenInput, digest};
 #[derive(Clone)]
+/// Validated software artifact with immutable transfer bytes and optional retained native authority.
 pub(crate) struct Artifact {
+    /// Session/input/source identities; software admission leaves hardware qualification false.
     pub summary: ArtifactSummary,
+    /// Exact validated UF2 bytes, shared across cache and active operations.
     pub uf2: Arc<[u8]>,
+    /// Native file/source lease required for flashing; absent for non-native representations.
     pub lease: Option<Arc<ArtifactLease>>,
 }
 /// Shared by cache and active operation; eviction cannot release an in-use artifact.
 pub(crate) struct ArtifactLease {
+    /// Immutable accepted inputs and frozen source with owned build-attempt storage.
     pub frozen: Arc<FrozenInput>,
+    /// Captured ELF pathname protected by retained file and ancestor handles.
     pub elf: PathBuf,
+    /// Pinned converter executable and its retained identity.
     pub converter: Converter,
+    /// Sorted, disjoint, non-touching half-open flash-address ranges for verification.
     pub verification_ranges: Vec<(u32, u32)>,
+    /// Capture/UF2 files and ancestor handles retained until every lease owner drops.
     _holds: Vec<File>,
 }
 impl Artifact {
+    /// Returns the native lease after rechecking frozen inputs, ELF/UF2/converter digests and range presence.
+    /// Missing lease, file/source failures or identity mismatch return errors; this does not inspect a device.
     pub fn verify_lease(&self) -> Result<&ArtifactLease, String> {
         let lease = self.lease.as_deref().ok_or("Artifact has no retained native lease")?;
         lease.frozen.verify()?;
@@ -35,13 +46,21 @@ impl Artifact {
         Ok(lease)
     }
 }
+/// Pinned picotool executable held against replacement for the artifact's lifetime.
 pub(crate) struct Converter {
+    /// Canonical absolute executable path used for conversion and version/capability checks.
     pub path: PathBuf,
+    /// Windows handle denying executable writes/deletion while held.
     _file: File,
+    /// Ancestor directory handles preventing relocation while held.
     _parents: Vec<File>,
+    /// Lowercase SHA-256 of the bounded executable bytes.
     hash: String,
 }
+/// Returns a read handle for `path` using native sharing/link admission, or its filesystem error.
 fn held(path: &Path) -> Result<File, String> { crate::file_locks::read_file(path) }
+/// Returns bytes from `file`'s current cursor, advancing it, or read/size error above `max` bytes.
+/// Internal callers use at most 64 MiB; `max` must remain below `usize::MAX` for the excess-byte sentinel.
 fn bytes(
     file: &mut File,
     max: usize,
@@ -56,6 +75,9 @@ fn bytes(
     Ok(result)
 }
 /// Validation stdout may be a machine report; stderr is always observable.
+/// Runs `tool` with `args` in `cwd` under owned `process` cancellation/output limits.
+/// `machine_stdout` suppresses stdout relay; `sink` receives `(stderr, text)` for visible output.
+/// Returns captured exit/raw output (including nonzero exit) or process/timeout/cancellation error.
 fn run_validation_tool(
     process: &mut crate::process::ProcessContext,
     tool: &Path,
@@ -71,6 +93,9 @@ fn run_validation_tool(
     })
 }
 
+/// Returns the canonical picotool 2.3.1 converter under `repo`, retaining executable/ancestor locks.
+/// `process` supervises version/help probes. Missing executable, lock/read failure, wrong version,
+/// absent UF2 family/platform capability or process failure returns an error and releases partial holds.
 pub(crate) fn converter(
     process: &mut crate::process::ProcessContext,
     repo: &Path,
@@ -97,6 +122,13 @@ pub(crate) fn converter(
         hash,
     })
 }
+/// Converts and validates the completed capture owned by `frozen` against accepted `input` for `session`.
+/// `converter` supplies pinned executable authority; `process` bounds child work and cancellation;
+/// `sink` receives stage/status and tool diagnostics without machine-report stdout.
+/// Returns immutable UF2 plus retained lease only after source/input/image/range validation and a final
+/// cancellation check. Errors publish no artifact, but generated UF2 and diagnostics can remain in the owned attempt.
+/// Verification ranges must lie in `[0x10000000, 0x101FE000)`, excluding the reserved capture journal.
+/// Software admission never asserts hardware qualification or authorizes a flash.
 pub(crate) fn admit(
     process: &mut crate::process::ProcessContext,
     frozen: Arc<FrozenInput>,
@@ -233,6 +265,8 @@ pub(crate) fn admit(
 
 /// The frozen Python authority revalidates every image field; this boundary rejects
 /// legacy or experimental receipts before publishing a native artifact.
+/// Returns success only for `report` explicitly declaring schema 2 practical software admission with
+/// instruction proof, hardware qualification and flash readiness all false; missing fields also fail.
 fn validate_qualification(report: &serde_json::Value) -> Result<(), String> {
     if report["schema_version"] != 2
         || report["scope"] != "practical_software_artifact"
@@ -248,11 +282,13 @@ fn validate_qualification(report: &serde_json::Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod qualification_tests {
+    //! Receipt boundaries must explicitly distinguish practical image checks from physical qualification.
     use serde_json::json;
 
     use super::validate_qualification;
 
     #[test]
+    /// Every qualification field is required and incompatible/overclaiming receipts are rejected.
     fn only_explicit_practical_receipts_are_admitted() {
         let valid = json!({"schema_version":2,"scope":"practical_software_artifact",
             "image_gate":"practical","complete_instruction_proof":false,
@@ -287,7 +323,9 @@ mod qualification_tests {
 
 #[cfg(all(test, windows))]
 mod diagnostic_tests {
+    //! Windows subprocess regression for public diagnostics and private machine reports.
     #[test]
+    /// Failed validators expose stderr while their report stdout stays available only in captured output.
     fn failed_validator_streams_stderr_but_preserves_machine_stdout_privately() {
         let cmd = crate::prerequisites::python_executable().expect("Python on an absolute PATH");
         let cwd = std::env::current_dir().unwrap();

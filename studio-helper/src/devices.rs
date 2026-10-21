@@ -2,10 +2,13 @@
 use std::path::Path;
 
 use dashboard_helper_protocol::*;
+/// Returns nonempty control-free descriptor `s` within `N` UTF-8 bytes, or `None` for absent/invalid/oversized text.
 fn text<const N: usize>(s: Option<&str>) -> Option<Text<N>> {
     s.filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
         .and_then(|s| Text::new(s).ok())
 }
+/// Returns an incomplete empty descriptor report for `session` with bounded diagnostic `reason`.
+/// No absence-of-device or capacity conclusion follows from this failure report.
 pub(crate) fn empty(
     session: SessionId,
     reason: &str,
@@ -18,11 +21,16 @@ pub(crate) fn empty(
         devices: BoundedVec::new(vec![]).unwrap(),
     }
 }
+/// Returns a fresh 128-bit lowercase-hex selection identity, or OS entropy/protocol validation error.
+/// This ephemeral ID is not a USB serial, chip identity or proof of continued attachment.
 fn id() -> Result<DeviceId, String> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|_| "OS entropy unavailable")?;
     DeviceId::new(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()).map_err(|e| e.to_string())
 }
+/// Marks duplicate-serial `devices` Ambiguous and absent/non-ASCII/option-like serials Unsupported.
+/// Caller has removed control-bearing text; uniquely selectable descriptors remain DescriptorOnly without hardware
+/// qualification.
 fn qualify(devices: &mut [DeviceSummary]) {
     for i in 0..devices.len() {
         let serial = devices[i].serial.as_ref().map(|s| s.as_str());
@@ -42,6 +50,9 @@ fn qualify(devices: &mut [DeviceSummary]) {
         }
     }
 }
+/// Returns SHA-256 over length-prefixed bounded descriptor/topology identity from `d`, including Windows
+/// instance/location data. Oversized fields/location count return an error; descriptor identity can change on
+/// reattachment and does not measure flash.
 fn descriptor_digest(d: &nusb::DeviceInfo) -> Result<Sha256, String> {
     let mut bytes = Vec::new();
     let mut add = |value: &[u8], maximum: usize| -> Result<(), String> {
@@ -83,6 +94,11 @@ fn descriptor_digest(d: &nusb::DeviceInfo) -> Result<Sha256, String> {
     }
     Sha256::new(crate::build_input::digest(&bytes)).map_err(|e| e.to_string())
 }
+/// Returns up to 16 RP2350 BOOTSEL VID/PID observations using blocking nusb descriptor enumeration.
+/// More matches return an incomplete empty report; enumeration/entropy/identity/schema errors return `Err`.
+/// No PICOBOOT interface is opened. Completeness covers returned library observations, not continuous attachment
+/// or an assertion that the OS/library exposed every physical device. Caller runs this in an owned child for timeout
+/// control.
 fn enumerate() -> Result<DeviceScanReport, String> {
     use nusb::MaybeFuture;
     let mut report = empty(
@@ -128,6 +144,8 @@ fn enumerate() -> Result<DeviceScanReport, String> {
     Ok(report)
 }
 /// Fixed child entrypoint is isolated because nusb's Windows enumeration is blocking.
+/// Returns exit 0 only after encoding/writing a descriptor report to stdout; otherwise emits a generic stderr failure
+/// and returns 1.
 pub fn enumerate_child() -> i32 {
     match enumerate().and_then(|r| encode(&r).map_err(|e| e.to_string())) {
         Ok(bytes) => {
@@ -144,6 +162,9 @@ pub fn enumerate_child() -> i32 {
         }
     }
 }
+/// Returns a descriptor report bound to `session`, running this executable's fixed child mode in `repo` under
+/// `process`. Child/timeout/cancellation/schema failures become bounded incomplete reports; decoded raw output
+/// preserves exact wire values. This scan never runs picotool, measures capacity or authorizes a device command.
 pub(crate) fn scan(
     process: &mut crate::process::ProcessContext,
     repo: &Path,
@@ -168,8 +189,10 @@ pub(crate) fn scan(
 }
 #[cfg(test)]
 mod tests {
+    //! Descriptor filtering, ambiguous selection and bounded failure-text regressions.
     use super::*;
     #[test]
+    /// Long multibyte error text is bounded safely while preserving an explicit incomplete report.
     fn failure_reason_accepts_long_unicode_without_panicking() {
         for value in ["é", "界", "😀"] {
             let report = empty(
@@ -183,6 +206,7 @@ mod tests {
             report.validate().unwrap();
         }
     }
+    /// Returns an unqualified BOOTSEL fixture with filtered optional `serial` and fresh selection identity.
     fn device(serial: Option<&str>) -> DeviceSummary {
         DeviceSummary {
             device_id: id().unwrap(),
@@ -202,6 +226,7 @@ mod tests {
         }
     }
     #[test]
+    /// Duplicate and missing serials remain unselectable with no invented capacity or readiness.
     fn missing_and_duplicate_serials_remain_unqualified() {
         let mut devices = vec![device(Some("same")), device(Some("same")), device(None)];
         qualify(&mut devices);
@@ -211,6 +236,8 @@ mod tests {
         assert!(devices.iter().all(|d| !d.flash_ready && d.capacity.bytes.is_none()));
     }
     #[test]
+    /// Control-bearing and oversized descriptor strings are omitted instead of rendered or truncated into new
+    /// identities.
     fn descriptor_controls_and_oversize_are_not_displayed() {
         assert!(text::<126>(Some("bad\nserial")).is_none());
         assert!(text::<126>(Some(&"a".repeat(127))).is_none());

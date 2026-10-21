@@ -138,6 +138,15 @@ jobs:
           cargo check --locked -p dashboard-helper-protocol --target wasm32-unknown-unknown
           cargo clippy --locked -p dashboard-helper-protocol --target wasm32-unknown-unknown -- -D warnings
 
+      - name: Strict shared Rust documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --locked --workspace --lib --all-features --no-deps --document-private-items
+          cargo doc --locked --workspace --bins --all-features --no-deps --document-private-items --target-dir target/rustdoc-bins
+          cargo test --locked --workspace --all-features --doc
+          cargo doc --locked -p dashboard-core -p dashboard-config -p dashboard-build-profiles -p dashboard-helper-protocol --lib --all-features --target wasm32-unknown-unknown --no-deps --document-private-items
+
   studio-helper:
     name: Helper pure contracts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -160,6 +169,13 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Strict native helper documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --locked --lib --no-deps --document-private-items
+          cargo doc --locked --bins --no-deps --document-private-items --target-dir target/rustdoc-bins
 
       - name: Windows dashboard wrapper contracts
         if: runner.os == 'Windows'
@@ -210,6 +226,14 @@ jobs:
           trunk build --release --locked
       - name: Strict browser harness Clippy
         run: cargo clippy --locked --target wasm32-unknown-unknown --features browser-tests -- -D warnings
+      - name: Strict Studio native and browser documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --locked --lib --no-deps --document-private-items
+          cargo doc --locked --bins --no-deps --document-private-items --target-dir target/rustdoc-bins
+          cargo doc --locked --lib --features browser-tests --target wasm32-unknown-unknown --no-deps --document-private-items
+          cargo doc --locked --bins --features browser-tests --target wasm32-unknown-unknown --no-deps --document-private-items --target-dir target/rustdoc-bins
       - name: Browser process cleanup contracts
         run: python3 -m unittest discover -s scripts -p 'test_browser_process.py'
       - name: Browser storage, worker, transport and rendering failures
@@ -241,6 +265,16 @@ jobs:
       - name: Host contracts
         run: cargo test --locked
         working-directory: host
+      - name: Complete Rust source documentation inventory
+        run: |
+          cargo test --locked --example rustdoc_inventory
+          cargo run --locked --example rustdoc_inventory -- .. --check > target/rustdoc-inventory.json
+        working-directory: host
+      - name: Strict host library and example documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --lib --examples --no-deps --document-private-items
+        working-directory: host
       - name: Verify vendored HAL source
         run: |
           cargo build --locked --release -p dashboard-provenance
@@ -253,18 +287,31 @@ jobs:
       - name: Radio transport and security regressions
         run: |
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only,firmware-logs
-          cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth
+          cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth,log
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,security,default-packet-pool -- --test-threads=1
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,peripheral,gatt,security,legacy-pairing,att-queued-writes,default-packet-pool,log -- --test-threads=1
       - name: Advertising, channels and compiled hardware harness
         # Physical serial tests are explicitly ignored unless requested on hardware.
         run: |
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --no-default-features --features peripheral,extended-advertising,gatt,derive,central,default-packet-pool,security,att-queued-writes,l2cap-sdu-reassembly-optimization,connection-params-update --tests -- --test-threads=1
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features peripheral,central,default-packet-pool -- --test-threads=1
+      - name: BLE build configuration precedence and conflicts
+        run: |
+          rustc --edition=2024 --test --cfg 'feature="central"' firmware/vendor/trouble-host/build.rs -o target/trouble-build-contracts
+          target/trouble-build-contracts
       - name: Discovery-only GATT regressions and forbidden security unification
         run: |
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool -- --test-threads=1
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool-size-8,default-packet-pool-mtu-251,gatt-client-notification-queue-size-4 -- --test-threads=1
           python3 firmware/scripts/check_probe_security_guard.py --target x86_64-unknown-linux-gnu
+      - name: Strict radio and BLE documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth,firmware-logs --no-deps --document-private-items
+          cargo doc --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only --no-deps --document-private-items
+          cargo doc --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features peripheral,extended-advertising,gatt,derive,central,default-packet-pool,security,att-queued-writes,l2cap-sdu-reassembly-optimization,connection-params-update --no-deps --document-private-items
+          cargo doc --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool --no-deps --document-private-items
       - name: Target artifact capture contracts
         run: |
           cargo fetch --locked --manifest-path ../Cargo.toml
@@ -313,13 +360,69 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-10-18
+          components: llvm-tools-preview
+          targets: thumbv6m-none-eabi
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware/vendor/embassy-rp
       - name: Native register and timer contracts
         run: cargo test --locked --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib -- --test-threads=1
       - name: Release arithmetic and UART cancellation
-        run: cargo test --locked --release --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib pio_programs::uart::tests -- --test-threads=1
+        run: cargo test --locked --release --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib -- --test-threads=1
+      - name: Retained RP2040 software contracts
+        # Arithmetic, ABI and atomic-cache seams never call ROM or MMIO.
+        run: cargo test --locked --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp2040,critical-section/std,rom-func-cache --lib -- --test-threads=1
+      - name: Strict HAL native contract documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp235xa,_test,critical-section/std --lib --no-deps --document-private-items
+      - name: Strict retained RP2040 HAL documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path firmware/vendor/embassy-rp/Cargo.toml --target ${{ matrix.target }} --no-default-features --features rp2040,critical-section/std,rom-func-cache --lib --no-deps --document-private-items
+      - name: Retained ARM integer intrinsic ABI link
+        if: runner.os == 'Linux'
+        shell: bash
+        # Link-only artifact: no vector table, device access or supported-board claim.
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rp2040-abi"
+          cargo build --locked --release --manifest-path firmware/vendor/embassy-rp/Cargo.toml --lib --no-default-features --features rp2040,intrinsics,rom-func-cache,rom-v2-intrinsics --target thumbv6m-none-eabi --target-dir "$out"
+          sysroot="$(rustc --print sysroot)"
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          tools="$sysroot/lib/rustlib/$host/bin"
+          libs="$sysroot/lib/rustlib/thumbv6m-none-eabi/lib"
+          archive="$out/thumbv6m-none-eabi/release/libembassy_rp.rlib"
+          test -f "$archive"
+          rustc --edition=2024 --crate-name rp2040_di_abi --target thumbv6m-none-eabi -C opt-level=2 -C panic=abort --emit=obj host/tests/fixtures/rp2040_di_abi.rs -o "$out/probe.o"
+          "$tools/llvm-nm" -A --defined-only "$archive" > "$out/hal-symbols.txt"
+          grep -Eq ' [TW] __popcountsi2$' "$out/hal-symbols.txt"
+          if grep -Eq ' [TW] __(popcount|clz|ctz)di2$' "$out/hal-symbols.txt"; then
+            echo 'HAL must not export a 32-bit implementation as a 64-bit intrinsic'
+            exit 1
+          fi
+          "$tools/rust-lld" -flavor gnu -e _start --gc-sections "$out/probe.o" "$archive" "$libs"/libcore-*.rlib "$libs"/libcompiler_builtins-*.rlib -Map="$out/probe.map" -o "$out/probe.elf"
+          for symbol in __popcountdi2 __clzdi2 __ctzdi2; do
+            grep -Eq "libcompiler_builtins.*\\(\\.text\\.$symbol\\)" "$out/probe.map"
+          done
+          "$tools/llvm-objdump" -d "$out/probe.elf" > "$out/probe.disassembly"
+
+  ble-packet-ownership:
+    name: BLE packet ownership (Miri)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-18
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: firmware/vendor/trouble-host
+      - name: Live packet leases across allocation and release
+        # Interpreter checks Rust aliasing; it does not emulate radio or DMA.
+        run: cargo miri test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib packet_pool::tests -- --test-threads=1
 
   clippy-pico2:
     name: Clippy (Pico 2 W)
@@ -366,6 +469,26 @@ jobs:
         working-directory: firmware
       - name: Target benchmark Clippy
         run: cargo clippy --locked -p dashboard-pico2 --features target-bench,ble-obd,frame-trace,te-trace -- -D warnings
+        working-directory: firmware
+      - name: Strict Cortex-M33 dashboard and HAL documentation
+        env:
+          RUSTDOCFLAGS: -D warnings -C target-cpu=cortex-m33
+        run: |
+          cargo doc --locked -p dashboard-pico2 --lib --bin pico2 --target thumbv8m.main-none-eabihf --features demo,frame-trace,te-trace --no-deps --document-private-items
+          cargo doc --locked -p dashboard-pico2 --lib --bin pico2 --target thumbv8m.main-none-eabihf --features target-bench,ble-obd,frame-trace,te-trace --no-deps --document-private-items
+          cargo doc --locked -p dashboard-pico2 --lib --bin pico2 --target thumbv8m.main-none-eabihf --features longan-rx12 --no-deps --document-private-items
+          cargo doc --locked --manifest-path vendor/embassy-rp/Cargo.toml --lib --target thumbv8m.main-none-eabihf --no-default-features --features rp235xa,time-driver,unstable-pac --no-deps --document-private-items
+        working-directory: firmware
+      - name: Install compiler for retained Cortex crypto backend
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Retained Cortex crypto compile and documentation
+        # Compile only: this does not execute or qualify the optional C/assembly backend.
+        env:
+          RUSTFLAGS: -C target-cpu=cortex-m33
+          RUSTDOCFLAGS: -D warnings -C target-cpu=cortex-m33
+        run: |
+          cargo check --locked --manifest-path vendor/trouble-host/Cargo.toml --target thumbv8m.main-none-eabihf --features security-p256-cortex-m4,legacy-pairing,scan,subrating,connection-metrics
+          cargo doc --locked --manifest-path vendor/trouble-host/Cargo.toml --target thumbv8m.main-none-eabihf --features security-p256-cortex-m4,legacy-pairing,scan,subrating,connection-metrics --no-deps --document-private-items
         working-directory: firmware
       - name: Mutually exclusive profile guards
         run: |
@@ -481,6 +604,10 @@ jobs:
           workspaces: firmware
       - name: Strict utility Clippy
         run: cargo clippy --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -D warnings
+      - name: Strict standalone probe documentation
+        env:
+          RUSTDOCFLAGS: -D warnings -C target-cpu=cortex-m33
+        run: cargo doc --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" --no-deps --document-private-items
       - name: Build optimized utility with Cortex-M33 flags from Cargo config
         # Match build_ble_probe.py; extra rustc options apply only to this binary.
         run: cargo rustc --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -C llvm-args=--inline-threshold=100000

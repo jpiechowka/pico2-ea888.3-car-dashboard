@@ -1,27 +1,45 @@
 //! Reviewed generic Mode01 subset. Wideband/MAP scaling and manufacturer DIDs
 //! remain unqualified; no guessed conversion can produce a live sample here.
+//! Conversion cross-checks: [python-OBD temperature decoder](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py)
+//! and [ELMduino Mode01 voltage implementation](https://github.com/PowerBroker2/ELMduino/blob/e9d6b55fd63f4afd7789d0981861e9990cdfcd8e/src/ELMduino.cpp).
+//! These implementation references do not qualify any particular ECU.
 use crate::samples::Quantity;
 
+/// Capability evidence, keeping absent responses distinct from an explicit cleared bit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Support {
+    /// Required page has not been received or lies beyond the retained pages.
     Unknown,
+    /// The admitted responder advertised the PID.
     Supported,
+    /// An admitted bitmap clears the PID or a prerequisite continuation bit.
     Unsupported,
 }
+/// Rejected capability evidence; existing pages remain unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapabilityError {
+    /// Invalid OBD responder identifier, or evidence from another responder/epoch.
     Source,
+    /// Bitmap base is not 0x00, 0x20 or 0x40.
     Page,
+    /// Previous pages have not positively advertised this continuation page.
     Unadvertised,
+    /// A previously recorded page changed within the same epoch.
     Changed,
 }
+/// Three immutable-once-recorded Mode 01 capability pages for one responder/epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
+    /// Standard OBD response identifier in 0x7E8..=0x7EF.
     ecu: u16,
+    /// Caller-owned transaction/session generation; no numeric value is reserved here.
     epoch: u64,
+    /// Big-endian decoded bitmaps for bases 0x00, 0x20 and 0x40; None means absent.
     pages: [Option<u32>; 3],
 }
 impl Capabilities {
+    /// Returns empty evidence bound to `ecu` in 0x7E8..=0x7EF and opaque `epoch`,
+    /// or Source for an identifier outside that responder range.
     pub fn new(
         ecu: u16,
         epoch: u64,
@@ -36,10 +54,16 @@ impl Capabilities {
         })
     }
 
+    /// Returns the fixed eleven-bit responder identifier.
     pub const fn ecu(&self) -> u16 { self.ecu }
 
+    /// Returns the caller generation to which all recorded pages belong.
     pub const fn epoch(&self) -> u64 { self.epoch }
 
+    /// Records `bits` for `base` (0x00/0x20/0x40) from exact `ecu`/`epoch`.
+    /// Bit31 advertises base+1 and bit0 base+32. Returns success for first admission
+    /// or an identical repeat; wrong source, missing continuation or changed evidence
+    /// returns an error without mutation. This does not authorize vehicle requests.
     pub fn record_page(
         &mut self,
         ecu: u16,
@@ -66,6 +90,9 @@ impl Capabilities {
         Ok(())
     }
 
+    /// Returns evidence for `pid`: explicit bits/cleared continuation imply Supported/
+    /// Unsupported, missing pages imply Unknown. PID zero is Supported only once page
+    /// zero exists; silence is never interpreted as Unsupported.
     pub fn supported(
         &self,
         pid: u8,
@@ -99,16 +126,35 @@ impl Capabilities {
     }
 }
 
+/// Generic decoder rejection; no quantity is produced on error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeError {
+    /// Data width differs from the selected PID's exact width.
     Length,
+    /// PID has no reviewed conversion in this restricted decoder.
     UnqualifiedPid,
 }
+/// Canonical quantity or unbound bitmap; source/freshness admission remains with the caller.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Decoded {
-    Quantity(Quantity),
-    Supported { base: u8, bits: u32 },
+    /// Temperature or module voltage decoded into canonical units.
+    Quantity(
+        /// Celsius or volts, as identified by the quantity variant.
+        Quantity,
+    ),
+    /// Capability page requiring source/epoch admission before use.
+    Supported {
+        /// Page PID: 0x00, 0x20 or 0x40.
+        base: u8,
+        /// Big-endian bitmap: bit31 is base+1 and bit0 base+32.
+        bits: u32,
+    },
 }
+/// Decodes Mode 01 `pid` from application data `bytes`, excluding service/PID headers.
+/// Returns Celsius for 0x05/0x0F/0x5C (one byte minus40, -40..=215), volts for
+/// 0x42 (two-byte big-endian value /1000, 0..=65.535), or a four-byte capability
+/// bitmap for 0x00/0x20/0x40. Unknown PIDs fail before width checking; known PIDs
+/// reject extra or missing bytes. Decoding alone proves neither ECU support nor freshness.
 pub fn decode(
     pid: u8,
     bytes: &[u8],

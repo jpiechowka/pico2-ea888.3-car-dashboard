@@ -1,5 +1,7 @@
+//! Shared landscape/portrait geometry, mounting inheritance and migration contracts.
 #[cfg(feature = "json")]
 #[test]
+/// A current 2x4 portrait grid imports without treating its rows as landscape coordinates.
 fn current_json_accepts_a_complete_portrait_grid() {
     let mut value: serde_json::Value = serde_json::from_str(include_str!("../../../configs/default.json")).unwrap();
     value["version"] = VERSION.into();
@@ -16,6 +18,7 @@ fn current_json_accepts_a_complete_portrait_grid() {
 use dashboard_config::*;
 
 #[test]
+/// Both grids partition every body pixel exactly once, exclude the header and reject outside hit coordinates.
 fn every_cell_owns_exactly_its_pixels_and_no_header_pixels() {
     for geometry in Geometry::ALL {
         let mut area = 0;
@@ -80,6 +83,7 @@ fn every_cell_owns_exactly_its_pixels_and_no_header_pixels() {
 }
 
 #[test]
+/// Exhaust all byte coordinates and spans against independent widened geometry bounds.
 fn every_span_and_byte_coordinate_is_checked_without_overflow() {
     for geometry in Geometry::ALL {
         for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
@@ -107,6 +111,7 @@ fn every_span_and_byte_coordinate_is_checked_without_overflow() {
 }
 
 #[test]
+/// All mounting modes roundtrip and inherit correctly; an incompatible view override rejects placement.
 fn inherited_and_explicit_geometry_controls_validation_and_roundtrip() {
     for orientation in Orientation::ALL {
         let mut config = default_config();
@@ -140,6 +145,7 @@ fn inherited_and_explicit_geometry_controls_validation_and_roundtrip() {
 }
 
 #[test]
+/// Portrait overlap and an outside column retain distinct Overlap and Bounds failures.
 fn portrait_overlap_and_outside_cells_remain_rejected() {
     let mut config = default_config();
     config.orientation = Orientation::Portrait;
@@ -161,6 +167,7 @@ fn portrait_overlap_and_outside_cells_remain_rejected() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Host v4 migration adds landscape/inheritance consistently; firmware boot still rejects legacy bytes.
 fn frozen_v4_migrates_identically_from_binary_and_json() {
     let binary = decode(include_bytes!("fixtures/v4-default.eav")).unwrap();
     let json = from_json_bytes(include_bytes!("fixtures/v4-default.json")).unwrap();
@@ -178,6 +185,7 @@ fn frozen_v4_migrates_identically_from_binary_and_json() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Required nullable overrides cannot be omitted/duplicated, and legacy records reject current-only fields.
 fn orientation_unknowns_duplicates_and_legacy_field_injection_fail() {
     let current = to_json(&validate(default_config()).unwrap()).unwrap();
     let missing = current.replace(",\"orientation\":null", "");

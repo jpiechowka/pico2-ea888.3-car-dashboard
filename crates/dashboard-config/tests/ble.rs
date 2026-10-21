@@ -1,6 +1,8 @@
+//! Explicit BLE peer identity, inactive timing admission and disabled legacy migration.
 use dashboard_config::*;
 
 #[test]
+/// Enabling BLE requires an admitted peer; valid bytes roundtrip and failed boot restores disabled defaults.
 fn enabled_ble_requires_explicit_peer_and_preserves_bytes() {
     let mut c = default_config();
     assert!(!c.ble.enabled);
@@ -19,6 +21,7 @@ fn enabled_ble_requires_explicit_peer_and_preserves_bytes() {
 }
 
 #[test]
+/// Reject reserved/random-static identities and check inclusive timing endpoints even while BLE is disabled.
 fn random_static_and_inactive_timings_are_validated() {
     for address in [
         [0xFF; 6],
@@ -53,6 +56,7 @@ fn random_static_and_inactive_timings_are_validated() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Frozen v5 binary/JSON add disabled BLE; a current document cannot omit that required field.
 fn frozen_v5_migrates_without_enabling_radio() {
     let a = decode(include_bytes!("fixtures/v5-default.eav")).unwrap();
     let b = from_json_bytes(include_bytes!("fixtures/v5-default.json")).unwrap();

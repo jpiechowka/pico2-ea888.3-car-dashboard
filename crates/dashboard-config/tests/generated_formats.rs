@@ -1,17 +1,23 @@
+//! Deterministic mutation corpus for format/boot equivalence; seeds are retained in failure diagnostics.
 #[path = "../../../test-support/generated.rs"]
+/// Shared panic-time corpus identity reporting; does not alter generated cases.
 mod generated;
 use dashboard_config::*;
 
+/// Fixed nonzero xorshift seed for reproducible generated regressions.
 const SEED: u32 = 0x17EA_5005;
+/// Advance deterministic xorshift `state` and return the next u32; zero would remain zero.
 fn next(state: &mut u32) -> u32 {
     *state ^= *state << 13;
     *state ^= *state >> 17;
     *state ^= *state << 5;
     *state
 }
+/// Return 512 cases by default or an environment override clamped to 16 through 8192; malformed overrides panic.
 fn budget() -> usize {
     std::env::var("DASHBOARD_FORMAT_CASES").map_or(512, |v| v.parse::<usize>().unwrap().clamp(16, 8192))
 }
+/// Refresh CRC in complete current envelope `bytes`; panics on a missing header and does not validate payload.
 fn seal(bytes: &mut [u8]) {
     let mut checked = bytes[..8].to_vec();
     checked.extend_from_slice(&bytes[12..]);
@@ -21,6 +27,7 @@ fn seal(bytes: &mut [u8]) {
 // A lost canonicality/semantic guard must not let the owned host parser and
 // firmware's in-place publication disagree, including after a prior success.
 #[test]
+/// Seeded resealed payload mutations give identical owned/in-place outcomes after a prior successful load.
 fn seeded_resealed_eav_mutations_agree_with_boot_publication() {
     let mut rng = SEED;
     let mut slot = ConfigSlot::new();
@@ -63,6 +70,7 @@ fn seeded_resealed_eav_mutations_agree_with_boot_publication() {
 }
 
 #[test]
+/// Seeded EASP mutations agree with an independent byte-level admission predicate and canonical re-encoding.
 fn seeded_profile_bytes_match_independent_wire_predicate() {
     use dashboard_config::startup::StartupProfile;
     let mut rng = SEED;
@@ -92,6 +100,7 @@ fn seeded_profile_bytes_match_independent_wire_predicate() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Historical JSON and seeded current candidates converge to the same current in-place boot publication.
 fn seeded_json_and_frozen_migrations_converge_to_current_slot() {
     let mut rng = SEED;
     let mut slot = ConfigSlot::new();
@@ -131,6 +140,7 @@ fn seeded_json_and_frozen_migrations_converge_to_current_slot() {
 }
 
 #[test]
+/// NaN, infinities, extremes, subnormal and negative-zero fuel ratios reject even with a repaired checksum.
 fn float_bit_boundaries_cannot_escape_resealed_validation() {
     let mut storage = [0; MAX_FILE_BYTES];
     for bits in [

@@ -118,11 +118,13 @@ pub enum Width {
 }
 
 impl Default for Config {
+    /// Returns the APS6404L preset; caller must replace its assumed 125 MHz system clock.
     fn default() -> Self { Self::aps6404l() }
 }
 
 impl Config {
-    /// Create configuration for APS6404L PSRAM.
+    /// Returns the 8 MiB APS6404L quad-I/O preset with an assumed 125 MHz system clock.
+    /// This does not measure clocks or identify a device; update `clock_hz` before use.
     pub fn aps6404l() -> Self {
         Self {
             clock_hz: 125_000_000,        // Default to 125MHz
@@ -160,7 +162,15 @@ impl Config {
         }
     }
 
-    /// Create a custom memory configuration.
+    /// Returns an unchecked configuration: `clock_hz` is actual clk_sys Hz;
+    /// `max_mem_freq` caps SCLK Hz; `max_select_us`/`min_deselect_ns` bound CS timing;
+    /// `cooldown` is SCLK cycles and `page_break` controls automatic burst splitting.
+    /// `init_clkdiv` controls direct-command SCLK (`0` encodes 256).
+    /// `enter_quad_cmd` optionally enters quad mode; `quad_read_cmd` and
+    /// `quad_write_cmd` set mapping prefixes. `dummy_cycles` counts dummy bits,
+    /// not clocks. `read_format`/`write_format` select phase widths; `mem_size` is
+    /// bytes, `verification_type` chooses identity checking, and `xip_writable`
+    /// enables memory-mapped writes. `Psram::new` validates representable timing.
     pub fn custom(
         clock_hz: u32,
         max_mem_freq: u32,
@@ -202,15 +212,21 @@ impl Config {
 
 /// PSRAM driver.
 pub struct Psram<'d> {
+    /// Keeps exclusive CS1 ownership for the mapping lifetime.
     #[allow(dead_code)]
     qmi_cs1: QmiCs1<'d>,
+    /// Configured byte size, identity-checked only when verification is enabled.
     size: usize,
 }
 
 impl<'d> Psram<'d> {
-    /// Create a new PSRAM driver instance.
-    ///
-    /// This will detect the PSRAM device and configure it for memory-mapped access.
+    /// Consumes `qmi_cs1`, validates `config` and returns an initialized CS1 mapping.
+    /// Invalid timings fail before QMI access; identity rejection may already have
+    /// exited device quad mode. Optional identity checks distinguish absent/unknown
+    /// devices from size mismatch. Core1 is paused and local IRQs masked during
+    /// direct mode; all other XIP users (including DMA) must already be quiescent.
+    /// Hardware waits have no timeout. RISC-V direct operations panic as unsupported.
+    /// A returned pointer does not establish Rust allocation or aliasing ownership.
     pub fn new(
         qmi_cs1: QmiCs1<'d>,
         config: Config,
@@ -239,16 +255,17 @@ impl<'d> Psram<'d> {
         })
     }
 
-    /// Get the detected PSRAM size in bytes.
+    /// Returns configured bytes; this is not a physical measurement when verification is disabled.
     pub fn size(&self) -> usize { self.size }
 
-    /// Get the base address for memory-mapped access.
-    ///
-    /// After initialization, PSRAM can be accessed directly through memory mapping.
-    /// The base address for CS1 is typically 0x11000000.
+    /// Returns the CS1 XIP base pointer, 0x11000000. Dereferencing requires valid
+    /// bounds, alignment, lifetime and exclusive mutable-access discipline; this
+    /// pointer alone does not guarantee writable configuration or device presence.
     pub fn base_address(&self) -> *mut u8 { 0x1100_0000 as *mut u8 }
 
-    /// Verify APS6404L PSRAM device matches expected configuration.
+    /// Uses `qmi` to read identity and returns success only for a recognized size
+    /// equal to `expected_size` bytes. Pauses core1/masks IRQs; unknown identity and
+    /// mismatched capacity return distinct errors. Busy waits have no timeout.
     #[unsafe(link_section = ".data.ram_func")]
     #[inline(never)]
     fn verify_aps6404l(
@@ -266,8 +283,15 @@ impl<'d> Psram<'d> {
 
     #[unsafe(link_section = ".data.ram_func")]
     #[inline(never)]
+    /// Returns the KGD/EID words read through `qmi`, after issuing exit-quad 0xF5.
+    /// Busy waits have no timeout; RISC-V panics, native compilation returns zeros.
+    /// # Safety
+    /// Execute from RAM with both cores/IRQs and all other XIP users quiescent;
+    /// `qmi` must address RP235x QMI with exclusive direct-mode ownership.
     unsafe fn read_aps6404l_kgd_eid(qmi: &pac::qmi::Qmi) -> (u32, u32) {
+        /// Exit quad mode opcode (the retained identifier predates this clarification).
         const RESET_ENABLE_CMD: u8 = 0xF5;
+        /// Single-lane manufacturer/device identification opcode.
         const READ_ID_CMD: u8 = 0x9F;
 
         #[allow(unused_assignments)]
@@ -392,7 +416,9 @@ impl<'d> Psram<'d> {
         (kgd, eid)
     }
 
-    /// Initialize PSRAM with proper timing.
+    /// Validates `config`, then configures `qmi` CS1 and `xip_ctrl` write permission.
+    /// Returns InvalidConfig before changes when timing cannot fit; core1 resumes
+    /// on scope exit. Direct commands have unbounded waits and RISC-V panics.
     #[unsafe(link_section = ".data.ram_func")]
     #[inline(never)]
     fn init_psram(
@@ -419,6 +445,11 @@ impl<'d> Psram<'d> {
 
     #[unsafe(link_section = ".data.ram_func")]
     #[inline(never)]
+    /// Sends `init_cmd` using the initialization divider from `config`, then disables direct mode.
+    /// Busy waits have no timeout; RISC-V panics and native compilation does nothing.
+    /// # Safety
+    /// Execute from RAM with QMI/XIP exclusive, both cores and IRQs quiescent,
+    /// and DMA or other bus masters prevented from accessing XIP.
     unsafe fn direct_csr_send_init_command(
         config: &Config,
         init_cmd: u8,
@@ -491,6 +522,9 @@ impl<'d> Psram<'d> {
     }
 }
 
+/// Programs CS1 registers in `qmi` and write permission in `xip_ctrl` from `config`
+/// and prevalidated `timing`. Caller must exclude concurrent QMI/XIP access.
+/// Panics if dummy bits were not validated; absent write fields retain old registers.
 fn write_mapping(
     qmi: &pac::qmi::Qmi,
     xip_ctrl: &pac::xip_ctrl::XipCtrl,
@@ -620,14 +654,21 @@ fn write_mapping(
     }
 }
 
+/// Validated register-sized QMI timing values.
 #[derive(Debug, PartialEq)]
 struct Timing {
+    /// System-clock cycles per SCLK period, 1..255.
     divisor: u8,
+    /// Read sample delay in system-clock cycles, at most 7.
     rxdelay: u8,
+    /// CS assertion budget in 64-system-clock units, 1..63; final burst reserved separately.
     max_select: u8,
+    /// Additional deselect delay in system-clock cycles, 0..31.
     min_deselect: u8,
 }
 
+/// Returns SCLK cycles for `format` prefix, 24-bit address, suffix, `dummy_bits`
+/// and one eight-byte XIP line, rounding each phase upward by its bus width.
 fn transfer_clocks(
     format: &FormatConfig,
     dummy_bits: u8,
@@ -647,6 +688,8 @@ fn transfer_clocks(
         + 64u64.div_ceil(width(format.data_width))
 }
 
+/// Returns success when KGD `kgd` and extended ID `eid` encode recognized capacity
+/// equal to `expected_size` bytes; distinguishes unknown identity from size mismatch.
 fn verify_identity(
     kgd: u32,
     eid: u32,
@@ -671,6 +714,9 @@ fn verify_identity(
     }
 }
 
+/// Returns representable timing for `config`, or InvalidConfig for zero clocks,
+/// unsupported field/size/write combinations or insufficient CS transfer budget.
+/// Uses wide arithmetic and reserves one final read/write burst; touches no hardware.
 fn timing(config: &Config) -> Result<Timing, Error> {
     if config.clock_hz == 0
         || config.max_mem_freq == 0
@@ -716,9 +762,11 @@ fn timing(config: &Config) -> Result<Timing, Error> {
     })
 }
 
+/// Pure timing, identity and in-memory register contract regressions.
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Rejects zero frequencies without dividing or touching hardware.
     #[test]
     fn zero_clock_and_frequency_are_controlled_errors() {
         let mut config = Config::default();
@@ -728,6 +776,7 @@ mod tests {
         config.max_mem_freq = 0;
         assert_eq!(timing(&config), Err(Error::InvalidConfig));
     }
+    /// Rejects truncated cooldown fields and nonrepresentable dummy-bit counts.
     #[test]
     fn hardware_field_limits_and_unsupported_formats_are_rejected() {
         let mut config = Config::default();
@@ -737,6 +786,7 @@ mod tests {
         config.dummy_cycles = 7;
         assert_eq!(timing(&config), Err(Error::InvalidConfig));
     }
+    /// Accepts a zero extra deselect field when the half-period already exceeds the minimum.
     #[test]
     fn long_sck_half_period_already_satisfies_deselect_requirement() {
         let mut config = Config::default();
@@ -745,6 +795,7 @@ mod tests {
         assert_eq!(timing(&config).unwrap().min_deselect, 0);
     }
 
+    /// Checks calculated timing against independent physical-unit inequalities across supported clocks.
     #[test]
     fn supported_timings_respect_frequency_and_select_limits() {
         for clock in [48_000_000, 100_000_000, 125_000_000, 150_000_000, 280_000_000] {
@@ -765,6 +816,7 @@ mod tests {
         }
     }
 
+    /// Rejects invalid boundaries and incomplete writable mappings before QMI access.
     #[test]
     fn impossible_or_unrepresentable_timings_fail_before_register_access() {
         let invalid = [
@@ -818,6 +870,7 @@ mod tests {
         }
     }
 
+    /// Separates recognized byte capacities, mismatches and unknown identity encodings.
     #[test]
     fn known_device_sizes_and_unknown_identity_remain_distinct() {
         for (eid, size) in [(0x00, 2 << 20), (0x20, 4 << 20), (0x26, 8 << 20), (0x40, 8 << 20)] {
@@ -829,6 +882,7 @@ mod tests {
         }
     }
 
+    /// Checks mapping updates independently of initialization commands and clears retained XIP write permission.
     #[test]
     fn mapping_is_configured_without_an_enter_quad_command_and_read_only_clears_writes() {
         let mut qmi_registers = [0u32; 64];

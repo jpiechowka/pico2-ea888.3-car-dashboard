@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 use super::{PublishedCapture, hex};
 
+/// Returns at most 32 ASCII lowercase letters/digits/separators from untrusted `name`.
+/// Missing or unusable names become `unnamed`; separators collapse and trailing separators are removed.
 fn slug(name: Option<&str>) -> String {
     let mut slug = String::with_capacity(32);
     for c in name.unwrap_or("").chars() {
@@ -28,6 +30,8 @@ fn slug(name: Option<&str>) -> String {
 
 /// `digest` is the complete lowercase SHA256 of the admitted binary, including
 /// frozen metadata. The short suffix is a label; use the full ID for comparison.
+/// Returns JSON identity and portable artifact names from validated `view`, preserving raw name provenance.
+/// Panics if `digest` lacks sixteen bytes or that boundary is not UTF-8 aligned; callers supply 64 hex bytes.
 pub(super) fn derive(
     view: &CaptureView<'_>,
     digest: &str,

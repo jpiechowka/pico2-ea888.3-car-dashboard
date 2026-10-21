@@ -1,9 +1,15 @@
+//! Exact Longan mode-handshake boundary, UART completion fencing and bounded restart behavior.
 use dashboard_host_validation::diagnostics::bootstrap::{Bootstrap, Command, Error, Event, Status};
 
+/// Exact expected setting-mode banner, including CRLF terminator.
 const SETTING: &[u8] = b"ENTER INTO SETTING MODE\r\n";
+/// Exact AT acknowledgment, with no optional whitespace or echo.
 const OK: &[u8] = b"OK\r\n";
+/// Exact quit acknowledgment plus data-mode banner that establishes the RX12 boundary.
 const DATA: &[u8] = b"OK\r\nENTER DATA MODE\r\n";
 
+/// Polls `boot` at milliseconds `now`, checks exact `expected` command bytes
+/// and one-shot issuance, then returns the command/token. Panics on fixture mismatch.
 fn command(
     boot: &mut Bootstrap,
     now: u64,
@@ -14,6 +20,8 @@ fn command(
     assert!(boot.poll(now).unwrap().is_none());
     command
 }
+/// Feeds `bytes` into `boot` at milliseconds `now` and returns the final event.
+/// Panics on parser error or a nonfinal event before the final supplied byte.
 fn reply(
     boot: &mut Bootstrap,
     bytes: &[u8],
@@ -26,6 +34,8 @@ fn reply(
     }
     last
 }
+/// Advances fresh `boot` through quiet escape and AT check using fixed 50..54ms
+/// timestamps; panics if command, UART acknowledgment or exact replies diverge.
 fn enter(boot: &mut Bootstrap) {
     let tx = command(boot, 50, b"+++");
     assert_eq!(boot.tx_completed(tx.token, 51), Ok(Event::None));
@@ -35,6 +45,7 @@ fn enter(boot: &mut Bootstrap) {
     assert_eq!(reply(boot, OK, 54), Event::None);
 }
 
+/// Every banner split produces one boundary and leaves the following binary record byte-for-byte untouched.
 #[test]
 fn every_banner_split_and_binary_tail_preserves_the_exact_boundary() {
     for split in 0..=DATA.len() {
@@ -60,6 +71,7 @@ fn every_banner_split_and_binary_tail_preserves_the_exact_boundary() {
     }
 }
 
+/// Traffic extends the quiet guard only within its total limit; quiet time alone never establishes record alignment.
 #[test]
 fn quiet_input_guard_is_bounded_and_never_establishes_a_record_boundary() {
     let mut boot = Bootstrap::new(0);
@@ -80,6 +92,7 @@ fn quiet_input_guard_is_bounded_and_never_establishes_a_record_boundary() {
     assert_eq!(busy.status(), Status::Fault(Error::QuietTimeout));
 }
 
+/// UART completion and reply deadlines are inclusive and cannot be extended by slowly arriving response bytes.
 #[test]
 fn transmit_and_reply_timeouts_have_fixed_inclusive_deadlines() {
     let mut boot = Bootstrap::new(0);
@@ -104,6 +117,7 @@ fn transmit_and_reply_timeouts_have_fixed_inclusive_deadlines() {
     }
 }
 
+/// Every corrupted banner byte and unsolicited extra response fails closed with a latched bootstrap fault.
 #[test]
 fn every_changed_reply_byte_and_extra_response_fail_closed() {
     for position in 0..SETTING.len() {
@@ -119,6 +133,7 @@ fn every_changed_reply_byte_and_extra_response_fail_closed() {
     assert_eq!(boot.receive(b'O', 54), Err(Error::UnexpectedReply));
 }
 
+/// A complete response cannot replace its UART completion fence; an old command acknowledgment remains stale.
 #[test]
 fn delayed_uart_ack_cannot_be_replaced_by_a_complete_response() {
     let mut boot = Bootstrap::new(0);
@@ -131,6 +146,7 @@ fn delayed_uart_ack_cannot_be_replaced_by_a_complete_response() {
     assert!(boot.poll(52).unwrap().is_none());
 }
 
+/// Restart after discarded RX advances command identity, while clock reversal is terminal and cannot restart.
 #[test]
 fn discarded_restart_keeps_tokens_unique_and_clock_failure_is_terminal() {
     let mut boot = Bootstrap::new(0);
@@ -145,6 +161,7 @@ fn discarded_restart_keeps_tokens_unique_and_clock_failure_is_terminal() {
     assert_eq!(boot.restart_after_discard(152), Err(Error::Clock));
 }
 
+/// Early final banner waits for matching UART completion and publishes the binary boundary exactly once.
 #[test]
 fn final_banner_before_uart_ack_cannot_publish_a_boundary_early_or_twice() {
     let mut boot = Bootstrap::new(0);
@@ -158,6 +175,8 @@ fn final_banner_before_uart_ack_cannot_publish_a_boundary_early_or_twice() {
     assert!(boot.poll(56).unwrap().is_none());
 }
 
+/// Every interrupted banner prefix is discarded on recovery; supplying only its old suffix cannot complete the new
+/// handshake.
 #[test]
 fn old_partial_banner_is_not_reused_after_loss() {
     for at in 1..SETTING.len() {

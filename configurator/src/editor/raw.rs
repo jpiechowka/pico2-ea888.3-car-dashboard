@@ -1,6 +1,8 @@
 //! Raw field applicability and parsing; acceptance and history belong to Editor.
 use super::*;
 
+/// Returns whether `field` exists and applies to `config`, independent of current UI selection.
+/// Missing/ambiguous owners, unavailable variants and out-of-range bands return editor errors.
 pub(super) fn check_raw_available(
     config: &Config,
     field: RawField,
@@ -25,6 +27,8 @@ pub(super) fn check_raw_available(
     check_raw_target(config, selection, field)
 }
 
+/// Returns whether `field` is applicable in `config` and owned by `selection` where ownership is required.
+/// Rejects missing/ambiguous IDs, mismatched selection, absent bands and inactive variants; does not validate values.
 pub(super) fn check_raw_target(
     config: &Config,
     selection: Selection,
@@ -99,6 +103,10 @@ pub(super) fn check_raw_target(
     Ok(())
 }
 
+/// Parses `input` into mutable candidate `config`; returns parsing, capacity, missing-owner or variant errors.
+/// Numeric text is trimmed; CAN IDs additionally accept `0x`/`0X`. Parsing floats can admit nonfinite values,
+/// so callers must run full shared validation before publication. This does not enforce selection/applicability
+/// for every variant; call the target checks before accepting user input. No accepted editor state is touched.
 pub(crate) fn apply_raw(
     config: &mut Config,
     input: &RawInput,

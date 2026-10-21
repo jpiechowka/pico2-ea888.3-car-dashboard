@@ -1,7 +1,9 @@
+//! Advanced-option migration, bounds, dormant-state and canonical-wire regressions.
 #![cfg(feature = "json")]
 use dashboard_config::*;
 
 #[test]
+/// Current defaults serialize compactly with explicit advanced, history and LED fields.
 fn complete_defaults_and_compact_output() {
     let config = validate(default_config()).unwrap();
     assert_eq!(VERSION, 6, "BLE extends the orientation contract");
@@ -16,6 +18,7 @@ fn complete_defaults_and_compact_output() {
 }
 
 #[test]
+/// Frozen v3 JSON/binary converge to current defaults; the 64-widget fixture loses no instances.
 fn legacy_v3_migrates_to_current_defaults() {
     assert_eq!(
         decode(include_bytes!("fixtures/v3-default.eav")).unwrap(),
@@ -35,6 +38,7 @@ fn legacy_v3_migrates_to_current_defaults() {
     );
 }
 
+/// Return a v4 JSON candidate derived from the frozen v3 fixture with explicit new settings.
 fn advanced_json() -> serde_json::Value {
     let mut c: serde_json::Value = serde_json::from_slice(include_bytes!("fixtures/v3-default.json")).unwrap();
     c["version"] = serde_json::json!(4);
@@ -67,6 +71,7 @@ fn advanced_json() -> serde_json::Value {
 }
 
 #[test]
+/// Out-of-range timing, incompatible units and LED values identify the exact field and error class.
 fn advanced_bounds_reject_precise_fields() {
     for (path, value, field, code) in [
         (
@@ -172,6 +177,7 @@ fn advanced_bounds_reject_precise_fields() {
 }
 
 #[test]
+/// Bounded band text roundtrips escapes; overflow/unknown fields reject and clearing restores defaults.
 fn band_wire_is_bounded_strict_and_preserves_escaped_printable_text() {
     let mut c = advanced_json();
     let band = serde_json::json!({"min":-1.0,"max":0.0,"color":"#FFFFFF","label":"\"\\abc"});
@@ -210,6 +216,7 @@ fn band_wire_is_bounded_strict_and_preserves_escaped_printable_text() {
     assert_eq!(a, AdvancedDisplay::for_channel(Channel::Boost, false));
 }
 
+/// Assert candidate `c` is rejected with exactly `field` and `code`; panics on acceptance or mismatch.
 fn error(
     c: Config,
     field: Field,
@@ -220,6 +227,7 @@ fn error(
     assert_eq!(e.code, code);
 }
 #[test]
+/// Hidden reference/window values remain finite; band bounds, overlap and contrast are independently checked.
 fn hidden_active_nonfinite_and_band_domains_never_escape_validation() {
     for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         for mode in [ReferenceMode::Off, ReferenceMode::Zero, ReferenceMode::Manual] {
@@ -268,6 +276,7 @@ fn hidden_active_nonfinite_and_band_domains_never_escape_validation() {
 }
 
 #[test]
+/// Disabled window rules still require hysteresis, and latched/snoozed rules need onboard acknowledgment.
 fn window_hysteresis_and_acknowledgment_are_independent_of_enabled() {
     for (mode, t, clear, th, ch) in [
         (LimitMode::OutsideWindow, 0.0, 1.0, 3.0, 2.0),
@@ -306,6 +315,7 @@ fn window_hysteresis_and_acknowledgment_are_independent_of_enabled() {
 }
 
 #[test]
+/// Timing endpoints roundtrip through owned/in-place decoders; gauge/span capabilities match their table.
 fn all_inclusive_boundaries_capabilities_and_slot_equivalence() {
     for smoothing in [0, 50, 250, 750, 5000] {
         for hold in [100, 750, 60000] {
@@ -336,6 +346,7 @@ fn all_inclusive_boundaries_capabilities_and_slot_equivalence() {
 }
 
 #[test]
+/// A v3 envelope cannot smuggle later control, window or display fields through nested deserialization.
 fn frozen_v3_rejects_v4_only_nested_vocabulary() {
     let original = core::str::from_utf8(include_bytes!("fixtures/v3-default.json")).unwrap();
     for bad in [
@@ -350,6 +361,7 @@ fn frozen_v3_rejects_v4_only_nested_vocabulary() {
 }
 
 #[test]
+/// Dormant finite reference values survive; activating an out-of-channel-domain manual reference rejects.
 fn inactive_reference_is_retained_but_manual_activation_is_validated() {
     for mode in [ReferenceMode::Off, ReferenceMode::Zero] {
         let mut c = default_config();
@@ -362,6 +374,7 @@ fn inactive_reference_is_retained_but_manual_activation_is_validated() {
 }
 
 #[test]
+/// Non-window high endpoints reject negative zero, preserving one canonical representation.
 fn inactive_high_endpoints_require_canonical_positive_zero() {
     let mut c = default_config();
     c.widgets[0].warning.advanced.trigger_high = -0.0;
@@ -372,6 +385,7 @@ fn inactive_high_endpoints_require_canonical_positive_zero() {
 }
 
 #[test]
+/// Rejected band count/index/text edits leave prior state byte-equivalent; valid edits replace only the label.
 fn band_edit_errors_target_fields_without_mutating_stored_state() {
     let mut display = AdvancedDisplay::for_channel(Channel::Boost, false);
     let before = display;
@@ -405,6 +419,7 @@ fn band_edit_errors_target_fields_without_mutating_stored_state() {
 }
 
 #[test]
+/// Current choice names fit bounded controls; unknown choices return the precise JSON error location.
 fn new_enum_spellings_are_bounded_and_unknown_values_report_json_location() {
     let values = [
         serde_json::to_value([
@@ -462,6 +477,7 @@ fn new_enum_spellings_are_bounded_and_unknown_values_report_json_location() {
 }
 
 #[test]
+/// Reordered pretty JSON converges to identical compact JSON and binary, including boot-slot publication.
 fn pretty_reordered_advanced_json_normalizes_to_exact_compact_wire() {
     let original = validate(default_config()).unwrap();
     let compact = to_json(&original).unwrap();

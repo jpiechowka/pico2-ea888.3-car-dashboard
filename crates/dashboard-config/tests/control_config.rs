@@ -1,5 +1,7 @@
+//! Configuration-level control admission and frozen historical migration.
 use dashboard_config::*;
 #[test]
+/// Removing both onboard view-navigation actions rejects the current configuration.
 fn current_configuration_requires_recovery_safe_controls() {
     let mut config = default_config();
     config.controls.screens[0].buttons[0].hold = ControlAction::None;
@@ -11,6 +13,7 @@ fn current_configuration_requires_recovery_safe_controls() {
 }
 #[cfg(feature = "json")]
 #[test]
+/// Frozen v1/v2 JSON and binary fixtures independently migrate to the reviewed current defaults.
 fn both_historical_versions_upgrade() {
     for (json, binary) in [
         (
@@ -28,6 +31,7 @@ fn both_historical_versions_upgrade() {
 }
 #[cfg(not(feature = "json"))]
 #[test]
+/// Device-only v1/v2 imports return Version and publish complete defaults with that fault.
 fn firmware_rejects_both_historical_versions() {
     for bytes in [
         include_bytes!("fixtures/v1-default.eav").as_slice(),
@@ -41,7 +45,9 @@ fn firmware_rejects_both_historical_versions() {
 }
 
 #[test]
+/// Control failures retain their original gesture/reachability cause and shared error category.
 fn shared_validation_preserves_control_cause_and_category() {
+    /// Mutator, precise control failure and shared validation category for one independent scenario.
     type Case = (fn(&mut ControlMap), ControlError, ErrorCode);
     let cases: &[Case] = &[
         (|m| m.hold_ms = 399, ControlError::HoldDuration, ErrorCode::Bounds),
@@ -80,6 +86,7 @@ fn shared_validation_preserves_control_cause_and_category() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Custom valid bindings roundtrip; missing fields, invalid gestures and unreachable maps reject.
 fn custom_current_controls_roundtrip_and_strict_import() {
     let mut c = default_config();
     c.controls.hold_ms = 1234;
@@ -118,7 +125,9 @@ fn custom_current_controls_roundtrip_and_strict_import() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Resealed legacy version/varint/trailing-byte defects and unknown nested JSON fields remain rejected.
 fn legacy_payload_version_canonicality_and_nested_shapes_are_checked() {
+    /// Recompute the envelope CRC of complete `bytes` after mutation; panics if the twelve-byte header is absent.
     fn reseal(bytes: &mut [u8]) {
         let mut checked = bytes[..8].to_vec();
         checked.extend_from_slice(&bytes[12..]);
@@ -178,6 +187,7 @@ fn legacy_payload_version_canonicality_and_nested_shapes_are_checked() {
 
 #[cfg(feature = "json")]
 #[test]
+/// Migration preserves historical custom values exactly after removing explicitly added current fields.
 fn v2_import_preserves_custom_widget_values_and_colours() {
     let mut v: serde_json::Value = serde_json::from_slice(include_bytes!("fixtures/v2-default.json")).unwrap();
     v["views"][0]["name"] = "Historical".into();

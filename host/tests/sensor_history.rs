@@ -1,5 +1,7 @@
+//! Measurement-timed statistics and sparse graph history, independent of rendering cadence.
 use dashboard_host_validation::sensor_state::{GRAPH_HISTORY_SIZE, SensorState};
 
+/// Render ticks create no samples; graph and average windows use their distinct measurement deadlines.
 #[test]
 fn sampling_uses_measurement_timestamps_and_never_replays_render_ticks() {
     let mut state = SensorState::new();
@@ -20,6 +22,7 @@ fn sampling_uses_measurement_timestamps_and_never_replays_render_ticks() {
     assert_eq!(state.get_average(), Some(30.0));
 }
 
+/// Duplicate/reversed times and nonfinite values cannot alter history, average or peak highlighting.
 #[test]
 fn duplicate_regressed_and_nonfinite_samples_do_not_change_history_or_peak() {
     let mut state = SensorState::new();
@@ -37,6 +40,7 @@ fn duplicate_regressed_and_nonfinite_samples_do_not_change_history_or_peak() {
     assert!(state.update_at(-21.0, false, 200));
 }
 
+/// Peak highlighting expires after 750 elapsed milliseconds and explicit reset clears it immediately.
 #[test]
 fn peak_hold_uses_elapsed_time_and_reset_clears_it() {
     let mut state = SensorState::new();
@@ -53,6 +57,7 @@ fn peak_hold_uses_elapsed_time_and_reset_clears_it() {
     assert!(!state.is_new_peak);
 }
 
+/// Full graph wrap evicts the oldest negative minimum and recomputes bounds from retained values.
 #[test]
 fn graph_wrap_recalculates_negative_minimum_after_eviction() {
     let mut state = SensorState::new();
@@ -78,6 +83,7 @@ fn graph_wrap_recalculates_negative_minimum_after_eviction() {
     assert_eq!(state.history().iter().last().unwrap().1, Some(0.0));
 }
 
+/// The sixty-sample average evicts its oldest outlier without changing capacity.
 #[test]
 fn average_wrap_evicts_the_oldest_sample_without_changing_capacity() {
     let mut state = SensorState::new();
@@ -90,6 +96,7 @@ fn average_wrap_evicts_the_oldest_sample_without_changing_capacity() {
     assert_eq!(state.get_average(), Some(1.0));
 }
 
+/// Long gaps fabricate no samples; individual resets clear and immediately rearm each statistics window.
 #[test]
 fn long_gaps_do_not_fabricate_samples_and_resets_restart_each_window() {
     let mut state = SensorState::new();
@@ -108,6 +115,9 @@ fn long_gaps_do_not_fabricate_samples_and_resets_restart_each_window() {
     assert_eq!(state.history().count(), 1);
 }
 
+/// Replays fixed 100 ms measurements with ordered millisecond `render_ticks` interleaved before samples.
+/// Returns final average, valid graph values, trend direction and peak flag at 10 seconds.
+/// Ticks after the final sample are ignored; panics if the deterministic sample trace is rejected.
 fn replay_with_render_ticks(render_ticks: &[u64]) -> (Option<f32>, Vec<f32>, Option<bool>, bool) {
     let mut state = SensorState::new();
     let mut render = 0;
@@ -124,6 +134,7 @@ fn replay_with_render_ticks(render_ticks: &[u64]) -> (Option<f32>, Vec<f32>, Opt
     (state.get_average(), graph, state.get_trend(), state.is_new_peak)
 }
 
+/// Regular and irregular render schedules produce identical statistics from the same timestamped samples.
 #[test]
 fn identical_timestamped_trace_is_independent_of_render_schedule() {
     let baseline: Vec<u64> = (0..=10_000).step_by(50).collect();
@@ -140,6 +151,7 @@ fn identical_timestamped_trace_is_independent_of_render_schedule() {
     assert_eq!(replay_with_render_ticks(&irregular), expected);
 }
 
+/// Trend eligibility uses elapsed windows and channel thresholds; invalid thresholds yield no initial trend.
 #[test]
 fn trend_uses_elapsed_windows_and_channel_threshold() {
     let mut sensitive = SensorState::with_trend_threshold(0.05);
@@ -154,6 +166,7 @@ fn trend_uses_elapsed_windows_and_channel_threshold() {
     assert_eq!(SensorState::with_trend_threshold(f32::NAN).get_trend(), None);
 }
 
+/// Late peak samples and reversed ticks cannot resurrect already-expired highlights.
 #[test]
 fn old_tick_and_late_peak_do_not_resurrect_expired_highlight() {
     let mut state = SensorState::new();
@@ -169,6 +182,7 @@ fn old_tick_and_late_peak_do_not_resurrect_expired_highlight() {
     assert!(!state.is_new_peak);
 }
 
+/// Each graph bucket keeps its latest observation and expires after a full window without new samples.
 #[test]
 fn timed_bucket_keeps_last_observation_and_expires_without_samples() {
     let mut state = SensorState::new();
@@ -181,6 +195,7 @@ fn timed_bucket_keeps_last_observation_and_expires_without_samples() {
 
 use dashboard_host_validation::history::History;
 
+/// Bucket boundaries retain explicit gaps; faults/recovery and duration changes do not invent intermediate points.
 #[test]
 fn bucket_boundaries_sparse_gaps_fault_recovery_and_duration_reset() {
     let mut history = History::new(10);
@@ -207,6 +222,7 @@ fn bucket_boundaries_sparse_gaps_fault_recovery_and_duration_reset() {
     assert_eq!(history.view().duration_seconds(), 900);
 }
 
+/// Same-bucket recovery sacrifices the preceding point to expose a gap; replay cannot refill a new fault.
 #[test]
 fn fault_then_recovery_in_same_bucket_sacrifices_preceding_point_only() {
     let mut history = History::new(10);
@@ -224,6 +240,7 @@ fn fault_then_recovery_in_same_bucket_sacrifices_preceding_point_only() {
     assert_eq!(history.view().count(), 1);
 }
 
+/// Preset/custom durations and u64 clock extremes match a u128 bucket oracle with at most sixty advances.
 #[test]
 fn all_duration_presets_custom_and_u64_boundaries_match_wide_integer_oracle() {
     for seconds in [10u16, 30, 60, 120, 300, 600, 900, 137] {
@@ -261,6 +278,7 @@ fn all_duration_presets_custom_and_u64_boundaries_match_wide_integer_oracle() {
     }
 }
 
+/// Changing graph duration clears only graph history, preserving average and raw extrema.
 #[test]
 fn history_duration_change_does_not_reset_statistics() {
     let mut state = SensorState::new();
@@ -272,6 +290,7 @@ fn history_duration_change_does_not_reset_statistics() {
     assert_eq!((state.minimum(), state.maximum()), (Some(1.0), Some(3.0)));
 }
 
+/// Last-observation replacement preserves the exact floating-point bits, including negative zero.
 #[test]
 fn bucket_retains_bit_exact_last_observation_including_signed_zero() {
     let mut history = History::new(10);

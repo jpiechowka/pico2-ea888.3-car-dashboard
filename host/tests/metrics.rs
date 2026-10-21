@@ -1,5 +1,7 @@
+//! Histogram quantile intervals checked against sorted exact samples and compact overflow buckets.
 use dashboard_host_validation::metrics::Histogram;
 
+/// All percentiles contain the exact nearest-rank value across power-of-two edges and deterministic random samples.
 #[test]
 fn quantile_bounds_cover_exact_sorted_reference_and_all_integer_edges() {
     let mut values = vec![0, 1, 15, 16, 31, 32, u64::MAX];
@@ -33,6 +35,7 @@ fn quantile_bounds_cover_exact_sorted_reference_and_all_integer_edges() {
     );
 }
 
+/// Empty/invalid quantiles stay absent; compact overflow contributes an explicit unbounded upper bucket.
 #[test]
 fn compact_histograms_expose_overflow_and_empty_quantiles() {
     let mut histogram = Histogram::<160>::new();

@@ -1,6 +1,8 @@
+//! In-place boot decoding parity, atomic publication and complete default restoration.
 use dashboard_config::*;
 
 #[test]
+/// The checked current fixture publishes identical borrowed and owned configuration after complete admission.
 fn current_file_is_published_only_after_validation() {
     let bytes = include_bytes!("../../../configs/default.eav");
     let expected = decode(bytes).unwrap();
@@ -11,6 +13,7 @@ fn current_file_is_published_only_after_validation() {
 }
 
 #[test]
+/// A malformed file publishes complete defaults and preserves the precise fault.
 fn failure_replaces_every_field_with_the_reviewed_default() {
     let expected = validate(default_config()).unwrap();
     let mut slot = ConfigSlot::new();
@@ -20,6 +23,7 @@ fn failure_replaces_every_field_with_the_reviewed_default() {
 }
 
 // Independent envelope CRC matches the codec contract fixtures.
+/// Return an independently CRC-sealed current envelope for `payload`; panics if its length exceeds u16.
 fn envelope(payload: &[u8]) -> Vec<u8> {
     let mut bytes = b"EAV1".to_vec();
     bytes.extend_from_slice(&VERSION.to_le_bytes());
@@ -36,11 +40,13 @@ fn envelope(payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// Return independently sealed bytes of unvalidated `config`; panics if the fixed test buffer is too small.
 fn raw(config: &Config) -> Vec<u8> {
     let mut out = [0; MAX_FILE_BYTES];
     envelope(postcard::to_slice(config, &mut out).unwrap())
 }
 
+/// Return a valid candidate with nondefault text, controls, colors, fuel and route to detect partial fallback.
 fn customized() -> Config {
     let mut c = default_config();
     c.catalogue_version = CATALOGUE_VERSION;
@@ -60,6 +66,7 @@ fn customized() -> Config {
     c
 }
 
+/// Return eight fully populated customized views with late advanced/LED fields for partial-publication tests.
 fn maximum() -> Config {
     let mut c = customized();
     c.views.clear();
@@ -102,6 +109,7 @@ fn maximum() -> Config {
     c
 }
 
+/// Load `bytes` into reused `slot` and assert owned-decoder parity, including derived fuel and full fallback.
 fn assert_same(
     slot: &mut ConfigSlot,
     bytes: &[u8],
@@ -122,6 +130,7 @@ fn assert_same(
 }
 
 #[test]
+/// Current candidates and every resealed truncated prefix agree between owned and in-place decoders.
 fn current_corpus_matches_owned_decode_and_every_truncated_prefix() {
     let mut slot = ConfigSlot::new();
     let mut blend = customized();
@@ -145,6 +154,7 @@ fn current_corpus_matches_owned_decode_and_every_truncated_prefix() {
 }
 
 #[test]
+/// Semantic failures after a maximum prior load replace all fields, then allow a later successful reload.
 fn resealed_semantic_failures_reset_all_previously_loaded_fields() {
     let mut slot = ConfigSlot::new();
     let success = raw(&maximum());
@@ -177,6 +187,7 @@ fn resealed_semantic_failures_reset_all_previously_loaded_fields() {
 }
 
 #[test]
+/// Bad enums, UTF-8, oversized collections and overlong varints reject identically through both decoders.
 fn resealed_payload_errors_and_noncanonical_encodings_match_owned_decoder() {
     let mut slot = ConfigSlot::new();
     let mut c = default_config();
@@ -241,6 +252,7 @@ fn resealed_payload_errors_and_noncanonical_encodings_match_owned_decoder() {
 }
 
 #[test]
+/// Envelope corruption and oversized files return the same boot and owned-decode error category.
 fn envelope_failure_classes_remain_identical() {
     let mut slot = ConfigSlot::new();
     let bytes = raw(&customized());
@@ -253,6 +265,7 @@ fn envelope_failure_classes_remain_identical() {
 }
 
 #[test]
+/// Boot slots refuse legacy schema bytes even when wrapped in a current envelope.
 fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
     let mut slot = ConfigSlot::new();
     for bytes in [
@@ -270,6 +283,7 @@ fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
     }
 }
 #[test]
+/// Republication allocates a new cache identity; clones preserve identity and serialized bytes remain equal.
 fn publications_have_distinct_runtime_identity_but_equal_wire_content() {
     let mut slot = dashboard_config::ConfigSlot::new();
     let first = slot.load_at_boot(b"").config.clone();
@@ -290,6 +304,7 @@ fn publications_have_distinct_runtime_identity_but_equal_wire_content() {
 }
 
 #[test]
+/// Late advanced/history/LED failures cannot retain earlier custom fields in a fallback publication.
 fn late_advanced_decode_and_validation_failures_replace_all_slot_fields() {
     let mut slot = ConfigSlot::new();
     let mut custom = customized();

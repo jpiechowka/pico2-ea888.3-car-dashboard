@@ -1,3 +1,4 @@
+//! Serialized job summaries, bounded event retention and authoritative Setup ledger projection.
 use std::collections::VecDeque;
 use std::time::{Instant, SystemTime};
 
@@ -8,24 +9,37 @@ use super::logs::LogInput;
 use super::time::utc_millis;
 
 #[derive(Clone)]
+/// One job's control state and lossy diagnostic history; sequence exhaustion does not close control mutation.
 struct Job {
+    /// Validated public projection; closure is separate from terminal stage state.
     summary: JobSummary,
+    /// Last at most 1024 serialized-bounded events, oldest first.
     records: VecDeque<Event>,
+    /// Next sequence, starting at one; MAX is an exhaustion sentinel and never emitted.
     next: u64,
+    /// Saturating count of retained-history evictions, separate from producer output loss.
     dropped: u64,
+    /// Monotonic clock origin for this job.
     start: Instant,
+    /// Last published nondecreasing elapsed milliseconds.
     elapsed: u64,
+    /// At most 256 validated log inputs awaiting append; never used for control messages.
     pending: VecDeque<LogInput>,
+    /// Authoritative private ledger for Setup only; other operations use stage transitions.
     setup: Option<SetupLedger>,
 }
 /// Single serialized state owner: all mutation requires exclusive access. Native
 /// adapters send control directly; the lossy queue carries only sanitized logs.
 pub struct JobStore {
+    /// Session attached to every job and event batch.
     session: SessionId,
+    /// At most 16 retained jobs in admission order; no new job while any remains unclosed.
     jobs: VecDeque<Job>,
+    /// Last 16 evicted identities distinguishing Expired from unknown.
     tombstones: VecDeque<JobId>,
 }
 impl JobStore {
+    /// Returns an empty store bound to `session`; no process or worker is started.
     pub fn new(session: SessionId) -> Self {
         Self {
             session,
@@ -34,6 +48,7 @@ impl JobStore {
         }
     }
 
+    /// Returns retained index for `id`, Expired for a retained tombstone, otherwise NotFoundOrUnavailable.
     fn index(
         &self,
         id: &JobId,
@@ -48,6 +63,9 @@ impl JobStore {
             })
     }
 
+    /// Applies `f` to a bounded control candidate for open `id`; returns lookup/Closed/callback/validation errors
+    /// atomically. Commits only summary, setup ledger and elapsed time; event history, pending inputs and sequence
+    /// are not replaced. A panic in `f` leaves this store unchanged, but cannot undo effects outside the candidate.
     fn change(
         &mut self,
         id: &JobId,
@@ -76,6 +94,10 @@ impl JobStore {
         Ok(())
     }
 
+    /// Returns a newly admitted summary for unique `id` and non-Setup `operation`; `retry_of` optionally names a
+    /// retained prior job of the same kind. Returns Busy while any job is unclosed, or
+    /// identity/retry/state/validation errors. Successful admission can evict the oldest of 16 closed jobs; this
+    /// records intent only, without starting native work.
     pub fn start(
         &mut self,
         id: JobId,
@@ -85,6 +107,9 @@ impl JobStore {
         self.start_core(id, operation, retry_of, None)
     }
 
+    /// Returns a new Setup summary for unique `id`, immutable `plan`, and optional retained same-kind `retry_of`.
+    /// Uses the same single-open-job and 16-job retention rules as start; returns admission/projection errors
+    /// atomically.
     pub fn start_setup(
         &mut self,
         id: JobId,
@@ -94,6 +119,9 @@ impl JobStore {
         self.start_core(id, OperationKind::Setup, retry_of, Some(SetupLedger::new(plan)))
     }
 
+    /// Returns a fresh summary for `id`/`operation`, optional retained `retry_of`, and `setup` ledger required exactly
+    /// for Setup. Rejects open-job contention, reused/tombstoned IDs and mismatched retries before retention
+    /// eviction.
     fn start_core(
         &mut self,
         id: JobId,
@@ -178,6 +206,11 @@ impl JobStore {
         Ok(summary)
     }
 
+    /// Transitions open non-Setup job `id` at `stage` to `state`, attaching optional bounded `reason`.
+    /// Returns lookup/Closed/invalid-transition/validation errors atomically. Running requires prior success/skip and
+    /// no cancellation; skip/failure/cancel require a reason. Failure/cancel skips later pending stages;
+    /// transfer/verification update write evidence, and elapsed timestamps describe software state changes, not
+    /// device execution times.
     pub fn transition(
         &mut self,
         id: &JobId,
@@ -246,6 +279,10 @@ impl JobStore {
         })
     }
 
+    /// Appends sanitized `input` to open `id`, splitting its at-most-1024 UTF-8 bytes to fit actual event envelopes.
+    /// Returns lookup/Closed/input/serialization errors atomically; success may evict old events or account
+    /// sequence-exhaustion loss instead of emitting records. Caller owns sanitization; timestamps and event level
+    /// are assigned here.
     pub fn append(
         &mut self,
         id: &JobId,
@@ -283,7 +320,9 @@ impl JobStore {
         Ok(())
     }
 
-    /// Nonblocking bounded log ingress; control operations never depend on this capacity.
+    /// Queues validated sanitized `input` for open `id`; returns true when retained or false with explicit loss at 256
+    /// entries. Returns lookup/Closed/bounds errors without enqueueing. Nonblocking ingress capacity never gates
+    /// control operations.
     pub fn enqueue(
         &mut self,
         id: &JobId,
@@ -303,6 +342,8 @@ impl JobStore {
         Ok(true)
     }
 
+    /// Appends queued inputs for open `id` in order; returns lookup/Closed/append errors.
+    /// Earlier successful appends remain committed on error, while the failing input and remaining queue stay pending.
     pub fn drain(
         &mut self,
         id: &JobId,
@@ -318,6 +359,9 @@ impl JobStore {
         Ok(())
     }
 
+    /// Returns retained events for `id` selected by `request`: sequences greater than its after cursor, up to its
+    /// limit, plus current summary/retention bounds. Does not drain ingress; closed jobs remain readable. Returns
+    /// request/lookup/batch errors.
     pub fn poll(
         &self,
         id: &JobId,
@@ -345,6 +389,9 @@ impl JobStore {
         Ok(batch)
     }
 
+    /// Latches cancellation for open `id` and stops pending Setup steps; returns lookup/Closed/projection errors
+    /// atomically. Does not terminate native processes, finish a running step or close output; the process owner
+    /// performs those actions.
     pub fn cancel(
         &mut self,
         id: &JobId,
@@ -359,7 +406,9 @@ impl JobStore {
         })
     }
 
-    /// Account only observed sanitized chunks dropped by the bounded process channel.
+    /// Adds observed sanitized `loss` for open `id`, saturating counters and preserving overflow flags.
+    /// Returns lookup/Closed/validation errors atomically; unknowable unread process output is not invented as byte
+    /// loss.
     pub fn account_log_loss(
         &mut self,
         id: &JobId,
@@ -372,7 +421,8 @@ impl JobStore {
         })
     }
 
-    /// Trusted selection result, captured before transfer and retained as immutable history.
+    /// Binds trusted `artifact` and `device` selection to open Flash job `id` once, before transfer.
+    /// Returns lookup/Closed/state/validation errors atomically; these identities are history, not fresh device proof.
     pub fn bind_flash(
         &mut self,
         id: &JobId,
@@ -393,7 +443,9 @@ impl JobStore {
         })
     }
 
-    /// An unjoined run remains active and cannot seal; retain the failure separately.
+    /// Latches fatal ownership-cleanup failure for open `id`, OR-ing `output_incomplete` and making an in-progress
+    /// write Unknown. Returns lookup/Closed/projection errors atomically. Pending stages stop, but running
+    /// ownership remains open until real closure.
     pub fn note_cleanup_fatal(
         &mut self,
         id: &JobId,
@@ -424,6 +476,12 @@ impl JobStore {
         })
     }
 
+    /// Seals open `id` with `cause`, trusted producer `closure`, optional published `artifact` and optional validated
+    /// raw `exit`. Returns lookup/Closed/invalid-state/validation errors atomically: workers must be joined, tree
+    /// empty and ingress drained; success also requires completed stages, no cancellation, a Build artifact or
+    /// verified Flash as applicable. Preserves prior cleanup-fatal state, records observed loss and immutable final
+    /// sequence, and retires remaining stages. Caller proves closure facts; this pure store neither joins workers
+    /// nor establishes running firmware.
     pub fn finish(
         &mut self,
         id: &JobId,
@@ -520,6 +578,8 @@ impl JobStore {
         })
     }
 
+    /// Starts expected Setup `step` assigned to `executor` for open `id`; returns lookup/Closed/ledger/projection
+    /// errors atomically. Active work, an unacknowledged receipt or a stop latch prevents another step.
     pub fn setup_start_next(
         &mut self,
         id: &JobId,
@@ -535,8 +595,10 @@ impl JobStore {
         })
     }
 
-    /// Apply private lease control to this owner's only ledger and publish its projection.
-    /// Protocol rejection deliberately retains the stop latch/retired peer, never a success.
+    /// Applies private `frame` from `direction` at lease-relative `now_ms` to open Setup `id` and mutable `peer`.
+    /// Returns lookup/Closed/projection errors without committing; transcript rejection instead commits the stop latch
+    /// and retired peer then returns that protocol error. Caller must separately verify real pipe/process/Job
+    /// ownership.
     pub fn setup_accept(
         &mut self,
         id: &JobId,
@@ -555,6 +617,8 @@ impl JobStore {
         accepted
     }
 
+    /// Returns whether `result` matches `peer` association and authoritative Setup ledger for retained `id`.
+    /// Returns lookup/non-Setup/schema/state errors without mutation; does not prove output closure or file provenance.
     pub fn setup_validate_result(
         &self,
         id: &JobId,
@@ -565,6 +629,8 @@ impl JobStore {
         peer.validate_result(result, ledger)
     }
 
+    /// Retires `peer` and latches OwnerLost in open Setup `id`; returns lookup/Closed/projection errors atomically.
+    /// Preserves completed ledger facts and does not claim a running step or native tree has stopped.
     pub fn setup_owner_lost(
         &mut self,
         id: &JobId,
@@ -579,6 +645,8 @@ impl JobStore {
         Ok(())
     }
 
+    /// Publishes validated `outcome` for the active step of open Setup `id`; returns lookup/Closed/ledger/projection
+    /// errors atomically. A matching success cannot override a stop latch; failure also stops pending steps.
     pub fn setup_finish_active(
         &mut self,
         id: &JobId,
@@ -590,6 +658,8 @@ impl JobStore {
         })
     }
 
+    /// Marks expected unnecessary `step` for `executor` skipped in open Setup `id`.
+    /// Returns lookup/Closed/ledger/projection errors atomically; active work, receipt or stop blocks skipping.
     pub fn setup_skip_next(
         &mut self,
         id: &JobId,
@@ -605,9 +675,13 @@ impl JobStore {
         })
     }
 
+    /// Returns clones of up to 16 retained summaries in admission order, including closed jobs; does not drain logs.
     pub fn summaries(&self) -> Vec<JobSummary> { self.jobs.iter().map(|j| j.summary.clone()).collect() }
 }
 impl Job {
+    /// Projects authoritative Setup stages/tools into summary, assigning first-observed elapsed timestamps.
+    /// Returns missing-ledger/bounded-projection errors; callers use a candidate because local fields may already
+    /// change.
     fn project_setup(&mut self) -> Result<(), Error> {
         let elapsed = self.elapsed();
         let ledger = self.setup.as_ref().ok_or(Error::InvalidState)?;
@@ -639,6 +713,8 @@ impl Job {
         Ok(())
     }
 
+    /// Returns nondecreasing elapsed milliseconds, retaining the prior value and latching anomalies on invalid
+    /// observations.
     fn elapsed(&mut self) -> u64 {
         self.elapsed = super::time::monotonic_elapsed(
             self.elapsed,
@@ -648,6 +724,7 @@ impl Job {
         self.elapsed
     }
 
+    /// Adds observed dropped `chunks` and `bytes` to saturating summary counters, latching any overflow.
     fn loss(
         &mut self,
         chunks: u64,
@@ -665,6 +742,8 @@ impl Job {
         );
     }
 
+    /// Returns Bounds when `input` exceeds 1024 UTF-8 bytes or names a stage outside this operation's layout.
+    /// Successful validation does not sanitize text or require the named stage to be currently running.
     fn validate_input(
         &self,
         input: &LogInput,
@@ -675,6 +754,9 @@ impl Job {
         Ok(())
     }
 
+    /// Appends `input` as envelope-bounded events, preserving UTF-8 and accounting exhaustion/retention loss.
+    /// Returns input/encoding/bounds errors; may mutate this candidate before error, so store callers publish only
+    /// after validation.
     fn append(
         &mut self,
         input: LogInput,
@@ -733,6 +815,9 @@ impl Job {
         Ok(())
     }
 }
+/// Returns the UTF-8 prefix length of `text` whose JSON string contents fit `budget` escaped bytes, excluding
+/// surrounding quotes. Returns zero if no scalar fits; uses serde_json's current escaping for controls, quotes and
+/// backslashes.
 fn json_text_prefix(
     text: &str,
     budget: usize,
@@ -753,6 +838,8 @@ fn json_text_prefix(
     }
     end
 }
+/// Returns the sum of `a` and `b` saturated at MAX, setting sticky `overflow` only when the exact sum is
+/// unrepresentable.
 fn checked_count(
     a: u64,
     b: u64,
@@ -766,17 +853,24 @@ fn checked_count(
 /// Internal producer facts; never deserialized from HTTP. The native owner proves
 /// process-tree and output closure before sealing an operation.
 pub struct OutputClosure {
+    /// Every owned producer/reader worker was joined, not merely signalled.
     pub workers_joined: bool,
+    /// Owned process tree was observed empty.
     pub tree_empty: bool,
+    /// Output may be incomplete even when no exact discarded count is knowable.
     pub output_incomplete: bool,
+    /// Additional known discarded chunks not previously accounted to the job.
     pub discarded_chunks: u64,
+    /// Additional known discarded bytes not previously accounted to the job.
     pub discarded_bytes: u64,
 }
 
 #[cfg(test)]
+/// Sequence and loss-counter boundary tests with control closure independent of event capacity.
 mod tests {
     use super::*;
     #[test]
+    /// Exhausted event sequences stop emission while stage transitions and proven final closure still work.
     fn exhausted_sequence_keeps_mutable_summary_until_real_close() {
         let mut s = JobStore::new(SessionId::new("a".repeat(32)).unwrap());
         let id = JobId::new("b".repeat(32)).unwrap();
@@ -823,6 +917,7 @@ mod tests {
         assert_eq!(p.summary.final_next, Some(u64::MAX));
     }
     #[test]
+    /// Counter overflow saturates and sets the sticky anomaly rather than wrapping to zero.
     fn checked_drop_count_does_not_wrap() {
         let mut flag = false;
         assert_eq!(checked_count(u64::MAX, 1, &mut flag), u64::MAX);

@@ -1,3 +1,8 @@
+//! RP2040 compiler-runtime replacements. ARM exports preserve the current core's
+//! SIO divider through nested interrupt use; native divider stubs return zero and
+//! are compilation aids, not arithmetic implementations.
+//!
+//! ABI contracts: <https://github.com/ARM-software/abi-aa/blob/main/rtabi32/rtabi32.rst>.
 #![macro_use]
 
 // Credit: taken from `rp-hal` (also licensed Apache+MIT)
@@ -19,6 +24,7 @@ macro_rules! intrinsics_aliases {
     ) => {
         #[cfg(all(target_arch = "arm", feature = "intrinsics"))]
         intrinsics! {
+            #[doc = concat!("ABI alias of `", stringify!($name), "`; returns the same result. ", $("`", stringify!($argname), "` is forwarded unchanged. ",)*)]
             extern $abi fn $alias( $($argname: $ty),* ) -> $ret {
                 $name($($argname),*)
             }
@@ -37,6 +43,7 @@ macro_rules! intrinsics_aliases {
     ) => {
         #[cfg(all(target_arch = "arm", feature = "intrinsics"))]
         intrinsics! {
+            #[doc = concat!("ABI alias of `", stringify!($name), "`; returns the same result. ", $("`", stringify!($argname), "` is forwarded unchanged. ",)* "\n\n# Safety\nThe target function's preconditions apply unchanged.")]
             unsafe extern $abi fn $alias( $($argname: $ty),* ) -> $ret {
                 $name($($argname),*)
             }
@@ -76,17 +83,23 @@ macro_rules! intrinsics_aliases {
 /// Each function can also be decorated with nonstandard attributes to control
 /// additional behaviour:
 ///
-/// * `slower_than_default` - indicates that the override is slower than the
-///   default implementation.  Currently this just disables the override
-///   entirely.
-/// * `bootrom_v2` - indicates that the override is only available
-///   on a V2 bootrom or higher.  Only enabled when the feature
-///   `rom-v2-intrinsics` is set.
+/// * `slower_than_default` - indicates that the override is slower than the default implementation.  Currently this
+///   just disables the override entirely.
+/// * `bootrom_v2` - indicates that the override is only available on a V2 bootrom or higher.  Only enabled when the
+///   feature `rom-v2-intrinsics` is set.
 /// * `alias` - accepts a list of names to alias the intrinsic to.
 /// * `aeabi` - accepts a list of ARM EABI names to alias to.
-///
 macro_rules! intrinsics {
     () => {};
+
+    // Keep documentation while removing export-only custom attributes from fallbacks.
+    (@private [$($docs:tt)*] [] $item:item) => { $($docs)* $item };
+    (@private [$($docs:tt)*] [#[doc = $doc:expr] $($attrs:tt)*] $item:item) => {
+        intrinsics!(@private [$($docs)* #[doc = $doc]] [$($attrs)*] $item);
+    };
+    (@private [$($docs:tt)*] [#[$($attr:tt)*] $($attrs:tt)*] $item:item) => {
+        intrinsics!(@private [$($docs)*] [$($attrs)*] $item);
+    };
 
     (
         #[slower_than_default]
@@ -99,9 +112,12 @@ macro_rules! intrinsics {
     ) => {
         // Not exported, but defined so the actual implementation is
         // considered used
-        #[allow(dead_code)]
-        fn $name( $($argname: $ty),* ) -> $ret {
-            $($body)*
+        intrinsics! {
+            @private [] [$(#[$($attr)*])*]
+            #[allow(dead_code)]
+            fn $name( $($argname: $ty),* ) -> $ret {
+                $($body)*
+            }
         }
 
         intrinsics!($($rest)*);
@@ -119,9 +135,12 @@ macro_rules! intrinsics {
         // Not exported, but defined so the actual implementation is
         // considered used
         #[cfg(not(feature = "rom-v2-intrinsics"))]
-        #[allow(dead_code)]
-        fn $name( $($argname: $ty),* ) -> $ret {
-            $($body)*
+        intrinsics! {
+            @private [] [$(#[$($attr)*])*]
+            #[allow(dead_code)]
+            fn $name( $($argname: $ty),* ) -> $ret {
+                $($body)*
+            }
         }
 
         #[cfg(feature = "rom-v2-intrinsics")]
@@ -222,6 +241,7 @@ macro_rules! intrinsics {
         }
 
         #[cfg(all(target_arch = "arm", feature = "intrinsics"))]
+        #[doc = concat!("Unmangled ABI export for `", stringify!($name), "`.")]
         mod $name {
             #[unsafe(no_mangle)]
             $(#[$($attr)*])*
@@ -233,9 +253,12 @@ macro_rules! intrinsics {
         // Not exported, but defined so the actual implementation is
         // considered used
         #[cfg(not(all(target_arch = "arm", feature = "intrinsics")))]
-        #[allow(dead_code)]
-        fn $name( $($argname: $ty),* ) -> $ret {
-            $($body)*
+        intrinsics! {
+            @private [] [$(#[$($attr)*])*]
+            #[allow(dead_code)]
+            fn $name( $($argname: $ty),* ) -> $ret {
+                $($body)*
+            }
         }
 
         intrinsics!($($rest)*);
@@ -256,6 +279,7 @@ macro_rules! intrinsics {
         }
 
         #[cfg(all(target_arch = "arm", feature = "intrinsics"))]
+        #[doc = concat!("Unmangled ABI export for `", stringify!($name), "`.")]
         mod $name {
             #[unsafe(no_mangle)]
             $(#[$($attr)*])*
@@ -267,6 +291,7 @@ macro_rules! intrinsics {
         // Not exported, but defined so the actual implementation is
         // considered used
         #[cfg(not(all(target_arch = "arm", feature = "intrinsics")))]
+        $(#[$($attr)*])*
         #[allow(dead_code)]
         unsafe fn $name( $($argname: $ty),* ) -> $ret {
             $($body)*
@@ -352,6 +377,9 @@ core::arch::global_asm!(
     ".endm",
 );
 
+/// Defines a per-core SIO divide entry point and optional EABI aliases. `$begin`
+/// writes operands; shared assembly waits eight cycles and preserves DIRTY state.
+/// Native builds emit a zero-returning stub without MMIO.
 macro_rules! division_function {
     (
         $name:ident $($intrinsic:ident)* ( $argty:ty ) {
@@ -395,11 +423,18 @@ macro_rules! division_function {
         unsafe extern "aapcs" {
             // Connect a local name to global symbol above through FFI.
             #[link_name = concat!("_erphal_", stringify!($name)) ]
+            /// Returns `n` divided by `d`, quotient in low 32 bits and remainder in high
+            /// 32 bits. SIO defines divide-by-zero/overflow results; no trap is raised.
+            /// # Safety
+            /// Must execute on RP2040; interrupt divider users must preserve DIRTY state.
             fn $name(n: $argty, d: $argty) -> u64;
         }
 
         #[cfg(not(target_arch = "arm"))]
         #[allow(unused_variables)]
+        /// Returns zero regardless of `n` and `d`; native compilation stub only.
+        /// # Safety
+        /// No additional preconditions; this does not emulate SIO arithmetic.
         unsafe fn $name(n: $argty, d: $argty) -> u64 { 0 }
     };
 }
@@ -418,7 +453,12 @@ division_function! {
     }
 }
 
-fn divider_unsigned(n: u32, d: u32) -> DivResult<u32> {
+/// Returns SIO unsigned quotient/remainder for `n` and `d`, preserving dirty divider
+/// state. Zero `d` yields quotient u32::MAX and remainder `n`; native stub returns zeros.
+fn divider_unsigned(
+    n: u32,
+    d: u32,
+) -> DivResult<u32> {
     let packed = unsafe { unsigned_divmod(n, d) };
     DivResult {
         quotient: packed as u32,
@@ -426,7 +466,13 @@ fn divider_unsigned(n: u32, d: u32) -> DivResult<u32> {
     }
 }
 
-fn divider_signed(n: i32, d: i32) -> DivResult<i32> {
+/// Returns SIO signed quotient/remainder for `n` and `d` (truncated toward zero).
+/// Zero `d` yields -1 for nonnegative `n`, +1 otherwise, and remainder `n`;
+/// MIN/-1 wraps to MIN. Preserves DIRTY state; native stub returns zeros.
+fn divider_signed(
+    n: i32,
+    d: i32,
+) -> DivResult<i32> {
     let packed = unsafe { signed_divmod(n, d) };
     // Double casts to avoid sign extension
     DivResult {
@@ -444,14 +490,17 @@ struct DivResult<T> {
 }
 
 intrinsics! {
+    /// Returns the unsigned quotient of `n` / `d`; zero `d` yields u32::MAX on RP2040.
     extern "C" fn __udivsi3(n: u32, d: u32) -> u32 {
         divider_unsigned(n, d).quotient
     }
 
+    /// Returns the unsigned remainder of `n` / `d`; zero `d` yields `n` on RP2040.
     extern "C" fn __umodsi3(n: u32, d: u32) -> u32 {
         divider_unsigned(n, d).remainder
     }
 
+    /// Returns the unsigned quotient of `n` / `d`; writes its remainder through `rem` when Some. Zero `d` yields u32::MAX and remainder `n` on RP2040.
     extern "C" fn __udivmodsi4(n: u32, d: u32, rem: Option<&mut u32>) -> u32 {
         let quo_rem = divider_unsigned(n, d);
         if let Some(rem) = rem {
@@ -460,14 +509,17 @@ intrinsics! {
         quo_rem.quotient
     }
 
+    /// Returns the toward-zero signed quotient of `n` / `d`; SIO zero-divisor and overflow rules apply.
     extern "C" fn __divsi3(n: i32, d: i32) -> i32 {
         divider_signed(n, d).quotient
     }
 
+    /// Returns the signed remainder of `n` / `d`, with the dividend sign; zero `d` yields `n`.
     extern "C" fn __modsi3(n: i32, d: i32) -> i32 {
         divider_signed(n, d).remainder
     }
 
+    /// Returns the toward-zero signed quotient of `n` / `d` and writes the remainder through `rem`; SIO zero-divisor and overflow rules apply.
     extern "C" fn __divmodsi4(n: i32, d: i32, rem: &mut i32) -> i32 {
         let quo_rem = divider_signed(n, d);
         *rem = quo_rem.remainder;

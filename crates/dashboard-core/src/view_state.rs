@@ -7,14 +7,20 @@ use crate::backlight::{Backlight, EncoderEffect};
 use crate::pages::Page;
 use crate::popup::Popup;
 
+/// At most twenty printable ASCII bytes for bounded view/warning feedback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PopupText {
+    /// Zero-filled backing storage; only the len prefix is displayed.
     bytes: [u8; 20],
+    /// Initialized printable prefix length in0..=20 bytes.
     len: u8,
 }
 impl PopupText {
+    /// Empty printable text with all backing bytes zero.
     pub const EMPTY: Self = Self { bytes: [0; 20], len: 0 };
 
+    /// Returns copied `text` when at most20bytes and every byte is printable ASCII
+    /// 32..=126, including empty input; otherwise None without truncation/replacement.
     pub fn new(text: &str) -> Option<Self> {
         if text.len() > 20 || !text.bytes().all(|c| (32..=126).contains(&c)) {
             return None;
@@ -25,21 +31,29 @@ impl PopupText {
         Some(result)
     }
 
+    /// Returns the initialized printable prefix; private construction guarantees valid UTF-8 and bounds.
     pub fn as_str(&self) -> &str { core::str::from_utf8(&self.bytes[..usize::from(self.len)]).expect("ASCII popup") }
 }
 
+/// Named-view identity retained when leaving Dashboard; configuration defines ordering.
 pub struct ViewSelection {
+    /// Configured view ID, not its position in the view list.
     id: u8,
 }
 impl ViewSelection {
+    /// Returns `config`'s validated boot view selection.
     pub fn new(config: &ValidatedConfig) -> Self {
         Self {
             id: config.config().boot_view,
         }
     }
 
+    /// Returns the retained configured view identifier.
     pub const fn id(&self) -> u8 { self.id }
 
+    /// Rotates by signed `delta` through `config` view order only on Dashboard `page`.
+    /// Returns whether the ID changed; other pages, absent current ID and full-cycle
+    /// movement return false. Widened modulo arithmetic handles every i32 delta.
     pub fn rotate(
         &mut self,
         config: &ValidatedConfig,
@@ -61,6 +75,10 @@ impl ViewSelection {
 
     /// Motion interrupts only a previous shutdown; clicks then win feedback.
     /// A dark-screen rotation changes the selected view without waking it.
+    /// `config` supplies view order, `backlight` receives shutdown/click effects,
+    /// `delta` is signed rotation, `presses` the bounded click batch and `now`
+    /// monotonic milliseconds. Returns click-priority feedback and motion_applied only
+    /// if changed motion was visible before clicks; a later wake cannot retroactively expose it.
     pub fn encoder(
         &mut self,
         config: &ValidatedConfig,
@@ -83,20 +101,30 @@ impl ViewSelection {
     }
 }
 
+/// One resolved warning page with exact rule identity, palette and state labels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WarningPage {
+    /// Up to three bounded warning messages; unused trailing rows are empty.
     lines: [PopupText; 3],
+    /// Initialized row count in1..=3 for selected/sample pages.
     count: u8,
+    /// One-based visible page number in the current eligible set.
     pub number: u8,
+    /// Total pages for the selected one- or three-row presentation mode.
     pub total: u8,
+    /// Caller-resolved blink phase, independent of rendered frame count.
     pub blink: bool,
+    /// Per-rule palette in CycleOne or shared list palette in ListThree.
     pub colors: dashboard_config::WarningColors,
-    // Identity remains tied to the actual rules, even for duplicate text.
+    /// Widget-index rule mask for acknowledgment; duplicate messages retain distinct bits.
     pub rules: u64,
+    /// Status label identity for each rendered row; included in retained equality keys.
     statuses: [WarningLabel; 3],
 }
 impl WarningPage {
     /// Explicit preview sample; no alarm identity and never an acquisition result.
+    /// Returns a single COLOUR PREVIEW row using `colors` and caller `blink` phase,
+    /// with rule mask zero so it cannot acknowledge a live alarm.
     pub fn palette_sample(
         colors: dashboard_config::WarningColors,
         blink: bool,
@@ -117,6 +145,8 @@ impl WarningPage {
         }
     }
 
+    /// Returns the fixed ASCII status label for `row`. Panics for row>=3; callers
+    /// should restrict rows to lines().len(), since unused rows have empty labels.
     pub fn status(
         &self,
         row: usize,
@@ -124,20 +154,29 @@ impl WarningPage {
         self.statuses[row].text()
     }
 
+    /// Returns only the initialized warning-message rows, at most three.
     pub fn lines(&self) -> &[PopupText] { &self.lines[..usize::from(self.count)] }
 }
 
+/// Compact label identity, preserving latch/ack/staleness distinctions in render keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 enum WarningLabel {
+    /// No status, used only by preview/unused rows.
     None,
+    /// Qualified active warning without acknowledgment/latch label.
     Active,
+    /// Active episode acknowledged by the producer.
     Acknowledged,
+    /// Visible latched episode awaiting its configured clear/ack conditions.
     Latched,
+    /// Latched warning whose source is unavailable.
     Stale,
+    /// Latched trigger cleared but acknowledgment still required.
     Cleared,
 }
 impl WarningLabel {
+    /// Returns the fixed ASCII label for this state; None returns empty text.
     const fn text(self) -> &'static str {
         match self {
             Self::None => "",
@@ -149,6 +188,8 @@ impl WarningLabel {
         }
     }
 
+    /// Returns label for eligible `e`, prioritizing unavailable latch, cleared latch,
+    /// acknowledgment, latch, then active. Caller filters non-attention states first.
     fn of(e: crate::warning_state::WarningEligibility) -> Self {
         if e.latched && matches!(e.status, crate::alarms::Status::Unavailable) {
             Self::Stale
@@ -164,17 +205,26 @@ impl WarningLabel {
     }
 }
 
+/// Time-driven warning cursor with bounded catch-up and activation interruption.
 #[derive(Default)]
 pub struct WarningPager {
+    /// Retained first rule index of rotation page, absent after pause/empty set.
     cursor: Option<u8>,
+    /// Last requested view ID; changing view restarts at the highest-priority eligible rule.
     view: u8,
+    /// Current page interval origin in monotonic milliseconds.
     anchor: u64,
+    /// Monotonic high-water mark, retained across pause.
     last_ms: u64,
+    /// Last observed warning activation serial; change interrupts without resetting rotation time.
     event_serial: u64,
+    /// Acquisition warning-owner identity; replacement restarts paging.
     run_id: Option<u64>,
+    /// New activation temporarily shows the first eligible page over the retained rotation cursor.
     interrupted: bool,
 }
 impl WarningPager {
+    /// Returns empty pager state with time zero and no acquisition run identity.
     pub const fn new() -> Self {
         Self {
             cursor: None,
@@ -189,6 +239,7 @@ impl WarningPager {
 
     /// Feedback or leaving Dashboard restarts with the first current warning.
     /// Preserve the monotonic high-water mark even while obscured.
+    /// `now` is monotonic milliseconds; older values cannot lower the retained clock.
     pub fn pause(
         &mut self,
         now: u64,
@@ -202,6 +253,9 @@ impl WarningPager {
     /// Appearance reconstructs a synthetic owner for each render. The caller
     /// resets this pager for configuration/source changes; no warning identity
     /// from this path may be submitted for acknowledgment.
+    /// `config` supplies appearance rules, `samples` synthetic evidence, `view` the
+    /// selected ID, `now` monotonic milliseconds and `blink` visual phase. Returns the
+    /// selected page/None as select, treating reconstructed sample owners as continuous.
     #[cfg(feature = "alloc")]
     pub fn select_appearance(
         &mut self,
@@ -215,6 +269,13 @@ impl WarningPager {
         self.select(config, samples, view, now, blink)
     }
 
+    /// Returns up to three eligible warnings from `samples` under `config` for
+    /// selected `view`, monotonic `now` milliseconds and caller `blink` phase, or None
+    /// for reversed time, unknown view or no attention. Order is priority, configured
+    /// view, then widget order. New runs/views restart; new activations interrupt with
+    /// the first eligible page without resetting the rotation deadline. Catch-up skips
+    /// whole cycles arithmetically; a removed cursor uses its next surviving successor.
+    /// Caller resets this owner when replacing configuration and excludes feedback/off-screen periods via pause.
     pub fn select(
         &mut self,
         config: &ValidatedConfig,
