@@ -161,8 +161,11 @@ fixed-length standard values, storage errors/unsupported captures, malformed USB
 commands or a failed transfer on its current USB session, loss of an established
 encoder, and invalid FPS timing. A protected read reports an access restriction,
 not a defective device. Global scan errors are not attributed to the selected
-peer. Empty slots, normal cancellation, an encoder absent at startup, idle USB
+peer. Empty slots, normal cancellation, ordinary overwrite/Reset confirmation
+expiry before I/O, an encoder absent at startup, idle USB
 timeouts and USB reset/unplug cancellation do not themselves latch red.
+Confirmation expiry does not clear an existing fault. Actual capture-operation
+timeout or clock regression still latches red; see the [slot workflow](ble-probe-captures.md#save-open-replace-and-reset).
 
 Blinking uses elapsed monotonic time: working blue and scan-only red have a 500 ms half-period;
 terminal red has a 125 ms half-period, sampled by the 50 ms supervisor. No display
@@ -559,6 +562,13 @@ measurements or observations of an actual adapter:
 | Saving | Storage failure | Readable copy / replacement blocked |
 | --- | --- | --- |
 | ![Synthetic save in progress](../images/ble-probe/saving-synthetic.png) | ![Synthetic storage error](../images/ble-probe/storage-error-synthetic.png) | ![Synthetic supported copy with explicit reset required](../images/ble-probe/blocked-save-synthetic.png) |
+
+| Confirmation expired before I/O | Timed-out operation still pending | Owner finished after timeout |
+| --- | --- | --- |
+| ![Synthetic confirmation expiry with no mutation](../images/ble-probe/confirmation-expired-synthetic.png) | ![Synthetic timeout retaining storage ownership](../images/ble-probe/slot-timeout-pending-synthetic.png) | ![Synthetic late completion with review guidance](../images/ble-probe/slot-timeout-finished-synthetic.png) |
+
+Reset confirmation has the [same no-I/O expiry feedback](../images/ble-probe/reset-expired-synthetic.png).
+These scenes use fabricated peers and timing; they do not measure a physical save.
 
 | Saved identity | Saved link / stages | Saved characteristic / descriptor |
 | --- | --- | --- |

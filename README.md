@@ -353,6 +353,9 @@ the encoder, then tap X. Replacing a save requires encoder click or a two-second
 A hold to confirm; Y cancels. Click/hold A opens a saved slot. Damaged captures or
 unknown journal/payload formats require a distinct confirmed Reset; no slot is erased automatically.
 A readable old copy can still load when replacement is blocked.
+Confirmation expires after ten seconds without writing or adding a red fault:
+press Y, then X to confirm again. A real operation timeout retains ownership until
+storage finishes; review the slot afterward. Existing faults still require Y recovery.
 
 On the PC, plug normal USB in **without BOOTSEL**. From `host/`:
 

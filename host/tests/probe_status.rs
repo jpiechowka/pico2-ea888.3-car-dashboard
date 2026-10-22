@@ -822,6 +822,62 @@ fn capture_activity_and_saved_browsing_never_present_saved_evidence_as_live_succ
     assert_eq!(status.levels(0, false), [false, false, true]);
 }
 
+/// Ordinary confirmation expiry neither adds Storage nor clears an existing fault, including protected-slot Reset.
+#[test]
+fn confirmation_expiry_keeps_the_existing_latch_without_a_storage_failure() {
+    for slot in [
+        cap::Slot::Saved { generation: 1 },
+        cap::Slot::SavedBlocked { generation: 1 },
+    ] {
+        for prior in [None, Some(Fault::Watchdog), Some(Fault::Storage)] {
+            for click in [false, true] {
+                let status = Status::new();
+                let mut ui = cap::CaptureUi::new();
+                let context = cap::Context {
+                    save: cap::SaveAvailability::Ready,
+                    revision: 1,
+                };
+                let Some(cap::Action::Refresh { id }) = status.capture_input(&mut ui, cap::Input::XHold, 0, context)
+                else {
+                    panic!()
+                };
+                status.capture_complete(
+                    &mut ui,
+                    id,
+                    &cap::Completion::Listed {
+                        slots: [slot; 4],
+                        identities: [None; 4],
+                    },
+                );
+                if let Some(fault) = prior {
+                    status.record(fault);
+                }
+                let before = status.fault_latch();
+                status.capture_input(&mut ui, cap::Input::XShort, 10, context);
+                let action = if click {
+                    status.capture_input(&mut ui, cap::Input::Click, 10_010, context)
+                } else {
+                    status.capture_tick(&mut ui, 10_010)
+                };
+                assert_eq!(action, None);
+                assert_eq!(ui.pending(), None);
+                status.publish(&Probe::new(), &ui);
+                assert_eq!(status.fault_latch(), before);
+                if before == FaultLatch::EMPTY {
+                    assert_ne!(status.levels(0, false), [false, true, true]);
+                }
+                status.capture_input(&mut ui, cap::Input::Back, 10_011, context);
+                status.capture_input(&mut ui, cap::Input::XShort, 10_012, context);
+                assert_eq!(status.capture_tick(&mut ui, 10_011), None);
+                assert!(
+                    status.fault_latch().contains(Fault::Storage),
+                    "clock reversal is still a fault"
+                );
+            }
+        }
+    }
+}
+
 /// Capture timeout or a failed hidden request still latches red after leaving its screen.
 #[test]
 fn capture_failure_and_timeout_survive_back_and_hidden_completion() {
@@ -842,6 +898,83 @@ fn capture_failure_and_timeout_survive_back_and_hidden_completion() {
             status.capture_complete(&mut ui, id, &cap::Completion::Failed(cap::UiError::Storage));
         }
         status.publish(&Probe::new(), &ui);
+        assert_eq!(status.levels(0, false), [false, true, true]);
+    }
+}
+
+/// All four real operation timeouts retain their fence and red fault through stale and then matching completion.
+#[test]
+fn operation_timeouts_cannot_overlap_or_clear_fault_on_late_success() {
+    for operation in [
+        cap::Operation::Refresh,
+        cap::Operation::Load,
+        cap::Operation::Save,
+        cap::Operation::Reset,
+    ] {
+        let status = Status::new();
+        let mut ui = cap::CaptureUi::new();
+        let context = cap::Context {
+            save: cap::SaveAvailability::Ready,
+            revision: 1,
+        };
+        let Some(cap::Action::Refresh { id }) = status.capture_input(&mut ui, cap::Input::XHold, 0, context) else {
+            panic!()
+        };
+        status.capture_complete(
+            &mut ui,
+            id,
+            &cap::Completion::Listed {
+                slots: [if operation == cap::Operation::Reset {
+                    cap::Slot::SavedBlocked { generation: 1 }
+                } else {
+                    cap::Slot::Saved { generation: 1 }
+                }; 4],
+                identities: [None; 4],
+            },
+        );
+        let action = match operation {
+            cap::Operation::Refresh => status.capture_input(&mut ui, cap::Input::XHold, 10, context),
+            cap::Operation::Load => status.capture_input(&mut ui, cap::Input::Click, 10, context),
+            cap::Operation::Save | cap::Operation::Reset => {
+                status.capture_input(&mut ui, cap::Input::XShort, 9, context);
+                status.capture_input(&mut ui, cap::Input::Click, 10, context)
+            }
+        };
+        assert!(action.is_some());
+        let id = ui.pending().unwrap();
+        status.capture_tick(&mut ui, 30_010);
+        assert_eq!(ui.screen(), cap::Screen::Error(cap::UiError::Timeout));
+        assert_eq!(status.capture_input(&mut ui, cap::Input::Click, 30_011, context), None);
+        assert_eq!(ui.pending(), Some(id));
+        let completion = match operation {
+            cap::Operation::Refresh => {
+                cap::Completion::Listed {
+                    slots: [cap::Slot::Empty; 4],
+                    identities: [None; 4],
+                }
+            }
+            cap::Operation::Load => cap::Completion::Loaded { pages: 1 },
+            cap::Operation::Save => {
+                cap::Completion::Saved {
+                    generation: 2,
+                    identity: names::SavedIdentity {
+                        peer: Peer {
+                            address: [1; 6],
+                            random: true,
+                        },
+                        name: Payload::new(b"Saved"),
+                    },
+                }
+            }
+            cap::Operation::Reset => cap::Completion::Reset,
+        };
+        status.capture_complete(&mut ui, id + 1, &completion);
+        assert_eq!(ui.pending(), Some(id));
+        status.capture_complete(&mut ui, id, &completion);
+        assert_eq!(ui.pending(), None);
+        assert_eq!(ui.screen(), cap::Screen::Error(cap::UiError::Timeout));
+        status.publish(&Probe::new(), &ui);
+        assert!(status.fault_latch().contains(Fault::Storage));
         assert_eq!(status.levels(0, false), [false, true, true]);
     }
 }

@@ -1130,9 +1130,12 @@ fn slot_label(slot: capture_ui::Slot) -> &'static str {
         Slot::Unavailable => "Storage unavailable",
     }
 }
-/// Returns recovery guidance for `error`, including operations whose timeout
-/// does not release their storage owner.
-fn ui_error(error: capture_ui::UiError) -> &'static str {
+/// Returns recovery guidance for `error`; `pending` means the storage owner still
+/// holds a request. Released timeouts imply neither successful I/O nor zero effects.
+fn ui_error(
+    error: capture_ui::UiError,
+    pending: bool,
+) -> &'static str {
     use capture_ui::UiError;
     match error {
         UiError::NoPeer => "Select a peer before saving",
@@ -1142,7 +1145,9 @@ fn ui_error(error: capture_ui::UiError) -> &'static str {
         UiError::Corrupt => "Damaged slot; X offers explicit erase",
         UiError::Unsupported => "Unknown format; export before erasing",
         UiError::Unavailable => "Storage unavailable; hold X to refresh",
-        UiError::Timeout => "Timed out; owner must finish before retry",
+        UiError::Timeout if pending => "Timed out; owner must finish before retry",
+        UiError::Timeout => "Timed out; Y back to review slots",
+        UiError::ConfirmationExpired => "Confirmation expired; no change made",
         UiError::Changed => "Evidence changed; review then confirm again",
         UiError::Clock => "Clock changed; retry the gesture",
         UiError::Exhausted => "Request limit reached; restart required",
@@ -1169,7 +1174,7 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
         CaptureScreen::Busy(Operation::Load) => "Reading selected capture...",
         CaptureScreen::Busy(Operation::Save) => "Saving frozen evidence; please wait...",
         CaptureScreen::Busy(Operation::Reset) => "Erasing selected slot; please wait...",
-        CaptureScreen::Error(error) => ui_error(error),
+        CaptureScreen::Error(error) => ui_error(error, ui.pending().is_some()),
         _ if ui.pending().is_some() => "Operation still running; please wait",
         _ if matches!(
             ui.slots()[usize::from(ui.selected())],
@@ -1180,7 +1185,17 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
         }
         _ => "Four saves survive USB power off",
     };
-    text(d, 10, 61, status, RED)?;
+    text(
+        d,
+        10,
+        61,
+        status,
+        if screen == CaptureScreen::Error(capture_ui::UiError::ConfirmationExpired) {
+            MUTED
+        } else {
+            RED
+        },
+    )?;
     for (index, &slot) in ui.slots().iter().enumerate() {
         let y = 78 + index as i32 * 30;
         rect(
@@ -1244,6 +1259,8 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
             "Click/Hold A 2s: confirm  Y: cancel (10s)"
         } else if ui.pending().is_some() {
             "Y: leave view; storage finishes safely"
+        } else if matches!(screen, CaptureScreen::Error(_)) {
+            "Y: back to slots before retrying"
         } else {
             "A/B: slot Click/Hold A 2s: open X: save/reset"
         },

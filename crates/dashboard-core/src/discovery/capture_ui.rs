@@ -5,7 +5,7 @@ use super::names::SavedIdentity;
 pub const HOLD_MS: u64 = crate::input_model::BUTTON_HOLD_MS;
 /// Milliseconds before visible operation feedback times out; does not cancel owner I/O.
 pub const OPERATION_TIMEOUT_MS: u64 = 30_000;
-/// Milliseconds before an overwrite/reset confirmation expires.
+/// Milliseconds before overwrite/reset intent expires without I/O or a new storage fault.
 pub const CONFIRM_TIMEOUT_MS: u64 = 10_000;
 /// Nonzero checked-increment operation identity; exhaustion never wraps.
 pub type RequestId = u32;
@@ -119,7 +119,7 @@ pub enum Operation {
     /// Explicitly erase/reset the selected slot's two-copy journal.
     Reset,
 }
-/// Bounded UI failure classification; each error preserves the pending I/O fence.
+/// Bounded admission/operation feedback; each outcome preserves any pending I/O fence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiError {
     /// Save requested without a live peer.
@@ -136,11 +136,13 @@ pub enum UiError {
     Unsupported,
     /// Slot state has not been read or cannot be accessed.
     Unavailable,
-    /// Visible operation or confirmation deadline expired; I/O may still be pending.
+    /// Visible operation deadline expired or its time reversed; I/O remains fenced until completion.
     Timeout,
+    /// Overwrite/reset intent expired before any I/O; preserve slots and existing faults, then re-confirm.
+    ConfirmationExpired,
     /// Confirmed slot/generation/live-source revision no longer matches.
     Changed,
-    /// Raw button timing moved backwards.
+    /// Raw button or confirmation timing moved backwards; no mutation is authorized.
     Clock,
     /// Request identity counter reached its maximum and cannot safely restart at zero.
     Exhausted,
@@ -163,9 +165,9 @@ pub enum Screen {
     ConfirmOverwrite,
     /// Explicit click is required to reset protected/corrupt slot contents.
     ConfirmReset,
-    /// Error feedback; does not itself cancel pending owner work.
+    /// Admission/operation feedback; does not itself cancel pending owner work.
     Error(
-        /// Bounded failure presented to the operator.
+        /// Bounded feedback presented to the operator; confirmation expiry is not an I/O failure.
         UiError,
     ),
 }
@@ -409,8 +411,9 @@ impl CaptureUi {
     /// Call every input/render tick, including while X remains pressed.
     /// At boot-relative `now_ms` milliseconds, expires visible operation/confirmation
     /// feedback and recognizes a raw X hold in `self`. Returns a refresh action once per
-    /// hold, otherwise `None`. Reversed time expires visible deadlines and faults raw
-    /// press timing. Timed-out I/O remains fenced until the owner completes it.
+    /// hold, otherwise `None`. Normal confirmation expiry emits no I/O or storage fault;
+    /// reversed confirmation/raw-press time reports Clock. Reversed operation time
+    /// reports Timeout. Timed-out I/O remains fenced until the owner completes it.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -426,12 +429,12 @@ impl CaptureUi {
             self.invalidate_identity(pending);
             self.fail(UiError::Timeout);
         }
-        if let Some(confirm) = self.confirmation
-            && now_ms
-                .checked_sub(confirm.at_ms)
-                .is_none_or(|age| age >= CONFIRM_TIMEOUT_MS)
-        {
-            self.fail(UiError::Timeout);
+        if let Some(confirm) = self.confirmation {
+            match now_ms.checked_sub(confirm.at_ms) {
+                None => self.fail(UiError::Clock),
+                Some(age) if age >= CONFIRM_TIMEOUT_MS => self.fail(UiError::ConfirmationExpired),
+                Some(_) => {}
+            }
         }
         let at = self.x_down?;
         let Some(age) = now_ms.checked_sub(at) else {

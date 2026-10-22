@@ -193,7 +193,69 @@ fn held_release_without_ticks_is_consumed_and_confirmation_expires() {
     ui.input(Input::XUp, 2101, context());
     assert_eq!(ui.screen(), Screen::ConfirmOverwrite);
     assert_eq!(ui.input(Input::Click, 2101 + CONFIRM_TIMEOUT_MS, context()), None);
-    assert_eq!(ui.screen(), Screen::Error(UiError::Timeout));
+    assert_eq!(ui.screen(), Screen::Error(UiError::ConfirmationExpired));
+}
+
+/// Expired overwrite/reset intent cannot issue I/O or consume an operation identity; a fresh confirmation can.
+#[test]
+fn confirmation_expiry_preserves_slots_and_requires_fresh_intent() {
+    for slot in [Slot::Saved { generation: 1 }, Slot::SavedBlocked { generation: 1 }] {
+        for (at, expired) in [(10, 10_010), (10, 10_011), (u64::MAX - 10_000, u64::MAX)] {
+            let mut ui = CaptureUi::new();
+            named_directory(&mut ui, slot);
+            let before = *ui.identities();
+            assert_eq!(ui.input(Input::XShort, at, context()), None);
+            assert_eq!(ui.tick(at + 9_999), None);
+            assert!(matches!(ui.screen(), Screen::ConfirmOverwrite | Screen::ConfirmReset));
+            assert_eq!(ui.input(Input::Click, expired, context()), None);
+            assert_eq!(ui.pending(), None);
+            assert_eq!(ui.slots(), &[slot; 4]);
+            assert_eq!(ui.identities(), &before);
+            assert_eq!(ui.screen(), Screen::Error(UiError::ConfirmationExpired));
+            for input in [Input::Click, Input::XShort, Input::Turn(1)] {
+                assert_eq!(ui.input(input, expired, context()), None);
+                assert_eq!(ui.pending(), None);
+            }
+            ui.input(Input::Back, expired, context());
+            assert_eq!(ui.input(Input::XShort, expired, context()), None);
+            let action = ui.input(Input::Click, expired, context());
+            assert_eq!(
+                action,
+                Some(if matches!(slot, Slot::Saved { .. }) {
+                    Action::Save {
+                        id: 2,
+                        slot: 0,
+                        revision: 7,
+                        overwrite: true,
+                    }
+                } else {
+                    Action::Reset { id: 2, slot: 0 }
+                })
+            );
+        }
+    }
+}
+
+/// Confirmation may be accepted just before expiry; reversed time rejects both mutations as a clock fault.
+#[test]
+fn confirmation_deadline_and_clock_reversal_do_not_authorize_expired_mutation() {
+    for slot in [Slot::Saved { generation: 1 }, Slot::SavedBlocked { generation: 1 }] {
+        for now in [9, 10_009] {
+            let mut ui = CaptureUi::new();
+            named_directory(&mut ui, slot);
+            ui.input(Input::XShort, 10, context());
+            let result = ui.input(Input::Click, now, context());
+            if now == 9 {
+                assert_eq!(result, None);
+                assert_eq!(ui.pending(), None);
+                assert_eq!(ui.screen(), Screen::Error(UiError::Clock));
+                assert_eq!(ui.slots(), &[slot; 4]);
+            } else {
+                assert!(matches!(result, Some(Action::Save { .. } | Action::Reset { .. })));
+                assert_eq!(ui.pending(), Some(2));
+            }
+        }
+    }
 }
 
 /// Back consumes a pending X gesture so its later release cannot open slots or forward a live click.

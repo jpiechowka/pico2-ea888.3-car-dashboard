@@ -399,3 +399,54 @@ fn saved_pages_and_slot_prompts_fit_and_preserve_the_same_diagnostics_band() {
         ui.input(CaptureInput::Turn(1), 2103 + selected * 10, context);
     }
 }
+
+/// Timeout guidance changes only when the exact owner completes; a failure is not rendered as successful storage.
+#[test]
+fn timeout_status_tracks_actual_owner_completion() {
+    use capture_ui::{Action, CaptureUi, Completion, Context, Input, SaveAvailability, Slot};
+    for failed in [false, true] {
+        let mut ui = CaptureUi::new();
+        let context = Context {
+            save: SaveAvailability::Ready,
+            revision: 1,
+        };
+        let Some(Action::Refresh { id }) = ui.input(Input::XHold, 0, context) else {
+            panic!()
+        };
+        ui.tick(30_000);
+        let mut pending = ScreenTarget::default();
+        render_slots(&mut pending, &ui, ProbeDiagnostics::default()).unwrap();
+        let completion = if failed {
+            Completion::Failed(capture_ui::UiError::Storage)
+        } else {
+            Completion::Listed {
+                slots: [Slot::Empty; 4],
+                identities: [None; 4],
+            }
+        };
+        assert!(!ui.complete(id + 1, completion));
+        let mut stale = ScreenTarget::default();
+        render_slots(&mut stale, &ui, ProbeDiagnostics::default()).unwrap();
+        assert_eq!(pending.pixels, stale.pixels);
+        assert!(ui.complete(id, completion));
+        let mut finished = ScreenTarget::default();
+        render_slots(&mut finished, &ui, ProbeDiagnostics::default()).unwrap();
+        assert!(
+            pending
+                .pixels
+                .iter()
+                .any(|(&(x, y), pixel)| { (61..71).contains(&y) && finished.pixels[&(x, y)] != *pixel }),
+            "status must no longer claim an owner is still running"
+        );
+        ui.input(Input::Back, 30_001, context);
+        let mut directory = ScreenTarget::default();
+        render_slots(&mut directory, &ui, ProbeDiagnostics::default()).unwrap();
+        assert!(
+            finished
+                .pixels
+                .iter()
+                .any(|(&(x, y), pixel)| { (206..216).contains(&y) && directory.pixels[&(x, y)] != *pixel }),
+            "error footer must not advertise ignored slot controls"
+        );
+    }
+}

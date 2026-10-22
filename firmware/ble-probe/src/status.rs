@@ -213,13 +213,17 @@ impl Status {
     }
 
     /// Latches storage failure for `error`, excluding expected Empty/NoPeer/Busy
-    /// admission rejections. Other errors remain visible until protected recovery.
+    /// admission rejections and no-I/O ConfirmationExpired. Neutral feedback never
+    /// clears an existing fault; other errors remain latched until protected recovery.
     pub fn capture_error(
         &self,
         error: cap::UiError,
     ) {
         // These are expected admission rejections, not a failed I/O operation.
-        if !matches!(error, cap::UiError::Empty | cap::UiError::NoPeer | cap::UiError::Busy) {
+        if !matches!(
+            error,
+            cap::UiError::Empty | cap::UiError::NoPeer | cap::UiError::Busy | cap::UiError::ConfirmationExpired
+        ) {
             self.record(Fault::Storage);
         }
     }

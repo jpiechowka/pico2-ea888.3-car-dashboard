@@ -46,6 +46,61 @@ fn save_slots(
     render_slots(&mut St7789Renderer::new(&mut frame.0), ui, diagnostics).unwrap();
     save_frame(dir, name, &frame);
 }
+/// Writes synthetic expiry/pending/released timeout scenes under `dir` with current-style `diagnostics`.
+/// Exercises real UI transitions without I/O; panics on unexpected actions or rendering/file errors.
+fn save_timeout_scenes(
+    dir: &Path,
+    diagnostics: ProbeDiagnostics,
+) {
+    use capture_ui::{Action, CaptureUi, Completion, Context, Input, SaveAvailability, Slot};
+    let context = Context {
+        save: SaveAvailability::Ready,
+        revision: 1,
+    };
+    let identity = names::SavedIdentity {
+        peer: Peer {
+            address: [0xC1; 6],
+            random: true,
+        },
+        name: Payload::new(b"SYNTHETIC SAVED DEVICE"),
+    };
+    for (slot, name) in [
+        (Slot::Saved { generation: 1 }, "confirmation-expired-synthetic"),
+        (Slot::SavedBlocked { generation: 1 }, "reset-expired-synthetic"),
+    ] {
+        let mut ui = CaptureUi::new();
+        let Some(Action::Refresh { id }) = ui.input(Input::XHold, 0, context) else {
+            panic!()
+        };
+        ui.complete(
+            id,
+            Completion::Listed {
+                slots: [slot; 4],
+                identities: [Some(identity); 4],
+            },
+        );
+        ui.input(Input::XShort, 10, context);
+        ui.tick(10_010);
+        save_slots(dir, name, &ui, diagnostics);
+        if matches!(slot, Slot::Saved { .. }) {
+            ui.input(Input::Back, 10_011, context);
+            ui.input(Input::XShort, 10_012, context);
+            let Some(Action::Save { id, .. }) = ui.input(Input::Click, 10_013, context) else {
+                panic!()
+            };
+            ui.tick(40_013);
+            save_slots(dir, "slot-timeout-pending-synthetic", &ui, diagnostics);
+            ui.complete(
+                id,
+                Completion::Saved {
+                    generation: 2,
+                    identity,
+                },
+            );
+            save_slots(dir, "slot-timeout-finished-synthetic", &ui, diagnostics);
+        }
+    }
+}
 /// Emits synthetic scan/inspection/saved-slot/error/reset-evidence PPMs into the first CLI argument's directory.
 /// Missing arguments, fixture invariant failures and I/O errors panic; trailing arguments are ignored and existing
 /// images replaced. All radio, timing, memory and peer observations are fabricated display fixtures; no device is
@@ -403,6 +458,7 @@ fn main() {
             save_slots(directory, name, &ui, p.diagnostics);
         }
     }
+    save_timeout_scenes(directory, p.diagnostics);
     // Deliberately fabricated failure, not a diagnosis of any physical peer.
     p.event(Event::Failure {
         revision: p.request.revision,

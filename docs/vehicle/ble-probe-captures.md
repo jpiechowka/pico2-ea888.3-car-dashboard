@@ -21,6 +21,9 @@ explains what can be started offline and what remains unproved.
    empty slot. An occupied supported slot asks for confirmation before replacement.
 5. Confirm with encoder click or a two-second A hold. Y cancels. Confirmation
    expires after ten seconds, and changed evidence invalidates an overwrite prompt.
+   Expiry starts no write or erase, preserves all slots, and adds no red fault.
+   Press Y to return to slots, then X to request a fresh confirmation. A click
+   reaching the ten-second boundary is too late; a reversed clock remains a fault.
 6. Wait for the slot to show its new generation. Click/hold A to load the saved
    pages; rotate or use A/B to read them. X or Y returns to slots, then Y returns
    to the live view. Hold X to refresh the slot directory.
@@ -80,9 +83,17 @@ These are the journal's tested software rules; physical power-cut qualification
 remains separate. The [full-slot audit](../validation/probe-slot4-followup-2026-10-21.md#full-slots-replacement-and-reset)
 records the confirmation, generation, failure-injection and ownership checks.
 
-Back/recovery and a UI timeout do not cancel an in-progress flash operation.
+An operation that remains visibly pending for thirty seconds reports a timeout;
+this is distinct from the ten-second confirmation expiry before I/O starts.
+Back/recovery and an operation timeout do not cancel an in-progress flash operation.
 The storage owner finishes and returns its buffer before another operation is
 admitted. Do not interpret leaving the page as undoing a save or reset.
+Once a matching late completion releases ownership, timeout feedback directs you
+back to review the slots instead of claiming the owner is still running. This
+does not imply that the operation succeeded, and does not clear its red latch.
+
+The [confirmation-expiry follow-up](../validation/probe-confirmation-expiry-2026-10-22.md)
+records the reproduced UI fault, read-only generation-2 export and verification limits.
 
 The storage task owns one fixed reply record. It transfers an exclusive reference
 to core 1 and waits for its return before servicing another request. Core 1 takes
