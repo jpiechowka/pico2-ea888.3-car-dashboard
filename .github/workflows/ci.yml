@@ -90,7 +90,7 @@ jobs:
           toolchain: nightly-2026-10-18
           components: clippy
           targets: thumbv8m.main-none-eabihf,wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - name: Shared unit contracts and both outlines
         run: |
           cargo test --locked -p dashboard-core
@@ -163,7 +163,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-18
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: studio-helper
       - run: cargo fmt --all --check
@@ -210,7 +210,7 @@ jobs:
           toolchain: nightly-2026-10-18
           components: clippy,rustfmt
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: configurator
       - run: cargo fmt --all --check
@@ -259,7 +259,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-18
           components: clippy
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: host
       - name: Host contracts
@@ -363,7 +363,7 @@ jobs:
           toolchain: nightly-2026-10-18
           components: llvm-tools-preview
           targets: thumbv6m-none-eabi
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: firmware/vendor/embassy-rp
       - name: Native register and timer contracts
@@ -418,7 +418,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-18
           components: miri, rust-src
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: firmware/vendor/trouble-host
       - name: Live packet leases across allocation and release
@@ -435,7 +435,7 @@ jobs:
           toolchain: nightly-2026-10-18
           components: clippy
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: firmware
       - name: Fetch locked firmware dependencies
@@ -554,7 +554,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-18
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: firmware
           # Each capture intentionally builds in a fresh directory. Cache downloads,
@@ -600,7 +600,7 @@ jobs:
           toolchain: nightly-2026-10-18
           components: clippy
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: firmware
       - name: Strict utility Clippy
