@@ -1,6 +1,7 @@
 # Saved BLE probe captures
 
-The [standalone probe](ble-probe.md) saves one selected peer's evidence into one
+The [standalone probe](ble-probe.md) and separate [NGM identity tool](ngm-identity.md)
+save one selected peer's evidence into one
 of four numbered slots. A committed save survives USB power removal. The saved
 record can be opened on the Pico or exported later as binary, JSON and text.
 Saving, viewing and exporting do not inspect the adapter again.
@@ -113,10 +114,12 @@ separate busy colour; a current-session protocol/transfer failure latches red.
 
 ## Recover captures on a PC
 
-Keep the probe firmware installed and plug the Pico into the PC with a USB data
+Keep the capturing utility installed and plug the Pico into the PC with a USB data
 cable. **Do not hold BOOTSEL.** Normal firmware exposes USB CDC serial with
-VID `2E8A`, PID `0009`, product `Pico BLE Probe Captures`; BOOTSEL is a different
-device and is not the export interface. Merely plugging in sends no BLE requests.
+VID `2E8A`, PID `0009`, product `Pico BLE Probe Captures` for the ordinary probe or
+`Pico NGM Identity Captures` for the identity image. BOOTSEL is a different device
+and is not the export interface. Boot can start active scanning, which sends BLE
+scan requests; USB recovery never starts an inspection, connection or INFO request.
 The USB descriptor requests up to 500 mA when configured. That is a host power
 budget request, not measured consumption or qualification of a cable or supply.
 
@@ -146,9 +149,12 @@ owner's connected Pico on 2026-10-19, after their power-off/reopen check.
 This does not qualify every USB host/driver or interrupted-transfer scenario.
 
 Automatic selection is deliberately conservative: it requires exactly one
-matching VID/PID and recognized product name. Windows may expose its generic
+matching VID/PID and one of those two exact product names, optionally followed by
+the exact ` (COMx)` suffix for that enumerated port. Other prefixes or mismatched
+suffixes are rejected. Windows may expose its generic
 friendly name, such as `USB Serial Device (COM7)`, instead of the firmware's USB
-product string. In that case, or with multiple probes, pass `--port` explicitly.
+product string. In that case, or with multiple utilities,
+pass `--port` explicitly.
 The selected port must still be an enumerated VID/PID candidate. The tool does
 not open unrelated ports to search for the protocol.
 
@@ -174,7 +180,7 @@ An address or name is not permanent or authenticated physical device identity.
 Name selection is deterministic: first nonempty complete Local Name from scan
 response, then advertisement; otherwise the first successful, non-truncated
 captured GAP Device Name read (`2A00`); otherwise the first nonempty shortened
-Local Name from response, then advertisement. In v4, a complete, non-truncated
+Local Name from response, then advertisement. In v4 and newer, a complete, non-truncated
 cached name follows the current complete packet/GAP read candidates and precedes
 shortened packet names; another cached observation is the final fallback.
 Duplicate names use the first
@@ -252,7 +258,8 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | Cached device name (v4) | Up to 64 raw bytes, source/completeness/truncation and observation time; exact observed peer only, not resolved across private address changes |
 | Primary services, characteristics and descriptors | Up to 24 / 64 / 128; exact UUIDs, handles, properties and parent relationships |
 | Standard reads | Up to 16 outcomes of 64 bytes; service/handle, result, raw error code when available, duration and bytes |
-| Link, ATT MTU, timings and cleanup | Observed connection parameters and negotiated ATT limit when available; no L2CAP CoC negotiation |
+| Link, ATT MTU, timings and cleanup | Observed connection parameters and negotiated ATT limit when available; ATT MTU is separate from identity-tool CoC limits |
+| Identity tool mode and evidence (v5) | Explicit producer mode plus optional selected-peer INFO trial; candidate/source policy, four bounded vendor reads, directional CoC limits, raw INFO, first fault and cleanup; see below |
 | Four stage flags and omissions/rejections | Partial, unrequested or limited work stays explicit; no invented missing records |
 | First failure and local/terminal context | Exact available reason, range and elapsed time; absent raw status remains absent |
 | First rejected characteristic declaration | Handle, original byte length and up to 19 raw bytes; its value-handle field is unvalidated and can be absent |
@@ -271,13 +278,46 @@ DIS reads are the eight manufacturer/model/serial/hardware/firmware/software/
 System-ID/PnP-ID fields. GAP adds Device Name `2A00`, Appearance `2A01` and Preferred
 Connection Parameters `2A04`; GATT adds Database Hash `2B2A`. Each requires its
 corresponding standard service and readable property. Descriptors are discovered
-by identity only. No vendor characteristic or descriptor value is read, no CCCD
-is written, and there is no pairing, authentication or ECU request.
+by identity only. The ordinary probe reads no vendor characteristic or descriptor
+value and writes no CCCD. The separate identity image adds only the four scoped
+vendor reads and INFO request described in its [contract](ngm-identity.md).
+Neither utility pairs, performs authentication or requests ECU data.
+
+### Identity trial evidence
+
+An explicit identity Inspect creates evidence before connecting, so connection
+failure can be saved even with no GATT rows or received INFO bytes. Its v5 extension
+retains four optional reads for `0081`, `0082`, `FFF2`, `FFF3` under uniquely
+inventoried `FFF1`: service/value handles, raw bytes (at most 64 each), result,
+available ATT/local reason, elapsed time and truncation. Values remain opaque;
+they are not interpreted as a discovered SPSM. Admission checks their relationship
+to the fresh readable declarations again when loading a capture.
+
+`ngm_identity` in JSON/text contains the configured candidate 129 and source pin,
+with `discovered_spsm: null`. Offered local MTU/MPS/initial credits are separate
+from observed local/peer receive limits. The runtime currently leaves dynamic
+CIDs and remaining-credit snapshots null because its adapter does not expose
+them. A refused open retains the offer and available raw L2CAP `u16` result.
+
+The raw INFO stream prefix is at most 245 bytes. Total owner-observed bytes, SDU
+count and maximum delivered SDU length make omitted bytes explicit; lower-layer
+rejected ingress may never reach these counters. Stage, first fault with original
+time/domain/code, whole-request submission and final cleanup remain separate.
+An absent numeric status stays null. Local submission is not a peer acknowledgment.
+Incomplete/malformed/negative replies and failed cleanup remain useful evidence.
+Five UTF-8 fields are derived only from a complete locally admitted frame with
+all observed bytes retained; they are untrusted claims, not authentication.
+
+`identity_tool_mode` is true/false for v5 producers and null for v1–v4. Evidence is
+null when no identity attempt exists; true mode alone does not mean a request was
+sent. Existing `identity` naming/hash fields keep their original meaning: INFO
+model/serial text never changes filenames. `connection_handoff.enabled` stays
+false. Saving/exporting this evidence adds no BLE traffic.
 
 ## Storage, source identity and verification
 
-New captures use **payload schema v4**. This firmware and exporter also read
-legacy v1/v2/v3 captures. V1 has no rejected-declaration field; v1/v2 have no LED
+New captures use **payload schema v5**. Both utilities and the exporter also read
+legacy v1/v2/v3/v4 captures. V1 has no rejected-declaration field; v1/v2 have no LED
 fault mask/first source or radio GSPI rate. Those fields remain explicitly
 unavailable instead of being reconstructed from current firmware. JSON reports
 the actual input schema. V3 adds seven metadata bytes: fault mask `u16`, first
@@ -304,6 +344,16 @@ these fields to unavailable. JSON exposes them as `cached_name` and `boot`, with
 the same evidence in text. Power removal can erase the scratch record; the record
 does not identify which firmware image produced it. See the
 [reset/name source review](../validation/probe-slot3-discovery-2026-10-20.md).
+
+V5 appends a producer identity-mode boolean and optional version-1 identity
+extension after the v4 fields. The extension has explicit stable codes, fixed
+policy/source pin, four bounded vendor slots and one bounded raw prefix; it does
+not add standard-read record types or change their allowlist. Identity evidence
+requires identity producer mode and an explicit requested inspection. Invalid
+relationships, unknown extension/policy/source codes or inconsistent timing are
+rejected. A TimeReversed first fault retains its actual earlier observation time.
+Frozen legacy v1–v4 fixtures ensure decoder reuse clears the new fields rather
+than carrying evidence from a previously decoded capture.
 
 Global scan-error observation time must not exceed the capture time. It may
 precede the selected peer's discovery because scanning covers all peers.
@@ -332,6 +382,12 @@ reservation, plus the existing reviewed flash-lockout and memory/stack gates.
 Developer builds may report source identity unavailable. A source digest is not a
 complete compiler-input closure, and firmware never asserts that it passed a
 post-link check. Keep the build receipt for later correlation.
+
+Utility manifest schema 2 also binds `tool` to the ELF `.probe_tool` discriminator:
+0 `ble-probe`, 1 `ngm-identity`. Capture schema 5, utility manifest schema 2 and
+unchanged journal/USB framing versions are separate contracts. Fresh integrated
+image receipts and source-provenance checks remain required; previous probe
+receipts do not admit the new shared-source binaries or identity image.
 
 **Export before loading other firmware.** A dashboard or old probe image may use
 the capture region; erase-all destroys it. A linker reservation does not prove

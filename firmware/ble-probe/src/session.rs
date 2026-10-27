@@ -3,19 +3,35 @@ use core::future::Future;
 
 use embassy_futures::select::{Either, select};
 
-/// Runs `startup`, then `run` with its successful client, while polling `events`
+/// Awaits `runner`, then invokes synchronous `latch` before returning its output.
+/// Wrapping the HCI side of select closes admission before select can drop the
+/// operation future and its connection lease. No terminal publication is awaited.
+pub async fn latch_completion<T>(
+    runner: impl Future<Output = T>,
+    latch: impl FnOnce(),
+) -> T {
+    let result = runner.await;
+    latch();
+    result
+}
+
+/// Runs `startup`, then lends its successful client to `run`, while polling `events`
 /// throughout. Returns the work result or the first event error; work wins when
 /// both are ready in the same poll. The losing future is dropped before return.
 /// Callers must make losing futures cancellation-safe and perform connection
 /// cleanup afterward; a returned success does not acknowledge disconnection.
-pub async fn inspect_with_events<C, T, E, R: Future<Output = Result<T, E>>>(
+/// The successful startup value stays here across callback suspension and drops
+/// after the callback. If that value is a client reference, the caller retains
+/// the actual owner and must drop it after this future and before link cleanup.
+/// No owned startup value enters the callback future.
+pub async fn inspect_with_events<C, T, E>(
     startup: impl Future<Output = Result<C, E>>,
-    run: impl FnOnce(C) -> R,
+    run: impl AsyncFnOnce(&C) -> Result<T, E>,
     events: impl Future<Output = E>,
 ) -> Result<T, E> {
     let work = async {
         let client = startup.await?;
-        run(client).await
+        run(&client).await
     };
     // Work wins simultaneous readiness, retaining the operation's stage/range.
     // The event consumer is already active while MTU startup is suspended.

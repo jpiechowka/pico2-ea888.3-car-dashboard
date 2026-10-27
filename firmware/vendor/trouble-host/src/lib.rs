@@ -284,6 +284,7 @@ impl Identity {
     /// Matches if the address is an exact match (kind + addr) or if the IRK can resolve it.
     /// Returns true for normalized address equality with `address`, or successful IRK resolution of its raw bytes when security is enabled; explicit kind is not separately checked on the resolution branch.
     pub fn match_address(&self, address: &Address) -> bool {
+        #[cfg(feature = "security")]
         if self.addr == *address {
             return true;
         }
@@ -291,12 +292,13 @@ impl Identity {
         if let Some(irk) = self.irk {
             return irk.resolve_address(&address.addr);
         }
-        false
+        self.addr == *address
     }
 
     /// Check whether the given identity matches current identity
     /// Returns true when `identity` matches normalized address, either IRK resolves the opposite raw address, or both IRKs match. This matching relation is broader than structural Eq.
     pub fn match_identity(&self, identity: &Identity) -> bool {
+        #[cfg(feature = "security")]
         if self.addr == identity.addr {
             return true;
         }
@@ -318,7 +320,7 @@ impl Identity {
                 }
             }
         }
-        false
+        self.addr == identity.addr
     }
 }
 

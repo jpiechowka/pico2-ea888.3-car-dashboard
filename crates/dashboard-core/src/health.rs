@@ -37,6 +37,21 @@ pub enum Fault {
     Maintenance,
 }
 
+impl Fault {
+    /// Returns this unit fault's exact Debug name without allocating or formatting.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Clock => "Clock",
+            Self::Supervisor => "Supervisor",
+            Self::Acquisition => "Acquisition",
+            Self::Rendering => "Rendering",
+            Self::Input => "Input",
+            Self::Display => "Display",
+            Self::Maintenance => "Maintenance",
+        }
+    }
+}
+
 /// Includes cooperative drain, synchronous flash operation and resumption.
 /// The separate hardware watchdog remains armed for two seconds throughout.
 pub const MAINTENANCE_MS: u64 = 1000;

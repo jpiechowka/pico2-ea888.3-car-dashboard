@@ -1432,6 +1432,26 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         _stack: &Stack<'_, C, P>,
         connection: &Connection<'reference, P>,
     ) -> Result<GattClient<'reference, C, P, MAX_SERVICES>, BleHostError<C::Error>> {
+        let mut output = None;
+        Self::new_into(_stack, connection, &mut output).await?;
+        output.ok_or(Error::InvalidState.into())
+    }
+
+    /// Initializes the sole client for `connection` in empty caller-owned `output`,
+    /// returning a reference to that final owner; `_stack` supplies the controller type.
+    /// An occupied output returns Busy unchanged. MTU/security startup and errors
+    /// match [`Self::new`]; error/cancellation leaves an initially empty slot empty
+    /// and releases the client claim. Canceling an admitted ATT exchange closes the
+    /// bearer. Only successful startup publishes a client; no owned client crosses
+    /// the async return. Drop the output after all borrowed work and before link cleanup.
+    pub async fn new_into<'slot>(
+        _stack: &Stack<'_, C, P>,
+        connection: &Connection<'reference, P>,
+        output: &'slot mut Option<Self>,
+    ) -> Result<&'slot Self, BleHostError<C::Error>> {
+        if output.is_some() {
+            return Err(Error::Busy.into());
+        }
         let connection = ClientConnection::acquire(connection)?;
         if !connection.is_att_mtu_exchanged() {
             let l2cap = L2capHeader { channel: 4, length: 3 };
@@ -1502,7 +1522,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             }
         }
 
-        Ok(Self {
+        Ok(output.insert(Self {
             known_services: RefCell::new(heapless::Vec::new()),
             _phantom: PhantomData,
             connection,
@@ -1510,13 +1530,28 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             response_channel: Channel::new(),
 
             notifications: PubSubChannel::new(),
-        })
+        }))
     }
 
     /// Discover all primary services in ascending handle order.
     /// Returns discovered primary services in increasing nonoverlapping ranges and remembers them atomically; capacity, malformed response and ATT errors propagate. Cancellation may leave peer transactions completed but does not publish a partial cache.
     pub async fn services(&self) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
         let mut result = Vec::new();
+        self.services_into(&mut result).await?;
+        Ok(result)
+    }
+
+    /// Discovers primary services into caller-owned `output`, returning unit after
+    /// complete discovery and atomic cache merge. Clears `output` when first polled;
+    /// errors or cancellation may leave an unpublished ordered prefix there, while
+    /// the cache remains unchanged. Rows are bounded by MAX_SERVICES; ATT, malformed
+    /// ordering and capacity errors match [`Self::services`]. Canceling an admitted
+    /// pending ATT transaction closes its bearer. No service-vector result is copied.
+    pub async fn services_into(
+        &self,
+        output: &mut Vec<ServiceHandle, MAX_SERVICES>,
+    ) -> Result<(), BleHostError<C::Error>> {
+        output.clear();
         let mut start = 1u16;
 
         loop {
@@ -1557,7 +1592,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             uuid,
                         };
 
-                        result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
+                        output.push(svc).map_err(|_| Error::InsufficientSpace)?;
                     }
                     if end < start {
                         return Err(Error::UnexpectedGattResponse.into());
@@ -1576,8 +1611,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             }
         }
 
-        self.remember_services(&result)?;
-        Ok(result)
+        self.remember_services(output)?;
+        Ok(())
     }
 
     /// Discover primary services associated with a UUID.
@@ -2288,8 +2323,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Handle a notification or indication that was received.
-    /// Parses `data` excluding opcode; `indication` records its wire kind. Returns after immediate publication, evicting oldest messages when full; malformed/oversized values request disconnect and return an error.
-    async fn handle_notification_packet(&self, data: &[u8], indication: bool) -> Result<(), BleHostError<C::Error>> {
+    /// Parses `data` excluding opcode synchronously; `indication` records its wire kind. Returns after immediate publication, evicting oldest messages when full; malformed/oversized values request disconnect and return an error.
+    fn handle_notification_packet(&self, data: &[u8], indication: bool) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
         let value_handle: u16 = r.read().inspect_err(|_| {
             self.connection.disconnect();
@@ -2299,19 +2334,18 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let handle = value_handle;
 
         // TODO: make it `P::MTU` in the future — see the note on `GattClient::notifications`.
-        let mut data = [0u8; NOTIF_MTU];
-        if value_attr.len() > data.len() {
+        if value_attr.len() > NOTIF_MTU {
             self.connection.disconnect();
             return Err(Error::InvalidValue.into());
         }
         let to_copy = value_attr.len();
-        data[..to_copy].copy_from_slice(&value_attr[..to_copy]);
-        let n = Notification {
+        let mut n = Notification {
             handle,
-            data,
+            data: [0u8; NOTIF_MTU],
             len: to_copy,
             indication,
         };
+        n.data[..to_copy].copy_from_slice(value_attr);
         self.notifications.immediate_publisher().publish_immediate(n);
         Ok(())
     }
@@ -2329,7 +2363,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             };
             if matches!(opcode, ATT_HANDLE_VALUE_IND | ATT_HANDLE_VALUE_NTF) {
                 let indication = pdu.as_ref()[0] == ATT_HANDLE_VALUE_IND;
-                self.handle_notification_packet(&pdu.as_ref()[1..], indication).await?;
+                self.handle_notification_packet(&pdu.as_ref()[1..], indication)?;
             } else {
                 self.response_channel.send((handle, pdu)).await;
             }
@@ -2629,7 +2663,6 @@ mod tests {
         use core::pin::pin;
         use core::task::{Context, Waker};
 
-        use embassy_futures::block_on;
         let conn = test_connection();
         let client = test_client(&conn);
         let characteristic = Characteristic::<u8> {
@@ -2643,7 +2676,7 @@ mod tests {
         let mut subscribe = pin!(client.subscribe(&characteristic, false));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(subscribe.as_mut().poll(&mut cx).is_pending());
-        block_on(client.handle_notification_packet(&[1, 0, 42], false)).unwrap();
+        client.handle_notification_packet(&[1, 0, 42], false).unwrap();
         let mut packet = DefaultPacketPool::allocate().unwrap();
         packet.as_mut()[0] = att::ATT_WRITE_RSP;
         client
@@ -2668,11 +2701,47 @@ mod tests {
         let client = test_client(&conn);
         let mut listener = client.listen_all().unwrap();
         for _ in 0..crate::config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE + 1 {
-            block_on(client.handle_notification_packet(&[1, 0, 42], false)).unwrap();
+            client.handle_notification_packet(&[1, 0, 42], false).unwrap();
         }
         assert!(block_on(listener.next_checked()).is_err());
-        assert!(block_on(client.handle_notification_packet(&[1], false)).is_err());
+        assert!(client.handle_notification_packet(&[1], false).is_err());
         assert!(block_on(conn.next_gatt_client()).is_none());
+    }
+
+    #[test]
+    /// Empty and maximum notification/indication payloads publish exact bytes; oversized/missing handles publish nothing and close the bearer.
+    fn notification_payload_boundaries_preserve_publication() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+        use embassy_futures::block_on;
+        for indication in [false, true] {
+            let conn = test_connection();
+            let client = test_client(&conn);
+            let mut listener = client.listen_all().unwrap();
+            for length in [0, NOTIF_MTU] {
+                let mut bytes = std::vec![0xA5; length + 2];
+                bytes[..2].copy_from_slice(&0x1234u16.to_le_bytes());
+                client.handle_notification_packet(&bytes, indication).unwrap();
+                let value = block_on(listener.next_checked()).unwrap();
+                assert_eq!(value.handle(), 0x1234);
+                assert_eq!(value.is_indication(), indication);
+                assert_eq!(value.as_ref(), &bytes[2..]);
+                assert!(value.data[length..].iter().all(|&byte| byte == 0));
+            }
+            assert!(conn.is_connected());
+        }
+        for bytes in [std::vec![], std::vec![0xA5; NOTIF_MTU + 3]] {
+            let conn = test_connection();
+            let client = test_client(&conn);
+            let mut listener = client.listen_all().unwrap();
+            assert!(client.handle_notification_packet(&bytes, false).is_err());
+            assert!(!conn.is_connected());
+            assert!(pin!(listener.next_checked())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending());
+        }
     }
 
     #[test]

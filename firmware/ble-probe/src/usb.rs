@@ -80,7 +80,7 @@ pub fn start(
     });
     let mut config = Config::new(0x2E8A, 0x0009);
     config.manufacturer = Some("Pico dashboard project");
-    config.product = Some("Pico BLE Probe Captures");
+    config.product = Some(crate::tool_kind().usb_product());
     config.serial_number = serial;
     // Request the USB 2 full-speed configuration budget; not a measurement.
     config.max_power = 500;

@@ -5,6 +5,8 @@ mod assessment;
 mod handoff;
 /// Content identity and portable names preserving raw observed-name provenance.
 mod identity;
+/// Offline projection of bounded INFO-only evidence, independent of capture naming.
+mod ngm;
 
 use std::io::{ErrorKind, Read, Write};
 use std::time::{Duration, Instant};
@@ -195,6 +197,11 @@ fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
         "record_counts":{"services":view.counts()[0],"characteristics":view.counts()[1],"descriptors":view.counts()[2],"reads":view.counts()[3]},"records":records,
         "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."});
     value["identity"] = identity;
+    value["identity_tool_mode"] = json!(m.identity_mode);
+    value["ngm_identity"] = ngm::project(m.identity.as_ref());
+    if m.identity_mode == Some(true) {
+        value["policy"] = json!(ngm::POLICY);
+    }
     value["cached_name"] = m.cached_name.map(|n|json!({"source":n.source.label(),"raw_hex":hex(n.data.as_slice()),"utf8":core::str::from_utf8(n.data.as_slice()).ok(),"complete":n.complete,"truncated":n.data.truncated,"observed_at_boot_ms":n.at_ms})).unwrap_or(Value::Null);
     value["boot"] = m.boot.map(|b|json!({"raw_watchdog_reason":b.raw_reason,"rom_boot_type":b.boot_type,"classification":b.label(),"watchdog_fault":b.watchdog_fault(),"previous":b.previous.map(|p|json!({"stage_code":p.stage.code(),"stage":p.stage.label(),"observed_at_previous_boot_ms":p.elapsed_ms})),"scope":"Last retained observation, not proven reset cause or exact reset time. Power removal may erase it; producer image unknown."})).unwrap_or(Value::Null);
     Ok((value, publication))
@@ -310,14 +317,31 @@ pub fn publish(
 pub const USB_VID: u16 = 0x2E8A;
 /// Capture firmware's USB product identifier; VID/PID alone is only a candidate match.
 pub const USB_PID: u16 = 0x0009;
-/// Product-string prefix required for automatic unique selection.
+/// Standard probe product identity accepted for automatic unique selection.
 pub const USB_PRODUCT: &str = "Pico BLE Probe Captures";
+/// Separate INFO-only tool product identity accepted for automatic unique selection.
+pub const NGM_USB_PRODUCT: &str = "Pico NGM Identity Captures";
 /// Returns whether enumerated `port` is USB with the capture VID/PID, without opening it.
 pub fn is_candidate(port: &serialport::SerialPortInfo) -> bool {
     matches!(&port.port_type,serialport::SerialPortType::UsbPort(usb)if usb.vid==USB_VID&&usb.pid==USB_PID)
 }
+/// Returns whether `product` is an exact tool name or its Windows friendly name
+/// ending in the same enumerated `port_name`. Arbitrary suffixes never qualify.
+/// serialport's Windows backend obtains this field from SPDRP_FRIENDLYNAME.
+fn matches_product(
+    product: &str,
+    port_name: &str,
+) -> bool {
+    [USB_PRODUCT, NGM_USB_PRODUCT].into_iter().any(|base| {
+        product == base
+            || product.strip_prefix(base).is_some_and(|suffix| {
+                suffix.strip_prefix(" (").and_then(|suffix| suffix.strip_suffix(')')) == Some(port_name)
+            })
+    })
+}
 /// Returns an enumerated capture port name from `ports` without opening hardware.
 /// `explicit` must exactly match a VID/PID candidate; None additionally requires a unique matching product string.
+/// Accepts exact tool products and Windows friendly names suffixed by the same port name.
 /// Returns Err for missing, noncandidate or ambiguous selection; generic OS product labels require explicit choice.
 pub fn select_port(
     ports: &[serialport::SerialPortInfo],
@@ -332,7 +356,7 @@ pub fn select_port(
                 format!("{name} is not an enumerated {USB_VID:04X}:{USB_PID:04X} capture candidate; run ports")
             });
     }
-    let mut matching=ports.iter().filter(|p|is_candidate(p)&&matches!(&p.port_type,serialport::SerialPortType::UsbPort(usb)if usb.product.as_deref().is_some_and(|product|product==USB_PRODUCT||product.starts_with(&format!("{USB_PRODUCT} (")))));
+    let mut matching=ports.iter().filter(|p|is_candidate(p)&&matches!(&p.port_type,serialport::SerialPortType::UsbPort(usb)if usb.product.as_deref().is_some_and(|product|matches_product(product, &p.port_name))));
     let port = matching
         .next()
         .ok_or("no uniquely identified capture product; run ports and pass --port COMx explicitly")?;

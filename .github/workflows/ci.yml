@@ -577,7 +577,7 @@ jobs:
           python3 -O firmware/scripts/test_flash_lockout.py "$CAPTURE_ROOT/$CAPTURE_NAME/pico2.elf"
 
   ble-probe:
-    name: Standalone BLE probe (${{ matrix.profile }})
+    name: BLE utility ${{ matrix.tool }} (${{ matrix.profile }})
     runs-on: ubuntu-latest
     env:
       CARGO_BUILD_JOBS: 2
@@ -587,9 +587,17 @@ jobs:
       matrix:
         include:
           - profile: stock
+            tool: ble-probe
             features: ""
           - profile: 280-70
+            tool: ble-probe
             features: cpu280-spi70-1v30
+          - profile: stock
+            tool: ngm-identity
+            features: ngm-identity
+          - profile: 280-70
+            tool: ngm-identity
+            features: ngm-identity,cpu280-spi70-1v30
     defaults:
       run:
         working-directory: firmware
@@ -604,15 +612,15 @@ jobs:
         with:
           workspaces: firmware
       - name: Strict utility Clippy
-        run: cargo clippy --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -D warnings
+        run: cargo clippy --locked -p dashboard-ble-probe --bin ${{ matrix.tool }} --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -D warnings
       - name: Strict standalone probe documentation
         env:
           RUSTDOCFLAGS: -D warnings -C target-cpu=cortex-m33
-        run: cargo doc --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" --no-deps --document-private-items
+        run: cargo doc --locked -p dashboard-ble-probe --bin ${{ matrix.tool }} --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" --no-deps --document-private-items
       - name: Build optimized utility with Cortex-M33 flags from Cargo config
         # Match build_ble_probe.py; extra rustc options apply only to this binary.
-        run: cargo rustc --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -C llvm-args=--inline-threshold=100000
+        run: cargo rustc --locked -p dashboard-ble-probe --bin ${{ matrix.tool }} --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -C llvm-args=--inline-threshold=100000
       - name: Check linked layout and conservative stack paths
         # This is explicitly the ELF-only CI stage. CLI captures additionally
         # bind sources/options and check pinned-converter UF2 equality.
-        run: python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/ble-probe --elf-only --result target/ble-probe-layout.json
+        run: python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/${{ matrix.tool }} --elf-only --result target/${{ matrix.tool }}-layout.json

@@ -402,7 +402,7 @@ fn merge_requires_the_same_manager_as_well_as_index() {
 
 /// A maximum-length SDU includes its two-byte prefix in K-frame admission before controller I/O.
 #[test]
-fn maximum_sdu_waits_for_all_segment_credits() {
+fn maximum_sdu_reserves_only_next_segment_credit() {
     with_link(|_, host, conn| {
         let index = host
             .channels()
@@ -420,11 +420,98 @@ fn maximum_sdu_waits_for_all_segment_credits() {
             assert!(send.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
             assert_eq!(
                 host.channels().channel(index).peer_credits,
-                257,
-                "258 K-frames need 258 credits before reservation"
+                256,
+                "only the next K-frame is reserved while ACL initialization is pending"
             );
         }
         assert_eq!(host.channels().channel(index).peer_credits, 257);
+    });
+}
+
+/// Every terminal channel transition wakes a sender suspended only on peer credits.
+#[test]
+fn coc_channel_closure_wakes_credit_waiter() {
+    for close in 0..3 {
+        with_link(|_, host, conn| {
+            let index = host
+                .channels()
+                .alloc(conn, Some(0x41), |s| {
+                    s.state = ChannelState::Connected;
+                })
+                .unwrap();
+            let wakes = std::sync::Arc::new(ListenerWakeCount::default());
+            let waker = Waker::from(wakes.clone());
+            assert!(host
+                .channels()
+                .poll_request_to_send(index, 1, Some(&mut Context::from_waker(&waker)))
+                .is_pending());
+            match close {
+                0 => host.channels().disconnected(conn).unwrap(),
+                1 => host.channels().disconnect(index),
+                _ => host
+                    .channels()
+                    .handle_disconnect_request(conn, 7, BASE_ID, 0x41, host.connections())
+                    .unwrap(),
+            }
+            assert!(
+                wakes.0.load(std::sync::atomic::Ordering::SeqCst) > 0,
+                "close path {close}"
+            );
+        });
+    }
+}
+
+/// A retained disconnect submission prevents a closed slot from being reused before its late confirmation.
+#[test]
+fn coc_disconnect_request_retains_slot_until_confirmation() {
+    with_link(|_, host, conn| {
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x41), |s| {
+                s.state = ChannelState::Connected;
+            })
+            .unwrap();
+        host.channels().disconnect(index);
+        let Poll::Ready(request) = host.channels().poll_disconnecting(None) else {
+            panic!()
+        };
+        host.channels().disconnected(conn).unwrap();
+        let next = host
+            .channels()
+            .alloc(conn, Some(0x42), |s| {
+                s.state = ChannelState::Connected;
+            })
+            .unwrap();
+        assert_ne!(index, next, "runner-owned old request must reserve its slot");
+        request.confirm();
+        assert_eq!(host.channels().channel(next).state, ChannelState::Connected);
+    });
+}
+
+/// A credit grant cannot refund into a different channel after terminal link loss.
+#[test]
+fn coc_credit_grant_retains_closed_slot_until_refund_cleanup() {
+    with_link(|_, host, conn| {
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x41), |s| {
+                s.state = ChannelState::Connected;
+                s.peer_credits = 1;
+            })
+            .unwrap();
+        let Poll::Ready(Ok(grant)) = host.channels().poll_request_to_send(index, 1, None) else {
+            panic!()
+        };
+        host.channels().disconnected(conn).unwrap();
+        let next = host
+            .channels()
+            .alloc(conn, Some(0x42), |s| {
+                s.state = ChannelState::Connected;
+            })
+            .unwrap();
+        assert_ne!(index, next);
+        drop(grant);
+        assert_eq!(host.channels().channel(next).peer_credits, 0);
     });
 }
 
@@ -482,9 +569,9 @@ fn split_merge_preserve_reference_budget_at_limit() {
     }
 }
 
-/// Cancellation refunds cannot overflow when a peer replenishes credits while a send is reserved.
+/// Incoming credits reject overflow including outstanding reservations before later cancellation can refund them.
 #[test]
-fn cancelled_credit_reservation_rejects_refund_overflow() {
+fn reserved_credit_rejects_overflow_before_cancellation() {
     with_link(|_, host, conn| {
         let index = host
             .channels()
@@ -496,15 +583,17 @@ fn cancelled_credit_reservation_rejects_refund_overflow() {
         let Poll::Ready(Ok(grant)) = host.channels().poll_request_to_send(index, 1, None) else {
             panic!()
         };
-        host.channels()
-            .handle_credit_flow(
+        assert_eq!(
+            host.channels().handle_credit_flow(
                 conn,
                 &LeCreditFlowInd {
                     cid: 0x41,
                     credits: u16::MAX,
                 },
-            )
-            .unwrap();
+            ),
+            Err(Error::InvalidValue)
+        );
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
         drop(grant);
         assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
         assert!(host.channels().poll_disconnecting(None).is_ready());

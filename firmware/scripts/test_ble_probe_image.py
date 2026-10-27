@@ -14,6 +14,32 @@ import build_ble_probe as build
 
 
 class ProbeAdmission(unittest.TestCase):
+    def test_identity_tool_requires_explicit_binary_features_and_marker(self) -> None:
+        args = build.build_command("stock", "ngm-identity")
+        self.assertEqual(args[args.index("--bin") + 1], "ngm-identity")
+        self.assertIn("ngm-identity", args[args.index("--features") + 1].split(","))
+        args = build.build_command("280-70", "ngm-identity")
+        self.assertEqual(
+            set(args[args.index("--features") + 1].split(",")),
+            {"ngm-identity", "cpu280-spi70-1v30"},
+        )
+        with self.assertRaises(AssertionError):
+            build.build_command("stock", "unknown")
+        for value, name in ((0, "ble-probe"), (1, "ngm-identity")):
+            elf = ImageFixture(
+                data=bytes([value]),
+                section_entries=[(1, ".probe_tool", (0, 1, 2, 0x10000100, 0, 1, 0, 0, 1, 0))],
+                symbol_entries=[("BLE_PROBE_TOOL_KIND", 0x10000100, 1, 0x11, 1)],
+                segments=[(1, 0, 0x10000100, 0x10000100, 1, 1, 4, 1)],
+            )
+            self.assertEqual(image.linked_tool(elf, name), name)
+            for wrong in ("unknown", "ble-probe" if value else "ngm-identity"):
+                with self.assertRaises(AssertionError):
+                    image.linked_tool(elf, wrong)
+            elf.data = b"\x02"
+            with self.assertRaises(AssertionError):
+                image.linked_tool(elf)
+
     def test_manifest_requires_object_and_exact_integer_schema_before_source_access(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -102,10 +128,16 @@ class ProbeAdmission(unittest.TestCase):
     def identity_elf(digest: bytes = bytes(range(32))) -> ImageFixture:
         section = (0, 1, 2, 0x10000100, 16, 32, 0, 0, 4, 0)
         return ImageFixture(
-            data=bytes(16) + digest,
-            section_entries=[(1, ".probe_identity", section)],
-            symbol_entries=[("BLE_PROBE_SOURCE_DIGEST", 0x10000100, 32, 0x11, 1)],
-            segments=[(1, 16, 0x10000100, 0x10000100, 32, 32, 4, 4)],
+            data=bytes(16) + digest + b"\x00",
+            section_entries=[
+                (1, ".probe_identity", section),
+                (2, ".probe_tool", (0, 1, 2, 0x10000120, 48, 1, 0, 0, 1, 0)),
+            ],
+            symbol_entries=[
+                ("BLE_PROBE_SOURCE_DIGEST", 0x10000100, 32, 0x11, 1),
+                ("BLE_PROBE_TOOL_KIND", 0x10000120, 1, 0x11, 2),
+            ],
+            segments=[(1, 16, 0x10000100, 0x10000100, 33, 33, 4, 4)],
         )
 
     def test_linked_identity_is_unique_read_only_file_backed_and_exact(self) -> None:
@@ -153,7 +185,7 @@ class ProbeAdmission(unittest.TestCase):
                 row[3] = 0x101E6000
                 bad.segments[0] = segment_fields(row)
             else:
-                bad.data = bad.data[:-1]
+                bad.data = bad.data[:47]
             with self.subTest(fault=fault), self.assertRaises(AssertionError):
                 image.linked_identity(bad, bytes(range(32)).hex())
         zero = self.identity_elf(bytes(32))
@@ -257,7 +289,8 @@ class ProbeAdmission(unittest.TestCase):
             uf2_path.write_bytes(b"mocked canonical UF2")
             manifest = dict(
                 gate=image.GATE,
-                schema=1,
+                schema=2,
+                tool="ble-probe",
                 sources=sources,
                 source_digest=digest,
                 target="thumbv8m.main-none-eabihf",
@@ -283,7 +316,12 @@ class ProbeAdmission(unittest.TestCase):
             ):
                 result = image.check(elf_path, uf2_path, manifest_path, root)
                 self.assertTrue(result["source_identity"]["snapshot_bound"])
+                self.assertEqual(result["tool"], "ble-probe")
                 flash.assert_called_once_with(elf)
+                for wrong in (None, "ngm-identity", "unknown", True):
+                    write_manifest(dict(manifest, tool=wrong))
+                    with self.subTest(tool=wrong), self.assertRaises(AssertionError):
+                        image.check(elf_path, uf2_path, manifest_path, root)
                 for invalid in (None, "00" * 32, "garbage"):
                     write_manifest(dict(manifest, source_digest=invalid))
                     with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
@@ -447,6 +485,59 @@ class ProbeAdmission(unittest.TestCase):
         )
         with self.assertRaises(AssertionError):
             image.stack_check(elf, 65536)
+
+    def test_identity_radio_ownership_preserves_all_frame_limits(self) -> None:
+        names = (
+            "embassy_main_task",
+            "probe_ui_task",
+            "probe_display_task",
+            "probe_inputs_task",
+            "probe_encoder_task",
+            "probe_supervisor_task",
+            "probe_radio_task",
+            "probe_storage_task",
+            "probe_usb_device_task",
+            "probe_usb_capture_task",
+        )
+        functions = {
+            "TaskStorage4poll" + name: (0x10001000 + i * 4, 4, 1) for i, name in enumerate(names)
+        }
+        functions["probe_core1"] = (0x10002000, 4, 1)
+        sizes = {address: 128 for address, _, _ in functions.values()}
+        additions = (
+            ("14identity_radio12inspect_peer", 0x10003000, 2048),
+            ("13identity_flow13run_connected", 0x10003004, 2048),
+            ("14dashboard_core9discovery6render", 0x10003008, 6500),
+        )
+        for name, address, size in additions:
+            functions[name] = (address, 4, 1)
+            sizes[address] = size
+        elf = ImageFixture(
+            named={".stack_sizes": (0, 1, 0, 0, 100, 16, 0, 0, 1, 0)},
+            functions=functions,
+            section_data={".stack_sizes": b"metadata"},
+        )
+        with patch.object(image, "frames", return_value=sizes):
+            result = image.stack_check(elf, 65536)
+            self.assertEqual(result["nonradio_frame_total"], 11 * 128 + 6500)
+            self.assertEqual(result["emitted_frame_total"], sum(sizes.values()))
+            for name, frames, reason in (
+                ("14dashboard_core3ble9canyonero", [4500], "non-radio nested"),
+                ("5radio6helper", [8192, 512], "aggregate utility"),
+                ("14identity_radio6helper", [8193], "frame over 8 KiB"),
+            ):
+                added = []
+                for index, size in enumerate(frames):
+                    address = 0x10004000 + index * 4
+                    key = name + str(index)
+                    functions[key] = (address, 4, 1)
+                    sizes[address] = size
+                    added.append((key, address))
+                with self.subTest(reason=reason), self.assertRaisesRegex(AssertionError, reason):
+                    image.stack_check(elf, 65536)
+                for key, address in added:
+                    del functions[key]
+                    del sizes[address]
 
 
 if __name__ == "__main__":

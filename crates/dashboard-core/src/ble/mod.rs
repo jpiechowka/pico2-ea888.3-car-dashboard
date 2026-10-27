@@ -1,4 +1,6 @@
 //! Bounded BLE adapter protocol. Real ECU reads remain unqualified.
+/// INFO-only CANyonero framing and single-flight diagnostic trial lifecycle.
+pub mod canyonero;
 /// Bounded ELM ASCII reply parsing and profile-qualified command handling.
 pub mod elm;
 /// Transport lifecycle/fault snapshots and bounded transition logging.

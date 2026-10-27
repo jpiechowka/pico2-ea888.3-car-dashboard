@@ -884,6 +884,16 @@ where
         result
     }
 
+    /// Returns owned ingress storage for `cid` on `handle`: a pre-admitted channel lease for dynamic data, or a fresh shared packet for fixed channels.
+    /// Allocation/state/identity errors propagate before HCI reassembly can publish data; no extra pool capacity is created.
+    fn allocate_l2cap_packet(&self, handle: ConnHandle, cid: u16) -> Result<P::Packet, Error> {
+        if cid >= L2CAP_CID_DYN_START {
+            self.state.channels.take_receive_packet(handle, cid)
+        } else {
+            P::allocate().ok_or(Error::OutOfMemory)
+        }
+    }
+
     /// Reassembles/routes borrowed `acl` using `event_handler` for security effects. Returns partial success while waiting, or decode/state/credit/capacity errors. ATT ingress validates correlation and queues confirmations; dynamic optimization shares one per-link assembly.
     fn handle_acl_inner(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         self.state.connections.received(acl.handle())?;
@@ -941,10 +951,7 @@ where
                                     let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
                                     self.state.channels.check_sdu_len(handle, header.channel, len)?;
-                                    let Some(packet) = P::allocate() else {
-                                        warn!("[host] no memory for packets on channel {}", header.channel);
-                                        return Err(Error::OutOfMemory);
-                                    };
+                                    let packet = self.allocate_l2cap_packet(handle, header.channel)?;
                                     p.init(header.channel, len, packet)?;
                                     p.update(payload)?
                                 } else {
@@ -969,10 +976,7 @@ where
                             .check_pdu_len(handle, header.channel, header.length)?;
                     }
 
-                    let Some(packet) = P::allocate() else {
-                        warn!("[host] no memory for packets on channel {}", header.channel);
-                        return Err(Error::OutOfMemory);
-                    };
+                    let packet = self.allocate_l2cap_packet(handle, header.channel)?;
                     self.state.connections.reassembly(acl.handle(), |p| {
                         p.init(header.channel, header.length, packet)?;
                         let r = p.update(data)?;
@@ -1005,10 +1009,7 @@ where
                                     let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
                                     self.state.channels.check_sdu_len(handle, header.channel, len)?;
-                                    let Some(packet) = P::allocate() else {
-                                        warn!("[host] no memory for packets on channel {}", header.channel);
-                                        return Err(Error::OutOfMemory);
-                                    };
+                                    let packet = self.allocate_l2cap_packet(handle, header.channel)?;
                                     p.init(header.channel, len, packet)?;
                                     p.update(payload)
                                 } else {
@@ -1033,10 +1034,7 @@ where
                                 .check_pdu_len(handle, header.channel, header.length)?;
                         }
 
-                        let Some(packet) = P::allocate() else {
-                            warn!("[host] no memory for packets on channel {}", header.channel);
-                            return Err(Error::OutOfMemory);
-                        };
+                        let packet = self.allocate_l2cap_packet(handle, header.channel)?;
                         let result = self.state.connections.reassembly(acl.handle(), |p| {
                             p.init(header.channel, header.length, packet)?;
                             p.update(data)

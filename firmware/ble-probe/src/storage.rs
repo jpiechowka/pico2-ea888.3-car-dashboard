@@ -171,17 +171,17 @@ fn error(error: journal::Error<Error>) -> ui::UiError {
             ui::UiError::Corrupt
         }
         journal::Error::Storage(Error::Flash(ref e)) => {
-            defmt::warn!("probe.capture flash {:?}", defmt::Debug2Format(e));
+            defmt::warn!("probe.capture flash {:?}", e);
             ui::UiError::Storage
         }
         journal::Error::Storage(Error::Maintenance(ref e)) => {
             match e {
                 maintenance::Error::Drain => defmt::warn!("probe.capture display drain deadline"),
                 maintenance::Error::Gate(reason) => {
-                    defmt::warn!("probe.capture maintenance gate {:?}", defmt::Debug2Format(reason))
+                    defmt::warn!("probe.capture maintenance gate {=str}", reason.label())
                 }
                 maintenance::Error::Operation(reason) => {
-                    defmt::warn!("probe.capture maintenance write {:?}", defmt::Debug2Format(reason))
+                    defmt::warn!("probe.capture maintenance write {:?}", reason)
                 }
             }
             ui::UiError::Storage
@@ -310,6 +310,9 @@ pub async fn probe_storage_task(flash: CheckedFlash) {
 /// `reply` in place. The incoming lease always moves into the reply; errors set a
 /// failure completion and latch status. Panics if the previous reply still owns
 /// a buffer. No response publication occurs until the operation/restoration ends.
+/// Save/Reset hold the exclusive operation gate across admission and restoration;
+/// a live connection returns Busy with the original byte lease and no mutation.
+/// List/Load only read flash and do not take the mutation gate.
 async fn handle_ui(
     storage: &mut Storage,
     decoder: &mut capture::Decoder,
@@ -321,6 +324,17 @@ async fn handle_ui(
     reply.completion = ui::Completion::Failed(ui::UiError::Storage);
     reply.buffer = request.buffer;
     reply.length = 0;
+    // UI eligibility is advisory: a newer Inspect can race a queued mutation.
+    // Keep this lease across every page, readback and maintenance restoration.
+    let _mutation = if matches!(request.operation, UiOperation::Save { .. } | UiOperation::Reset(_)) {
+        let Some(lease) = bridge::OPERATION_GATE.mutation() else {
+            reply.completion = ui::Completion::Failed(ui::UiError::Busy);
+            return;
+        };
+        Some(lease)
+    } else {
+        None
+    };
     let result = match request.operation {
         UiOperation::List => {
             match reply.buffer.as_deref_mut() {

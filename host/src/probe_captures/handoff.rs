@@ -43,6 +43,8 @@ pub(super) fn properties(bits: u8) -> Value {
 
 /// Returns disabled, evidence-only connection hints from validated `view`, preserving original record indexes.
 /// Uses shared address admission and UUID-pair uniqueness; saved handles remain explicitly nonreusable.
+/// Scope and unobserved categories cover standard advertisement/GATT hints only;
+/// independent INFO/CoC evidence is referenced at the separate ngm_identity export path.
 /// Panics only if decoder guarantees about UUID widths or characteristic parent services are violated.
 pub(super) fn connection(view: &DecodedCapture<'_>) -> Value {
     let m = view.metadata();
@@ -151,6 +153,8 @@ pub(super) fn connection(view: &DecodedCapture<'_>) -> Value {
         })
         .collect();
     json!({"version":1,"status":"evidence_only","enabled":false,"profile":null,
+        "observation_scope":"standard_advertisement_and_gatt_hints_only",
+        "independent_identity_evidence_path":"ngm_identity",
         "address_candidate":peer,"address_blocker":blocker,
         "inventory_complete":m.gatt_requested && m.stages[..3].iter().all(|v| *v)
             && m.omitted == 0 && m.malformed == 0,

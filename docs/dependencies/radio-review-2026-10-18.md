@@ -123,3 +123,14 @@ physical DMA/flash timing, stack high-water, power/thermal margins or dongle sle
 The current two-second adapter identity loop may prevent inactivity sleep.
 Physical tests require separate authorization; instruction-level proof remains
 separate unfinished research.
+
+## 2026-10-24 CoC follow-up
+
+The shared Trouble host now uses backed single-credit receive admission and
+per-K-frame TX progress, with cancellation/close/failed-create ownership fixes.
+This serves the separate INFO-only identity utility and protects the shared
+vendor dependency used by the dashboard. No ECU traffic is enabled. Current
+contracts, source tests and remaining physical limits are in
+[the identity implementation record](../validation/ngm-identity-2026-10-24.md)
+and [local patch notes](../../firmware/vendor/trouble-host/LOCAL_PATCHES.md).
+Earlier counts and image figures above remain dated evidence for those sources.

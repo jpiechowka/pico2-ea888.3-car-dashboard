@@ -1,9 +1,11 @@
 # NGM and OBDeleven evidence boundaries
 
-Reviewed 2026-10-19 against primary public material and the pinned source below.
+Updated 2026-10-24 against captured evidence and the pinned source below.
 This is a research guide for [saved probe evidence](ble-probe-captures.md), not an
-enabled adapter profile or a claim of working autonomous access. The probe sends
+enabled adapter profile or a claim of working autonomous access. The standard probe sends
 no proprietary commands, pairing/authentication sequence or ECU request.
+The separate [NGM identity utility](ngm-identity.md) implements an explicit
+INFO-only trial; its implementation does not establish physical interoperability.
 
 ## What a capture lets us start offline
 
@@ -32,10 +34,12 @@ controller as a Core 6.1 implementation.
 
 ## NGM / ECUconnect family
 
-The owned adapter's prior intake identified **ECUconnect V2.0B**, app-reported
-`0.8.0.422`, `S3/V2` and NGM branding. These are prior owner/app observations,
-not a new independent firmware read. Keep the label and app version alongside
-the exported capture; do not substitute a name string for verified identity.
+The owner identifies slot 2 from the garage capture as their NGM adapter. The
+standard capture independently contains Device Information strings `Vanille-Media`,
+`ECUconnect`, `S3/V2` and `0.8.0.422`, a `nimble` GAP name and FFF1 with readable
+0081/0082/FFF2/FFF3 characteristics. This matches the owner's prior app observation
+and public family layout. The capture has no vendor-value reads or CoC exchange;
+its ATT MTU 247 is not an observed CoC MTU. Raw addresses and captures stay private.
 
 NGM advertises BLE/Wi-Fi and an ESP32 platform, and explicitly does not market the
 adapter as a universal third-party diagnostic interface. This is a product
@@ -43,14 +47,14 @@ support boundary, not a description of the wire enforcement mechanism.
 [NGM product documentation](https://ngmapp.com/products/ngm-obd2-bluetooth-adapter).
 
 The public ECUconnect family implementation was reviewed at immutable
-Swift-CANyonero revision `f476f522d5b1074aec03fc073e15f800e9dec19e`:
+Swift-CANyonero revision `78091bb5599c4f5e3002fbd5700b826a625e8b04`:
 
-- [CLI source](https://github.com/Automotive-Swift/Swift-CANyonero/blob/f476f522d5b1074aec03fc073e15f800e9dec19e/Sources/ecuconnect-tool/ECUconnect.swift)
+- [CLI source](https://github.com/Automotive-Swift/Swift-CANyonero/blob/78091bb5599c4f5e3002fbd5700b826a625e8b04/Sources/ecuconnect-tool/ECUconnect.swift)
   uses the default URL `ecuconnect-l2cap://FFF1:129`.
-- [Linux L2CAP source](https://github.com/Automotive-Swift/Swift-CANyonero/blob/f476f522d5b1074aec03fc073e15f800e9dec19e/python/ecuconnect_tool/ecuconnect_tool/linux_l2cap.py)
+- [Linux L2CAP source](https://github.com/Automotive-Swift/Swift-CANyonero/blob/78091bb5599c4f5e3002fbd5700b826a625e8b04/python/ecuconnect_tool/ecuconnect_tool/linux_l2cap.py)
   uses a supplied PSM and low Bluetooth security. That path does not derive its
   PSM from this probe's descriptor table.
-- [Protocol header](https://github.com/Automotive-Swift/Swift-CANyonero/blob/f476f522d5b1074aec03fc073e15f800e9dec19e/Sources/libCANyonero/include/Protocol.hpp)
+- [Protocol header](https://github.com/Automotive-Swift/Swift-CANyonero/blob/78091bb5599c4f5e3002fbd5700b826a625e8b04/Sources/libCANyonero/include/Protocol.hpp)
   provides a framing/command-family lead. It was read, not executed against the
   owned adapter; acceptance by NGM firmware is unproved.
 
@@ -58,8 +62,18 @@ Decimal 129 is `0x0081`, in the dynamic SPSM range. The SIG specifies discovery 
 dynamic SPSM through GATT on reconnection. The public default is a family-specific
 lead, not a universally assigned ECUconnect port or a measured NGM value.
 [L2CAP specification, Table 4.15](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
-Finding `FFF1` therefore does not authorize assuming PSM 129 works. The probe
-does not open a CoC channel, test PSMs or send identity/channel commands.
+Finding `FFF1` does not establish that PSM 129 works. The standard probe does not
+open CoC channels. The explicit identity utility tries this one source-configured
+candidate after fresh discovery, retaining the offered/observed limits and exact
+refusal separately. It never labels the candidate as discovered. The characteristic
+UUID 0081 is not evidence that its value encodes the same numeric SPSM.
+
+The shared Rust codec/session implements only INFO `1F 11 00 00`, a bounded
+response and terminal cleanup. The vendored CoC fixes cover per-frame progress,
+backed receive credits, segmentation and canceled/closed ownership. See the
+[implementation and verification record](../validation/ngm-identity-2026-10-24.md).
+No upstream CLI command was run against the adapter: upstream `info` workflows
+can include additional voltage/configuration work beyond this utility's scope.
 
 Future qualification would need accepted transport establishment, actual channel
 limits, identity response, framing/reassembly, reconnect behavior and any access
@@ -67,6 +81,12 @@ control. Exact DNUC request definitions and scaling remain separate from adapter
 transport. See the [ECU reference](ecu-reference/README.md).
 
 ## OBDeleven 3
+
+The owner confirmed that the twelve hexadecimal channel identifiers shown in
+their OBDeleven screenshots produce live data on their ECU through OBDeleven.
+That is accepted operational evidence for those OBDeleven channels. An independent
+client still needs the transport, diagnostic request bytes, response layout,
+units and scaling; the visible identifier alone is not a CAN arbitration address.
 
 Keep Gen3 distinct from FirstGen and NextGen. The official Gen3 manual describes
 an app/account setup flow, a six-digit PIN and BLE. It does not identify that PIN

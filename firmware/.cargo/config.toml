@@ -58,3 +58,5 @@ pico2-300-75-1v30-run = "run -p dashboard-pico2 --release --features simple-outl
 # Unchecked developer utility builds; use scripts/build_ble_probe.py for admission.
 ble-probe = "build -p dashboard-ble-probe --bin ble-probe --release"
 ble-probe-280-70-1v30 = "build -p dashboard-ble-probe --bin ble-probe --release --features cpu280-spi70-1v30"
+ngm-identity = "build -p dashboard-ble-probe --bin ngm-identity --release --features ngm-identity"
+ngm-identity-280-70-1v30 = "build -p dashboard-ble-probe --bin ngm-identity --release --features ngm-identity,cpu280-spi70-1v30"

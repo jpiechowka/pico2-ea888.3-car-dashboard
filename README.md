@@ -15,6 +15,7 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 [Requirements](#requirements-and-first-run) · [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
 [Bluetooth setup](#bluetooth-prototype-in-studio) · [BLE discovery utility](#standalone-ble-discovery-utility) ·
+[NGM identity utility](docs/vehicle/ngm-identity.md) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation) ·
 [Rust documentation](docs/validation/rust-documentation.md)
@@ -297,6 +298,16 @@ See [setup details](docs/configurator/setup-tools.md) and the
 
 ## Standalone BLE discovery utility
 
+The standard `ble-probe` image retains its standard-read-only policy. A separate
+[`ngm-identity` image](docs/vehicle/ngm-identity.md) adds an explicit selected-peer
+INFO trial: fresh vendor reads, one configured SPSM 129 channel and only the
+four-byte `1F110000` application request. It has no ECU requests, pairing or
+automatic retry. Both utilities passed offline image admission at stock and
+280/70 clocks on 27 October 2026, including the reserved capture region. The
+dashboard's shared BLE path also passed its practical image gate. See the
+[validation record](docs/validation/ngm-identity-2026-10-24.md); physical NGM
+interoperability has not been validated.
+
 Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
 lists nearby connectable BLE advertisements and offers **manual GATT inspection
 on encoder click or a two-second A hold**. Rotate or use short A/B presses to
@@ -405,7 +416,17 @@ From the repository root, build a checked CLI artifact using the installed tools
 ./firmware/scripts/Build-BleProbe.ps1 -Name probe-stock-01
 # Explicit experimental owner-requested profile:
 ./firmware/scripts/Build-BleProbe.ps1 -Name probe-280-01 -Profile 280-70 -Expert
+# Separate INFO-only tool; build/check only, no device operation:
+./firmware/scripts/Build-NgmIdentity.ps1 -Name ngm-stock-01 -Profile stock
 ```
+
+Both wrappers write to `firmware/target/ble-probe-captures/<name>/`, using
+`ble-probe.elf/.uf2` or `ngm-identity.elf/.uf2`. Manifest schema 2 binds the tool
+name to its linked discriminator. Normal USB product names are `Pico BLE Probe
+Captures` and `Pico NGM Identity Captures`; the same exporter handles both.
+An ordinary `ble-probe` binary remains standard-only even when compiled with the
+identity feature. See the [NGM preparation and single-visit capture plan](docs/vehicle/ngm-identity.md#future-garage-runbook)
+before any separately authorized flash or adapter experiment.
 
 The utility stays **outside Studio** and replaces the dashboard until you flash
 the dashboard back. It uses both cores, two fixed framebuffers, Cortex-M33
@@ -454,9 +475,12 @@ Interrupted writes, endurance and broader USB qualification remain separate.
 
 Characteristic rejection now retains the first rejected declaration handle,
 original length and up to 19 raw bytes in live pages and saved exports. Capture
-payload v4 adds cached-name provenance and boot reset evidence to v3's global LED
-fault snapshot and configured radio GSPI speed. V1/v2/v3 remain readable with
-their absent fields explicitly unavailable; existing slots are not rewritten.
+payload v5 adds explicit tool mode and optional bounded NGM identity evidence.
+V4's cached-name provenance and boot reset evidence, and v3's global LED fault
+snapshot and configured radio GSPI speed, remain. V1–v4 are readable with absent
+fields explicitly unavailable; existing slots are not rewritten. Identity
+attempts retain partial/failure bytes, directional channel limits and cleanup;
+parsed identity strings do not enable the future Studio connection handoff.
 The shared ATT client also
 validates service/characteristic boundaries for the dashboard's adapter discovery.
 [Follow-up findings, regressions and remaining hardware checks](docs/validation/probe-discovery-followup-2026-10-19.md).

@@ -232,6 +232,14 @@ use `cargo build` for compilation without device operations.
   raw packet evidence or cross address/type identities. Slot labels and PC export
   identities use the same validated saved-name selection. Retained watchdog
   stage/time is a last observation, not a proven cause or reset timestamp.
+  The separate [NGM identity utility](docs/vehicle/ngm-identity.md) shares this
+  platform through explicit `ngm-identity` entrypoint/feature and linked tool
+  discriminator. Only manual fresh-peer inventory, four scoped vendor reads and
+  one configured-SPSM129 INFO request `1F110000` are permitted; no ECU commands,
+  alternate PSM search, pairing or automatic retry. Standard probe selection
+  remains standard even when the identity feature is compiled. Capture v5 keeps
+  bounded raw identity evidence and legacy v1-v4 decoding; saved results never
+  grant live success or authorize reusing handles. Retain all image/slot limits.
   A deliberate RP2350 NORMAL ROM reboot also uses the watchdog timer and can
   invalidate retained scratch; ambiguous TIMER/type0 evidence must not be treated
   as proof of a missed feed or silently normalized as a healthy reboot.

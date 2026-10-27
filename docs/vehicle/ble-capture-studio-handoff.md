@@ -1,15 +1,17 @@
 # BLE capture to Studio connection handoff
 
-Updated 2026-10-20. The exporter adds connection evidence to device-labelled
+Updated 2026-10-24. The exporter adds connection evidence to device-labelled
 `.json` and `.txt` files, derived from the validated `.blecap`. **Studio does not yet
 import captures or create arbitrary adapter profiles.** This is the data
 contract and planned admission path for that later feature.
 
 The Pico already saves bounded observations: peer identity, raw advertisements,
 primary services, characteristics, descriptor identities, allowlisted standard
-reads, link parameters, completion and failures. The additions below run on the
-PC and cost no Pico RAM, stack, slot space or BLE traffic. They also work when
-decoding legacy v1/v2 binaries.
+reads, link parameters, completion and failures. The separate
+[NGM identity tool](ngm-identity.md) adds bounded raw vendor/CoC/INFO evidence in
+payload v5. The connection-hint projection runs on the PC and adds no Pico storage
+or BLE traffic; the new captured identity evidence has its own bounded storage.
+The exporter also reads legacy v1–v4 binaries without inventing missing fields.
 
 ## What the exporter adds now
 
@@ -25,11 +27,14 @@ without it remains an old report; regenerate it from its binary with offline
 | `identity.device_key`, `file_stem` | Observed address label (`p-`/`r-` plus 12 display-order hex digits) and safe common artifact stem. Never a permanent physical ID, connection selector or trusted input path. |
 | `identity.device_name` | Selected label or null. Raw hex, valid UTF-8 or null, source (`scan_response`, `advertisement`, `gap_device_name`), complete/truncated flags, cached status, boot-relative observation time and GAP read record index or null. See [name selection and filename rules](ble-probe-captures.md#recover-captures-on-a-pc); original packets and read records remain authoritative. |
 | `cached_name`, `boot` | Optional v4 raw naming/reset observations, unavailable for legacy payloads. Cached labels do not establish stable identity; previous watchdog stage/time does not establish cause. These fields do not enable connection or authentication. |
+| `identity_tool_mode` | Explicit v5 producer policy: true for the identity image, false for ordinary probe; null for v1–v4. True alone does not imply an INFO request or successful connection. |
+| `ngm_identity` | Optional v5 trial evidence, null for legacy/no attempt. Policy/source pin, configured SPSM129 versus discovered null, four raw vendor read slots, offered/observed directional channel fields, request submission, raw reply/length counters, derived five fields and lifecycle/fault/cleanup. It never changes naming `identity` or enables a profile. |
 | `export.artifacts` | Exact `binary`, `json` and `text` basenames written to the new output directory. Derived from the safe stem, not raw BLE names. A future importer must not treat supplied JSON filenames as trusted paths. |
 | Each `uuid.canonical` | Lowercase expanded 128-bit UUID text. `wire_hex`, `width_bytes` and `assigned_u16` remain, preserving original encoding. |
 | Each characteristic's `property_flags` | Eight booleans: broadcast, read, write without response, write request, notify, indicate, authenticated signed writes and extended properties. Raw `properties` remains. These describe declared procedures, not verified access permissions. |
 | `inspection.termination_assessment` | Version 1 derived classification: `not_observed`, `local_ingress_error`, `cleanup_unconfirmed`, `conflicting_reason`, `reason_unavailable`, `normal_reason`, or `abnormal_reason`. Includes `reason_hex` and `reason_label`, null when unavailable. `acceptable_for_clean_probe` qualifies only acknowledged, consistent normal termination with observed link/end and no local ingress fault; all other inspection checks remain separate. |
 | `connection_handoff.version` | Version 1 of the derived hint structure. |
+| `observation_scope`, `independent_identity_evidence_path` | `standard_advertisement_and_gatt_hints_only` and `ngm_identity`. The generic gap list applies to those standard hints; separate identity observations retain their own policy and limits. |
 | `status`, `enabled`, `profile` | Always `evidence_only`, `false`, `null`. No name/UUID match selects a protocol or enables a connection. |
 | `address_candidate` | Shared `BlePeer` shape: six display-order numeric bytes plus `Public` or `RandomStatic`, only when shared dashboard validation accepts it as an enabled address. Otherwise null. |
 | `address_blocker` | Null, `random_address_not_supported`, or `invalid_dashboard_address`. Private/reserved random types and invalid placeholders cannot become settings. |
@@ -40,7 +45,7 @@ without it remains an old report; regenerate it from its binary with offline
 | `subscription_evidence` | `not_advertised`, `cccd_not_observed`, `cccd_observed`, or `multiple_cccd_observed`. Missing in partial data is unknown; duplicates remain visible. No value proves that the endpoint was subscribed to or is writable. |
 | `database_hash_read_record_indices` | Successful, non-truncated, exactly 16-byte standard GATT Database Hash reads. Failed/invalid reads remain in `records` but are excluded here. |
 | `saved_handles_reusable` | Always false for this handoff. Handles are historical evidence; rediscover live endpoints. |
-| `unobserved`, `review_required` | Protocol, authentication, CoC and vendor-traffic gaps that properties or a successful standard read cannot resolve. |
+| `unobserved`, `review_required` | Conservative generic inventory gaps; this projection does not consume separate `ngm_identity` evidence or qualify a protocol from it. |
 
 Indexes refer to this report's original record array, not a future rediscovery.
 The raw `.blecap` is authoritative for rebuilding the projection. A future
@@ -48,6 +53,17 @@ importer must bound inputs, decode/validate the binary, recompute hints and
 compare any supplied digest. A matching self-supplied hash does not establish
 trusted hardware provenance. Unknown versions, damaged bytes or edited hints
 must never become active settings.
+
+For identity captures, evaluate `ngm_identity` separately from generic inventory
+hints. Its parsed vendor/model/hardware/serial/firmware text is derived from raw
+bytes, not authenticated identity. Complete local request submission, valid INFO,
+and normal cleanup are different observations. Partial send, protected reads,
+remote negative message type, raw L2CAP/HCI/ATT status, omitted bytes and cleanup
+failure remain inspectable even when parsed fields are unavailable. Null channel
+CIDs/remaining credits are unavailable observations, not zero. The configured
+candidate SPSM remains 129 even after acceptance; no dynamic-discovery claim is
+created. The generic handoff remains `evidence_only`, disabled, with no profile
+and no reusable saved handles, including after a successful INFO trial.
 
 Original timestamps, raw bytes, failures, build identity and global error scope
 remain intact. No host date replaces boot-relative observation time. Slot and
@@ -100,13 +116,14 @@ profile table or guess an ELM-compatible transport.
 | Physical model/revision, app version, ignition/power state, connected phone, exact action | Record operator notes alongside the export, keyed by `binary.sha256`. A future import form should collect these with a manual-source label. Pico cannot infer them. |
 | Vendor framing and notification bytes | Compare public implementation evidence first; collect a separately scoped app-side trace or explicit safe protocol experiment for a concrete gap. |
 | Security requirements or proprietary authentication | Standard protected-read errors are clues, not a complete handshake. Do not store passwords, keys or PINs in portable projects. |
-| NGM/ECUconnect transport and dynamic SPSM | The family-specific `FFF1:129` public lead is not an observed NGM channel. The probe does not read a vendor SPSM value or establish LE CoC. |
+| NGM/ECUconnect transport and dynamic SPSM | Ordinary probe remains standard-only. The separate INFO tool can try one source-configured candidate129 and retain acceptance/refusal; it does not discover a dynamic SPSM. No physical identity-tool result is claimed yet. |
 | Secondary/included services and descriptor values | Current inventory covers primary services and descriptor identities. Extend bounded discovery/read policy only if a qualified protocol needs these fields. |
 | Reconnect, cold-start and adapter/ECU compatibility | Repeated device observations and profile-specific tests; a clean inventory is insufficient. |
 
 See [NGM/OBDeleven evidence boundaries](adapter-research.md) for pinned research.
-The next useful addition to the probe should follow an actual missing protocol
-field, preserving its no-pairing and standard-read-only contract.
+Further protocol work must follow a concrete evidence gap. The ordinary probe's
+no-pairing and standard-read-only contract remains intact; the separate identity
+tool does not enable arbitrary commands, automotive requests or Studio import.
 
 ## Specification cross-checks
 

@@ -386,3 +386,117 @@ Connection-parameter event documentation links to the shared token and states
 the feature requirement for acceptance. Strict private docs cover both roles,
 central-only discovery and peripheral-only builds. These follow-ups change only
 tests and documentation; no firmware behavior or packet limits change.
+
+## Credit-based channel progress and ownership (2026-10-24)
+
+Async SDU transmission reserves one credit per K-frame, so a peer granting one
+credit at a time can make progress. The exclusive writer covers the entire SDU;
+cancellation/error after possible submission closes the channel rather than
+allowing a new SDU to interleave. `try_send` retains whole-call pre-admission.
+Both paths bound peer MPS by local scratch capacity; a large advertised maximum
+does not require sending a frame that large.
+
+Each dynamic channel owns a receive packet reservation before offering credit.
+Initial receive credits are capped at one; explicit zero remains zero. Positive
+configured values are upper bounds, and flow-policy batching is overridden by
+the backed single-credit window. Partial-SDU progress wakes the receive task to
+replenish one backed credit; a queued complete SDU stops grants until consumed.
+The existing eight-packet/251-byte pool is unchanged. This trades burst throughput
+for bounded backing. Fixed ATT/security traffic keeps its prior allocation route.
+
+An SDU dequeued for delivery returns without another await. Cancellation during
+possibly submitted credit signaling closes the channel; idle receive cancellation
+retains admitted partial bytes. Close wakes credit, transport, ACL-lock and receive
+waiters and releases reserved/partial/queued packets. Credit and disconnect tokens
+retain their original channel slot. Refused/wrong-identifier creates release
+reservations immediately while retaining the old attempt's reference/error, so
+full-pool retry cannot strand a packet or redirect a late completion.
+
+Actual host/manager regressions cover a245-byte SDU over11 legal23-byte K-frames,
+one-credit TX, large peer MPS, zero credits, empty SDUs, every exercised cancellation
+prefix, simultaneous channels, pool exhaustion, queued-consumer backpressure,
+HCI prefix splits, local/peer/link close and failed-create retry. Serialized native
+suites pass223(no-security),270(security) and282(legacy/optimized-reassembly
+feature set). Strict Clippy passes both normal contexts. These tests establish
+software behavior only; shared dashboard/probe linked-image admission remains
+required. See the [identity implementation record](../../../docs/validation/ngm-identity-2026-10-24.md).
+
+Specification: Bluetooth Core6.2 L2CAP sections3.4,4.22,4.23,7.3 and10.1,
+[credit-based framing and flow control](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
+The optimized-reassembly API's existing short-prefix restrictions remain; no
+new CID/current-credit snapshot getter or physical peer acknowledgment is implied.
+
+## Caller-buffer primary service discovery (2026-10-24)
+
+`GattClient::services_into` discovers directly into the caller's bounded service
+vector. The retained `services` API delegates to the same parser and returns its
+owned vector as before. Ordering, ATT pagination, errors, atomic cache merge and
+pending-request cancellation behavior are shared. The caller buffer is cleared
+on first poll; failure or cancellation can leave an unpublished ordered prefix,
+while the cache stays unchanged. Probe inventory publishes rows only after the
+method succeeds, avoiding a temporary owned service-vector return without
+changing its service capacity, packet pool or publication rules.
+
+Three actual-client regressions compare both APIs' requests, mixed-width UUIDs,
+rows and caches; cover malformed later pages, ATT refusal, output/cache capacity,
+pending cancellation and empty completion; and verify stale output replacement.
+Serialized native suites pass 226 (no-security), 273 (security) and 285
+(legacy/optimized reassembly). Linked target stack savings are measured separately;
+these host tests do not qualify hardware or relax image admission limits.
+
+## Reserved-credit overflow admission (2026-10-24)
+
+Incoming peer grants now include outstanding unconfirmed TX reservations when
+checking the 65535-credit limit. Reserving behind an occupied ACL lock cannot hide
+an overflow that would otherwise disappear after successful submission. Each
+channel adds one u16 counter; confirmation/drop release their matching reservation,
+and final close clears it while retained references prevent slot reuse. Channel
+metrics retain their documented reservation-count semantics, including refunds.
+No packet-pool, service-capacity, public API or image-admission limit changes.
+
+A real public-channel regression failed before this correction and now verifies
+immediate overflow closure before both resumed and canceled sends. Exact-limit
+replenishment remains valid across completion, cancellation and link close. The
+prior refund test now requires rejection before refund. Serialized native suites
+pass 228 (no-security), 275 (security), 287 (legacy/optimized reassembly); strict
+Clippy in both normal contexts and strict private no-security rustdoc pass.
+Target layout/stack measurements and physical interoperability remain separate.
+
+## Caller-owned GATT startup (2026-10-24)
+
+`GattClient::new_into` publishes the fully initialized client into an empty caller
+Option and returns a reference to that owner. An occupied slot returns Busy without
+changing it. Failure or cancellation leaves an initially empty slot empty and
+releases the client claim; canceling admitted ATT startup closes the bearer.
+The original `new` remains an owned-result compatibility wrapper over the same
+startup body. Once-only MTU exchange, response/error correlation, early notification
+handling, the 30-second ATT transaction timeout and best-effort bonded encryption
+are unchanged. Probe callers retain the slot inside inspection work, dropping all
+borrowers and the owner before full-link cleanup. No field, capacity or gate changes.
+
+Four actual-client regressions cover final-slot address identity, occupied and
+competing owners, claim release, pool exhaustion, malformed/failed ATT startup,
+cancellation, a real outer startup deadline, and owner/borrower drop order across
+successful work, event failure and outer cancellation. The existing owned-new
+MTU response/error matrix still exercises the shared startup body. The outer
+1ms deadline regression does not claim to elapse the unchanged internal30s timer.
+Serialized native suites pass 232 (no-security), 279 (security) and 291
+(legacy/optimized reassembly); strict Clippy in both normal contexts and strict
+private no-security rustdoc pass. The reference return avoids an owned async
+result; actual target-frame savings and image admission are measured separately.
+
+## Synchronous notification decoding (2026-10-24)
+
+The private notification parser had no suspension point. It now runs synchronously
+and fills the final Notification buffer directly, removing its async wrapper and
+separate payload-array temporary. Client task scheduling, zero-filled unused tail,
+notification/indication classification, immediate publication/lag handling and
+malformed/oversized bearer quarantine remain unchanged. No payload, subscriber,
+queue or packet limit changes.
+
+One added characterization passes before and after: empty/max payload bytes and
+indication flags publish exactly; absent handles/oversized values close the bearer
+without publication. Existing early subscription, lag and host-ingress tests pass.
+Full native suites pass 233/280/292 in the same no-security/security/optimized
+contexts above; both strict Clippy contexts and strict private rustdoc pass.
+Linked stack/image effects require separate target measurement.

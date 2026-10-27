@@ -186,10 +186,7 @@ pub async fn run<E>(operation: impl FnOnce(Request) -> Result<(), E>) -> Result<
             Ok(true) => break,
             Ok(false) => Timer::after_millis(1).await,
             Err(e) => {
-                defmt::error!(
-                    "probe.flash resume failed {:?}; watchdog recovery",
-                    defmt::Debug2Format(&e)
-                );
+                defmt::error!("probe.flash resume failed {=str}; watchdog recovery", e.label());
                 core::future::pending::<()>().await;
             }
         }

@@ -4,6 +4,9 @@ use super::names::{NameSource, ObservedName};
 use super::*;
 use crate::health::reset::{BootEvidence, ResetRecord, ResetStage};
 
+/// Stable bounded identity metadata extension; legacy schemas omit it.
+mod identity_codec;
+
 /// Capture producer's supported clock-profile label; rates are retained separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildProfile {
@@ -41,7 +44,7 @@ pub enum CaptureError {
     Truncated,
     /// Capture discriminator does not match the supported format family.
     Magic,
-    /// Capture schema is outside supported versions 1..=4.
+    /// Capture schema is outside supported versions 1..=5.
     Version,
     /// Header or body CRC disagrees with the input bytes.
     Integrity,
@@ -51,6 +54,25 @@ pub enum CaptureError {
     Relationships,
     /// Metadata/record/body contains bytes beyond its declared structure.
     Trailing,
+}
+
+impl CaptureError {
+    /// Returns this unit error's exact Debug name without allocating or formatting.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::BufferTooSmall => "BufferTooSmall",
+            Self::TooLarge => "TooLarge",
+            Self::NoPeer => "NoPeer",
+            Self::InvalidState => "InvalidState",
+            Self::Truncated => "Truncated",
+            Self::Magic => "Magic",
+            Self::Version => "Version",
+            Self::Integrity => "Integrity",
+            Self::InvalidData => "InvalidData",
+            Self::Relationships => "Relationships",
+            Self::Trailing => "Trailing",
+        }
+    }
 }
 
 /// Frozen legacy packet prefix with its own optional observation metadata.
@@ -122,8 +144,12 @@ pub enum Record<'a> {
 /// Frozen producer and selected-peer context; optional legacy fields remain unavailable.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureMetadata {
-    /// Actual admitted payload schema version in 1..=4, independent of journal/USB versions.
+    /// Actual admitted payload schema version in 1..=5, independent of journal/USB versions.
     pub schema_version: u16,
+    /// Producer image selected identity mode; absent in legacy v1-v4, never inferred.
+    pub identity_mode: Option<bool>,
+    /// Explicit source-configured identity trial; absent in v1-v4 and ordinary probe captures.
+    pub identity: Option<identity::Evidence>,
     /// Absent in legacy v1/v2 captures, never inferred from current firmware.
     pub fault_latch: Option<FaultLatch>,
     /// Configured radio bus hertz, absent before v3 or when encoded as unavailable zero.
@@ -194,6 +220,8 @@ impl CaptureMetadata {
     /// Private invalid parsing seed, never published before full field/relationship admission.
     const EMPTY: Self = Self {
         schema_version: 0,
+        identity_mode: None,
+        identity: None,
         fault_latch: None,
         radio_bus_hz: None,
         cached_name: None,
@@ -290,7 +318,7 @@ impl Decoder {
     }
 
     /// Returns an admitted view borrowing `self` and immutable `bytes` after envelope,
-    /// CRC, field, count, metadata and GATT-relationship checks. Supports schema 1..=4;
+    /// CRC, field, count, metadata and GATT-relationship checks. Supports schema 1..=5;
     /// legacy absent fields are cleared on every reuse. Errors leave unpublished partial
     /// metadata in `self`, so no previous view survives this mutable call.
     pub fn decode<'a>(
@@ -302,7 +330,7 @@ impl Decoder {
 
     /// Encodes selected-peer `probe` with producer `build` at boot-relative `captured_at_ms`
     /// milliseconds into `output`, then validates by decoding with `self`'s reusable storage.
-    /// Returns the admitted schema-v4 byte count, at most 8192; output tail is unchanged.
+    /// Returns the admitted schema-v5 byte count, at most 8192; output tail is unchanged.
     /// Errors leave a partial or fully encoded but untrusted prefix. Performs no allocation,
     /// radio or storage I/O and never turns incomplete evidence into complete evidence.
     pub fn encode(
@@ -812,7 +840,7 @@ fn read_scan(
     Ok(())
 }
 
-/// Appends schema-v4 metadata from selected-peer probe `p`, producer `b` and boot-relative
+/// Appends schema-v5 metadata from selected-peer probe `p`, producer `b` and boot-relative
 /// capture time `at` milliseconds into `w`, returning unit. Rejects no peer, a requested
 /// inspection for another peer, impossible payload widths and explicit zero radio clock.
 /// Full semantic checks follow encode by decode; any error leaves output untrusted.
@@ -919,10 +947,12 @@ fn write_metadata(
             w.u32(previous.elapsed_ms)?;
         }
     }
+    w.bool(p.identity_mode)?;
+    identity_codec::write(w, p.inspection.identity.as_ref())?;
     Ok(())
 }
 /// Decodes schema `version` metadata from `r` into unpublished reusable `m`, returning unit.
-/// Caller first bounds version to 1..=4. Validates primitive codes, RSSI, UUID-independent
+/// Caller first bounds version to 1..=5. Validates primitive codes, RSSI, UUID-independent
 /// lengths, ATT MTU 23..=517, positive build clocks and radio clock at most 50 MHz/CPU half.
 /// Explicitly clears fields absent in legacy schemas. Errors leave partial `m` and reader
 /// progress; complete temporal/relationship validation occurs before any view is returned.
@@ -1027,6 +1057,8 @@ fn read_metadata<'a>(
     m.radio_bus_hz = None;
     m.cached_name = None;
     m.boot = None;
+    m.identity = None;
+    m.identity_mode = None;
     if version >= 3 {
         m.fault_latch = Some(FaultLatch::from_parts(r.u16()?, r.u8()?).ok_or(CaptureError::InvalidData)?);
         let hz = r.u32()?;
@@ -1077,6 +1109,10 @@ fn read_metadata<'a>(
                 previous,
             });
         }
+    }
+    if version >= 5 {
+        m.identity_mode = Some(r.bool()?);
+        identity_codec::read(r, &mut m.identity)?;
     }
     Ok(())
 }
@@ -1147,7 +1183,7 @@ fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
 
 /// Output is untrusted on error. No allocation or complete-model clone occurs.
 /// Serializes `probe`, producer `build` and boot-relative `captured_at_ms` into `output`,
-/// returning schema-v4 byte count with header/body CRCs and grouped records. Returns
+/// returning schema-v5 byte count with header/body CRCs and grouped records. Returns
 /// bounds/field errors with possible partial writes. The caller must run full decode
 /// before accepting this prefix; raw encoding alone does not establish metadata consistency.
 fn encode_bytes(
@@ -1206,7 +1242,7 @@ fn encode_bytes(
         + probe.inspection.descriptors.len()
         + probe.inspection.values.len();
     w.bytes[..8].copy_from_slice(MAGIC);
-    w.bytes[8..10].copy_from_slice(&4u16.to_le_bytes());
+    w.bytes[8..10].copy_from_slice(&5u16.to_le_bytes());
     w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
     w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
     w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
@@ -1250,6 +1286,51 @@ fn find_characteristic(
 /// previously admitted 24/64/128/16 record limits, avoiding another inventory allocation.
 fn relationships(view: &CaptureView<'_>) -> Result<(), CaptureError> {
     metadata_valid(view.metadata)?;
+    if let Some(identity) = &view.metadata.identity
+        && identity.vendor_values.iter().any(Option::is_some)
+    {
+        if !view.metadata.stages.iter().all(|&done| done) {
+            return Err(CaptureError::Relationships);
+        }
+        // Ordered records put every service before characteristics. Retain only
+        // scope/count/match scalars, not copied service/characteristic payloads.
+        let mut service_start = None;
+        let mut declarations = [0u8; 4];
+        let mut matched = 0u8;
+        for record in view.records() {
+            match record {
+                Record::Service(s) if s.uuid.short() == Some(0xFFF1) => {
+                    if service_start.replace(s.start).is_some() {
+                        return Err(CaptureError::Relationships);
+                    }
+                }
+                Record::Characteristic(c) if Some(c.service_start) == service_start => {
+                    let short = c.uuid.short();
+                    if let Some(index) = identity::VENDOR_UUIDS.iter().position(|&uuid| Some(uuid) == short) {
+                        // Full-stream admission bounds all characteristics to64.
+                        declarations[index] += 1;
+                        if let Some(value) = identity.vendor_values[index].as_ref()
+                            && value.service_start == c.service_start
+                            && value.handle == c.handle
+                            && c.properties & 2 != 0
+                        {
+                            matched |= 1 << index;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (index, value) in identity.vendor_values.iter().enumerate() {
+            if let Some(value) = value
+                && (Some(value.service_start) != service_start
+                    || declarations[index] != 1
+                    || matched & (1 << index) == 0)
+            {
+                return Err(CaptureError::Relationships);
+            }
+        }
+    }
     let mut services = 0u16;
     let mut chars = 0u16;
     let mut descriptors = 0u16;
@@ -1362,6 +1443,12 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
             .is_none_or(|o| (m.first_seen_ms..=m.last_seen_ms).contains(&o.at_ms))
     };
     if m.revision == 0
+        || m.identity.as_ref().is_some_and(|identity| {
+            m.identity_mode != Some(true)
+                || !m.gatt_requested
+                || m.started_at_ms.is_none_or(|start| identity.started_at_ms < start)
+                || !identity.valid(m.captured_at_ms)
+        })
         || m.cached_name.is_some_and(|name| {
             name.at_ms < m.first_seen_ms
                 || name.at_ms > m.captured_at_ms
@@ -1431,7 +1518,7 @@ pub fn check_header(
     if r.take(8)? != MAGIC {
         return Err(CaptureError::Magic);
     }
-    if !matches!(r.u16()?, 1..=4) {
+    if !matches!(r.u16()?, 1..=5) {
         return Err(CaptureError::Version);
     }
     let total = usize::from(r.u16()?);
@@ -1451,6 +1538,9 @@ pub fn check_header(
 /// borrowing both only after all CRC, schema, ordered-record/count and relationship checks.
 /// Errors may partially update metadata but expose no view; at most 8192 input bytes
 /// and 24/64/128/16 records are admitted. No heap allocation or hardware I/O occurs.
+// Reuse the complete validator across UI and journal call sites without duplicating
+// its record traversal under the utility binary's aggressive inlining policy.
+#[inline(never)]
 fn decode_into<'a>(
     metadata: &'a mut CaptureMetadata,
     bytes: &'a [u8],
@@ -1513,7 +1603,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedCapture<'_>, CaptureError> {
     })
 }
 /// Convenience encoder; firmware should reuse Decoder::encode.
-/// Returns admitted schema-v4 prefix length written to `output` from selected-peer `probe`,
+/// Returns admitted schema-v5 prefix length written to `output` from selected-peer `probe`,
 /// producer `build` and boot-relative `captured_at_ms` milliseconds. Uses temporary decoder
 /// storage to revalidate all encoded state; errors leave output untrusted. No I/O occurs.
 pub fn encode(

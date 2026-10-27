@@ -128,7 +128,7 @@ pub async fn run<E>(operation: impl FnOnce(Request) -> Result<(), E>) -> Result<
             Ok(true) => break,
             Ok(false) => Timer::after_millis(1).await,
             Err(error) => {
-                crate::log_fault!("Resume: {:?}", error);
+                crate::log_fault!("Resume: {}", error.label());
                 // Retain the permit. No new feed; the hardware watchdog is the
                 // bound when an owner cannot resume or the total budget expires.
                 core::future::pending::<()>().await;

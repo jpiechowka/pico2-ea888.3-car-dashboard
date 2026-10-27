@@ -7,7 +7,7 @@
 #[path = "rustdoc_inventory/mod.rs"]
 mod rustdoc_inventory;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::{Component, Path};
 use std::process::{Command, ExitCode, Stdio};
@@ -120,6 +120,8 @@ fn inventory(root: &Path) -> Result<serde_json::Value, String> {
     let mut files = Vec::new();
     let mut total = 0usize;
     let mut uncovered = 0usize;
+    let mut sources = BTreeMap::new();
+    let mut parsed = Vec::new();
     for relative in paths {
         if !safe_relative(&relative) {
             return Err(format!("unsafe source path: {relative}"));
@@ -146,6 +148,20 @@ fn inventory(root: &Path) -> Result<serde_json::Value, String> {
         }
         let source = String::from_utf8(bytes).map_err(|error| format!("{relative}: {error}"))?;
         let entries = rustdoc_inventory::inspect_source(&source).map_err(|error| format!("{relative}: {error}"))?;
+        sources.insert(relative.clone(), source);
+        parsed.push((relative, entries));
+    }
+    let inherited = rustdoc_inventory::includes::resolve(&sources)?;
+    for (relative, mut entries) in parsed {
+        let owners = inherited.get(&relative).filter(|_| entries[0].docs.trim().is_empty());
+        if let Some(owners) = owners {
+            entries[0].docs = owners
+                .iter()
+                .map(|owner| format!("Inherited from {}:{}\n{}", owner.path, owner.line, owner.docs))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            entries[0].missing.retain(|gap| gap != "docs");
+        }
         total += entries.len();
         let missing = entries.iter().filter(|entry| !entry.missing.is_empty()).count();
         uncovered += missing;
@@ -158,7 +174,14 @@ fn inventory(root: &Path) -> Result<serde_json::Value, String> {
                 })
             })
             .collect();
-        files.push(serde_json::json!({"path":relative,"uncovered":missing,"items":items}));
+        let owners: Vec<_> = owners
+            .into_iter()
+            .flatten()
+            .map(|owner| serde_json::json!({"path":owner.path,"line":owner.line}))
+            .collect();
+        files.push(
+            serde_json::json!({"path":relative,"uncovered":missing,"items":items,"included_file_docs_from":owners}),
+        );
     }
     Ok(
         serde_json::json!({"schema":1,"file_count":files.len(),"item_count":total,"uncovered_items":uncovered,"files":files}),

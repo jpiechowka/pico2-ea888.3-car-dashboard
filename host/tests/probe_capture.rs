@@ -97,7 +97,7 @@ fn rejected_evidence_round_trips_and_legacy_decode_clears_it() {
         let mut output = [0; 8192];
         let size = encode(&p, build(), 60, &mut output).unwrap();
         let view = decoder.decode(&output[..size]).unwrap();
-        assert_eq!(view.metadata().schema_version, 4);
+        assert_eq!(view.metadata().schema_version, 5);
         assert_eq!(view.metadata().failure, Some(failure));
         assert_eq!(rejected.length(), length as u16);
         assert_eq!(rejected.bytes(), &bytes[..length.min(19)]);
@@ -136,7 +136,7 @@ fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
     let mut bytes = [0; 8192];
     let len = encode(&p, build(), 60, &mut bytes).unwrap();
     let json = decode_json(&bytes[..len]).unwrap();
-    assert_eq!(json["schema"], 4);
+    assert_eq!(json["schema"], 5);
     let rejected = &json["inspection"]["failure"]["rejected"];
     assert_eq!(rejected["declaration_handle"], 20);
     assert_eq!(rejected["value_handle"], 21);
@@ -231,7 +231,7 @@ fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
 fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     let mut output = [0; 8192];
     let size = encode(&probe(), build(), 60, &mut output).unwrap();
-    for (at, value) in [(8, 5), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
+    for (at, value) in [(8, 6), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
         let mut bytes = output[..size].to_vec();
         bytes[at] = value;
         fix_crc(&mut bytes);
@@ -309,6 +309,152 @@ fn invalid_live_relationships_and_small_buffers_never_silently_drop_evidence() {
     let mut p = probe();
     p.request.action = Action::Scan(false);
     assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::InvalidState));
+}
+
+/// Returns complete synthetic inventory with four retained vendor reads scoped to
+/// one FFF1 service; only capture admission is exercised, never radio traffic.
+fn vendor_probe() -> Probe {
+    let mut p = probe();
+    p.identity_mode = true;
+    p.inspection.services[0].uuid = Uuid::from_wire(&0xFFF1u16.to_le_bytes()).unwrap();
+    p.inspection.services[0].end = 50;
+    p.inspection.characteristics.clear();
+    p.inspection.descriptors.clear();
+    p.inspection.values.clear();
+    let mut evidence = identity::Evidence::new(25);
+    for (index, uuid) in identity::VENDOR_UUIDS.into_iter().enumerate() {
+        let handle = 3 + index as u16 * 3;
+        p.inspection
+            .characteristics
+            .push(Characteristic {
+                service_start: 1,
+                declaration: handle - 1,
+                handle,
+                properties: 2,
+                uuid: Uuid::from_wire(&uuid.to_le_bytes()).unwrap(),
+            })
+            .unwrap();
+        evidence.vendor_values[index] = Some(InfoValue {
+            service_start: 1,
+            handle,
+            uuid,
+            value: Payload::new(&[index as u8, 0xFF]),
+            result: ReadResult::Ok,
+            failure: None,
+            elapsed_ms: 1,
+        });
+    }
+    p.inspection.identity = Some(evidence);
+    p
+}
+
+/// Vendor scope/uniqueness/readability and ordinary range/handle rejection remain
+/// exact, including aliases, unrelated duplicate UUIDs and partially observed reads.
+#[test]
+fn vendor_capture_relationships_preserve_scope_and_inventory_admission() {
+    for case in 0..15 {
+        let mut p = vendor_probe();
+        let expected = match case {
+            0 => None,
+            1 => {
+                p.inspection.services[0].uuid = Uuid::from_wire(&0x180Au16.to_le_bytes()).unwrap();
+                Some(CaptureError::Relationships)
+            }
+            2..=4 => {
+                let mut service = p.inspection.services[0];
+                service.start = 51;
+                service.end = 100;
+                if case != 2 {
+                    service.uuid = Uuid::from_wire(&0x180Au16.to_le_bytes()).unwrap();
+                }
+                p.inspection.services.push(service).unwrap();
+                let mut c = p.inspection.characteristics[0];
+                c.service_start = if case == 3 { 1 } else { 51 };
+                c.declaration = if case == 3 { 20 } else { 52 };
+                c.handle = c.declaration + 1;
+                p.inspection.characteristics.push(c).unwrap();
+                (case != 4).then_some(CaptureError::Relationships)
+            }
+            5 => {
+                p.inspection.characteristics[0].properties = 0;
+                Some(CaptureError::Relationships)
+            }
+            6 => {
+                p.inspection.identity.as_mut().unwrap().vendor_values[0]
+                    .as_mut()
+                    .unwrap()
+                    .handle = 4;
+                Some(CaptureError::Relationships)
+            }
+            7 => {
+                p.inspection.identity.as_mut().unwrap().vendor_values[0]
+                    .as_mut()
+                    .unwrap()
+                    .service_start = 2;
+                Some(CaptureError::Relationships)
+            }
+            8 => {
+                p.inspection.complete = false;
+                p.inspection.stages[3] = false;
+                Some(CaptureError::Relationships)
+            }
+            9 => {
+                p.inspection.services[0].end = 10;
+                Some(CaptureError::Relationships)
+            }
+            10 => {
+                p.inspection.characteristics[1].handle = p.inspection.characteristics[0].handle;
+                Some(CaptureError::Relationships)
+            }
+            11 => {
+                p.inspection.identity.as_mut().unwrap().vendor_values[0] = None;
+                p.inspection.characteristics[0].properties = 0;
+                None
+            }
+            12 => {
+                p.inspection.identity.as_mut().unwrap().vendor_values.fill(None);
+                p.inspection.services[0].uuid = Uuid::from_wire(&0x180Au16.to_le_bytes()).unwrap();
+                p.inspection.complete = false;
+                p.inspection.stages[3] = false;
+                None
+            }
+            13 => {
+                let mut wide = [
+                    0xFB, 0x34, 0x9B, 0x5F, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0xF1, 0xFF, 0, 0,
+                ];
+                p.inspection.services[0].uuid = Uuid::from_wire(&wide).unwrap();
+                for c in &mut p.inspection.characteristics {
+                    wide[12..14].copy_from_slice(&c.uuid.short().unwrap().to_le_bytes());
+                    c.uuid = Uuid::from_wire(&wide).unwrap();
+                }
+                None
+            }
+            14 => {
+                p.inspection.identity.as_mut().unwrap().updated_at_ms = 61;
+                p.inspection.characteristics[0].properties = 0;
+                Some(CaptureError::InvalidState)
+            }
+            _ => unreachable!(),
+        };
+        let mut output = [0; 8192];
+        let result = encode(&p, build(), 60, &mut output);
+        assert_eq!(result.as_ref().err().copied(), expected, "case {case}");
+        if let Ok(size) = result {
+            let view = decode(&output[..size]).unwrap();
+            let saved = view.metadata().identity.as_ref().unwrap();
+            let original = p.inspection.identity.as_ref().unwrap();
+            for (saved, original) in saved.vendor_values.iter().zip(&original.vendor_values) {
+                assert_eq!(saved.is_some(), original.is_some());
+                if let (Some(saved), Some(original)) = (saved, original) {
+                    assert_eq!(
+                        (saved.service_start, saved.handle, saved.uuid),
+                        (original.service_start, original.handle, original.uuid)
+                    );
+                    assert_eq!(saved.value.as_slice(), original.value.as_slice());
+                }
+            }
+        }
+    }
 }
 
 /// Maximum service/characteristic/descriptor/read/name/failure/reset evidence fits 8192 bytes; a 129th descriptor is
@@ -485,7 +631,7 @@ fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
     let n = encode(&p, build(), 60, &mut output).unwrap();
     for _ in 0..3 {
         let view = decoder.decode(&output[..n]).unwrap();
-        assert_eq!(view.metadata().schema_version, 4);
+        assert_eq!(view.metadata().schema_version, 5);
         assert_eq!(view.metadata().fault_latch, Some(p.fault_latch));
         assert_eq!(view.metadata().radio_bus_hz, Some(2_500_000));
         for (bytes, version) in [(&old2, 2), (&old1, 1)] {
@@ -558,7 +704,7 @@ fn v4_cached_name_and_reset_record_roundtrip_and_legacy_reuse() {
     let n = encode(&p, build(), 60, &mut output).unwrap();
     let mut decoder = Decoder::new();
     let view = decoder.decode(&output[..n]).unwrap();
-    assert_eq!(view.metadata().schema_version, 4);
+    assert_eq!(view.metadata().schema_version, 5);
     assert_eq!(view.metadata().boot, p.boot);
     assert_eq!(view.metadata().cached_name.unwrap().data.as_slice(), b"NGM");
     let old = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
@@ -595,9 +741,10 @@ fn v4_metadata_rejects_corrupt_names_timestamps_flags_and_reset_stages_with_vali
     let n = encode(&p, build(), 60, &mut output).unwrap();
     let end = 24 + usize::from(u16::from_le_bytes([output[14], output[15]]));
     // name present/source/complete/time/length/NGM/trunc =16 bytes;
-    // boot present/reason/type absent/previous present/stage/time =12.
-    let name = end - 28;
-    let boot = end - 12;
+    // boot present/reason/type absent/previous present/stage/time =12;
+    // schema5 appends producer mode and absent identity evidence =2 bytes.
+    let name = end - 30;
+    let boot = end - 14;
     let legacy = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
     let mut decoder = Decoder::new();
     for (at, byte) in [

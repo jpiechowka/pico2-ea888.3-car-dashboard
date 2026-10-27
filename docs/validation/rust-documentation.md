@@ -52,6 +52,24 @@ require a safety section. It rejects parse/read errors instead of reporting an
 empty successful result. Output is JSON; `--check` fails on uncovered contracts.
 File reads are capped at 4 MiB and the Git path listing at 2 MiB.
 
+Literal `include!("relative.rs")` fragments cannot carry inner file docs in their
+expansion position. Their file-level contract may instead come from every
+direct includer's documented file and enclosing named scopes. The inventory
+resolves these paths within the already validated source list and records each
+owner's path/line in `included_file_docs_from`; it never waives documentation for
+the fragment's individual items. Shared owner prose belongs in the including
+crate/module docs so rustdoc actually renders it, rather than on the `include!`
+invocation. Review that prose in each supported entrypoint's rendered output.
+
+Undocumented owners (including cfg-disabled ones), orphan fragments and computed
+include paths cannot supply inherited coverage. Inheritance is direct, not
+transitively manufactured through another undocumented fragment. Missing literal
+targets, root escapes, include cycles and paths containing more than 128 files
+are errors, regardless of traversal order or shared tails. The optional trailing
+comma in `include!("relative.rs",)` retains the same ownership checks.
+Qualified `core::include!`/`std::include!` invocations follow the same rules. This
+is source ownership evidence, not arbitrary macro expansion or a filename exemption.
+
 This is structural coverage, not a prose-quality or correctness proof. Imports
 and impl containers inherit item contracts. Out-of-line modules are checked in
 their source files. Macros are not expanded by this tool; generator templates,

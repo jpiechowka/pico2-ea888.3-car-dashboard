@@ -101,6 +101,309 @@ fn save_timeout_scenes(
         }
     }
 }
+
+/// Applies synthetic identity `update` through `p`'s real revision-qualified event path.
+/// Panics if the fixture violates admission; no transport is invoked.
+fn identity_update(
+    p: &mut Probe,
+    update: identity::Update,
+) {
+    let malformed = p.inspection.malformed;
+    p.event(Event::Item {
+        revision: p.request.revision,
+        item: InspectionItem::Identity(update),
+    });
+    assert_eq!(p.inspection.malformed, malformed);
+}
+
+/// Returns a synthetic explicitly inspected peer with fresh readable vendor declarations.
+/// `diagnostics` is fabricated display telemetry; all four inventory stages are complete.
+fn identity_probe(diagnostics: ProbeDiagnostics) -> Probe {
+    let mut p = Probe::new();
+    p.identity_mode = true;
+    p.diagnostics = diagnostics;
+    p.encoder_connected = true;
+    p.radio_bus_hz = Some(2_500_000);
+    p.catalog.observe(Advertisement::new(
+        Peer {
+            address: [0xC0, 0, 0, 0, 0, 0x99],
+            random: true,
+        },
+        ReportKind::Connectable,
+        -55,
+        b"\x02\x01\x06\x0e\x09SYNTHETIC NGM",
+        10_000,
+    ));
+    p.input(Input::Click, 12_000).unwrap();
+    p.phase = RadioPhase::Paused;
+    p.inspection.accept(InspectionItem::Service(Service {
+        start: 1,
+        end: 30,
+        uuid: Uuid::from_wire(&[0xF1, 0xFF]).unwrap(),
+    }));
+    for (index, uuid) in identity::VENDOR_UUIDS.into_iter().enumerate() {
+        p.inspection.accept(InspectionItem::Characteristic(Characteristic {
+            service_start: 1,
+            declaration: 2 + index as u16 * 3,
+            handle: 3 + index as u16 * 3,
+            properties: 2,
+            uuid: Uuid::from_wire(&uuid.to_le_bytes()).unwrap(),
+        }));
+    }
+    p.inspection.stages = [true; 4];
+    p.inspection.link = Some(LinkInfo {
+        connected_at_ms: 12_005,
+        connect_elapsed_ms: 5,
+        interval_us: 30_000,
+        latency: 0,
+        supervision_timeout_us: 4_000_000,
+        att_mtu: Some(247),
+    });
+    identity_update(&mut p, identity::Update::Start { at_ms: 12_000 });
+    for (index, uuid) in identity::VENDOR_UUIDS.into_iter().enumerate() {
+        identity_update(
+            &mut p,
+            identity::Update::Vendor(InfoValue {
+                service_start: 1,
+                handle: 3 + index as u16 * 3,
+                uuid,
+                result: ReadResult::Ok,
+                failure: None,
+                elapsed_ms: 5,
+                value: Payload::new(b"Synthetic raw value"),
+            }),
+        );
+    }
+    p
+}
+
+/// Adds offered channel values to `p`; `established` supplies actual directional limits.
+fn identity_channel(
+    p: &mut Probe,
+    established: bool,
+) {
+    identity_update(
+        p,
+        identity::Update::Channel(identity::ChannelParameters {
+            offered_mtu: 245,
+            offered_mps: 247,
+            offered_credits: 1,
+            local_mtu: established.then_some(245),
+            local_mps: established.then_some(247),
+            peer_mtu: established.then_some(512),
+            peer_mps: established.then_some(247),
+            local_cid: None,
+            peer_cid: None,
+            local_credits: None,
+            peer_credits: None,
+        }),
+    );
+}
+
+/// Publishes complete request submission and raw `reply` in admitted chunks to synthetic `p`.
+fn identity_reply(
+    p: &mut Probe,
+    reply: &[u8],
+) {
+    identity_channel(p, true);
+    identity_update(p, identity::Update::RequestSubmitted { at_ms: 12_040 });
+    identity_update(
+        p,
+        identity::Update::Sdu {
+            length: reply.len() as u16,
+        },
+    );
+    for (index, chunk) in reply.chunks(64).enumerate() {
+        identity_update(
+            p,
+            identity::Update::Chunk {
+                offset: (index * 64) as u16,
+                bytes: Payload::new(chunk),
+            },
+        );
+    }
+}
+
+/// Completes synthetic `p` cleanup, keeping the actual identity outcome separate from inventory.
+fn identity_end(p: &mut Probe) {
+    identity_update(
+        p,
+        identity::Update::End {
+            at_ms: 12_100,
+            cleanup: dashboard_core::ble::canyonero::CleanupOutcome::Clean,
+        },
+    );
+    let success = p.inspection.identity.as_ref().unwrap().successful();
+    p.inspection.ended_at_ms = Some(12_100);
+    p.inspection.cleanup_complete = true;
+    p.inspection.disconnect_reason = Some(0x16);
+    p.inspection.complete = success;
+    p.failure_context.disconnect_reason = Some(0x16);
+    if !success {
+        p.error = ProbeError::Transport;
+        p.fault_latch = FaultLatch::single(Fault::Probe);
+    }
+}
+
+/// Writes every live and validated saved page for synthetic `p` under scene `name` in `dir`.
+/// `at_ms` is the boot-relative capture time. Panics on invalid fixtures or rendering/I/O errors.
+fn identity_pages(
+    dir: &Path,
+    name: &str,
+    p: &mut Probe,
+    at_ms: u64,
+) {
+    for page in 0..page_count(p) {
+        p.page = page;
+        save(dir, &format!("ngm-{name}-live-{page:02}-synthetic"), p);
+    }
+    let mut bytes = [0; 8192];
+    let size = capture::encode(
+        p,
+        capture::BuildIdentity {
+            source_digest: [0x55; 32],
+            cpu_hz: 150_000_000,
+            spi_hz: 37_500_000,
+            profile: capture::BuildProfile::Stock,
+            source_identity_available: true,
+        },
+        at_ms,
+        &mut bytes,
+    )
+    .unwrap();
+    let decoded = capture::decode(&bytes[..size]).unwrap();
+    let view = decoded.view();
+    for page in 0..saved_page_count(&view) {
+        let mut frame = AlignedFrame::boxed();
+        render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, page, p.diagnostics).unwrap();
+        save_frame(dir, &format!("ngm-{name}-saved-{page:02}-synthetic"), &frame);
+    }
+}
+
+/// Adds complete, refused, omitted-prefix, maximal-field/counter and frozen legacy NGM QA scenes.
+/// Writes pages to `dir` using the supplied `diagnostics` for their diagnostic displays.
+/// All values are synthetic; only production model/capture/render APIs create the pages.
+fn save_identity_scenes(
+    dir: &Path,
+    diagnostics: ProbeDiagnostics,
+) {
+    use dashboard_core::ble::canyonero::{Fault as IdentityFault, Reason, Stage, TransportDomain, TransportFault};
+    let mut p = identity_probe(diagnostics);
+    let body = b"SYNTHETIC\nMODEL-TEST\nHW-TEST\nSERIAL-TEST\nFW";
+    let mut raw = vec![0x1F, 0x91];
+    raw.extend_from_slice(&(body.len() as u16).to_be_bytes());
+    raw.extend_from_slice(body);
+    identity_reply(&mut p, &raw);
+    identity_end(&mut p);
+    assert!(p.inspection.identity.as_ref().unwrap().successful());
+    identity_pages(dir, "success", &mut p, 12_200);
+
+    let mut p = identity_probe(diagnostics);
+    identity_channel(&mut p, false);
+    identity_update(
+        &mut p,
+        identity::Update::Stage {
+            stage: Stage::Closing,
+            at_ms: 12_050,
+            fault: Some(IdentityFault {
+                stage: Stage::OpeningCoc,
+                at_ms: 12_050,
+                reason: Reason::Transport(TransportFault {
+                    domain: TransportDomain::L2cap,
+                    code: Some(0x0002),
+                    partial_send: false,
+                }),
+            }),
+        },
+    );
+    identity_end(&mut p);
+    identity_pages(dir, "refused", &mut p, 12_200);
+
+    let mut p = identity_probe(diagnostics);
+    identity_reply(&mut p, b"\x1f\x91\x00\x09v\nm\nh\ns\nf");
+    identity_update(&mut p, identity::Update::Sdu { length: 1 });
+    identity_update(
+        &mut p,
+        identity::Update::Stage {
+            stage: Stage::Closing,
+            at_ms: 12_060,
+            fault: Some(IdentityFault {
+                stage: Stage::AwaitingInfo,
+                at_ms: 12_060,
+                reason: Reason::Protocol(dashboard_core::ble::canyonero::DecodeError::TrailingData),
+            }),
+        },
+    );
+    identity_end(&mut p);
+    let v = p.inspection.identity.as_mut().unwrap().vendor_values[1]
+        .as_mut()
+        .unwrap();
+    v.value = Payload::new(&[0xFF; 64]);
+    v.value.truncated = true;
+    identity_pages(dir, "truncated", &mut p, 12_200);
+
+    let mut p = identity_probe(diagnostics);
+    let mut raw = vec![0x1F, 0x91, 0, 241];
+    for (i, (byte, len)) in [(b'V', 64), (b'M', 64), (b'H', 64), (b'S', 40), (b'F', 5)]
+        .into_iter()
+        .enumerate()
+    {
+        if i > 0 {
+            raw.push(b'\n');
+        }
+        raw.extend(std::iter::repeat_n(byte, len));
+    }
+    assert_eq!(raw.len(), 245);
+    identity_reply(&mut p, &raw);
+    identity_end(&mut p);
+    assert!(p.inspection.identity.as_ref().unwrap().successful());
+    identity_pages(dir, "max-fields", &mut p, 12_200);
+
+    // Saturated counters/times exercise display widths, never imply a possible-duration device run.
+    let e = p.inspection.identity.as_mut().unwrap();
+    e.observed_bytes = u64::MAX;
+    e.sdu_count = u32::MAX;
+    e.max_sdu_bytes = u16::MAX;
+    e.updated_at_ms = u64::MAX;
+    e.ended_at_ms = Some(u64::MAX);
+    e.fault = Some(IdentityFault {
+        stage: Stage::AwaitingInfo,
+        at_ms: u64::MAX,
+        reason: Reason::Transport(TransportFault {
+            domain: TransportDomain::Local,
+            code: Some(u16::MAX),
+            partial_send: true,
+        }),
+    });
+    for v in e.vendor_values.iter_mut().flatten() {
+        v.elapsed_ms = u32::MAX;
+    }
+    p.inspection.ended_at_ms = Some(u64::MAX);
+    p.inspection.complete = false;
+    p.error = ProbeError::Transport;
+    p.fault_latch = FaultLatch::single(Fault::Capacity);
+    identity_pages(dir, "max-counters", &mut p, u64::MAX);
+
+    for (version, text) in [
+        (1, include_str!("../tests/fixtures/ble-capture-v1-failure.hex")),
+        (4, include_str!("../tests/fixtures/ble-capture-v4-legacy.hex")),
+    ] {
+        let hex: String = text.split_whitespace().collect();
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let decoded = capture::decode(&bytes).unwrap();
+        let view = decoded.view();
+        assert!(view.metadata().identity_mode.is_none());
+        assert!(view.metadata().identity.is_none());
+        for page in 0..saved_page_count(&view) {
+            let mut frame = AlignedFrame::boxed();
+            render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, page, diagnostics).unwrap();
+            save_frame(dir, &format!("ngm-legacy-v{version}-saved-{page:02}-synthetic"), &frame);
+        }
+    }
+}
 /// Emits synthetic scan/inspection/saved-slot/error/reset-evidence PPMs into the first CLI argument's directory.
 /// Missing arguments, fixture invariant failures and I/O errors panic; trailing arguments are ignored and existing
 /// images replaced. All radio, timing, memory and peer observations are fabricated display fixtures; no device is
@@ -459,6 +762,7 @@ fn main() {
         }
     }
     save_timeout_scenes(directory, p.diagnostics);
+    save_identity_scenes(directory, p.diagnostics);
     // Deliberately fabricated failure, not a diagnosis of any physical peer.
     p.event(Event::Failure {
         revision: p.request.revision,

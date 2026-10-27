@@ -11,6 +11,8 @@ use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
 
 use super::*;
+/// Shared live/saved adapter identity evidence rows with bounded text and raw bytes.
+mod identity_view;
 /// Full-screen dark background, in native RGB565 component ranges.
 const BG: Rgb565 = Rgb565::new(2, 3, 4);
 /// Highlighted selection/footer background.
@@ -107,6 +109,12 @@ fn control_hints(
             } else {
                 "Turn/A/B: select  Advert old; rescan"
             }
+        } else if probe.identity_mode {
+            if details {
+                "Turn/A/B: pages Click/X/Hold A 2s: INFO"
+            } else {
+                "Turn/A/B: select Click/Hold A 2s: INFO"
+            }
         } else if details {
             if gatt_requested(probe) {
                 "Turn/A/B: pages Click/X/Hold A 2s: Repeat"
@@ -201,6 +209,7 @@ fn text<D: DrawTarget<Color = Rgb565>>(
 }
 /// Draws sanitized single-line ASCII `s` into `d` at top-left `position`, in
 /// `c` with `font`. Returns `Ok(())` or the first draw error; prior pixels remain.
+#[inline(never)]
 fn font_text<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     position: Point,
@@ -244,6 +253,8 @@ fn memory(value: Option<MemoryUse>) -> String<12> {
 /// Paints current-Pico `values` in independent clipped header lanes on `d`.
 /// Returns `Ok(())` or the first target error after possible partial writes;
 /// stack values remain observed samples, not continuous high-water marks.
+/// Each lane lies within the fixed screen bounds, so callers pass the original
+/// target without adding a redundant full-screen clip around these lane clips.
 fn telemetry<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     values: ProbeDiagnostics,
@@ -255,8 +266,8 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         25,
         &line(format_args!(
             "FPS {} AVG {}",
-            rate(values.fps.map(|v| v.current)),
-            rate(values.fps.map(|v| v.average))
+            rate(values.fps.map(|v| v.current)).as_str(),
+            rate(values.fps.map(|v| v.average)).as_str()
         )),
         WHITE,
     )?;
@@ -267,8 +278,8 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         25,
         &line(format_args!(
             "W C0 {} C1 {}",
-            work(values.work[0]),
-            work(values.work[1])
+            work(values.work[0]).as_str(),
+            work(values.work[1]).as_str()
         )),
         WHITE,
     )?;
@@ -279,9 +290,9 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         37,
         &line(format_args!(
             "Static {} SP0 {} SP1 {}",
-            memory(values.ram),
-            memory(values.stacks[0]),
-            memory(values.stacks[1])
+            memory(values.ram).as_str(),
+            memory(values.stacks[0]).as_str(),
+            memory(values.stacks[1]).as_str()
         )),
         MUTED,
     )
@@ -352,6 +363,7 @@ impl<'a> EvidenceLines<'a> {
 
     /// Counts one row; formats `args` only with an active sink, retaining any
     /// successfully written prefix on formatting/capacity failure.
+    #[inline(never)]
     fn formatted(
         &mut self,
         args: core::fmt::Arguments<'_>,
@@ -377,6 +389,7 @@ impl<'a> EvidenceLines<'a> {
     // spaces. Fixed nibbles avoid per-byte fmt state and a second line buffer.
     /// Counts/emits `bytes` in uppercase hex; `uuid_order` reverses bytes and
     /// omits spaces. Callers use at most 16 bytes so the 50-byte row cannot fill.
+    #[inline(never)]
     fn hex_line(
         &mut self,
         bytes: &[u8],
@@ -652,6 +665,65 @@ fn reason_line(
         emit.formatted(format_args!("{title}: {}", reason.label()));
     }
 }
+/// Emits shared fields of borrowed `failure` in wire-evidence order through `emit`.
+/// Callers retain their distinct live/saved headings and connection-context policy.
+fn failure_details(
+    failure: &InspectionFailure,
+    emit: &mut EvidenceLines<'_>,
+) {
+    reason_line("Reason", failure.reason, emit);
+    if let Some(elapsed) = failure.elapsed_ms {
+        emit.formatted(format_args!("Stage elapsed: {elapsed} ms"));
+    }
+    if let Some((start, end)) = failure.range {
+        emit.formatted(format_args!("Query range {start:04X}-{end:04X}"));
+    }
+    if let Some((decl, value)) = failure.last_accepted {
+        emit.formatted(format_args!("Last accepted decl {decl:04X} / value {value:04X}"));
+    }
+    rejected_details(failure.rejected, emit);
+}
+/// Emits global `scan` counts and optional last-error fields through `emit`.
+/// `now` is live boot-relative milliseconds (age may be unavailable); None retains
+/// the saved observation timestamp. Only live rows include the batch-stop explanation.
+fn scan_details(
+    scan: &ScanDiagnostics,
+    now: Option<u64>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.formatted(format_args!("Bad batches {} / size {}", scan.total, scan.invalid_size));
+    emit.formatted(format_args!("Invalid value {}", scan.invalid_value));
+    if let Some(last) = scan.last.as_ref() {
+        match now {
+            Some(now) => {
+                if let Some(age_ms) = now.checked_sub(last.at_ms) {
+                    emit.formatted(format_args!("Last {:?} / {}s ago", last.kind, age_ms / 1000));
+                } else {
+                    emit.formatted(format_args!("Last {:?} / age unavailable", last.kind));
+                }
+            }
+            None => emit.formatted(format_args!("Last {:?} / at {} ms", last.kind, last.at_ms)),
+        }
+        emit.formatted(format_args!(
+            "Scan revision {} / entry {}/{}",
+            last.revision,
+            u16::from(last.index) + 1,
+            last.total_reports
+        ));
+        if now.is_some() {
+            emit.text("Parsing stops at the first bad entry in a batch");
+        }
+        emit.formatted(format_args!(
+            "Report bytes {} / remaining {}",
+            last.report_bytes, last.remaining_bytes
+        ));
+        match last.declared_data_len {
+            Some(length) => emit.formatted(format_args!("Declared data length: {length}")),
+            None => emit.text("Declared data length: missing header byte"),
+        }
+        emit.text("One record needs 10 + data length bytes");
+    }
+}
 /// Sends selected-peer evidence from `probe` to `emit`, computing advertisement
 /// ages at boot-relative milliseconds `now`. GATT rows require an explicit
 /// matching inspect request; they remain retained when advertisements age.
@@ -666,7 +738,11 @@ fn peer_details(
     };
     emit.text("PEER / ADVERTISEMENT EVIDENCE");
     name_details(names::device_name(d), emit);
-    emit.formatted(format_args!("{} / {}", d.peer.to_string(), d.peer.kind_label()));
+    emit.formatted(format_args!(
+        "{} / {}",
+        d.peer.to_string().as_str(),
+        d.peer.kind_label()
+    ));
     emit.formatted(format_args!(
         "Seen {}s ago / {} reports",
         d.age_ms(now) / 1000,
@@ -740,28 +816,18 @@ fn peer_details(
 /// Traverses current `probe` evidence into `emit` using snapshot milliseconds
 /// `now` for ages. Preserves peer failures separately from global scan/fault/boot
 /// evidence and makes no radio or storage requests.
+#[inline(never)]
 fn details(
     probe: &Probe,
     now: u64,
     emit: &mut EvidenceLines<'_>,
 ) {
-    if let Some(failure) = probe.failure.filter(|_| gatt_requested(probe)) {
+    if probe.identity_mode && gatt_requested(probe) {
+        identity_view::details(probe.inspection.identity.as_ref(), emit);
+    }
+    if let Some(failure) = probe.failure.as_ref().filter(|_| gatt_requested(probe)) {
         emit.formatted(format_args!("GATT FAILURE / {}", failure.stage.label()));
-        if let Some(code) = failure.reason.code() {
-            emit.formatted(format_args!("Reason: {} 0x{code:02X}", failure.reason.label()));
-        } else {
-            emit.formatted(format_args!("Reason: {}", failure.reason.label()));
-        }
-        if let Some(elapsed) = failure.elapsed_ms {
-            emit.formatted(format_args!("Stage elapsed: {elapsed} ms"));
-        }
-        if let Some((start, end)) = failure.range {
-            emit.formatted(format_args!("Query range {start:04X}-{end:04X}"));
-        }
-        if let Some((decl, value)) = failure.last_accepted {
-            emit.formatted(format_args!("Last accepted decl {decl:04X} / value {value:04X}"));
-        }
-        rejected_details(failure.rejected, emit);
+        failure_details(failure, emit);
         if let Some(error) = probe.failure_context.local_error {
             if let Some(code) = error.code() {
                 emit.formatted(format_args!("Host ingress: {} 0x{code:02X}", error.label()));
@@ -779,33 +845,10 @@ fn details(
     fault_details(Some(probe.fault_latch), emit);
     boot_details(probe.boot, emit);
     radio_clock_details(probe.radio_bus_hz, emit);
-    if let Some(last) = probe.scan_diagnostics.last {
-        let scan = probe.scan_diagnostics;
+    if probe.scan_diagnostics.last.is_some() {
         emit.text("GLOBAL HCI SCAN ERRORS / since boot");
         emit.text("Not attributed to the selected device");
-        emit.formatted(format_args!("Bad batches {} / size {}", scan.total, scan.invalid_size));
-        emit.formatted(format_args!("Invalid value {}", scan.invalid_value));
-        if let Some(age_ms) = now.checked_sub(last.at_ms) {
-            emit.formatted(format_args!("Last {:?} / {}s ago", last.kind, age_ms / 1000));
-        } else {
-            emit.formatted(format_args!("Last {:?} / age unavailable", last.kind));
-        }
-        emit.formatted(format_args!(
-            "Scan revision {} / entry {}/{}",
-            last.revision,
-            u16::from(last.index) + 1,
-            last.total_reports
-        ));
-        emit.text("Parsing stops at the first bad entry in a batch");
-        emit.formatted(format_args!(
-            "Report bytes {} / remaining {}",
-            last.report_bytes, last.remaining_bytes
-        ));
-        match last.declared_data_len {
-            Some(length) => emit.formatted(format_args!("Declared data length: {length}")),
-            None => emit.text("Declared data length: missing header byte"),
-        }
-        emit.text("One record needs 10 + data length bytes");
+        scan_details(&probe.scan_diagnostics, Some(now), emit);
     }
 }
 /// Sends sanitized chunks of optional `name` and its exact provenance to
@@ -929,6 +972,7 @@ pub fn page_count(probe: &Probe) -> usize {
 /// Traverses validated saved `view` into `emit` with frozen boot-relative
 /// timestamps, source identity and raw record bytes. Current live state never
 /// replaces capture evidence; no radio/storage operation is initiated.
+#[inline(never)]
 fn saved_details(
     view: &capture::CaptureView<'_>,
     emit: &mut EvidenceLines<'_>,
@@ -936,10 +980,17 @@ fn saved_details(
     let m = view.metadata();
     emit.text("SAVED EVIDENCE / frozen boot-relative timestamps");
     name_details(names::capture_name(view), emit);
-    emit.formatted(format_args!("{} / {}", m.peer.to_string(), m.peer.kind_label()));
+    emit.formatted(format_args!(
+        "{} / {}",
+        m.peer.to_string().as_str(),
+        m.peer.kind_label()
+    ));
     emit.formatted(format_args!("Captured at: {} ms", m.captured_at_ms));
     emit.formatted(format_args!("Request revision: {}", m.revision));
     emit.formatted(format_args!("Radio {:?} / {:?}", m.phase, m.error));
+    if m.identity_mode == Some(true) {
+        identity_view::details(m.identity.as_ref(), emit);
+    }
     fault_details(m.fault_latch, emit);
     boot_details(m.boot, emit);
     radio_clock_details(m.radio_bus_hz, emit);
@@ -977,19 +1028,9 @@ fn saved_details(
             emit.formatted(format_args!("Inspection end: {at} ms"));
         }
         link_details(m.link, m.stages, m.cleanup_complete, m.disconnect_reason, emit);
-        if let Some(failure) = m.failure {
+        if let Some(failure) = m.failure.as_ref() {
             emit.formatted(format_args!("FAILURE / {}", failure.stage.label()));
-            reason_line("Reason", failure.reason, emit);
-            if let Some(elapsed) = failure.elapsed_ms {
-                emit.formatted(format_args!("Stage elapsed: {elapsed} ms"));
-            }
-            if let Some((a, b)) = failure.range {
-                emit.formatted(format_args!("Query range {a:04X}-{b:04X}"));
-            }
-            if let Some((a, b)) = failure.last_accepted {
-                emit.formatted(format_args!("Last accepted decl {a:04X} / value {b:04X}"));
-            }
-            rejected_details(failure.rejected, emit);
+            failure_details(failure, emit);
         }
         if let Some(reason) = m.failure_context.local_error {
             reason_line("Host ingress", reason, emit);
@@ -1009,30 +1050,7 @@ fn saved_details(
         m.dropped_reports, m.malformed_reports
     ));
     emit.formatted(format_args!("Catalogue full reports {}", m.catalog_overflow_reports));
-    emit.formatted(format_args!(
-        "Bad batches {} / size {}",
-        m.scan_diagnostics.total, m.scan_diagnostics.invalid_size
-    ));
-    emit.formatted(format_args!("Invalid value {}", m.scan_diagnostics.invalid_value));
-    if let Some(last) = m.scan_diagnostics.last {
-        emit.formatted(format_args!("Last {:?} / at {} ms", last.kind, last.at_ms));
-        emit.formatted(format_args!(
-            "Scan revision {} / entry {}/{}",
-            last.revision,
-            u16::from(last.index) + 1,
-            last.total_reports
-        ));
-        emit.formatted(format_args!(
-            "Report bytes {} / remaining {}",
-            last.report_bytes, last.remaining_bytes
-        ));
-        if let Some(length) = last.declared_data_len {
-            emit.formatted(format_args!("Declared data length: {length}"));
-        } else {
-            emit.text("Declared data length: missing header byte");
-        }
-        emit.text("One record needs 10 + data length bytes");
-    }
+    scan_details(&m.scan_diagnostics, None, emit);
     emit.text("CAPTURE BUILD / configured clocks, not measured");
     emit.formatted(format_args!("Profile {:?}", m.build.profile));
     emit.formatted(format_args!("CPU {} Hz / SPI {} Hz", m.build.cpu_hz, m.build.spi_hz));
@@ -1042,7 +1060,11 @@ fn saved_details(
         "Source identity unavailable; digest bytes:"
     });
     hex(&m.build.source_digest, emit);
-    emit.text("No pairing, arbitrary reads, writes or ECU data");
+    emit.text(if m.identity_mode == Some(true) {
+        "INFO only; no pairing, ECU requests or polling"
+    } else {
+        "No pairing, arbitrary reads, writes or ECU data"
+    });
     emit.text("Enumeration does not prove adapter compatibility");
     emit.text("USB serial export retains the exact capture bytes");
 }
@@ -1060,8 +1082,11 @@ fn capture_header<D: DrawTarget<Color = Rgb565>>(
     title: &str,
     diagnostics: ProbeDiagnostics,
 ) -> Result<(), D::Error> {
-    rect(d, 0, 0, 320, 240, BG)?;
-    font_text(d, Point::new(10, 5), title, WHITE, &FONT_9X15)?;
+    {
+        let mut clipped = d.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
+        rect(&mut clipped, 0, 0, 320, 240, BG)?;
+        font_text(&mut clipped, Point::new(10, 5), title, WHITE, &FONT_9X15)?;
+    }
     telemetry(d, diagnostics)
 }
 /// Borrows the validated capture; never reconstructs or copies a complete Probe.
@@ -1076,10 +1101,10 @@ pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
     page: usize,
     diagnostics: ProbeDiagnostics,
 ) -> Result<(), D::Error> {
+    capture_header(target, "SAVED BLE CAPTURE", diagnostics)?;
     // Use the same screen target as live rendering so text/shape code is shared.
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
-    capture_header(d, "SAVED BLE CAPTURE", diagnostics)?;
     let pages = saved_page_count(view);
     let page = page.min(pages - 1);
     let slot_label = if slot < 4 {
@@ -1091,7 +1116,12 @@ pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
         d,
         10,
         61,
-        &line(format_args!("{slot_label} / read only / {}/{}", page + 1, pages)),
+        &line(format_args!(
+            "{} / read only / {}/{}",
+            slot_label.as_str(),
+            page + 1,
+            pages
+        )),
         RED,
     )?;
     let mut index = 0;
@@ -1163,9 +1193,9 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
     diagnostics: ProbeDiagnostics,
 ) -> Result<(), D::Error> {
     use capture_ui::{Operation, Screen as CaptureScreen};
+    capture_header(target, "CAPTURE SLOTS", diagnostics)?;
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
-    capture_header(d, "CAPTURE SLOTS", diagnostics)?;
     let screen = ui.screen();
     let status = match screen {
         CaptureScreen::ConfirmOverwrite => "Replace saved capture?",
@@ -1232,7 +1262,7 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
                     line(format_args!(
                         "{} {} / gen {generation}",
                         if identity.peer.random { "R" } else { "P" },
-                        identity.peer.to_string()
+                        identity.peer.to_string().as_str()
                     ))
                 } else {
                     line(format_args!("Generation {generation}"))
@@ -1279,19 +1309,29 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     probe: &Probe,
     now_ms: u64,
 ) -> Result<(), D::Error> {
+    {
+        let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
+        let d = &mut clipped;
+        d.clear(BG)?;
+        rect(d, 0, 0, 320, 3, RED)?;
+        font_text(
+            d,
+            Point::new(10, 7),
+            if probe.identity_mode { "NGM INFO" } else { "BLE PROBE" },
+            WHITE,
+            &FONT_9X15,
+        )?;
+        let active = !matches!(probe.phase, RadioPhase::Paused | RadioPhase::Fault);
+        let spin = if active {
+            ["|", "/", "-", "\\"][((now_ms / 200) % 4) as usize]
+        } else {
+            " "
+        };
+        text(d, 112, 10, &line(format_args!("{spin} {:?}", probe.phase)), WHITE)?;
+    }
+    telemetry(target, probe.diagnostics)?;
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
-    d.clear(BG)?;
-    rect(d, 0, 0, 320, 3, RED)?;
-    font_text(d, Point::new(10, 7), "BLE PROBE", WHITE, &FONT_9X15)?;
-    let active = !matches!(probe.phase, RadioPhase::Paused | RadioPhase::Fault);
-    let spin = if active {
-        ["|", "/", "-", "\\"][((now_ms / 200) % 4) as usize]
-    } else {
-        " "
-    };
-    text(d, 112, 10, &line(format_args!("{spin} {:?}", probe.phase)), WHITE)?;
-    telemetry(d, probe.diagnostics)?;
     text(
         d,
         10,
@@ -1299,7 +1339,11 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         &if probe.screen == Screen::Details
             && let Some(peer) = probe.selected_device()
         {
-            line(format_args!("{} / {}", peer.peer.to_string(), peer.peer.kind_label()))
+            line(format_args!(
+                "{} / {}",
+                peer.peer.to_string().as_str(),
+                peer.peer.kind_label()
+            ))
         } else {
             line(format_args!(
                 "{}/{} peers lost:{} full:{}",
@@ -1355,11 +1399,12 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
                 y + 16,
                 &line(format_args!(
                     "{} {} {}s",
-                    device.peer.to_string(),
+                    device.peer.to_string().as_str(),
                     device
                         .rssi
                         .map(|r| line(format_args!("{r}dBm")))
-                        .unwrap_or_else(|| line(format_args!("RSSI?"))),
+                        .unwrap_or_else(|| line(format_args!("RSSI?")))
+                        .as_str(),
                     device.age_ms(now_ms) / 1000
                 )),
                 MUTED,
@@ -1376,6 +1421,8 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
                 "{}  {}/{}",
                 if probe.selected_device().is_none() {
                     "SCAN DIAGNOSTICS"
+                } else if gatt_requested(probe) && probe.identity_mode {
+                    "GATT + ADAPTER IDENTITY"
                 } else if gatt_requested(probe) {
                     "ADVERTISEMENT + GATT"
                 } else {
@@ -1427,6 +1474,33 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
 mod tests {
     use super::*;
     extern crate std;
+    /// INFO image exposes candidate provenance and partial raw evidence without
+    /// rendering standard-only success or changing its manual request.
+    #[test]
+    fn identity_details_preserve_configured_candidate_and_partial_failure() {
+        let mut p = probe();
+        p.identity_mode = true;
+        p.input(Input::Click, 0).unwrap();
+        p.phase = RadioPhase::Paused;
+        let mut evidence = identity::Evidence::new(0);
+        evidence.fault = Some(crate::ble::canyonero::Fault {
+            stage: crate::ble::canyonero::Stage::OpeningCoc,
+            reason: crate::ble::canyonero::Reason::Transport(crate::ble::canyonero::TransportFault {
+                domain: crate::ble::canyonero::TransportDomain::L2cap,
+                code: Some(2),
+                partial_send: false,
+            }),
+            at_ms: 1,
+        });
+        p.inspection.identity = Some(evidence);
+        let rows = lines(&p);
+        assert!(rows.iter().any(|r| r == "Candidate SPSM 129 / source configured"));
+        assert!(rows.iter().any(|r| r == "Discovered SPSM: unavailable"));
+        assert!(rows.iter().any(|r| r == "Transport domain: L2CAP"));
+        assert!(rows.iter().any(|r| r == "Transport code: 0x0002"));
+        assert!(control_hints(&p, 0)[0].contains("INFO"));
+        assert_eq!(p.request.revision, 2);
+    }
     /// Checks all printable ASCII glyphs in three fonts against Text's reference rasterizer.
     #[test]
     fn single_line_glyph_rendering_matches_text_layout_for_all_printable_ascii() {
@@ -1557,13 +1631,41 @@ mod tests {
             assert_eq!(memory(Some(v)).as_str(), "--/--K");
         }
         // Worst supported values fit independent columns without clipping content.
-        assert!(line(format_args!("FPS {} AVG {}", rate(Some(999.99)), rate(Some(999.99)))).len() * 6 <= 152);
-        assert!(line(format_args!("W C0 {} C1 {}", work(Some(1000)), work(Some(1000)))).len() * 6 <= 144);
+        assert!(
+            line(format_args!(
+                "FPS {} AVG {}",
+                rate(Some(999.99)).as_str(),
+                rate(Some(999.99)).as_str()
+            ))
+            .len()
+                * 6
+                <= 152
+        );
+        assert!(
+            line(format_args!(
+                "W C0 {} C1 {}",
+                work(Some(1000)).as_str(),
+                work(Some(1000)).as_str()
+            ))
+            .len()
+                * 6
+                <= 144
+        );
         let max = memory(Some(MemoryUse {
             used: 524288,
             total: 524288,
         }));
-        assert!(line(format_args!("Static {max} SP0 {max} SP1 {max}")).len() * 6 <= 300);
+        assert!(
+            line(format_args!(
+                "Static {} SP0 {} SP1 {}",
+                max.as_str(),
+                max.as_str(),
+                max.as_str()
+            ))
+            .len()
+                * 6
+                <= 300
+        );
     }
     /// Expired advertisements suppress another Inspect without invalidating already retained GATT evidence.
     #[test]

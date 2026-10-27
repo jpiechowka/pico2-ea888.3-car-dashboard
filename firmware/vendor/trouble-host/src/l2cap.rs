@@ -205,16 +205,17 @@ impl<P: PacketPool> Drop for L2capPendingConnection<'_, P> {
 /// Configuration for an L2CAP channel.
 #[derive(Default)]
 pub struct L2capChannelConfig {
-    /// Local receive SDU byte limit, at least 23; None selects packet-pool MTU minus six.
-    /// Complete receive storage must hold the declared SDU; oversize reassembly is rejected.
+    /// Local receive SDU byte limit, at least23 and no greater than packet-pool MTU; None selects pool MTU minus six.
+    /// Opening rejects a limit that cannot fit complete owned SDU storage.
     pub mtu: Option<u16>,
     /// Local K-frame payload limit in bytes, 23..=65533 and at most pool MTU minus four.
     /// None selects pool MTU minus four; one K-frame consumes one channel credit.
     pub mps: Option<u16>,
-    /// Flow control policy for connection oriented channels.
+    /// Requested batching policy. The bounded one-credit receive window overrides thresholds whenever a waiting receiver needs progress.
     pub flow_policy: CreditFlowPolicy,
-    /// Initial receive credits advertised to the peer; zero is allowed.
-    /// None selects min(receive queue capacity, total packet-pool slots), narrowed to u16.
+    /// Requested upper bound on initial receive credits: None selects one, and positive values are capped at one.
+    /// The advertised credit is backed by a reserved pool packet; allocation failure rejects opening.
+    /// Explicit zero advertises no credit or initial lease; starting a receive may grant one after reserving capacity.
     pub initial_credits: Option<u16>,
 }
 
@@ -256,8 +257,8 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Sends SDU bytes `buf` through originating `stack`; returns Ok after controller writes, not peer delivery.
     /// Allocates one scratch packet; returns OutOfMemory, size/channel errors or controller errors as applicable.
-    /// Waits for channel/ACL credits without a deadline. Cancellation/error may leave a transmitted prefix;
-    /// unused grants are refunded but completed fragments cannot be recalled or blindly retried.
+    /// Waits for one channel credit per K-frame and ACL capacity without a deadline; segmentation also respects local scratch capacity.
+    /// The mutable writer serializes whole SDUs. Cancellation/error after controller submission starts closes the channel; queued bytes cannot be recalled.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn send<T: Controller>(
         &mut self,
@@ -275,7 +276,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Attempts SDU bytes `buf` through originating `stack`, returning Ok after all controller writes.
     /// Returns pool/size/channel/controller errors, Busy for backpressure, or NoPermits for impossible ACL demand.
-    /// A controller error/Busy can follow a transmitted prefix; unused credits are refunded, not sent data.
+    /// A controller error/Busy after submission starts closes the channel; unused credits are refunded, but queued data cannot be recalled.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub fn try_send<T: Controller + blocking::Controller>(
         &mut self,
@@ -292,7 +293,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Receives via originating `stack`, copies min(SDU length, `buf` length) bytes and returns that copied count.
     /// A short buffer silently discards the SDU tail; untouched output tail remains unchanged. Use receive_sdu to retain all bytes.
-    /// Waits without a deadline. After dequeue, credit-signaling error/cancellation loses the SDU and may leave buf modified.
+    /// Waits without a deadline and replenishes backed credits during assembly. No await follows dequeue/copy; canceling an in-flight credit submission closes the channel.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn receive<T: Controller>(
         &mut self,
@@ -303,8 +304,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack.host().channels().receive(self.index, buf, stack.host()).await
     }
 
-    /// Returns the next owned SDU via originating `stack` after receive-credit processing.
-    /// Closed-channel or signaling errors are returned. Cancellation after dequeue drops the SDU; before dequeue it consumes none.
+    /// Returns the next complete owned SDU via originating `stack`, replenishing backed credits while assembly is incomplete.
+    /// Closed-channel, capacity and signaling errors are returned. No await follows dequeue; cancellation during credit submission closes the channel.
+    /// Drop returned SDUs promptly to release the shared packet pool. Exhaustion before a new grant closes without advertising unbacked capacity.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn receive_sdu<T: Controller>(
         &mut self,
@@ -412,7 +414,7 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
 
     /// Receives via originating `stack`, copies min(SDU length, `buf` length) bytes and returns that copied count.
     /// A short buffer silently discards the SDU tail; untouched output tail remains unchanged. Use receive_sdu to retain all bytes.
-    /// Waits without a deadline. After dequeue, credit-signaling error/cancellation loses the SDU and may leave buf modified.
+    /// Waits without a deadline and replenishes backed credits during assembly. No await follows dequeue/copy; canceling an in-flight credit submission closes the channel.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn receive<T: Controller>(
         &mut self,
@@ -423,8 +425,9 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         stack.host().channels().receive(self.index, buf, stack.host()).await
     }
 
-    /// Returns the next owned SDU via originating `stack` after receive-credit processing.
-    /// Closed-channel or signaling errors are returned. Cancellation after dequeue drops the SDU; before dequeue it consumes none.
+    /// Returns the next complete owned SDU via originating `stack`, replenishing backed credits while assembly is incomplete.
+    /// Closed-channel, capacity and signaling errors are returned. No await follows dequeue; cancellation during credit submission closes the channel.
+    /// Drop returned SDUs promptly to release the shared packet pool. Exhaustion before a new grant closes without advertising unbacked capacity.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn receive_sdu<T: Controller>(
         &mut self,
@@ -476,8 +479,8 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
 
     /// Sends SDU bytes `buf` through originating `stack`; returns Ok after controller writes, not peer delivery.
     /// Allocates one scratch packet; returns OutOfMemory, size/channel errors or controller errors as applicable.
-    /// Waits for channel/ACL credits without a deadline. Cancellation/error may leave a transmitted prefix;
-    /// unused grants are refunded but completed fragments cannot be recalled or blindly retried.
+    /// Waits for one channel credit per K-frame and ACL capacity without a deadline; segmentation also respects local scratch capacity.
+    /// The mutable writer serializes whole SDUs. Cancellation/error after controller submission starts closes the channel; queued bytes cannot be recalled.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub async fn send<T: Controller>(
         &mut self,
@@ -495,7 +498,7 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
 
     /// Attempts SDU bytes `buf` through originating `stack`, returning Ok after all controller writes.
     /// Returns pool/size/channel/controller errors, Busy for backpressure, or NoPermits for impossible ACL demand.
-    /// A controller error/Busy can follow a transmitted prefix; unused credits are refunded, not sent data.
+    /// A controller error/Busy after submission starts closes the channel; unused credits are refunded, but queued data cannot be recalled.
     /// Returns InvalidValue before mutation when stack belongs to a different host.
     pub fn try_send<T: Controller + blocking::Controller>(
         &mut self,

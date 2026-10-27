@@ -272,9 +272,10 @@ async fn probe_supervisor_task_run() {
                 RecoveryCause::RadioStalled
             });
             defmt::error!(
-                "Probe watchdog recovery: progress={:?} radio_alive={} radio_ready={} radio_fatal={} display_fatal={} \
-                 requested={}",
-                defmt::Debug2Format(&progress_result),
+                "Probe watchdog recovery: progress_ok={} progress_fault={=str} radio_alive={} radio_ready={} \
+                 radio_fatal={} display_fatal={} requested={}",
+                progress_result.is_ok(),
+                progress_result.err().map_or("None", |fault| fault.label()),
                 radio_alive,
                 radio_ready,
                 radio_fatal,
@@ -305,10 +306,7 @@ async fn probe_supervisor_task_run() {
             };
             if let Err(error) = result {
                 watchdog.record_failure(error.into());
-                defmt::error!(
-                    "probe.flash health {:?}; watchdog recovery",
-                    defmt::Debug2Format(&error)
-                );
+                defmt::error!("probe.flash health {=str}; watchdog recovery", error.label());
                 failed = true;
             }
             if !failed && monitor.feeding_allowed() {

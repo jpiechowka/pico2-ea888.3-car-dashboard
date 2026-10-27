@@ -450,3 +450,96 @@ fn timeout_status_tracks_actual_owner_completion() {
         );
     }
 }
+
+/// Larger host surface that rejects writes outside the panel and injects one drawing failure.
+struct BoundedFailureTarget {
+    /// Number of accepted pixel writes, including overdraw.
+    written: usize,
+    /// Reject the next pixel when this many writes have succeeded.
+    fail_after: usize,
+    /// A renderer must propagate the first error without any later target call.
+    failed: bool,
+}
+
+impl OriginDimensions for BoundedFailureTarget {
+    /// Returns an intentionally larger surface so panel clipping must come from the renderer.
+    fn size(&self) -> Size { Size::new(400, 300) }
+}
+
+impl DrawTarget for BoundedFailureTarget {
+    /// Native utility pixel format.
+    type Color = Rgb565;
+    /// Unit marks the injected drawing error; no hardware error interpretation is implied.
+    type Error = ();
+
+    /// Admits `pixels` inside320x240, returning Err at `fail_after` with earlier writes retained.
+    /// Panics on a stray coordinate or any target call after the first returned error.
+    fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
+        &mut self,
+        pixels: I,
+    ) -> Result<(), Self::Error> {
+        assert!(!self.failed, "drawing continued after a target error");
+        for Pixel(point, _) in pixels {
+            assert!((0..320).contains(&point.x) && (0..240).contains(&point.y));
+            if self.written == self.fail_after {
+                self.failed = true;
+                return Err(());
+            }
+            self.written += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Live/saved/slot rendering retains panel clipping on a larger target and stops on draw failure.
+#[test]
+fn all_screens_clip_larger_targets_and_propagate_first_draw_error() {
+    let probe = populated();
+    let mut bytes = [0; 8192];
+    let len = capture::encode(
+        &probe,
+        capture::BuildIdentity {
+            source_digest: [0; 32],
+            cpu_hz: 150_000_000,
+            spi_hz: 37_500_000,
+            profile: capture::BuildProfile::Stock,
+            source_identity_available: false,
+        },
+        1,
+        &mut bytes,
+    )
+    .unwrap();
+    let mut decoder = capture::Decoder::new();
+    let saved = decoder.decode(&bytes[..len]).unwrap();
+    for screen in 0..3 {
+        let draw = |target: &mut BoundedFailureTarget| {
+            match screen {
+                0 => render(target, &probe, 0),
+                1 => render_saved(target, &saved, 0, 0, probe.diagnostics),
+                _ => render_slots(target, &capture_ui::CaptureUi::new(), probe.diagnostics),
+            }
+        };
+        let mut complete = BoundedFailureTarget {
+            written: 0,
+            fail_after: usize::MAX,
+            failed: false,
+        };
+        draw(&mut complete).unwrap();
+        for fail_after in [
+            0,
+            10,
+            5000,
+            complete.written / 2,
+            complete.written - 1,
+            complete.written,
+        ] {
+            let mut target = BoundedFailureTarget {
+                written: 0,
+                fail_after,
+                failed: false,
+            };
+            assert_eq!(draw(&mut target).is_err(), fail_after < complete.written);
+            assert_eq!(target.written, fail_after);
+        }
+    }
+}

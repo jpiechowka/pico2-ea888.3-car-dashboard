@@ -20,6 +20,7 @@ pub async fn probe_ui_task_run() {
     static MODEL: StaticCell<Probe> = StaticCell::new();
     let model = MODEL.init_with(Probe::new);
     model.boot = Some(bridge::BOOT.receive().await);
+    model.identity_mode = crate::tool_kind() == crate::ToolKind::NgmIdentity;
     model.radio_bus_hz = dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq());
     // Sole UI-owner state lives in place, like MODEL. Keeping these larger
     // values out of the async future avoids whole-future construction copies.
@@ -32,20 +33,19 @@ pub async fn probe_ui_task_run() {
     let mut bytes = Some(storage::ui_buffer());
     let mut length = 0;
     let mut last_frame = 0;
-    let start = metrics::snapshot();
+    let start = metrics::snapshot_into(&mut model.diagnostics);
     let mut fps = CompletionRate::new(start.at_us, start.completed);
     let mut last_resume = None;
     loop {
         maintenance::UI_QUIET.store(maintenance::FRAME_INHIBIT.load(Ordering::SeqCst), Ordering::SeqCst);
         maintenance::ui_boundary(&mut last_resume).await;
-        let snapshot = metrics::snapshot();
+        let snapshot = metrics::snapshot_into(&mut model.diagnostics);
         let now = snapshot.at_us / 1000;
         if fps.sample(snapshot.at_us, snapshot.completed).is_err() {
             bridge::STATUS.record(crate::status::Fault::Timing);
             defmt::warn!("probe.metrics completion timeline reset");
             fps = CompletionRate::new(snapshot.at_us, snapshot.completed);
         }
-        model.diagnostics = snapshot.values;
         model.diagnostics.fps = fps.latest(snapshot.at_us);
         storage::UI_REPLY.consume(|reply| {
             if let Some(returned) = reply.buffer.take() {
@@ -207,7 +207,13 @@ fn action_apply(
             (id, storage::UiOperation::List, true)
         }
         cap::Action::Load { id, slot } => (id, storage::UiOperation::Load(slot), true),
-        cap::Action::Reset { id, slot } => (id, storage::UiOperation::Reset(slot), false),
+        cap::Action::Reset { id, slot } => {
+            if !matches!(model.phase, RadioPhase::Paused | RadioPhase::Scanning) {
+                bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Busy));
+                return;
+            }
+            (id, storage::UiOperation::Reset(slot), false)
+        }
         cap::Action::Save {
             id,
             slot,
@@ -237,7 +243,7 @@ fn action_apply(
                     )
                 }
                 Err(e) => {
-                    defmt::warn!("probe.capture encode {:?}", defmt::Debug2Format(&e));
+                    defmt::warn!("probe.capture encode {=str}", e.label());
                     bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Changed));
                     return;
                 }

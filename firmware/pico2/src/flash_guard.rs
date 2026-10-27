@@ -10,7 +10,7 @@ use embassy_rp::flash::{Blocking, Flash};
 use embassy_rp::peripherals::FLASH;
 use embassy_rp::{Peri, pac, rom_data};
 
-#[derive(Debug)]
+#[derive(Debug, defmt::Format)]
 /// Rejected precondition or underlying HAL failure; rejection does not authorize retry without rechecking.
 pub enum Error {
     /// Unoptimized builds have no qualified RAM flash-operation artifact.

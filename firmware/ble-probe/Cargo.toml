@@ -3,6 +3,8 @@ name = "dashboard-ble-probe"
 version = "0.1.0"
 edition = "2024"
 description = "Standalone Pico 2 W BLE discovery and manual GATT inspection"
+autolib = false
+autobins = false
 
 [[bin]]
 name = "ble-probe"
@@ -10,8 +12,16 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "ngm-identity"
+path = "src/bin/ngm_identity.rs"
+required-features = ["ngm-identity"]
+test = false
+bench = false
+
 [features]
 default = []
+ngm-identity = []
 cpu280-spi70-1v30 = ["dashboard-pico2/cpu280-spi70-1v30"]
 
 [dependencies]

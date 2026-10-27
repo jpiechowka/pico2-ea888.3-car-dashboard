@@ -160,6 +160,9 @@ pub enum Screen {
 }
 /// Single-owner discovery state shared by firmware controls and host tests/rendering.
 pub struct Probe {
+    /// True only for the separately selected INFO-only image. Display/evidence policy;
+    /// this flag cannot authorize I/O, select a peer or qualify an adapter response.
+    pub identity_mode: bool,
     /// Bounded peers in first-admission order.
     pub catalog: Catalog,
     /// Current explicit inspection or empty fresh-advertisement view.
@@ -206,6 +209,7 @@ impl Probe {
     /// no failures, and no fabricated hardware measurements. Performs no radio I/O.
     pub const fn new() -> Self {
         Self {
+            identity_mode: false,
             catalog: Catalog::new(),
             inspection: Inspection::new(),
             selected: 0,
@@ -361,6 +365,7 @@ impl Probe {
     /// Late local/abnormal disconnect evidence revokes completion while retaining the first
     /// failure. Cleanup acknowledgment is separate; admitted GAP names may be cached only
     /// for the exact requested peer with a non-reversing inspection end timestamp.
+    #[inline(always)]
     pub fn event(
         &mut self,
         event: Event,

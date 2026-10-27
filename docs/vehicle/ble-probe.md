@@ -7,6 +7,13 @@ adapter evidence before attempting protocol integration. Four explicitly saved
 captures survive power removal and can be viewed on the display or exported later
 over normal USB. Photographs remain useful; the saved binary is the lossless record.
 
+This guide's connection/read policy describes the **`ble-probe` binary**. The same
+package also has a separate [NGM INFO-only image](ngm-identity.md), with distinct
+entrypoint, title, USB product and linked tool marker. Enabling its Cargo feature
+does not change the ordinary probe's standard-read allowlist or send INFO. Both
+share controls, capture storage/export and diagnostics; default firmware builds
+still select the dashboard.
+
 ## Use it in the car
 
 1. Power the Pico through USB. The display starts at full brightness and scans.
@@ -192,7 +199,7 @@ routes retain Booting, Supervised or the first explicit supervisor failure in
 watchdog scratch, with a checksum and commit marker. This is the last observation,
 not a proven root cause, exact reset time or image identity. Power removal can
 erase it. Y recovery acknowledges red while keeping the immutable boot evidence
-inspectable; v4 captures freeze it. No timeout or watchdog deadline was relaxed.
+inspectable; v4 and newer captures freeze it. No timeout or watchdog deadline was relaxed.
 [Source review, limits and next physical checks](../validation/probe-slot3-discovery-2026-10-20.md).
 The [slot-4 follow-up](../validation/probe-slot4-followup-2026-10-21.md)
 checks the exact A2 boot ROM/picotool path and separates a successful saved TV
@@ -231,7 +238,7 @@ The displayed rejected value field is explicitly **unvalidated**, and is
 unavailable when fewer than three bytes arrived. No later descriptor or standard
 read is attempted after this rejection. Earlier valid records remain inspectable
 and saveable, including the rejection context introduced in payload v2 and
-retained in current payload v4.
+retained in current payload v5.
 Lower-layer decoding can fail before a tuple reaches that guard; those failures
 retain their available error context and leave rejected bytes absent.
 
@@ -446,6 +453,14 @@ the source inventory and checks the linked bytes against the manifest; that dige
 does not mean firmware has verified its own image. It never accesses or flashes a device. Failed
 attempts remain for diagnosis; use a new name after repairing the cause.
 
+The current utility manifest is **schema 2**. Its `tool: "ble-probe"` must match
+the one-byte `BLE_PROBE_TOOL_KIND` symbol in `.probe_tool` (0 for standard probe,
+1 for the separate identity tool); filenames alone do not select policy. The
+32-byte source marker remains separately checked. Older schema-1 receipts require
+their historical checker and do not establish admission of newly built images.
+Current v5 capture and shared-source binary changes require fresh linked receipts;
+historical memory figures below are not current-image admission.
+
 For a developer compile only, from `firmware/`:
 
 ```text
@@ -596,7 +611,8 @@ Regenerate the lossless RGB captures from `host/`:
 cargo run --locked --example ble_probe_gallery -- target/ble-probe-gallery
 ```
 
-The generator writes 57 PPM files. To update the PNG documentation copies, use Python
+The generator writes synthetic PPM scenes, including identity/legacy boundary pages.
+To update the PNG documentation copies, use Python
 with Pillow installed, from the same `host/` directory:
 
 ```python
@@ -620,6 +636,12 @@ the argument-free measured task futures avoid duplicate stack construction.
 Explicit local saves/reset use bounded flash maintenance; USB list/export is
 read-only. There are no ADC/VSYS reads or extra framebuffers. Rendering targets 20 software updates/s; this is
 neither measured device FPS nor panel scanout.
+
+Connection and journal mutation now share an exclusive operation gate. Save and
+Reset cannot race a selected-peer connection; mutation retains its lease through
+all page restoration, and inspection retains ownership through acknowledged link
+cleanup. Returning from a page does not release an unfinished storage operation.
+The same rule covers the separate identity tool's CoC lifetime.
 
 The two 153600-byte buffers circulate through FREE/render/READY/transfer/FREE.
 Transfer failure retains the buffer until watchdog reset; SPI/PIO/I2C futures

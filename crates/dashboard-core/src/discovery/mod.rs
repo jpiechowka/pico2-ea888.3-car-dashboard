@@ -15,6 +15,8 @@ mod catalog;
 mod failure;
 /// Shared fault-bit assignments and LED priority classification.
 mod faults;
+/// Bounded explicitly requested NGM identity evidence, separate from standard reads.
+pub mod identity;
 /// GATT inventory admission and standard-information read allowlist.
 mod inspection;
 /// Generation-checked discovery controls and owner events.

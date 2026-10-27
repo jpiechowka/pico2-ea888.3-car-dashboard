@@ -50,6 +50,8 @@ _stext = ALIGN(ADDR(.start_block) + SIZEOF(.start_block), ALIGNOF(.text));
 
 SECTIONS {
     .probe_identity : ALIGN(4) { KEEP(*(.probe_identity)); } > FLASH
+    /* Executable policy is independent of source identity and optional features. */
+    .probe_tool : ALIGN(1) { KEEP(*(.probe_tool)); } > FLASH
     /* ### Picotool 'Binary Info' Entries
      *
      * Picotool looks through this block (as we have pointers to it in our

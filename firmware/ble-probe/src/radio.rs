@@ -37,13 +37,13 @@ use trouble_host::prelude::*;
 use crate::bridge;
 use crate::errors::failure_reason;
 /// External HCI controller with five command slots over the retained CYW BT driver.
-type RadioController = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
+pub(crate) type RadioController = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
 /// Compile-time bounded Trouble packet pool used by this image.
-type Pool = DefaultPacketPool;
+pub(crate) type Pool = DefaultPacketPool;
 /// Borrowed host stack with one admitted connection and bounded channels.
-type RadioStack<'a> = Stack<'a, RadioController, Pool>;
+pub(crate) type RadioStack<'a> = Stack<'a, RadioController, Pool>;
 /// GATT inventory client with at most 24 cached services.
-type Client<'a> = GattClient<'a, RadioController, Pool, 24>;
+pub(crate) type Client<'a> = GattClient<'a, RadioController, Pool, 24>;
 /// True only inside a completed CYW transaction boundary, including parked time.
 static BUS_IDLE: AtomicBool = AtomicBool::new(false);
 /// Returns whether the retained bus owner is at its quiescent maintenance hook;
@@ -79,7 +79,7 @@ pub fn poll_owner<F: Future>(
 use crate::reports::Reports;
 /// Logs and reliably queues `phase`/`error` under `revision`; queue backpressure
 /// may suspend publication but does not itself change the hardware operation.
-async fn state(
+pub(crate) async fn state(
     revision: u32,
     phase: RadioPhase,
     error: ProbeError,
@@ -114,19 +114,21 @@ async fn state(
 }
 /// Waits until the UI operation no longer has `revision`, checking every 10 ms.
 /// This is generation cancellation evidence, not a radio cleanup acknowledgement.
-async fn changed(revision: u32) {
+pub(crate) async fn changed(revision: u32) {
     while bridge::request().revision == revision {
         Timer::after_millis(10).await;
     }
 }
 /// Never returns: latches fatal radio state for `error`, publishes it, then waits forever.
 /// Clears ready and preserves the outer CYW owner until independent watchdog reset.
-async fn fault(error: ProbeError) -> ! {
-    bridge::RADIO_FATAL.store(true, Ordering::Release);
-    bridge::RADIO_READY.store(false, Ordering::Release);
+pub(crate) async fn fault(error: ProbeError) -> ! {
+    latch_fault();
     state(bridge::request().revision, RadioPhase::Fault, error).await;
     core::future::pending().await
 }
+/// Latches fatal radio visibility before reliable publication can wait for queue capacity.
+/// The caller must retain the operation/resource owners and enter the terminal fault path.
+pub(crate) fn latch_fault() { bridge::latch_radio_fault(); }
 /// Consumes core0 radio `resources`, initializes CYW and joins the permanent bus
 /// runner with host work. Never returns/cancels DMA; fatal host outcomes retain
 /// this bus owner. Boundary hooks publish progress and park only after completed
@@ -191,13 +193,16 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
     let mut runner = stack.runner();
     let active_inspection = Cell::new(None);
     let outcome = {
-        let hci = pin!(runner.run_with_handler(&reports));
+        let hci = pin!(crate::session::latch_completion(
+            runner.run_with_handler(&reports),
+            latch_fault
+        ));
         let work = pin!(operations(&stack, &reports, &active_inspection));
         select(hci, work).await
     };
     match outcome {
         Either::First(result) => {
-            defmt::warn!("Probe HCI runner stopped: {:?}", defmt::Debug2Format(&result));
+            defmt::warn!("Probe HCI runner stopped: {:?}", result);
             if let Some(revision) = active_inspection.get() {
                 let reason = result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected);
                 failed(revision, InspectionFailure::new(FailureStage::ClientTask, reason)).await;
@@ -296,8 +301,23 @@ async fn operations(
                 }
             }
             Action::Inspect(peer) => {
+                let Some(lease) = bridge::OPERATION_GATE.connection() else {
+                    // A previously admitted journal mutation may span several
+                    // page/restoration cycles. Re-read generation before retry.
+                    Timer::after_millis(5).await;
+                    continue;
+                };
                 active_inspection.set(Some(request.revision));
-                inspect_peer(stack, &mut central, request, peer, active_inspection).await;
+                let mut inspection = pin!(crate::inspect_selected_peer(
+                    stack,
+                    &mut central,
+                    request,
+                    peer,
+                    active_inspection,
+                ));
+                // Retain the same pinned owner, with a bounded poll-call boundary.
+                core::future::poll_fn(|cx| poll_owner(inspection.as_mut(), cx)).await;
+                drop(lease);
                 // Successful, canceled and failed inspections never auto-retry.
                 changed(request.revision).await;
             }
@@ -306,7 +326,7 @@ async fn operations(
 }
 /// Logs bounded `failure` context and reliably publishes it under `revision`;
 /// retained partial inventory is left intact and no retry/security escalation occurs.
-async fn failed(
+pub(crate) async fn failed(
     revision: u32,
     failure: InspectionFailure,
 ) {
@@ -336,7 +356,7 @@ async fn failure_context(
 }
 /// Returns currently retained local failure and controller disconnect reason from
 /// `connection`; absence stays unavailable and no new HCI/ATT request is issued.
-fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureContext {
+pub(crate) fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureContext {
     ConnectionFailureContext {
         local_error: connection
             .local_disconnect_error()
@@ -349,39 +369,17 @@ fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureCon
 /// and 30-second inventory bounds race generation change; losing futures drop
 /// before cleanup. Rejects peer mismatch and always disconnects after inventory.
 /// Valid partial results remain evidence; completion does not imply proprietary access.
-async fn inspect_peer(
+/// Only the standard binary aliases this entrypoint, even with identity features.
+/// The identity binary aliases its own inspector without an alternate async state.
+pub async fn inspect_peer(
     stack: &RadioStack<'_>,
     central: &mut Central<'_, RadioController, Pool>,
     request: Request,
     peer: Peer,
     active_inspection: &Cell<Option<u32>>,
 ) {
-    let mut address = peer.address;
-    address.reverse();
-    let peers = [Address::new(
-        if peer.random {
-            AddrKind::RANDOM
-        } else {
-            AddrKind::PUBLIC
-        },
-        BdAddr::new(address),
-    )];
-    let config = ConnectConfig {
-        scan_config: ScanConfig {
-            filter_accept_list: &peers,
-            interval: Duration::from_millis(100),
-            window: Duration::from_millis(50),
-            ..Default::default()
-        },
-        connect_params: RequestedConnParams {
-            min_connection_interval: Duration::from_millis(15),
-            max_connection_interval: Duration::from_millis(30),
-            max_latency: 0,
-            supervision_timeout: Duration::from_secs(4),
-            min_event_length: Duration::from_secs(0),
-            max_event_length: Duration::from_secs(0),
-        },
-    };
+    let peers = [selected_address(peer)];
+    let config = selected_config(&peers);
     state(request.revision, RadioPhase::Connecting, ProbeError::None).await;
     let connect_started = Instant::now();
     let connected = {
@@ -503,6 +501,41 @@ async fn inspect_peer(
         }
     }
 }
+/// Returns selected `peer` in the controller's little-endian address representation,
+/// preserving its public/random type. No address is recovered from names or saved handles.
+pub(crate) fn selected_address(peer: Peer) -> Address {
+    let mut address = peer.address;
+    address.reverse();
+    Address::new(
+        if peer.random {
+            AddrKind::RANDOM
+        } else {
+            AddrKind::PUBLIC
+        },
+        BdAddr::new(address),
+    )
+}
+
+/// Returns the common bounded connection timing/scan policy restricted to `peers`.
+/// Caller retains the address slice through connection completion or cancellation.
+pub(crate) fn selected_config(peers: &[Address]) -> ConnectConfig<'_> {
+    ConnectConfig {
+        scan_config: ScanConfig {
+            filter_accept_list: peers,
+            interval: Duration::from_millis(100),
+            window: Duration::from_millis(50),
+            ..Default::default()
+        },
+        connect_params: RequestedConnParams {
+            min_connection_interval: Duration::from_millis(15),
+            max_connection_interval: Duration::from_millis(30),
+            max_latency: 0,
+            supervision_timeout: Duration::from_secs(4),
+            min_event_length: Duration::from_secs(0),
+            max_event_length: Duration::from_secs(0),
+        },
+    }
+}
 /// Returns a static bounded stage label for `error` without formatting payload data.
 fn error_label(error: ProbeError) -> &'static str {
     match error {
@@ -519,7 +552,7 @@ fn error_label(error: ProbeError) -> &'static str {
     }
 }
 /// Returns elapsed milliseconds since monotonic `started`, saturated to u32::MAX.
-fn elapsed_ms(started: Instant) -> u32 {
+pub(crate) fn elapsed_ms(started: Instant) -> u32 {
     Instant::now()
         .duration_since(started)
         .as_millis()
@@ -528,7 +561,7 @@ fn elapsed_ms(started: Instant) -> u32 {
 /// Awaits `future` for three seconds and returns its value or mapped failure
 /// carrying `stage` and elapsed milliseconds. Timeout drops the ATT future;
 /// enclosing inspection must clean up this bearer rather than issuing another request.
-async fn att<T, E>(
+pub(crate) async fn att<T, E>(
     stage: FailureStage,
     future: impl Future<Output = Result<T, BleHostError<E>>>,
 ) -> Result<T, InspectionFailure> {
@@ -557,25 +590,28 @@ async fn inspect(
     connect_elapsed_ms: u32,
     mtu_ready: &Cell<bool>,
 ) -> Result<bool, InspectionFailure> {
+    let mut client_slot = None;
     crate::session::inspect_with_events(
-        pin!(att(FailureStage::Mtu, pin!(Client::new(stack, connection)))),
-        |client| {
-            async move {
-                mtu_ready.set(true);
-                link_info(connection, revision, connected_at_ms, connect_elapsed_ms, true).await;
-                let outcome = {
-                    let work = pin!(crate::inventory::inventory(&client, revision, &bridge::emit_event));
-                    let task = pin!(client.task());
-                    select(work, task).await
-                };
-                match outcome {
-                    Either::First(result) => result,
-                    Either::Second(result) => {
-                        Err(InspectionFailure::new(
-                            FailureStage::ClientTask,
-                            result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected),
-                        ))
-                    }
+        pin!(att(
+            FailureStage::Mtu,
+            pin!(Client::new_into(stack, connection, &mut client_slot))
+        )),
+        async |client| {
+            let client = *client;
+            mtu_ready.set(true);
+            link_info(connection, revision, connected_at_ms, connect_elapsed_ms, true).await;
+            let outcome = {
+                let work = pin!(crate::inventory::inventory(client, revision, &bridge::emit_event));
+                let task = pin!(client.task());
+                select(work, task).await
+            };
+            match outcome {
+                Either::First(result) => result,
+                Either::Second(result) => {
+                    Err(InspectionFailure::new(
+                        FailureStage::ClientTask,
+                        result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected),
+                    ))
                 }
             }
         },
@@ -586,7 +622,7 @@ async fn inspect(
 /// Publishes local `connection` parameters under `revision`, retaining supplied
 /// `connected_at_ms`/`connect_elapsed_ms`. `mtu_ready` controls whether ATT MTU is
 /// available; timing fields saturate to u32 microseconds and issue no radio request.
-async fn link_info(
+pub(crate) async fn link_info(
     connection: &Connection<'_, Pool>,
     revision: u32,
     connected_at_ms: u64,
@@ -610,7 +646,7 @@ async fn link_info(
 /// Consumes events from `connection`, rejects parameter-change requests through
 /// `stack`, and returns the first disconnect or event-operation failure. Runs
 /// during MTU startup as well as inventory; does not request pairing.
-async fn connection_events(
+pub(crate) async fn connection_events(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
 ) -> InspectionFailure {
@@ -649,19 +685,14 @@ impl crate::inventory::InventoryClient for Client<'_> {
     /// Locked-client service handle retaining bounded range/UUID metadata.
     type Service = ServiceHandle;
 
-    /// Replaces `output` only after complete locked-client discovery succeeds.
-    /// Returns mapped host failure, preserving prior output on error.
+    /// Discovers directly into `output`, clearing it on first poll. Returns unit
+    /// after complete discovery or a mapped host failure; failed/canceled output
+    /// may retain an unpublished prefix. Inventory publishes only after success.
     async fn services(
         &self,
         output: &mut Vec<ServiceHandle, 24>,
     ) -> Result<(), FailureReason> {
-        match Client::services(self).await {
-            Ok(services) => {
-                *output = services;
-                Ok(())
-            }
-            Err(error) => Err(failure_reason(error)),
-        }
+        Client::services_into(self, output).await.map_err(failure_reason)
     }
 
     /// Enumerates `uuid` in inclusive `start`..=`end` through the locked client,

@@ -93,6 +93,7 @@ class ProbeLayoutRecord(TypedDict):
     program: ProgramRecord
     capture_reservation: ReservationRecord
     source_identity: IdentityRecord
+    tool: str
     reviewed_flash_lockout: bool
 
 
@@ -146,34 +147,35 @@ def source_digest(sources: object) -> str:
     )
 
 
-def linked_identity(elf: InspectableImage, expected: str | None = None) -> IdentityRecord:
+def _linked_marker(
+    elf: InspectableImage, section_name: str, symbol_name: str, length: int
+) -> tuple[bytes, int]:
+    """Read one exact allocated RO marker with a unique flash LOAD mapping."""
     sections = [
-        (index, section)
-        for index, name, section in elf.section_entries
-        if name == ".probe_identity"
+        (index, section) for index, name, section in elf.section_entries if name == section_name
     ]
     require(len(sections) == 1, "missing or ambiguous probe identity section")
     index, section = sections[0]
     require(
         # SHF_GNU_RETAIN only prevents linker garbage collection. Rust #[used]
         # can emit it; allocation/read-only/non-executable requirements remain.
-        section[1] == 1 and section[2] in (2, 0x200002) and section[5] == 32,
-        "probe identity must be 32 read-only allocated bytes",
+        section[1] == 1 and section[2] in (2, 0x200002) and section[5] == length,
+        "probe identity must be exact-size read-only allocated bytes",
     )
-    symbols = [row for row in elf.symbol_entries if row[0] == "BLE_PROBE_SOURCE_DIGEST"]
+    symbols = [row for row in elf.symbol_entries if row[0] == symbol_name]
     require(len(symbols) == 1, "missing or ambiguous probe identity symbol")
     _, address, size, info, symbol_index = symbols[0]
     require(
-        address == section[3] and size == 32 and info & 15 == 1 and symbol_index == index,
+        address == section[3] and size == length and info & 15 == 1 and symbol_index == index,
         "probe identity symbol mismatch",
     )
-    require(section[4] + 32 <= len(elf.data), "truncated probe identity")
+    require(section[4] + length <= len(elf.data), "truncated probe identity")
     mappings = [
         physical + address - virtual
         for kind, offset, virtual, physical, filesz, memsz, flags, alignment in elf.segments
         if kind == 1
         and virtual <= address
-        and address + 32 <= virtual + filesz
+        and address + length <= virtual + filesz
         and offset + address - virtual == section[4]
         and filesz <= memsz
         and offset + filesz <= len(elf.data)
@@ -181,10 +183,24 @@ def linked_identity(elf: InspectableImage, expected: str | None = None) -> Ident
     require(
         len(mappings) == 1
         and mappings[0] == address
-        and FLASH_START <= address < address + 32 <= CAPTURES_START,
+        and FLASH_START <= address < address + length <= CAPTURES_START,
         "probe identity needs a unique program flash LOAD mapping",
     )
-    actual = elf.data[section[4] : section[4] + 32]
+    actual = elf.data[section[4] : section[4] + length]
+    return actual, address
+
+
+def linked_tool(elf: InspectableImage, expected: str | None = None) -> str:
+    """Reject missing, unknown or mismatched executable policy, including in CI."""
+    raw, _ = _linked_marker(elf, ".probe_tool", "BLE_PROBE_TOOL_KIND", 1)
+    require(raw[0] in (0, 1), "unknown linked utility")
+    tool = ("ble-probe", "ngm-identity")[raw[0]]
+    require(expected is None or expected == tool, "linked utility differs from manifest")
+    return tool
+
+
+def linked_identity(elf: InspectableImage, expected: str | None = None) -> IdentityRecord:
+    actual, address = _linked_marker(elf, ".probe_identity", "BLE_PROBE_SOURCE_DIGEST", 32)
     if expected is not None:
         require(
             type(expected) is str
@@ -309,7 +325,7 @@ def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
         address & ~1
         for name, (address, _, _) in elf.functions.items()
         if name == "probe_core1"
-        or re.fullmatch(r"_RNvCs[A-Za-z0-9]+_9ble_probe11probe_core1", name)
+        or re.fullmatch(r"_RNvCs[A-Za-z0-9]+_(?:9ble_probe|12ngm_identity)11probe_core1", name)
     }
     require(len(entry_addresses) == 1, "missing or ambiguous core1 render entry")
     # Include the matching executor specialization, FnOnce shim and core startup
@@ -331,7 +347,17 @@ def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
     radio_addresses = {
         address & ~1
         for name, (address, _, _) in elf.functions.items()
-        if any(token in name for token in ("5radio", "cyw43", "trouble_host", "bt_hci"))
+        if any(
+            token in name
+            for token in (
+                "5radio",
+                "14identity_radio",
+                "13identity_flow",
+                "cyw43",
+                "trouble_host",
+                "bt_hci",
+            )
+        )
     }
     nonradio_total = sum(size for address, size in sizes.items() if address not in radio_addresses)
     require(max(sizes.values()) <= 8192, "unreviewed utility frame over 8 KiB")
@@ -356,6 +382,7 @@ def inspect_elf(elf: InspectableImage) -> ProbeLayoutRecord:
     mapping, program = inspect_program(elf)
     reservation = capture_reservation(elf, mapping)
     identity = linked_identity(elf)
+    tool = linked_tool(elf)
     check_flash_lockout(elf)
     return {
         "schema": 1,
@@ -373,6 +400,7 @@ def inspect_elf(elf: InspectableImage) -> ProbeLayoutRecord:
         "program": program,
         "capture_reservation": reservation,
         "source_identity": identity,
+        "tool": tool,
         "reviewed_flash_lockout": True,
     }
 
@@ -384,11 +412,11 @@ def check(elf_path: Path, uf2_path: Path, manifest_path: Path, repo: Path) -> Pr
     manifest = object_fields(json.loads(raw), "utility manifest schema")
     require(
         manifest.get("gate") == GATE
-        and integer_value(manifest.get("schema"), "utility manifest schema") == 1,
+        and integer_value(manifest.get("schema"), "utility manifest schema") == 2,
         "utility manifest schema",
     )
     require(
-        {"sources", "source_digest", "target", "target_cpu", "elf_sha256", "uf2_sha256"}
+        {"tool", "sources", "source_digest", "target", "target_cpu", "elf_sha256", "uf2_sha256"}
         <= manifest.keys(),
         "utility manifest required fields",
     )
@@ -406,6 +434,7 @@ def check(elf_path: Path, uf2_path: Path, manifest_path: Path, repo: Path) -> Pr
     mapping, program = inspect_program(elf)
     reservation = capture_reservation(elf, mapping)
     identity = linked_identity(elf, digest)
+    tool = linked_tool(elf, string_value(manifest["tool"], "invalid utility kind"))
     check_flash_lockout(elf)
     obj = objects(elf)
     stack = stack_check(elf, headroom)
@@ -429,6 +458,7 @@ def check(elf_path: Path, uf2_path: Path, manifest_path: Path, repo: Path) -> Pr
         "uf2": uf2,
         "capture_reservation": reservation,
         "source_identity": identity,
+        "tool": tool,
         "reviewed_flash_lockout": True,
         "limitations": [
             "source snapshot is not compiler input closure",

@@ -1,6 +1,6 @@
 //! Cross-core messages contain owned bytes or exclusive framebuffer references.
 use core::cell::Cell;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use dashboard_core::discovery::{Event, Request, ScanDiagnostics};
 use dashboard_core::display::FrameBuffer;
@@ -69,14 +69,88 @@ pub static DISPLAY_FATAL: AtomicBool = AtomicBool::new(false);
 /// Explicit recovery from a terminal radio fault requests watchdog expiry.
 pub static RESET_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// Excludes connection lifetimes from journal mutation, including each restoration
+/// between pages. Scanning is permitted: its permanent bus owner parks separately.
+/// This guard is independent of UI state and closes queued-request admission races.
+pub struct OperationGate {
+    /// Zero is idle, one owns a connection, two owns a mutation, three is terminal.
+    owner: AtomicU8,
+}
+impl OperationGate {
+    /// Returns an idle gate. It owns no radio, storage or peripheral resources.
+    pub const fn new() -> Self {
+        Self {
+            owner: AtomicU8::new(0),
+        }
+    }
+
+    /// Returns an affine connection lease if idle, otherwise None without effects.
+    /// Retain through connect cancellation and acknowledged link cleanup; never
+    /// drop merely because an application timeout or close submission occurred.
+    pub fn connection(&self) -> Option<OperationLease<'_>> { self.acquire(1) }
+
+    /// Returns an affine mutation lease if no connection/mutation owns this gate.
+    /// Retain across admission, every journal page and owner restoration. None is
+    /// an ordinary Busy result; callers must not erase/program before admission.
+    pub fn mutation(&self) -> Option<OperationLease<'_>> { self.acquire(2) }
+
+    /// Permanently rejects new connection/mutation admission until reset, even when
+    /// an existing lease is later dropped. Existing owners still perform restoration;
+    /// this does not cancel an already admitted synchronous flash operation.
+    pub fn close(&self) { self.owner.store(3, Ordering::Release); }
+
+    /// Claims idle state for private nonzero `owner`, returning its unique lease.
+    /// Acquire/Release ordering makes admission/release coherent across both cores.
+    fn acquire(
+        &self,
+        owner: u8,
+    ) -> Option<OperationLease<'_>> {
+        self.owner
+            .compare_exchange(0, owner, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| OperationLease { gate: self, owner })
+    }
+}
+/// Unique operation permission; no Clone/Copy or public constructor is provided.
+#[must_use = "retain until acknowledged cleanup or full mutation restoration"]
+pub struct OperationLease<'a> {
+    /// Gate whose unique nonzero owner is released by Drop.
+    gate: &'a OperationGate,
+    /// Exact live owner state; Drop may clear only this state, never terminal closure.
+    owner: u8,
+}
+impl Drop for OperationLease<'_> {
+    /// Releases the sole owner's live gate after caller-established terminal conditions.
+    /// A fatal closure remains terminal after release, including cancellation drops.
+    /// Does not perform cleanup itself; abandoning a live owner is a caller bug.
+    fn drop(&mut self) {
+        let _ = self
+            .gate
+            .owner
+            .compare_exchange(self.owner, 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+/// Core0 radio/storage admission, also coherent with core1 intent publication.
+pub static OPERATION_GATE: OperationGate = OperationGate::new();
+
+/// Closes future operation admission and latches unhealthy radio state synchronously.
+/// Call before dropping unconfirmed radio work or awaiting terminal event capacity.
+/// A held lease cannot reopen admission; supervisor observes fatal without queue progress.
+pub fn latch_radio_fault() {
+    OPERATION_GATE.close();
+    RADIO_FATAL.store(true, Ordering::Release);
+    RADIO_READY.store(false, Ordering::Release);
+}
+
 /// Returns the latest operation request as one coherent generation/payload copy.
 pub fn request() -> Request { REQUEST.lock(Cell::get) }
 /// Replaces the operation with `request`; radio observes generation changes to
 /// cancel old work before admitting another operation.
 pub fn set_request(request: Request) { REQUEST.lock(|cell| cell.set(request)); }
-/// Reliably queues owned `event`, awaiting capacity. Cancellation before send
-/// completes can lose that terminal/inventory event, so callers retain the future.
-pub async fn emit_event(event: Event) { EVENTS.send(event).await; }
+/// Returns the queue's lazy send future owning `event`, without a second async relay.
+/// Polling awaits capacity; completion means queued, not yet consumed. Dropping
+/// before completion discards this event, so required terminal publications retain it.
+pub fn emit_event(event: Event) -> impl core::future::Future<Output = ()> { EVENTS.send(event) }
 /// Attempts to queue owned advertisement `event` immediately. Full capacity
 /// latches a capacity fault and saturating drop count; no blocking or retry.
 pub fn emit_report(event: Event) {

@@ -84,14 +84,15 @@ pub enum ReadResult {
     /// Other failed read, with a retained failure classification.
     Error,
 }
-/// Standard-read observation; only matching allowlisted declarations are admitted.
+/// Information-read observation; standard inventory and explicit identity trials
+/// separately admit only their matching allowlisted declarations.
 #[derive(Clone, Copy, Debug)]
 pub struct InfoValue {
     /// Owning primary-service declaration handle.
     pub service_start: u16,
     /// Read characteristic value handle.
     pub handle: u16,
-    /// Normalized 16-bit standard characteristic UUID.
+    /// Normalized 16-bit characteristic UUID, scoped by the admitting operation.
     pub uuid: u16,
     /// Up to 64 returned bytes; truncation remains explicit and bytes need not be text.
     pub value: Payload<64>,
@@ -145,6 +146,11 @@ pub enum InventoryStage {
 /// Owned event payload admitted to the current inspection by its outer request generation.
 #[derive(Clone, Copy, Debug)]
 pub enum InspectionItem {
+    /// Small update to a separately requested identity trial, never a standard read.
+    Identity(
+        /// Revision fencing occurs in the outer model; relationships are checked here.
+        super::identity::Update,
+    ),
     /// Primary-service declaration candidate.
     Service(
         /// Service and inclusive attribute range.
@@ -259,6 +265,8 @@ pub fn descriptor_range(
 
 /// Bounded, partial inventory retained even when enumeration fails or is cancelled.
 pub struct Inspection {
+    /// Explicit identity-trial evidence, absent for ordinary standard-only inspections.
+    pub identity: Option<super::identity::Evidence>,
     /// Admitted, nonoverlapping primary services; at most 24.
     pub services: Vec<Service, 24>,
     /// Admitted nonoverlapping declaration/value pairs; at most 64.
@@ -294,6 +302,7 @@ impl Inspection {
     /// Returns empty incomplete inventory; all stage/cleanup flags and counters start clear.
     pub const fn new() -> Self {
         Self {
+            identity: None,
             services: Vec::new(),
             characteristics: Vec::new(),
             descriptors: Vec::new(),
@@ -322,6 +331,28 @@ impl Inspection {
         item: InspectionItem,
     ) {
         let accepted = match item {
+            InspectionItem::Identity(update) => {
+                if let super::identity::Update::Start { at_ms } = update {
+                    if self.identity.is_some() || self.started_at_ms.is_none_or(|start| at_ms < start) {
+                        self.malformed = self.malformed.saturating_add(1);
+                    } else {
+                        // Initialize the final optional evidence slot.
+                        let _ = self.identity.insert(super::identity::Evidence::new(at_ms));
+                    }
+                    return;
+                }
+                let relationship = match &update {
+                    super::identity::Update::Vendor(value) => {
+                        self.stages.iter().all(|&done| done)
+                            && super::identity::vendor_relationship(value, &self.services, &self.characteristics)
+                    }
+                    _ => true,
+                };
+                if !relationship || self.identity.as_mut().is_none_or(|e| !e.apply(update)) {
+                    self.malformed = self.malformed.saturating_add(1);
+                }
+                return;
+            }
             InspectionItem::Service(service) => {
                 if !matches!(service.uuid.len, 2 | 4 | 16)
                     || service.start == 0

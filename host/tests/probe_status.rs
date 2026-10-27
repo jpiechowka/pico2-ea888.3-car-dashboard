@@ -247,6 +247,145 @@ fn connection_and_inventory_cannot_turn_green_before_terminal_cleanup() {
     assert_eq!(levels(&status, &model), [true, false, true]);
 }
 
+/// A separately selected identity image cannot qualify green using standard GATT alone.
+#[test]
+fn identity_image_requires_its_own_clean_result_and_latches_partial_failure() {
+    let status = Status::new();
+    let mut model = start(&status);
+    model.identity_mode = true;
+    inventory(&status, &mut model);
+    end(&status, &mut model, true);
+    complete(&status, &mut model, false);
+    assert_ne!(levels(&status, &model), [true, false, true]);
+    model.inspection.identity = Some(identity::Evidence::new(20));
+    let revision = model.request.revision;
+    status.event(
+        &mut model,
+        Event::Item {
+            revision,
+            item: InspectionItem::Identity(identity::Update::Stage {
+                stage: dashboard_core::ble::canyonero::Stage::Closing,
+                at_ms: 30,
+                fault: Some(dashboard_core::ble::canyonero::Fault {
+                    stage: dashboard_core::ble::canyonero::Stage::OpeningCoc,
+                    reason: dashboard_core::ble::canyonero::Reason::TimedOut,
+                    at_ms: 30,
+                }),
+            }),
+        },
+    );
+    assert!(status.fault_latch().contains(Fault::Probe));
+    assert_eq!(levels(&status, &model), [false, true, true]);
+}
+
+/// A clean INFO result becomes green only after link cleanup; saved views never reuse live success.
+#[test]
+fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber() {
+    use dashboard_core::ble::canyonero::{CleanupOutcome, Stage};
+    use identity::{ChannelParameters, Update, VENDOR_UUIDS};
+    let status = Status::new();
+    let mut model = start(&status);
+    model.identity_mode = true;
+    inventory(&status, &mut model);
+    event(
+        &status,
+        &mut model,
+        InspectionItem::Service(Service {
+            start: 5,
+            end: 20,
+            uuid: Uuid::from_wire(&0xFFF1_u16.to_le_bytes()).unwrap(),
+        }),
+    );
+    for (i, uuid) in VENDOR_UUIDS.into_iter().enumerate() {
+        event(
+            &status,
+            &mut model,
+            InspectionItem::Characteristic(Characteristic {
+                service_start: 5,
+                declaration: 6 + i as u16 * 2,
+                handle: 7 + i as u16 * 2,
+                properties: 2,
+                uuid: Uuid::from_wire(&uuid.to_le_bytes()).unwrap(),
+            }),
+        );
+    }
+    event(
+        &status,
+        &mut model,
+        InspectionItem::Identity(Update::Start { at_ms: 20 }),
+    );
+    for (i, uuid) in VENDOR_UUIDS.into_iter().enumerate() {
+        event(
+            &status,
+            &mut model,
+            InspectionItem::Identity(Update::Vendor(InfoValue {
+                service_start: 5,
+                handle: 7 + i as u16 * 2,
+                uuid,
+                value: Payload::new(&[1]),
+                result: ReadResult::Ok,
+                failure: None,
+                elapsed_ms: 1,
+            })),
+        );
+    }
+    for update in [
+        Update::Channel(ChannelParameters {
+            offered_mtu: 245,
+            offered_mps: 247,
+            offered_credits: 1,
+            local_mtu: Some(245),
+            local_mps: Some(247),
+            peer_mtu: Some(245),
+            peer_mps: Some(247),
+            local_cid: None,
+            peer_cid: None,
+            local_credits: None,
+            peer_credits: None,
+        }),
+        Update::RequestSubmitted { at_ms: 30 },
+        Update::Sdu { length: 13 },
+        Update::Chunk {
+            offset: 0,
+            bytes: Payload::new(b"\x1f\x91\x00\x09v\nm\nh\ns\nf"),
+        },
+        Update::Stage {
+            stage: Stage::Closing,
+            at_ms: 40,
+            fault: None,
+        },
+    ] {
+        event(&status, &mut model, InspectionItem::Identity(update));
+    }
+    complete(&status, &mut model, false);
+    assert_ne!(levels(&status, &model), [true, false, true]);
+    event(
+        &status,
+        &mut model,
+        InspectionItem::Identity(Update::End {
+            at_ms: 50,
+            cleanup: CleanupOutcome::Clean,
+        }),
+    );
+    assert_ne!(levels(&status, &model), [true, false, true]);
+    end(&status, &mut model, true);
+    assert_eq!(levels(&status, &model), [true, false, true]);
+    let mut ui = cap::CaptureUi::new();
+    status.capture_input(
+        &mut ui,
+        cap::Input::XHold,
+        60,
+        cap::Context {
+            save: cap::SaveAvailability::Ready,
+            revision: 2,
+        },
+    );
+    status.publish(&model, &ui);
+    assert_ne!(status.levels(0, false), [true, false, true]);
+    model.inspection.identity.as_mut().unwrap().cleanup = CleanupOutcome::TimedOut;
+    assert_ne!(levels(&status, &model), [true, false, true]);
+}
+
 /// All termination bytes and absence retain inventory; only 0x13/0x16 qualify clean success.
 #[test]
 fn terminal_reason_is_checked_after_completed_inventory_without_losing_evidence() {

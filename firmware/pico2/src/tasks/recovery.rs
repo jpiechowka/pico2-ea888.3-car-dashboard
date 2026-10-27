@@ -130,7 +130,7 @@ pub async fn recovery_task(mut watchdog: RecoveryWatchdog) {
         });
         if let Err(fault) = result {
             watchdog.record_failure(fault.into());
-            crate::log_fault!("Watchdog: {:?}", fault);
+            crate::log_fault!("Watchdog: {}", fault.label());
             // Retain all owners and stop feeding. The watchdog is configured to
             // reset both cores and peripherals without executor/IRQ progress.
             // This still depends on clk_ref and needs physical fault injection.

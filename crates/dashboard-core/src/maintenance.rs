@@ -71,6 +71,20 @@ pub enum Error {
     Timeout,
 }
 
+impl Error {
+    /// Returns this unit rejection's exact Debug name without allocating or formatting.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::State => "State",
+            Self::Generation => "Generation",
+            Self::Pending => "Pending",
+            Self::Owner => "Owner",
+            Self::Clock => "Clock",
+            Self::Timeout => "Timeout",
+        }
+    }
+}
+
 /// Current request phase and its bounded acknowledgment/timing state.
 struct Active {
     /// Immutable request paired with the active Park/Resume phase.

@@ -5,6 +5,9 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, FnArg, ImplItem, Item, Lit, Meta, ReturnType, Signature, TraitItem};
 
+/// Cross-file contracts for literal included fragments, without macro expansion.
+pub mod includes;
+
 /// One source item and the structural gaps its documentation still contains.
 #[derive(Debug)]
 pub struct Entry {

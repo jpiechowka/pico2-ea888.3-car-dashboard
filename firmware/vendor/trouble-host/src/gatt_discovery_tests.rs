@@ -212,6 +212,253 @@ fn discovery_mtu_constructor_correlates_error_opcode_and_preserves_fallback() {
     }
 }
 
+/// Runs `f` against a real local stack and fresh accepted connection; teardown releases queued packets.
+fn with_client_startup(
+    f: impl FnOnce(&Stack<'_, crate::mock_controller::MockController, DefaultPacketPool>, Connection<'_, DefaultPacketPool>),
+) {
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    let mut resources = crate::HostResources::<DefaultPacketPool, 1, 1>::new();
+    let stack = crate::new(crate::mock_controller::MockController::new(), &mut resources).build();
+    let manager = &stack.host_state.connections;
+    manager
+        .connect(
+            ConnHandle::new(0),
+            crate::Address::new(AddrKind::RANDOM, BdAddr::new([1; 6])),
+            LeConnRole::Central,
+            crate::connection::ConnParams::new(),
+        )
+        .unwrap();
+    let Poll::Ready(connection) = manager.poll_accept(LeConnRole::Central, &[], None) else {
+        panic!("connection")
+    };
+    f(&stack, connection);
+}
+
+#[test]
+/// Completed startup lends the exact final slot; occupied slots and a competing owner remain unchanged, then drop releases the claim.
+fn discovery_new_into_lends_final_owner_and_preserves_busy_slot() {
+    with_client_startup(|stack, connection| {
+        let manager = &stack.host_state.connections;
+        let mut slot = None;
+        let mut cx = Context::from_waker(Waker::noop());
+        let address = {
+            let mut startup = pin!(GattClient::<_, _, 24>::new_into(stack, &connection, &mut slot));
+            assert!(startup.as_mut().poll(&mut cx).is_pending());
+            let Poll::Ready((_, packet)) = pin!(manager.outbound()).as_mut().poll(&mut cx) else {
+                panic!("MTU request")
+            };
+            assert_eq!(packet.as_ref()[4], att::ATT_EXCHANGE_MTU_REQ);
+            drop(packet);
+            connection.set_att_mtu(23);
+            let mut response = DefaultPacketPool::allocate().unwrap();
+            response.as_mut()[..3].copy_from_slice(&[0x03, 23, 0]);
+            manager
+                .post_gatt_client(connection.handle(), Pdu::new(response, 3))
+                .unwrap();
+            let Poll::Ready(Ok(client)) = startup.as_mut().poll(&mut cx) else {
+                panic!("startup")
+            };
+            client
+                .known_services
+                .borrow_mut()
+                .push(ServiceHandle {
+                    start: 1,
+                    end: 4,
+                    uuid: Uuid::new_short(0x1801),
+                })
+                .unwrap();
+            client as *const _
+        };
+        assert!(core::ptr::eq(slot.as_ref().unwrap(), address));
+        assert!(matches!(
+            embassy_futures::block_on(GattClient::new_into(stack, &connection, &mut slot)),
+            Err(BleHostError::BleHost(Error::Busy))
+        ));
+        assert!(core::ptr::eq(slot.as_ref().unwrap(), address));
+        assert_eq!(slot.as_ref().unwrap().known_services.borrow()[0].handle_range(), 1..=4);
+        let mut competing = None;
+        assert!(matches!(
+            embassy_futures::block_on(GattClient::<_, _, 24>::new_into(stack, &connection, &mut competing)),
+            Err(BleHostError::BleHost(Error::Busy))
+        ));
+        assert!(competing.is_none());
+        drop(slot.take());
+        assert!(
+            embassy_futures::block_on(GattClient::<_, _, 24>::new_into(stack, &connection, &mut competing)).is_ok()
+        );
+        assert!(
+            pin!(manager.outbound()).as_mut().poll(&mut cx).is_pending(),
+            "MTU exchange stays once-only"
+        );
+    });
+}
+
+#[test]
+/// Allocation/ATT errors and canceled admitted startup leave no published client; only admission failures preserve a reusable bearer.
+fn discovery_new_into_error_and_cancel_leave_empty_slot() {
+    for failure in 0..4 {
+        with_client_startup(|stack, connection| {
+            let manager = &stack.host_state.connections;
+            let mut slot = None;
+            let mut held = std::vec::Vec::new();
+            if failure == 0 {
+                while let Some(packet) = DefaultPacketPool::allocate() {
+                    held.push(packet);
+                }
+            }
+            let mut cx = Context::from_waker(Waker::noop());
+            {
+                let mut startup = pin!(GattClient::<_, _, 24>::new_into(stack, &connection, &mut slot));
+                if failure == 0 {
+                    assert!(matches!(
+                        startup.as_mut().poll(&mut cx),
+                        Poll::Ready(Err(BleHostError::BleHost(Error::OutOfMemory)))
+                    ));
+                } else {
+                    assert!(startup.as_mut().poll(&mut cx).is_pending());
+                    let Poll::Ready((_, request)) = pin!(manager.outbound()).as_mut().poll(&mut cx) else {
+                        panic!("MTU request")
+                    };
+                    drop(request);
+                    if failure != 3 {
+                        let bytes: &[u8] = if failure == 1 { &[] } else { &[0x01, 0x02, 0, 0, 0x05] };
+                        let mut response = DefaultPacketPool::allocate().unwrap();
+                        response.as_mut()[..bytes.len()].copy_from_slice(bytes);
+                        manager
+                            .post_gatt_client(connection.handle(), Pdu::new(response, bytes.len()))
+                            .unwrap();
+                        assert!(matches!(startup.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+                    }
+                }
+            }
+            assert!(slot.is_none());
+            assert_eq!(connection.is_connected(), failure == 0);
+            drop(held);
+            if failure == 0 {
+                // A failed allocation must release the sole-client claim before returning.
+                connection.set_att_mtu(23);
+                assert!(
+                    embassy_futures::block_on(GattClient::<_, _, 24>::new_into(stack, &connection, &mut slot)).is_ok()
+                );
+            }
+        });
+    }
+}
+
+/// Borrow whose destructor verifies the actual client claim remains owned until work releases it.
+struct StartupBorrow<'a, 'connection> {
+    /// Final-slot client retained across the suspended inspection.
+    client: &'a GattClient<'connection, crate::mock_controller::MockController, DefaultPacketPool, 24>,
+    /// Address recorded before suspension, checked again during destruction.
+    address: usize,
+    /// Shared observation that borrowed work was dropped before cleanup.
+    dropped: &'a core::cell::Cell<bool>,
+}
+impl Drop for StartupBorrow<'_, '_> {
+    /// Verifies stable storage and a still-exclusive claim before recording work release.
+    fn drop(&mut self) {
+        assert_eq!(core::ptr::from_ref(self.client) as usize, self.address);
+        assert!(matches!(
+            ClientConnection::acquire(&self.client.connection),
+            Err(Error::Busy)
+        ));
+        self.dropped.set(true);
+    }
+}
+
+#[test]
+/// Caller-owned startup storage drops after borrowers and before cleanup on success, event error and cancellation.
+fn discovery_new_into_owner_scope_releases_before_cleanup() {
+    for outcome in 0..3 {
+        with_client_startup(|stack, connection| {
+            connection.set_att_mtu(23);
+            let finish = core::cell::Cell::new(false);
+            let borrowed_dropped = core::cell::Cell::new(false);
+            let mut cx = Context::from_waker(Waker::noop());
+            {
+                // Same owner scope as probe inspect/connected_work: startup and work
+                // borrow this slot; the caller begins cleanup after this future drops.
+                let inspection = async {
+                    let mut slot = None;
+                    let client = GattClient::<_, _, 24>::new_into(stack, &connection, &mut slot)
+                        .await
+                        .unwrap();
+                    let address = core::ptr::from_ref(client) as usize;
+                    let work = async {
+                        let _borrow = StartupBorrow {
+                            client,
+                            address,
+                            dropped: &borrowed_dropped,
+                        };
+                        core::future::poll_fn(|_| {
+                            assert_eq!(core::ptr::from_ref(client) as usize, address);
+                            if finish.get() && outcome == 0 {
+                                Poll::Ready(Ok::<_, ()>(()))
+                            } else {
+                                Poll::Pending
+                            }
+                        })
+                        .await
+                    };
+                    let events = core::future::poll_fn(|_| {
+                        if finish.get() && outcome == 1 {
+                            Poll::Ready(Err::<(), _>(()))
+                        } else {
+                            Poll::Pending
+                        }
+                    });
+                    match embassy_futures::select::select(work, events).await {
+                        embassy_futures::select::Either::First(result)
+                        | embassy_futures::select::Either::Second(result) => result,
+                    }
+                };
+                let mut inspection = pin!(inspection);
+                assert!(inspection.as_mut().poll(&mut cx).is_pending());
+                assert!(!borrowed_dropped.get());
+                assert!(matches!(ClientConnection::acquire(&connection), Err(Error::Busy)));
+                finish.set(true);
+                if outcome != 2 {
+                    assert_eq!(
+                        inspection.as_mut().poll(&mut cx),
+                        Poll::Ready(if outcome == 0 { Ok(()) } else { Err(()) })
+                    );
+                }
+            }
+            assert!(borrowed_dropped.get());
+            // The actual client lease is gone before full-link cleanup begins.
+            let claim = ClientConnection::acquire(&connection).expect("owner survived inspection scope");
+            drop(claim);
+            assert!(connection.is_connected());
+            connection.disconnect();
+        });
+    }
+}
+
+#[test]
+/// A real outer startup deadline drops the admitted MTU request, closes its bearer and leaves the final client slot empty.
+fn discovery_new_into_deadline_drops_unpublished_startup() {
+    with_client_startup(|stack, connection| {
+        let manager = &stack.host_state.connections;
+        let mut slot = None;
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut startup = pin!(with_timeout(
+                Duration::from_millis(1),
+                GattClient::<_, _, 24>::new_into(stack, &connection, &mut slot),
+            ));
+            assert!(startup.as_mut().poll(&mut cx).is_pending());
+            let Poll::Ready((_, request)) = pin!(manager.outbound()).as_mut().poll(&mut cx) else {
+                panic!("MTU request")
+            };
+            drop(request);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert!(matches!(startup.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+        }
+        assert!(slot.is_none());
+        assert!(!connection.is_connected());
+    });
+}
+
 #[test]
 /// Truncated or trailing-byte ATT errors reject without issuing another discovery request.
 fn discovery_error_response_requires_exact_wire_shape() {
@@ -546,6 +793,152 @@ fn discovery_filtered_group_pages_validate_progress_and_cache_only_success() {
         }
         assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
     }
+}
+
+#[test]
+/// Caller-buffer and owned APIs emit identical sparse mixed-width queries, rows and complete caches.
+fn discovery_services_into_matches_owned_api_and_replaces_output() {
+    for caller_buffer in [false, true] {
+        let (guard, conn) = connection();
+        let client = service_client::<3>(&conn);
+        let mut output = Vec::new();
+        output
+            .push(ServiceHandle {
+                start: 99,
+                end: 100,
+                uuid: Uuid::new_short(0x180F),
+            })
+            .unwrap();
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut future = pin!(async {
+                if caller_buffer {
+                    client.services_into(&mut output).await
+                } else {
+                    output = client.services().await?;
+                    Ok(())
+                }
+            });
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28]);
+            reply(&client, &[0x11, 6, 2, 0, 4, 0, 1, 0x18]);
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x10, 5, 0, 0xff, 0xff, 0, 0x28]);
+            assert!(client.known_services.borrow().is_empty());
+            reply(
+                &client,
+                &[
+                    0x11, 20, 11, 0, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                ],
+            );
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x10, 16, 0, 0xff, 0xff, 0, 0x28]);
+            assert!(client.known_services.borrow().is_empty());
+            reply(&client, &[0x11, 6, 20, 0, 0xff, 0xff, 0, 0x18]);
+            assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        }
+        assert_eq!(
+            output
+                .iter()
+                .map(ServiceHandle::handle_range)
+                .collect::<std::vec::Vec<_>>(),
+            [2..=4, 11..=15, 20..=0xffff]
+        );
+        assert_eq!(
+            output[1].uuid().as_raw(),
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+        assert_eq!(client.known_services.borrow().as_slice(), output.as_slice());
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+/// Later malformed, ATT, capacity and cancellation outcomes retain only unpublished rows and leave prior cache intact.
+fn discovery_services_into_partial_failures_and_cancellation_do_not_publish_cache() {
+    for failure in 0..5 {
+        let (guard, conn) = connection();
+        let client = service_client::<1>(&conn);
+        let previous = ServiceHandle {
+            start: 50,
+            end: 55,
+            uuid: Uuid::new_short(0x180F),
+        };
+        client.known_services.borrow_mut().push(previous.clone()).unwrap();
+        let mut output = Vec::new();
+        output.push(previous.clone()).unwrap();
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut future = pin!(client.services_into(&mut output));
+            reply(&client, &[0x11, 6, 1, 0, 4, 0, 1, 0x18]);
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28]);
+            expect_request(&guard, &[0x10, 5, 0, 0xff, 0xff, 0, 0x28]);
+            assert_eq!(
+                client.known_services.borrow().as_slice(),
+                core::slice::from_ref(&previous)
+            );
+            if failure != 3 {
+                reply(
+                    &client,
+                    match failure {
+                        0 => &[0x11, 6, 4, 0, 9, 0, 1, 0x18],
+                        1 => &[0x01, 0x10, 5, 0, 0x05],
+                        2 => &[0x11, 6, 5, 0, 0xff, 0xff, 1, 0x18],
+                        _ => &[0x01, 0x10, 5, 0, 0x0a],
+                    },
+                );
+                let Poll::Ready(Err(BleHostError::BleHost(error))) = future.as_mut().poll(&mut cx) else {
+                    panic!("partial discovery must fail");
+                };
+                assert_eq!(
+                    error,
+                    match failure {
+                        0 => Error::UnexpectedGattResponse,
+                        1 => Error::Att(att::AttErrorCode::new(0x05)),
+                        _ => Error::InsufficientSpace,
+                    }
+                );
+            }
+        }
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].handle_range(), 1..=4);
+        assert_eq!(output[0].uuid(), Uuid::new_short(0x1801));
+        assert_eq!(client.known_services.borrow().as_slice(), &[previous]);
+        if failure == 3 {
+            assert!(
+                !conn.is_connected(),
+                "canceling the pending ATT request must close its bearer"
+            );
+        }
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+/// First-poll clearing and an empty terminal result replace stale output without clearing the prior cache.
+fn discovery_services_into_empty_result_replaces_output_without_erasing_cache() {
+    let (guard, conn) = connection();
+    let client = service_client::<1>(&conn);
+    let previous = ServiceHandle {
+        start: 50,
+        end: 55,
+        uuid: Uuid::new_short(0x180F),
+    };
+    client.known_services.borrow_mut().push(previous.clone()).unwrap();
+    let mut output = Vec::new();
+    output.push(previous.clone()).unwrap();
+    {
+        let mut future = pin!(client.services_into(&mut output));
+        reply(&client, &[0x01, 0x10, 1, 0, 0x0a]);
+        assert!(matches!(
+            future.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert!(output.is_empty());
+    assert_eq!(client.known_services.borrow().as_slice(), &[previous]);
+    expect_request(&guard, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28]);
 }
 
 #[test]

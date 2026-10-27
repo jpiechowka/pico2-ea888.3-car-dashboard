@@ -9,15 +9,118 @@ use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 use std::cell::Cell;
 
+/// Non-Copy client large enough to expose ownership transfers across async states.
+struct LargeClient<'a> {
+    /// Initialized payload retained by the supervisor for the whole callback.
+    bytes: [u8; 4096],
+    /// Drop sequence shared with the borrower and event consumer.
+    drops: &'a std::cell::RefCell<Vec<&'static str>>,
+}
+impl Drop for LargeClient<'_> {
+    /// Records owner release after every active borrower has been destroyed.
+    fn drop(&mut self) { self.drops.borrow_mut().push("client"); }
+}
+
+/// Borrow held across suspension; its destructor accesses the still-live owner.
+struct ClientBorrow<'a, 'b>(
+    /// Supervisor-owned client whose lifetime covers the borrowing future.
+    &'a LargeClient<'b>,
+);
+impl Drop for ClientBorrow<'_, '_> {
+    /// Checks retained bytes and records borrower release before client destruction.
+    fn drop(&mut self) {
+        assert!(self.0.bytes.iter().all(|&byte| byte == 0xA5));
+        self.0.drops.borrow_mut().push("borrow");
+    }
+}
+
+/// Lending keeps one stable non-Copy client alive until completion, event failure or outer cancellation.
+#[test]
+fn large_client_is_borrowed_until_work_drop_then_released_once() {
+    for outcome in 0..3 {
+        let drops = std::cell::RefCell::new(Vec::new());
+        let finish = Cell::new(false);
+        let address = Cell::new(0usize);
+        {
+            let mut supervisor = pin!(session::inspect_with_events(
+                ready(Ok::<_, &str>(LargeClient {
+                    bytes: [0xA5; 4096],
+                    drops: &drops
+                })),
+                async |client: &LargeClient<'_>| {
+                    let _borrow = ClientBorrow(client);
+                    address.set(core::ptr::from_ref(client) as usize);
+                    poll_fn(|_| {
+                        assert_eq!(core::ptr::from_ref(client) as usize, address.get());
+                        assert!(client.bytes.iter().all(|&byte| byte == 0xA5));
+                        if finish.get() && outcome == 0 {
+                            Poll::Ready(Ok(true))
+                        } else {
+                            Poll::Pending
+                        }
+                    })
+                    .await
+                },
+                poll_fn(|_| {
+                    if finish.get() && outcome == 1 {
+                        Poll::Ready("event failed")
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+            ));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(supervisor.as_mut().poll(&mut cx), Poll::Pending);
+            assert_ne!(address.get(), 0);
+            assert!(drops.borrow().is_empty());
+            finish.set(true);
+            if outcome != 2 {
+                assert_eq!(
+                    supervisor.as_mut().poll(&mut cx),
+                    Poll::Ready(if outcome == 0 { Ok(true) } else { Err("event failed") })
+                );
+                assert_eq!(&*drops.borrow(), &["borrow", "client"]);
+            }
+        }
+        assert_eq!(&*drops.borrow(), &["borrow", "client"]);
+    }
+}
+
+/// Pending or canceled HCI work is not completion; a real result latches synchronously once.
+#[test]
+fn host_completion_latch_runs_only_after_runner_result() {
+    let latched = Cell::new(0);
+    {
+        let mut runner = pin!(session::latch_completion(pending::<()>(), || {
+            latched.set(latched.get() + 1)
+        }));
+        assert!(
+            runner
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+    }
+    assert_eq!(latched.get(), 0);
+    let mut runner = pin!(session::latch_completion(ready(Err::<(), _>(42)), || {
+        latched.set(latched.get() + 1)
+    }));
+    assert_eq!(
+        runner.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Err(42))
+    );
+    assert_eq!(latched.get(), 1);
+}
+
 /// Connection-event failure remains observable while MTU startup waits and prevents inventory creation.
 #[test]
 fn connection_event_failure_is_observed_while_mtu_is_still_pending() {
     let run_called = Cell::new(false);
     let mut session = pin!(session::inspect_with_events(
         pending::<Result<(), &str>>(),
-        |_| {
+        async |_| {
             run_called.set(true);
-            ready(Ok::<_, &str>(true))
+            Ok::<_, &str>(true)
         },
         ready("connection parameters rejected"),
     ));
@@ -44,8 +147,8 @@ fn event_work_progresses_during_startup_and_inventory_without_restarting_startup
                 Poll::Ready(Ok::<_, &str>(42))
             }
         }),
-        |client| {
-            assert_eq!(client, 42);
+        async |client| {
+            assert_eq!(*client, 42);
             client_runs.set(client_runs.get() + 1);
             poll_fn(|_| {
                 if stage.get() < 2 {
@@ -54,6 +157,7 @@ fn event_work_progresses_during_startup_and_inventory_without_restarting_startup
                     Poll::Ready(Ok(true))
                 }
             })
+            .await
         },
         poll_fn(|_| {
             event_polls.set(event_polls.get() + 1);
@@ -77,7 +181,7 @@ fn event_work_progresses_during_startup_and_inventory_without_restarting_startup
 fn immediate_mtu_failure_keeps_stage_error_and_never_starts_discovery() {
     let mut session = pin!(session::inspect_with_events(
         ready(Err::<(), _>("MTU error")),
-        |_| -> core::future::Ready<Result<bool, &str>> { panic!("failed startup must not discover") },
+        async |_| -> Result<bool, &str> { panic!("failed startup must not discover") },
         ready("disconnect notification"),
     ));
     assert_eq!(
@@ -112,11 +216,9 @@ fn connection_failure_drops_the_active_work_before_returning() {
                 }
                 Ok::<_, &str>(guard)
             },
-            |guard| {
-                async move {
-                    let _guard = guard;
-                    pending::<Result<bool, &str>>().await
-                }
+            async |guard| {
+                let _guard = guard;
+                pending::<Result<bool, &str>>().await
             },
             async move {
                 let _guard = events_guard;
@@ -139,7 +241,7 @@ fn completed_inventory_drops_event_consumer_before_returning() {
     let events_guard = DropFlag(&events_dropped);
     let mut session = pin!(session::inspect_with_events(
         ready(Ok::<_, &str>(42)),
-        |client| ready(Ok(client)),
+        async |client| Ok(*client),
         async move {
             let _guard = events_guard;
             pending::<&str>().await
@@ -169,11 +271,9 @@ fn outer_cancellation_drops_both_waits_in_mtu_and_discovery_phases() {
                     }
                     Ok::<_, &str>(guard)
                 },
-                |guard| {
-                    async move {
-                        let _guard = guard;
-                        pending::<Result<bool, &str>>().await
-                    }
+                async |guard| {
+                    let _guard = guard;
+                    pending::<Result<bool, &str>>().await
                 },
                 async move {
                     let _guard = events_guard;
@@ -213,11 +313,9 @@ fn borrowed_startup_and_event_futures_are_dropped_before_outer_cleanup() {
                 });
                 session::inspect_with_events(
                     startup,
-                    |guard| {
-                        async move {
-                            let _guard = guard;
-                            pending::<Result<bool, &str>>().await
-                        }
+                    async |guard| {
+                        let _guard = guard;
+                        pending::<Result<bool, &str>>().await
                     },
                     events,
                 )

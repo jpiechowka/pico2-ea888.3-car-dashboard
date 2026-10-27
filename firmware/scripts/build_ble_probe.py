@@ -22,8 +22,9 @@ TARGET = "thumbv8m.main-none-eabihf"
 BIN_RUSTC_FLAGS = ["-C", "llvm-args=--inline-threshold=100000"]
 
 
-def build_command(profile: str) -> list[str]:
+def build_command(profile: str, tool: str = "ble-probe") -> list[str]:
     require(profile in ("stock", "280-70"), "unknown profile")
+    require(tool in ("ble-probe", "ngm-identity"), "unknown utility")
     args = [
         "cargo",
         "rustc",
@@ -32,12 +33,15 @@ def build_command(profile: str) -> list[str]:
         "-p",
         "dashboard-ble-probe",
         "--bin",
-        "ble-probe",
+        tool,
         "--target",
         TARGET,
     ]
+    features = ["ngm-identity"] if tool == "ngm-identity" else []
     if profile == "280-70":
-        args += ["--features", "cpu280-spi70-1v30"]
+        features.append("cpu280-spi70-1v30")
+    if features:
+        args += ["--features", ",".join(features)]
     # Only the selected binary gets this LLVM option. Keep dependency compiler
     # options unchanged; recheck exact SRAM helper bytes in the image gate.
     return args + ["--", *BIN_RUSTC_FLAGS]
@@ -87,11 +91,12 @@ def find_clock_metadata(build_root: Path) -> Path:
     return found[0]
 
 
-def build(name: str, profile: str, expert: bool) -> None:
+def build(name: str, profile: str, expert: bool, tool: str = "ble-probe") -> None:
     require(
         re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name) is not None, "invalid attempt name"
     )
     require(profile in ("stock", "280-70"), "unknown profile")
+    require(tool in ("ble-probe", "ngm-identity"), "unknown utility")
     require(profile == "stock" or expert, "280-70 requires explicit Expert")
     attempt = REPO / "firmware/target/ble-probe-captures" / name
     attempt.mkdir(parents=True, exist_ok=False)
@@ -135,7 +140,7 @@ def build(name: str, profile: str, expert: bool) -> None:
     require("--family" in help_text and "--platform" in help_text, "converter capabilities")
     run([sys.executable, "scripts/check_vendor.py"], 300, host=True)
     run([sys.executable, "scripts/check_radio_vendor.py"], 300, host=True)
-    args = build_command(profile)
+    args = build_command(profile, tool)
     print("Compilation: " + " ".join(args) + "; target-cpu=cortex-m33")
     run(args, 1200)
     check_sources(REPO, sources)
@@ -156,9 +161,9 @@ def build(name: str, profile: str, expert: bool) -> None:
     (attempt / "clock_profile.json").write_bytes(clock_raw)
     clock_source = generated.with_name("clock_profile.rs").read_bytes()
     (attempt / "clock_profile.rs").write_bytes(clock_source)
-    elf = attempt / "ble-probe.elf"
-    shutil.copyfile(attempt / "build" / TARGET / "release/ble-probe", elf)
-    uf2 = attempt / "ble-probe.uf2"
+    elf = attempt / f"{tool}.elf"
+    shutil.copyfile(attempt / "build" / TARGET / "release" / tool, elf)
+    uf2 = attempt / f"{tool}.uf2"
     require(sha(converter.read_bytes()) == converter_hash, "converter changed")
     run(
         [
@@ -175,7 +180,8 @@ def build(name: str, profile: str, expert: bool) -> None:
     )
     require(sha(converter.read_bytes()) == converter_hash, "converter changed during conversion")
     manifest = {
-        "schema": 1,
+        "schema": 2,
+        "tool": tool,
         "gate": GATE,
         "sources": sources,
         "source_digest": digest,
@@ -211,6 +217,7 @@ class BuildOptions(argparse.Namespace):
     name: str
     profile: str
     expert: bool
+    tool: str
 
 
 def main() -> None:
@@ -218,9 +225,10 @@ def main() -> None:
     parser.add_argument("name")
     parser.add_argument("--profile", choices=("stock", "280-70"), default="stock")
     parser.add_argument("--expert", action="store_true")
+    parser.add_argument("--tool", choices=("ble-probe", "ngm-identity"), default="ble-probe")
     args = BuildOptions()
     parser.parse_args(namespace=args)
-    build(args.name, args.profile, args.expert)
+    build(args.name, args.profile, args.expert, args.tool)
 
 
 if __name__ == "__main__":
