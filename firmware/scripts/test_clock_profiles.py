@@ -32,11 +32,16 @@ class ClockProfiles(unittest.TestCase):
             "pico2-ble-280-70-1v30",
             "pico2-ble-280-70-1v30-run",
         }
-        probe_aliases: dict[str, list[str]] = {
-            "ble-probe": [],
-            "ble-probe-280-70-1v30": ["--features", "cpu280-spi70-1v30"],
+        utility_aliases: dict[str, tuple[str, list[str]]] = {
+            "ble-probe": ("ble-probe", []),
+            "ble-probe-280-70-1v30": ("ble-probe", ["--features", "cpu280-spi70-1v30"]),
+            "ngm-identity": ("ngm-identity", ["--features", "ngm-identity"]),
+            "ngm-identity-280-70-1v30": (
+                "ngm-identity",
+                ["--features", "ngm-identity,cpu280-spi70-1v30"],
+            ),
         }
-        self.assertEqual(set(aliases), expected | ble_aliases | probe_aliases.keys())
+        self.assertEqual(set(aliases), expected | ble_aliases | utility_aliases.keys())
         self.assertEqual(len(expected), 20)
         for profile in rows:
             self.assertIn(profile.feature, feature_map)
@@ -60,7 +65,7 @@ class ClockProfiles(unittest.TestCase):
             self.assertEqual(tokens[0], "run" if alias.endswith("-run") else "build")
             self.assertEqual(tokens[1:4], ["-p", "dashboard-pico2", "--release"])
             self.assertEqual(set(tokens[-1].split(",")), {"simple-outline", "ble-obd", clock})
-        for alias, features in probe_aliases.items():
+        for alias, (binary, features) in utility_aliases.items():
             # Utility aliases must build only; no inherited flashing runner.
             self.assertEqual(
                 aliases[alias].split(),
@@ -69,7 +74,7 @@ class ClockProfiles(unittest.TestCase):
                     "-p",
                     "dashboard-ble-probe",
                     "--bin",
-                    "ble-probe",
+                    binary,
                     "--release",
                     *features,
                 ],
