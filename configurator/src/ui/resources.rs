@@ -61,6 +61,9 @@ fn readout_label(readout: Readout) -> &'static str {
         Readout::Lambda => "λ",
         Readout::Afr => "AFR (configured fuel basis)",
         Readout::LambdaAndAfr => "λ + AFR (configured fuel basis)",
+        Readout::IgnitionNumeric => "Signed degrees",
+        Readout::IgnitionStatus => "OK / RET",
+        Readout::IgnitionStatusAndNumber => "Status + signed degrees",
     }
 }
 
@@ -123,7 +126,7 @@ fn accepted_view(
             <p class="hint">{format!("Canonical boost is bar and temperature is °C; widget readouts can use other units. Lambda is dimensionless; displayed AFR = lambda × {:.4} from the configured {:?} basis. Fuel composition is not measured by this report.",accepted.stoich_ratio,accepted.fuel)}</p>
             <h3>"Widget capabilities"</h3>
             <div class="workspace-scroll" role="region" aria-label="Widget capabilities" tabindex="0"><table><thead><tr><th>"Widget"</th><th>"View"</th><th>"Canonical"</th><th>"Configured readout"</th><th>"Secondary setting"</th><th>"Capabilities"</th></tr></thead><tbody>
-                {widgets.into_iter().map(|widget|view!{<tr><td>{widget.label}</td><td>{widget.view}</td><td>{canonical_unit(widget.channel)}</td><td>{readout_label(widget.readout)}</td><td>{secondary_label(widget.secondary,widget.capabilities.secondary)}</td><td>{format!("history {} · markers {} · bands {} · statistics {}",widget.capabilities.history,widget.capabilities.markers,widget.capabilities.bands,widget.capabilities.statistics)}</td></tr>}).collect_view()}
+                {widgets.into_iter().map(|widget|view!{<tr><td>{widget.label}</td><td>{widget.view}</td><td>{widget.channel.scalar().map(canonical_unit).unwrap_or("° (synthetic correction)")}</td><td>{readout_label(widget.readout)}</td><td>{secondary_label(widget.secondary,widget.capabilities.secondary)}</td><td>{format!("history {} · markers {} · bands {} · statistics {}",widget.capabilities.history,widget.capabilities.markers,widget.capabilities.bands,widget.capabilities.statistics)}</td></tr>}).collect_view()}
             </tbody></table></div>
         </div>
     }

@@ -71,9 +71,9 @@ the configured source session.
    draft. Drag again, use the context menu or edit placement fields to repair it.
    Keyboard users can select a widget and use arrows to move it or
    Delete to remove it. Size, column and row fields provide another alternative.
-3. Select a widget to rename it, choose 1×1, 2×1 or 2×2, change gauge style,
-   scale limits, precision, colours, statistics and optional lambda AFR. Numeric
-   widgets also support history graphs and trend. The inspector shows text
+3. Select a widget to rename it, choose 1×1, 2×1 or 2×2, change supported gauge style,
+   scale limits, precision, colours, statistics and optional lambda AFR. Scalar
+   Numeric widgets also support history graphs and trend. The inspector shows text
    limits. Wider and taller tiles automatically enlarge the primary value,
    shrinking the whole string (sign, digits and unit) when space is needed.
    A wide label must be shortened before shrinking the widget.
@@ -82,9 +82,11 @@ the configured source session.
    message and applicability. Changing high/low swaps the two endpoints to
    preserve strict hysteresis. Warning order buttons move it within its view.
 5. **Warning display** chooses all-view/current-view scope and one-message or
-   three-message pages. Feedback popups take precedence on the Pico. Warnings
-   resume afterward. The configured interval uses elapsed time. Combined list
-   warnings have their own palette; one-message pages use the warning widget's.
+   three-message pages. Ignition cylinder-line warnings use their own page with
+   up to four lines. Feedback popups take precedence on the Pico. Warnings
+   resume afterward. The configured interval uses elapsed time. Ordinary combined
+   list pages have their own palette; one-message and dedicated cylinder pages
+   use the warning widget's.
 6. **Fuel & AFR** selects equivalent 14.7, an explicit stoichiometric ratio, or
    an ethanol estimate with declared mass/volume basis, composition origin,
    component ratios/densities and common reference temperature when required.
@@ -96,10 +98,26 @@ the configured source session.
 
 The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
 scales, per-style capabilities, RGB565 validation and the shared preview/device
-renderer. Historical v1 through v5 documents import through explicit migration; exports
-use the current v6 schema. See
+renderer. Historical v1 through v6 documents import through explicit migration; exports
+use the current v7 schema. See
 [advanced controls](advanced-controls.md) for units, smoothing, history, bands,
 markers, priorities/latch/snooze and the RGB indicator panel.
+
+Add **IGN RETARD** from the library for four synthetic cylinder corrections in
+one tile. All sizes show cylinders 1/2 above 3/4, separated by a cross. **Units &
+current value** selects signed degrees, OK/RET, or status and number together
+(the default). A raw negative value is RET regardless of display rounding;
+zero and positive values are OK. Each cylinder can independently show missing,
+stale or faulted data. Vehicle mode has no ignition decoder or qualified source.
+
+The group uses Numeric style and has no scalar history, smoothing, statistics,
+secondary unit or gauge markers. Its warning shares one signed-degree threshold
+pair and message across all cylinders, with **Ignition retarded** as the default.
+Choose one global message or separate affected-cylinder lines. The Demo-only
+rule triggers strictly below its threshold and clears only with all four fresh
+cylinders at or above the clear threshold; zero/zero is allowed. Raw RET status
+does not depend on that warning threshold. Imported unsupported settings remain
+inspectable and repairable under **INVALID PREVIEW**.
 
 The grid has four columns and two rows in landscape, or two columns and four
 rows in portrait. [Screen orientation](orientation.md) explains device defaults,
@@ -142,7 +160,10 @@ mode is not an ECU, dwell-timing or physical FPS test.
 **Test values** offers channel minima/maxima, extreme digit widths and zero
 (including unavailable AFR). These are synthetic inspection tools, not suggested
 operating limits. Select **Animated demo** to restore the same elapsed-time
-generator used by the firmware. A failed render displays **PREVIEW ERROR** over
+generators used by the firmware, including independent four-cylinder corrections.
+The group receives samples during history replay and at the displayed final time;
+Diagnostics can instead advance without samples or fault one cylinder to inspect
+quality independently. A failed render displays **PREVIEW ERROR** over
 the previous frame instead of silently presenting it as current.
 
 Accepted changes and selection are saved locally. Two studio tabs coordinate

@@ -78,6 +78,107 @@ SLOT_CAPTURE = """
 
 
 class StackBudget(unittest.TestCase):
+    def ignition_fixture(self) -> StackFixture:
+        """Return literal schema7 configuration symbols and byte-sized frame metadata."""
+        return load_fixture(Path(__file__).parent / "fixtures/config-stack-schema7.json")
+
+    def test_ignition_capture_and_nested_children_remain_counted(self) -> None:
+        """Each new child retains its simultaneously resident parent frames."""
+        functions, sizes = self.ignition_fixture()
+        baseline = configuration_frames(functions, sizes)
+        self.assertEqual(baseline, 2296)
+        for child_tokens, parent_tokens in (
+            (
+                ("12next_element", "27IgnitionWarningPresentation"),
+                ("12next_element", "15AdvancedDisplay"),
+            ),
+            (
+                ("15serialize_field", "27IgnitionWarningPresentation"),
+                ("15serialize_field", "6Widget"),
+            ),
+            (("7Readout17compatible_widget",), ("8validate12validate_ref",)),
+        ):
+            child = next(
+                a & ~1 for n, (a, _, _) in functions.items() if all(t in n for t in child_tokens)
+            )
+            parent = next(
+                a & ~1 for n, (a, _, _) in functions.items() if all(t in n for t in parent_tokens)
+            )
+            changed = dict(sizes)
+            changed[child] = 10000
+            enlarged = configuration_frames(functions, changed)
+            self.assertGreater(enlarged, baseline + 7000)
+            changed[parent] += 1000
+            self.assertEqual(configuration_frames(functions, changed), enlarged + 1000)
+
+    def test_ignition_required_boundaries_fail_closed(self) -> None:
+        """Missing metadata, missing symbols and distinct aliases reject every new boundary."""
+        functions, sizes = self.ignition_fixture()
+        for tokens in (
+            ("12next_element", "27IgnitionWarningPresentation"),
+            ("15serialize_field", "27IgnitionWarningPresentation"),
+            ("7Readout17compatible_widget",),
+        ):
+            name = next(n for n in functions if all(t in n for t in tokens))
+            address, length, section = functions[name]
+            for fault in ("missing", "metadata", "ambiguous"):
+                with self.subTest(tokens=tokens, fault=fault):
+                    changed, metadata = dict(functions), dict(sizes)
+                    if fault == "missing":
+                        del changed[name]
+                    elif fault == "metadata":
+                        del metadata[address & ~1]
+                    else:
+                        changed[name + "distinct"] = (0x30000001, length, section)
+                        metadata[0x30000000] = 8
+                    with self.assertRaises(AssertionError):
+                        configuration_frames(changed, metadata)
+
+    def test_ignition_inlined_gauge_reoutline_is_counted_without_broad_exemption(self) -> None:
+        """Only the exact source method may re-outline; its parent and metadata remain required."""
+        functions, sizes = self.ignition_fixture()
+        name = "_RNvMs0_NtCskEXN1BWdwEP_16dashboard_config10appearanceNtB5_5Gauge12valid_domain"
+        functions[name] = (0x30000001, 4, 0)
+        sizes[0x30000000] = 10000
+        enlarged = configuration_frames(functions, sizes)
+        parent = next(
+            a & ~1 for n, (a, _, _) in functions.items() if "8validate12validate_ref" in n
+        )
+        sizes[parent] += 1000
+        self.assertEqual(configuration_frames(functions, sizes), enlarged + 1000)
+        del sizes[0x30000000]
+        with self.assertRaisesRegex(AssertionError, "metadata"):
+            configuration_frames(functions, sizes)
+        sizes[0x30000000] = 8
+        alias = name.replace("CskEXN1BWdwEP_", "CsOther_")
+        functions[alias] = (0x30000005, 4, 0)
+        sizes[0x30000004] = 8
+        with self.assertRaisesRegex(AssertionError, "ambiguous"):
+            configuration_frames(functions, sizes)
+        del functions[alias]
+        del functions[name]
+        functions[name + "_unreviewed_child"] = (0x30000001, 4, 0)
+        with self.assertRaisesRegex(AssertionError, "unreviewed config"):
+            configuration_frames(functions, sizes)
+
+    def test_ignition_shape_cannot_hide_missing_legacy_gauge_or_unknown_helpers(self) -> None:
+        """Current shape detection preserves frozen schema requirements and rejects new helpers."""
+        functions, sizes = self.ble_fixture()
+        del functions[next(n for n in functions if "5Gauge5valid" in n)]
+        with self.assertRaises(AssertionError):
+            configuration_frames(functions, sizes)
+        functions, sizes = self.ignition_fixture()
+        for name in list(functions):
+            if "27IgnitionWarningPresentation" in name:
+                del functions[name]
+        with self.assertRaises(AssertionError):
+            configuration_frames(functions, sizes)
+        functions, sizes = self.ignition_fixture()
+        functions["dashboard_config_new_validation_child"] = (0x30000001, 4, 0)
+        sizes[0x30000000] = 8
+        with self.assertRaisesRegex(AssertionError, "unreviewed config"):
+            configuration_frames(functions, sizes)
+
     def ble_fixture(self, name: str = "compact") -> StackFixture:
         return load_fixture(Path(__file__).parent / f"fixtures/ble-stack-{name}.json")
 

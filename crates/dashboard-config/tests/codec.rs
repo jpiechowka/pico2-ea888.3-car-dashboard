@@ -38,13 +38,13 @@ fn minimal() -> Config {
 }
 
 #[test]
-/// Independent CRC vectors and a manually generated v6 fixture match both decoder and encoder bytes.
-fn crc_known_answers_and_independently_built_golden_v6() {
+/// Independent CRC vectors and a manually generated v7 fixture match both decoder and encoder bytes.
+fn crc_known_answers_and_independently_built_golden_v7() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
     // Constructed from schema field order with a standalone Python uvarint
     // encoder, struct.pack('<HH') and zlib.crc32, not the production serializer.
-    let hex = "454156310600a10081b77d40060101010101410000000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f0036490033201000000000000000000000000000001904edc0b14";
+    let hex = "454156310700a100fe9f8cf1070101010101410000000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f0036490033201000000000000000000000000000001904edc0b14";
     let golden: Vec<u8> = hex
         .as_bytes()
         .as_chunks::<2>()
@@ -277,4 +277,19 @@ fn cache_publication_does_not_change_current_bytes() {
     assert_eq!(encode(&first, &mut a).unwrap(), encode(&second, &mut b).unwrap());
     #[cfg(feature = "json")]
     assert_eq!(to_json(&first).unwrap(), to_json(&second).unwrap());
+}
+
+#[cfg(feature = "json")]
+#[test]
+/// The independent pre-group schema-six golden bytes remain accepted through host migration.
+fn frozen_independent_schema_six_golden_migrates() {
+    let hex = "454156310600a10081b77d40060101010101410000000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f0036490033201000000000000000000000000000001904edc0b14";
+    let bytes: Vec<u8> = hex
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    assert_eq!(decode(&bytes).unwrap(), validate(minimal()).unwrap());
 }

@@ -8,6 +8,21 @@ updates current value, extrema and time-sampled history before a
 Rendering fewer frames can discard intermediate presentations without losing
 between-frame extrema or changing the average/history sampling cadence.
 
+The same owner carries a separate four-cylinder ignition group in the coherent
+snapshot. These observations have independent source, sequence, capture time and
+quality, with no scalar history/extrema allocation. Demo batches preflight all
+counters before changing admitted cylinders and advance the outer measurement
+sequence once per accepted group batch. A malformed member cannot block a valid
+one. Typed numeric failures publish that cylinder's invalid quality while keeping
+its last-good time. The group adds no vehicle producer or decoder.
+
+Readers expire each cylinder after 500 ms without refreshing observations.
+Statistics reset leaves those observations and timestamps intact. Shared warning
+dwell uses admitted sample times; elapsed display time alone cannot activate or
+clear a warning. Clearing needs all four fresh cylinders at or above the shared
+clear threshold. Published masks keep the group warning and its cylinder-line
+popup coherent with the measurements. See [sample quality](../vehicle/sample-quality.md).
+
 Invalid and duplicate/regressed measurements are rejected per channel. One bad
 channel cannot prevent another valid channel from updating. Snapshot sequence
 and reset generation reject regressions; sequence exhaustion stops acquisition
@@ -19,8 +34,8 @@ reset generations do nothing.
 The new-peak highlight and trend presentation expire using the display's current monotonic time,
 even without another producer snapshot. The independently configured gauge
 peak hold has its own 100–60000 ms lifetime and clears on unavailable data. The integrated model now carries typed
-source/quality/disconnect state; Demo is explicit and the optional Longan runtime
-remains unqualified. See [sample quality](../vehicle/sample-quality.md) and
+source/quality/disconnect state; Demo is explicit and the optional BLE prototype
+does not enable ECU requests. See [sample quality](../vehicle/sample-quality.md) and
 [transport qualification](../vehicle/diagnostic-transport.md).
 
 ## Source checks

@@ -4,7 +4,7 @@ use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
 /// Current dashboard payload schema; older supported versions migrate before admission.
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 /// Fixed documentary source-catalogue revision expected by validation.
 pub const CATALOGUE_VERSION: u16 = 1;
 /// Maximum named views retained in one configuration.
@@ -80,7 +80,7 @@ impl Config {
     }
 }
 
-/// One channel presentation and warning rule, placed within its referenced view.
+/// One scalar or four-cylinder presentation and optional shared warning rule, placed within its referenced view.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Widget {
@@ -88,8 +88,8 @@ pub struct Widget {
     pub id: u16,
     /// Existing view ID; not an array index.
     pub view: u8,
-    /// Shared measurement channel; multiple widgets may present the same sample.
-    pub channel: Channel,
+    /// Presentation selector; group widgets have no scalar source/history index.
+    pub channel: WidgetChannel,
     /// Logical cell position and span; 2×1 remains horizontal in portrait.
     pub placement: Placement,
     /// Printable nonblank label; admission allows twelve bytes per spanned column.
@@ -174,6 +174,89 @@ impl Channel {
             Self::Battery => (0.0, 65.535),
             Self::Lambda => (0.01, 10.0),
             _ => (-100.0, 2_000.0),
+        }
+    }
+}
+
+/// Stable flat widget selector; first eight wire variants retain the historical scalar order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WidgetChannel {
+    /// Relative boost in bar.
+    Boost,
+    /// Engine oil temperature in Celsius.
+    Oil,
+    /// Coolant temperature in Celsius.
+    Water,
+    /// Transmission oil temperature in Celsius.
+    Dsg,
+    /// Intake air temperature in Celsius.
+    Iat,
+    /// Exhaust gas temperature in Celsius.
+    Egt,
+    /// ECU supply voltage in volts.
+    Battery,
+    /// Dimensionless lambda.
+    Lambda,
+    /// Four independent signed cylinder corrections in degrees; no qualified vehicle producer.
+    IgnitionRetard,
+}
+impl WidgetChannel {
+    /// Complete widget library order; this is not the scalar source/history array order.
+    pub const ALL: [Self; 9] = [
+        Self::Boost,
+        Self::Oil,
+        Self::Water,
+        Self::Dsg,
+        Self::Iat,
+        Self::Egt,
+        Self::Battery,
+        Self::Lambda,
+        Self::IgnitionRetard,
+    ];
+
+    /// Return a scalar identity, or `None` for the four-cylinder group.
+    pub const fn scalar(self) -> Option<Channel> {
+        match self {
+            Self::Boost => Some(Channel::Boost),
+            Self::Oil => Some(Channel::Oil),
+            Self::Water => Some(Channel::Water),
+            Self::Dsg => Some(Channel::Dsg),
+            Self::Iat => Some(Channel::Iat),
+            Self::Egt => Some(Channel::Egt),
+            Self::Battery => Some(Channel::Battery),
+            Self::Lambda => Some(Channel::Lambda),
+            Self::IgnitionRetard => None,
+        }
+    }
+
+    /// Return the default short ASCII widget label, independent of custom text.
+    pub const fn label(self) -> &'static str {
+        match self.scalar() {
+            Some(channel) => channel.label(),
+            None => "IGN RETARD",
+        }
+    }
+
+    /// Return canonical representation bounds; signed degrees for the group, never safety limits.
+    pub const fn domain(self) -> (f32, f32) {
+        match self.scalar() {
+            Some(channel) => channel.domain(),
+            None => (-327.68, 327.67),
+        }
+    }
+}
+impl From<Channel> for WidgetChannel {
+    /// Return the widget selector preserving the exact scalar identity of `channel`.
+    fn from(channel: Channel) -> Self {
+        match channel {
+            Channel::Boost => Self::Boost,
+            Channel::Oil => Self::Oil,
+            Channel::Water => Self::Water,
+            Channel::Dsg => Self::Dsg,
+            Channel::Iat => Self::Iat,
+            Channel::Egt => Self::Egt,
+            Channel::Battery => Self::Battery,
+            Channel::Lambda => Self::Lambda,
         }
     }
 }
@@ -314,7 +397,9 @@ pub enum Applicability {
 pub enum LimitMode {
     /// Trigger at/above the high threshold; clear at/below a strictly smaller threshold.
     High,
-    /// Trigger at/below the low threshold; clear at/above a strictly larger threshold.
+    /// Scalar: trigger at/below threshold; clear at/above a strictly larger threshold.
+    /// Ignition: trigger strictly below threshold; clear at/above an equal-or-larger threshold.
+    /// Ignition thresholds are nonpositive signed degrees and do not change raw RET status.
     Low,
     /// Lambda-only absolute deviation from target with load qualification and high-style hysteresis.
     LambdaDeviation,
@@ -335,10 +420,12 @@ pub struct WarningSettings {
     /// Predicate and threshold-ordering rule.
     pub mode: LimitMode,
     /// Trigger threshold or lower window edge; lambda deviation admits 0..=2.
+    /// Ignition uses strict raw degrees < trigger with -327.68 <= trigger <= clear <= 0.
     pub trigger: f32,
     /// Clear threshold or lower clear-window edge; ordered hysteresis is mandatory.
+    /// Ignition permits equality with trigger and clears at raw degrees >= clear.
     pub clear: f32,
-    /// Minimum load percent for load-qualified lambda warning evaluation, 0..=100.
+    /// Minimum load percent for load-qualified lambda evaluation, 0..=100; ignition requires zero.
     pub min_load_percent: f32,
     /// Required continuous trigger duration in milliseconds, 1..=30,000.
     pub on_ms: u16,
@@ -628,3 +715,7 @@ pub enum Fuel {
 #[cfg(target_pointer_width = "32")]
 /// 32-bit schema storage ceiling; does not establish whole-image RAM or stack headroom.
 const _: () = assert!(core::mem::size_of::<Config>() <= 14_596);
+
+#[cfg(target_pointer_width = "32")]
+/// Preserve the pre-group widget storage ceiling; sixty-four instances share configuration storage.
+const _: () = assert!(core::mem::size_of::<Widget>() <= 220);

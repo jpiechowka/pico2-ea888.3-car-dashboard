@@ -84,10 +84,10 @@ impl Simulation {
             .expect("simulation always has a configuration")
     }
 
-    /// Processes at most one canonical Channel::ALL `values` batch and one queued warning command at `now_ms`
-    /// milliseconds, then ticks shared state and prepares presentation. None advances timers/results without
-    /// inventing samples. Backdated sample admission follows the shared gate; retained time never decreases and no
-    /// elapsed-proportional replay runs.
+    /// Processes at most one canonical Channel::ALL `values` batch, one shared synthetic cylinder batch and one
+    /// queued warning command at `now_ms` milliseconds, then ticks state and prepares presentation. None advances
+    /// timers/results without inventing samples. Backdated sample admission follows the shared gate; retained time
+    /// never decreases and no elapsed-proportional replay runs.
     pub(crate) fn advance_to(
         &mut self,
         now_ms: u64,
@@ -97,6 +97,8 @@ impl Simulation {
         // Preserve the shared model's rejection semantics for backdated readings.
         if let Some(values) = values {
             self.model.ingest_batch(values, now_ms);
+            self.model
+                .ingest_ignition_demo(dashboard_core::demo::ignition_values(now_ms), now_ms);
         }
         if let Ok(command) = self.queue.try_receive() {
             self.model.apply_warning_command(command, now_ms);

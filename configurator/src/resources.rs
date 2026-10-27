@@ -160,8 +160,8 @@ pub struct WidgetUsage {
     pub view: u8,
     /// Accepted bounded user label, rendered as text.
     pub label: String,
-    /// Canonical data channel.
-    pub channel: Channel,
+    /// Scalar measurement or independent four-cylinder widget group.
+    pub channel: WidgetChannel,
     /// Configured primary display-unit selection.
     pub readout: Readout,
     /// Retained optional boost companion-unit choice.

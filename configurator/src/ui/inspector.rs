@@ -165,7 +165,7 @@ pub fn Inspector(
                 <div class="empty-inspector"><div class="grid-icon" aria-hidden="true">"▦"</div><h3>"Select a widget"</h3><p>"Click a tile on the display to edit its label, size, graph and warnings."</p><p>"Drag a sensor from the library into a free cell. Create an empty view for a fresh layout."</p><div class="size-samples"><span>"1 × 1"</span><span>"2 × 1"</span><span>"2 × 2"</span></div></div>
             </Show>
             <AppearancePanel ui/>
-            <For each=move ||{ui.inspected_widget().into_iter().collect::<Vec<_>>()} key=|key|(key.0,key.1.index()) children=move |(id,_)|view!{<WidgetInspector ui id/>}/>
+            <For each=move ||{ui.inspected_widget().into_iter().collect::<Vec<_>>()} key=|key|(key.0,key.1.label()) children=move |(id,_)|view!{<WidgetInspector ui id/>}/>
 
         </aside>
     }
@@ -180,11 +180,11 @@ fn flag(
     get: fn(&DisplayOptions) -> bool,
     set: fn(&mut DisplayOptions, bool),
 ) -> impl IntoView {
-    view! { <Toggle ui label value=Signal::derive(move || ui.widget(id).is_some_and(|w|get(&w.display)))
+    view! { <Toggle ui label repair_invalid_draft=true value=Signal::derive(move || ui.widget(id).is_some_and(|w|get(&w.display)))
     on_change=Callback::new(move |(token,value)| ui.update_widget(token,id,|w| {
         let previous_afr=w.display.afr;
         set(&mut w.display,value);
-        if w.display.afr!=previous_afr {
+        if w.channel == WidgetChannel::Lambda && w.display.afr!=previous_afr {
             w.advanced.readout=if w.display.afr {Readout::LambdaAndAfr}else{Readout::Lambda};
         }
     }))/> }
@@ -192,6 +192,7 @@ fn flag(
 
 /// Returns repairable layout, gauge, appearance and warning fields for widget `id`
 /// in `ui`; inactive invalid fields remain visible and all edits use editor admission.
+/// Panics if the keyed inspector mounts without its selected or inspected widget.
 #[component]
 fn WidgetInspector(
     /// Shared selected/candidate objects and token-checked inspection/edit adapters.
@@ -199,7 +200,7 @@ fn WidgetInspector(
     /// Stable widget ID resolved through current selection or candidate inspection authority.
     id: u16,
 ) -> impl IntoView {
-    let channel = ui.widget(id).map(|w| w.channel).unwrap_or(Channel::Oil);
+    let channel = ui.widget(id).expect("selected widget").channel;
     view! {
         <div class="inspector-body">
             <Group ui group=GroupId::Layout>
@@ -219,6 +220,7 @@ fn WidgetInspector(
                 </div>}
             }}
             </Group>
+            <Show when=move ||channel.scalar().is_some() || ui.inspection_active()>
             <Group ui group=GroupId::Gauge>
 
             <Choice ui repair_invalid_draft=true label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
@@ -233,19 +235,21 @@ fn WidgetInspector(
             </Show>
             <super::advanced::GaugeControls ui id/>
             </Group>
+            </Show>
             <Group ui group=GroupId::Readout>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
             <super::advanced::DisplayControls ui id/>
             </Group>
+            <Show when=move ||channel.scalar().is_some() || ui.inspection_active()>
             <Group ui group=GroupId::HistoryStatistics>
-            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.capabilities().history) || ui.inspection_active()>
             <span title="History keeps the last qualified reading in each of 60 timed buckets. Slow sensors can leave gaps; no values are backfilled. Faults can discard one preceding point to show a brief outage. This is a trend view, not a lossless waveform or peak recorder.">{flag(ui,id,"History graph",|d|d.graph,|d,v|d.graph=v)}</span>
             </Show>
-            <Show when=move ||ui.widget(id).is_some_and(|w|w.supports_statistics())>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.supports_statistics()) || ui.inspection_active()>
             {flag(ui,id,"Average",|d|d.average,|d,v|d.average=v)}
             {flag(ui,id,"Minimum & maximum",|d|d.extrema,|d,v|d.extrema=v)}
             </Show>
-            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.capabilities().history) || ui.inspection_active()>
             {flag(ui,id,"Trend arrow",|d|d.trend,|d,v|d.trend=v)}
             </Show>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.capabilities().history) || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::GraphMinimum,WidgetField::GraphMaximum],Field::GraphRange))>
@@ -256,8 +260,9 @@ fn WidgetInspector(
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GraphMinimum) label="Graph minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GraphMaximum) label="Graph maximum"/></div>
             </Show>
             </Show>
-            <button on:click=move |_|workspaces::open(ui,Workspace::DataWarnings,GroupId::Channels)>"Open channel-shared history"</button>
+            <Show when=move ||channel.scalar().is_some()><button on:click=move |_|workspaces::open(ui,Workspace::DataWarnings,GroupId::Channels)>"Open channel-shared history"</button></Show>
             </Group>
+            </Show>
             <Group ui group=GroupId::Appearance>
             <details class="palette-panel"><summary>"Widget colours"</summary>
                 <p class="hint">"Exact panel colours · #RRGGBB quantized to RGB565. Foregrounds need 3:1 contrast. Inactive roles stay stored for other styles; edit them here to keep future changes valid."</p>
@@ -268,19 +273,19 @@ fn WidgetInspector(
             <Group ui group=GroupId::Warnings>
 
             <Toggle ui repair_invalid_draft=true label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>
-            <Choice ui repair_invalid_draft=true label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
+            <Choice ui repair_invalid_draft=true label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=if channel.scalar().is_none(){choices(&[("demo","Demo only")])}else{choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])}
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.warning.applicability=if value=="demo"{Applicability::DemoOnly}else{Applicability::VehicleAndDemo}))/>
             <p class="hint">"Demo limits are examples. Vehicle thresholds are your own configuration; source and operating-context guards remain enforced."</p>
             <Choice ui repair_invalid_draft=true label="Rule type" value=Signal::derive(move ||ui.widget(id).map(|w|match w.warning.mode {LimitMode::High=>"high",LimitMode::Low=>"low",LimitMode::LambdaDeviation=>"lambda",LimitMode::OutsideWindow=>"outside",LimitMode::InsideWindow=>"inside"}.to_string()).unwrap_or_default())
-                options=if channel==Channel::Lambda {choices(&[("lambda","Deviation from target lambda")])} else {choices(&[("high","High value"),("low","Low value"),("outside","Outside window"),("inside","Inside window")])}
+                options=if channel.scalar().is_none(){choices(&[("low","Below shared ignition threshold")])}else if channel==WidgetChannel::Lambda {choices(&[("lambda","Deviation from target lambda")])} else {choices(&[("high","High value"),("low","Low value"),("outside","Outside window"),("inside","Inside window")])}
                 on_change=Callback::new(move |(token,value):(FieldToken,String)| {
                     let mode=match value.as_str(){"low"=>LimitMode::Low,"high"=>LimitMode::High,"outside"=>LimitMode::OutsideWindow,"inside"=>LimitMode::InsideWindow,_=>return};
                     ui.typed(token,Edit::SetWarningMode{id,mode});
                 })/>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningTrigger) label="Trigger"/><TextField ui field=RawField::Widget(id,WidgetField::WarningClear) label="Clear"/></div>
-            <Show when=move || channel==Channel::Lambda || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::WarningLoad],Field::WarningLoad))>
-                <Show when=move ||channel!=Channel::Lambda><p class="hint">"This stored load preference is shown for repair; this channel's rule does not use it."</p></Show>
-                <TextField ui field=RawField::Widget(id,WidgetField::WarningLoad) label="Minimum load (%)" hint="0–100; required lambda context stays enforced"/>
+            <Show when=move || channel==WidgetChannel::Lambda || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::WarningLoad],Field::WarningLoad))>
+                <Show when=move ||channel!=WidgetChannel::Lambda><p class="hint">"This stored load preference is shown for repair; this channel's rule does not use it."</p></Show>
+                <TextField ui field=RawField::Widget(id,WidgetField::WarningLoad) label="Minimum load (%)" hint=if channel.scalar().is_none(){"Ignition uses no load gate; repair this stored value to 0."}else{"0–100; required lambda context stays enforced"}/>
             </Show>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningOn) label="On dwell (ms)" hint="1–30000"/><TextField ui field=RawField::Widget(id,WidgetField::WarningOff) label="Off dwell (ms)" hint="1–30000"/></div>
             <super::advanced::WarningControls ui id/>
@@ -290,7 +295,7 @@ fn WidgetInspector(
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,true)>"↓ Later"</button>
             </div></div>
             </Group>
-            <button on:click=move |_|{ui.source_channel.set(channel);workspaces::open(ui,Workspace::DataWarnings,GroupId::Sources);}>"Open channel source & decoder"</button>
+            <Show when=move ||channel.scalar().is_some()><button on:click=move |_|{if let Some(scalar)=channel.scalar(){ui.source_channel.set(scalar);workspaces::open(ui,Workspace::DataWarnings,GroupId::Sources);}}>"Open channel source & decoder"</button></Show>
             <div class="widget-actions">
                 <button disabled=move ||ui.invalid() on:click=move |_| {
                     if let Some(widget)=ui.widget(id) {if let Some(placement)=ui.free(widget.placement.span,None){ui.apply(Edit::DuplicateWidget{id,view:widget.view,placement});}else{ui.notice.set("No free space for this size in the current view.".into());}}

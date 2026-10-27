@@ -28,6 +28,21 @@ pub enum Readout {
     Afr,
     /// Lambda primary readout with equivalent AFR decoration.
     LambdaAndAfr,
+    /// Four signed correction numbers in degrees.
+    IgnitionNumeric,
+    /// Four raw-sign statuses: negative is RET, otherwise OK for fresh samples.
+    IgnitionStatus,
+    /// Four simultaneous raw-sign statuses and signed correction numbers.
+    IgnitionStatusAndNumber,
+}
+/// Ignition warning text layout; the shared threshold, dwell and message remain in WarningSettings.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IgnitionWarningPresentation {
+    /// One configured message for any qualifying cylinder; required for scalar widgets.
+    Global,
+    /// One bounded line per affected fresh cylinder, prefixing the shared configured message.
+    CylinderLines,
 }
 /// Optional second pressure unit; active visibility additionally depends on widget capabilities.
 #[repr(u8)]
@@ -79,6 +94,22 @@ pub enum Priority {
 }
 
 impl Readout {
+    /// Return whether this readout represents `channel`, including the independent cylinder group.
+    pub const fn compatible_widget(
+        self,
+        channel: crate::WidgetChannel,
+    ) -> bool {
+        match channel.scalar() {
+            Some(scalar) => self.compatible(scalar),
+            None => {
+                matches!(
+                    self,
+                    Self::IgnitionNumeric | Self::IgnitionStatus | Self::IgnitionStatusAndNumber
+                )
+            }
+        }
+    }
+
     /// Return whether this mode includes any fuel-assumption-derived AFR output.
     pub const fn includes_afr(self) -> bool { matches!(self, Self::Afr | Self::LambdaAndAfr) }
 
@@ -221,10 +252,28 @@ pub struct AdvancedDisplay {
     pub peak_mode: PeakSelection,
     /// Reference-marker policy; manual values are not ECU targets.
     pub reference_mode: ReferenceMode,
+    /// Ignition popup layout; scalar widgets require Global. Does not alter shared warning evaluation.
+    pub ignition_warning: IgnitionWarningPresentation,
     /// Active prefix length, always 0..=3 through safe mutators.
     band_count: u8,
 }
 impl AdvancedDisplay {
+    /// Return four-cylinder defaults without scalar features; one-decimal precision belongs to DisplayOptions.
+    pub const fn for_ignition() -> Self {
+        Self {
+            bands: [Band::EMPTY; 3],
+            reference: 0.0,
+            smoothing_ms: 0,
+            peak_hold_ms: 750,
+            readout: Readout::IgnitionStatusAndNumber,
+            secondary: Secondary::None,
+            peak_mode: PeakSelection::Off,
+            reference_mode: ReferenceMode::Off,
+            ignition_warning: IgnitionWarningPresentation::Global,
+            band_count: 0,
+        }
+    }
+
     /// Return defaults for `channel`; `afr` adds AFR only for lambda.
     /// Bands/smoothing/markers are off and peak hold is 750 ms; numeric reference is zero.
     pub const fn for_channel(
@@ -251,6 +300,7 @@ impl AdvancedDisplay {
             secondary: Secondary::None,
             peak_mode: PeakSelection::Off,
             reference_mode: ReferenceMode::Off,
+            ignition_warning: IgnitionWarningPresentation::Global,
             band_count: 0,
         }
     }
@@ -296,13 +346,13 @@ impl AdvancedDisplay {
     }
 }
 impl Serialize for AdvancedDisplay {
-    /// Serialize eight logical fields to `s`; returns serializer output/error and excludes inactive bands.
+    /// Serialize nine logical fields to `s`; returns serializer output/error and excludes inactive bands.
     fn serialize<S: Serializer>(
         &self,
         s: S,
     ) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = s.serialize_struct("AdvancedDisplay", 8)?;
+        let mut s = s.serialize_struct("AdvancedDisplay", 9)?;
         s.serialize_field("bands", self.bands())?;
         s.serialize_field("reference", &self.reference)?;
         s.serialize_field("smoothing_ms", &self.smoothing_ms)?;
@@ -311,6 +361,7 @@ impl Serialize for AdvancedDisplay {
         s.serialize_field("secondary", &self.secondary)?;
         s.serialize_field("peak_mode", &self.peak_mode)?;
         s.serialize_field("reference_mode", &self.reference_mode)?;
+        s.serialize_field("ignition_warning", &self.ignition_warning)?;
         s.end()
     }
 }
@@ -339,6 +390,8 @@ impl<'de> Deserialize<'de> for AdvancedDisplay {
             peak_mode: PeakSelection,
             /// Reference marker selection.
             reference_mode: ReferenceMode,
+            /// Required schema-seven ignition popup layout; scalar candidates require Global.
+            ignition_warning: IgnitionWarningPresentation,
         }
         let w = Wire::deserialize(d)?;
         let mut result = Self {
@@ -349,6 +402,7 @@ impl<'de> Deserialize<'de> for AdvancedDisplay {
             secondary: w.secondary,
             peak_mode: w.peak_mode,
             reference_mode: w.reference_mode,
+            ignition_warning: w.ignition_warning,
             ..Self::for_channel(Channel::Boost, false)
         };
         result

@@ -116,7 +116,7 @@ fn vehicle_applicability_does_not_enable_unknown_sources_or_contexts() {
     let voltage = config
         .widgets
         .iter()
-        .position(|w| w.channel == Channel::Battery)
+        .position(|w| w.channel == Channel::Battery.into())
         .unwrap();
     config.widgets[voltage].warning.applicability = Applicability::VehicleAndDemo;
     config.widgets[voltage].warning.on_ms = 1;
@@ -168,7 +168,7 @@ fn every_rule_uses_its_channel_for_context_metadata_expiry_and_faults() {
     for (i, widget) in cfg.config().widgets.iter().enumerate() {
         assert_eq!(
             model.snapshot().rule_status_at(index(i), 1100),
-            if widget.channel == Channel::Lambda {
+            if widget.channel == Channel::Lambda.into() {
                 Status::Unavailable
             } else {
                 Status::Active

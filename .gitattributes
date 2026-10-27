@@ -31,6 +31,7 @@
 # Firmware and embedded binaries
 *.elf binary
 *.eav binary
+*.eavp binary
 *.bin binary
 *.uf2 binary
 *.hex binary
@@ -56,6 +57,9 @@ firmware/vendor/embassy-rp/funcsel.txt -whitespace
 # Preserve exact bytes of the new measured captures and their digest sidecars.
 host/baselines/audit2_*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 host/baselines/configurator_*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+host/baselines/ignition-*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 
 # Preserve the frozen v3 JSON fixture's exact original bytes.
 crates/dashboard-config/tests/fixtures/v3-default.json -text
+# Schema-six migration fixtures retain their measured pre-migration bytes.
+crates/dashboard-config/tests/fixtures/v6-*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

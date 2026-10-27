@@ -5,6 +5,8 @@ pub mod cell_text;
 mod cells;
 /// Native landscape/portrait header and default-grid divider drawing.
 mod header;
+/// Four independently qualified ignition corrections and bounded cross layout.
+pub mod ignition;
 /// Bounded feedback and warning overlay rendering.
 mod popups;
 /// Background, graph, arrow and outlined text primitives.

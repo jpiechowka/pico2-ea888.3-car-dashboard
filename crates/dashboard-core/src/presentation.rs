@@ -21,6 +21,8 @@ pub enum Unit {
     Lambda,
     /// Equivalent air/fuel mass ratio, lambda times the explicit stoichiometric assumption.
     Afr,
+    /// Signed ignition correction in degrees; no temperature conversion.
+    Degrees,
 }
 
 impl Unit {
@@ -46,6 +48,7 @@ impl Unit {
             Readout::Volts => Self::Volts,
             Readout::Lambda | Readout::LambdaAndAfr => Self::Lambda,
             Readout::Afr => Self::Afr,
+            Readout::IgnitionNumeric | Readout::IgnitionStatus | Readout::IgnitionStatusAndNumber => Self::Degrees,
         }
     }
 
@@ -92,7 +95,8 @@ impl Unit {
         self.difference(canonical, stoich) + if self == Self::Fahrenheit { 32.0 } else { 0.0 }
     }
 
-    /// Returns fixed ASCII unit suffix; Lambda/AFR use no suffix because labels/assumptions are separate.
+    /// Returns the fixed UTF-8 unit suffix; degrees uses U+00B0. Lambda/AFR use no
+    /// suffix because labels/assumptions are separate. Callers must support the glyph.
     pub const fn suffix(self) -> &'static str {
         match self {
             Self::Celsius => "C",
@@ -103,6 +107,7 @@ impl Unit {
             Self::Volts => "V",
             Self::Lambda => "",
             Self::Afr => "",
+            Self::Degrees => "°",
         }
     }
 }
@@ -353,7 +358,11 @@ impl PresentationState {
                 *filter = SmoothState::EMPTY;
                 continue;
             };
-            let id = SensorId::from_channel(widget.channel);
+            let Some(channel) = widget.channel.scalar() else {
+                *filter = SmoothState::EMPTY;
+                continue;
+            };
+            let id = SensorId::from_channel(channel);
             if sources[id as usize] != self.sources[id as usize] {
                 filter.valid = false;
             }

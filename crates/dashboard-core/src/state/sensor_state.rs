@@ -1,5 +1,6 @@
 //! Single-channel accepted values, elapsed-time sampling and immutable graph snapshots.
 use super::extrema::{Extrema, valid_sample};
+use super::finite_optional::FiniteOptional;
 use super::history::{History, HistoryData, HistoryView};
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
@@ -51,13 +52,13 @@ pub enum PeakMode {
 #[derive(Clone, Copy, Debug)]
 pub struct SensorSnapshot {
     /// Last accepted canonical value, or absent before first sample.
-    value: Option<f32>,
+    value: FiniteOptional,
     /// Minimum since statistics reset, including retained current value at reset.
-    minimum: Option<f32>,
+    minimum: FiniteOptional,
     /// Maximum since statistics reset, including retained current value at reset.
-    maximum: Option<f32>,
+    maximum: FiniteOptional,
     /// Mean of up to sixty five-second samples, not a time-weighted interpolation.
-    average: Option<f32>,
+    average: FiniteOptional,
     /// Significant rising/falling trend; `None` for insufficient/flat comparison.
     trend: Option<bool>,
     /// Original last-good sample timestamp in monotonic milliseconds.
@@ -91,10 +92,10 @@ impl PartialEq for SensorSnapshot {
 impl SensorSnapshot {
     /// No accepted value/statistics; empty graph and unavailable cache identity.
     pub const EMPTY: Self = Self {
-        value: None,
-        minimum: None,
-        maximum: None,
-        average: None,
+        value: FiniteOptional::NONE,
+        minimum: FiniteOptional::NONE,
+        maximum: FiniteOptional::NONE,
+        average: FiniteOptional::NONE,
         trend: None,
         sampled_at_ms: None,
         peak_until_ms: None,
@@ -106,13 +107,13 @@ impl SensorSnapshot {
     pub const fn graph_cache_identity(&self) -> Option<GraphCacheIdentity> { self.graph_identity }
 
     /// Returns retained canonical value without source/freshness qualification.
-    pub fn value(&self) -> Option<f32> { self.value }
+    pub fn value(&self) -> Option<f32> { self.value.get() }
 
     /// Returns retained minimum, or `None` before accepted data.
-    pub fn minimum(&self) -> Option<f32> { self.minimum }
+    pub fn minimum(&self) -> Option<f32> { self.minimum.get() }
 
     /// Returns retained maximum, or `None` before accepted data.
-    pub fn maximum(&self) -> Option<f32> { self.maximum }
+    pub fn maximum(&self) -> Option<f32> { self.maximum.get() }
 
     /// Join accepted extrema from an earlier snapshot of the same source/run.
     /// Used by bounded browser replay when older history points leave its window.
@@ -120,20 +121,23 @@ impl SensorSnapshot {
     /// synthesized, and firmware acquisition remains the statistics owner.
     /// Merges valid extrema from `earlier` without changing the current reading,
     /// timestamp, graph, average or cache proof.
+    /// Panics if the private finite-storage invariant is violated; admitted extrema cannot do so.
     pub fn retain_extrema_from(
         &mut self,
         earlier: &Self,
     ) {
-        if let Some(min) = earlier.minimum.filter(|v| valid_sample(*v)) {
-            self.minimum = Some(self.minimum.map_or(min, |value| value.min(min)));
+        if let Some(min) = earlier.minimum().filter(|v| valid_sample(*v)) {
+            self.minimum = FiniteOptional::try_from_option(Some(self.minimum().map_or(min, |value| value.min(min))))
+                .expect("snapshot minimum must remain finite");
         }
-        if let Some(max) = earlier.maximum.filter(|v| valid_sample(*v)) {
-            self.maximum = Some(self.maximum.map_or(max, |value| value.max(max)));
+        if let Some(max) = earlier.maximum().filter(|v| valid_sample(*v)) {
+            self.maximum = FiniteOptional::try_from_option(Some(self.maximum().map_or(max, |value| value.max(max))))
+                .expect("snapshot maximum must remain finite");
         }
     }
 
     /// Returns the captured rolling mean in canonical units, or `None` without samples.
-    pub fn get_average(&self) -> Option<f32> { self.average }
+    pub fn get_average(&self) -> Option<f32> { self.average.get() }
 
     /// Returns original last-good sample time in monotonic milliseconds.
     pub fn sampled_at_ms(&self) -> Option<u64> { self.sampled_at_ms }
@@ -248,11 +252,13 @@ impl SensorState {
     pub const fn sampled_at_ms(&self) -> Option<u64> { self.last_sample_ms }
 
     /// Returns a coherent presentation copy without graph-cache proof.
+    /// Panics if the private finite-value/statistics invariant is violated.
     pub fn snapshot(&self) -> SensorSnapshot { self.snapshot_with_identity(None) }
 
     /// Returns a presentation copy with exact graph identity from optional
     /// acquisition `origin`, current graph revision and `channel`; either missing
     /// origin/revision disables proof while preserving numeric data.
+    /// Panics if the private finite-value/statistics invariant is violated.
     pub(crate) fn tracked_snapshot(
         &self,
         origin: Option<core::num::NonZeroU32>,
@@ -270,15 +276,18 @@ impl SensorState {
 
     /// Returns all presentation fields with supplied `graph_identity`; caller
     /// guarantees any identity corresponds to these current graph contents.
+    /// Panics on nonfinite numeric state instead of silently replacing it with absence.
+    /// Raw/extrema admission bounds values to +/-1,000,000; the mean uses at most
+    /// sixty samples and checks the finite invariant again at this copy boundary.
     fn snapshot_with_identity(
         &self,
         graph_identity: Option<GraphCacheIdentity>,
     ) -> SensorSnapshot {
         SensorSnapshot {
-            value: self.value,
-            minimum: self.minimum(),
-            maximum: self.maximum(),
-            average: self.get_average(),
+            value: FiniteOptional::try_from_option(self.value).expect("accepted snapshot value must be finite"),
+            minimum: FiniteOptional::try_from_option(self.minimum()).expect("snapshot minimum must be finite"),
+            maximum: FiniteOptional::try_from_option(self.maximum()).expect("snapshot maximum must be finite"),
+            average: FiniteOptional::try_from_option(self.get_average()).expect("snapshot average must be finite"),
             trend: self.get_trend(),
             sampled_at_ms: self.last_sample_ms,
             peak_until_ms: self.peak_until_ms,

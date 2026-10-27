@@ -1,5 +1,5 @@
 //! Fixed synthetic fixtures and injection outcomes. No vehicle qualification.
-use dashboard_config::{Channel, LimitMode};
+use dashboard_config::{Channel, LimitMode, WidgetChannel};
 use dashboard_core::samples::{Quality, Quantity, Sample, SampleError, SensorId, Source};
 
 use super::ControlSimulator;
@@ -466,10 +466,16 @@ impl ControlSimulator {
         if !w.enabled {
             return WarningFixture::Disabled;
         }
-        if matches!(widget.channel, Channel::Battery | Channel::Lambda | Channel::Egt) {
+        if matches!(
+            widget.channel,
+            WidgetChannel::Battery | WidgetChannel::Lambda | WidgetChannel::Egt
+        ) {
             return WarningFixture::Unavailable("Required operating context is not supplied by this typed scenario");
         }
         let (low, high) = widget.channel.domain();
+        if widget.channel == WidgetChannel::IgnitionRetard && low >= w.trigger {
+            return WarningFixture::Unavailable("No representable cylinder value is strictly below this threshold");
+        }
         let witness = match w.mode {
             LimitMode::High => high,
             LimitMode::Low => low,
@@ -492,9 +498,9 @@ impl ControlSimulator {
         }
     }
 
-    /// Advances selected fixture to `at_ms` milliseconds with at most eight typed ingests and one control sample,
-    /// independent of skips. Returns InspectionOnly/Exhausted/Backdated before effects. Normal uses shared demo
-    /// batch context; others use typed fixtures, with missing/stale/fault behavior and a deterministic
+    /// Advances selected fixture to `at_ms` milliseconds with at most eight scalar and four cylinder ingests and one
+    /// control sample, independent of skips. Returns InspectionOnly/Exhausted/Backdated before effects. Normal uses
+    /// shared demo batch context; others use typed fixtures, with missing/stale/fault behavior and a deterministic
     /// warning-witness schedule. Success does not imply every ingest was admitted.
     pub fn scenario_step(
         &mut self,
@@ -511,6 +517,7 @@ impl ControlSimulator {
         }
         let elapsed = at_ms.saturating_sub(super::SAMPLE_START_MS);
         let mut values = dashboard_core::demo::values(elapsed);
+        let mut ignition = dashboard_core::demo::ignition_values(at_ms);
         let ingest = match self.scenario {
             Scenario::Missing => false,
             Scenario::Stale => !self.scenario_seeded,
@@ -520,6 +527,11 @@ impl ControlSimulator {
                     quality: Quality::TransportError,
                     at_ms,
                 });
+                self.simulation.model.mark_ignition_fault(
+                    dashboard_core::ignition::Cylinder::Two,
+                    Quality::TransportError,
+                    at_ms,
+                );
                 false
             }
             Scenario::MinMax | Scenario::WidthStress => {
@@ -527,6 +539,12 @@ impl ControlSimulator {
                     let (lo, hi) = c.domain();
                     if (elapsed / 2000).is_multiple_of(2) { lo } else { hi }
                 });
+                let (min, max) = WidgetChannel::IgnitionRetard.domain();
+                ignition = if (elapsed / 2000).is_multiple_of(2) {
+                    [min; 4]
+                } else {
+                    [max; 4]
+                };
                 true
             }
             Scenario::Warnings => {
@@ -542,7 +560,11 @@ impl ControlSimulator {
                     let span = u64::from(w.warning.on_ms) + u64::from(w.warning.off_ms) + 4000;
                     if phase < span {
                         if let WarningFixture::Available(value) = self.warning_fixture(i) {
-                            values[w.channel.index()] = value;
+                            if let Some(channel) = w.channel.scalar() {
+                                values[channel.index()] = value;
+                            } else {
+                                ignition = [value; 4];
+                            }
                         }
                         break;
                     }
@@ -557,6 +579,7 @@ impl ControlSimulator {
             // operating context; custom/diagnostic/witness inputs remain typed.
             self.advance_to(at_ms, Some(values));
         } else if ingest {
+            self.simulation.model.ingest_ignition_demo(ignition, at_ms);
             for channel in Channel::ALL {
                 self.inject(SimulationInput::Channel {
                     channel,

@@ -230,7 +230,11 @@ fn configured_raw_peaks_reject_replays_and_clear_on_invalid_payload() {
     use dashboard_host_validation::alarms::RuleIndex;
     use dashboard_host_validation::view_config::*;
     let mut c = default_config();
-    let position = c.widgets.iter().position(|w| w.channel == Channel::Water).unwrap();
+    let position = c
+        .widgets
+        .iter()
+        .position(|w| w.channel == Channel::Water.into())
+        .unwrap();
     c.widgets[position].advanced.peak_mode = PeakSelection::Maximum;
     c.widgets[position].advanced.peak_hold_ms = 200;
     let c = validate(c).unwrap();

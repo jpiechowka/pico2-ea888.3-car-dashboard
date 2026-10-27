@@ -1,6 +1,6 @@
 # Units, history and warning controls
 
-These Studio controls expose the advanced fields in the current v6 configuration. Firmware and browser
+These Studio controls expose the advanced fields in the current v7 configuration. Firmware and browser
 share the advanced runtime; exports use the normal strict configuration codec.
 See [historical v4 release evidence](advanced-v4-release.md) and
 [current orientation controls](orientation.md).
@@ -10,10 +10,20 @@ and Fahrenheit. Boost offers **Follow dashboard bar / PSI button** or fixed bar,
 PSI and kPa. Only Follow dashboard responds to the physical or preview toggle.
 An equal primary and secondary unit appears once. Lambda offers lambda,
 estimated AFR, or both. AFR uses the declared Fuel & AFR stoichiometry, never a
-measured blend or an ECU requested AFR. Numeric widgets support secondary lines
+measured blend or an ECU requested AFR. Scalar Numeric widgets support secondary lines
 at every size; gauges need 2×1 or 2×2 for a companion reading.
 
-Thresholds, scale endpoints, bands, extrema, history and references remain
+**IGN RETARD** offers Numeric, Status (OK/RET), and Status + number. All show
+four cylinders in a cross layout at every size, with cylinders 1/2 above 3/4.
+Combined mode shows both status and degrees, for example RET −2.5°, with status
+beside the cylinder heading and the number below. RET means a raw negative
+correction; zero, signed zero and positive values are OK. Rounding does not
+change that status. Values are synthetic in Studio and firmware Demo; Vehicle
+has no qualified producer. Each cylinder has independent quality and a 500 ms
+freshness limit. Unavailable values show their quality instead of a number or OK.
+Scalar units, history, smoothing and gauge markers are unavailable for this group.
+
+Scalar thresholds, scale endpoints, bands, extrema, history and references remain
 canonical: Celsius, relative bar, volts or lambda. Conversion occurs at display
 formatting and geometry. Changing units preserves thresholds. **Current-value
 smoothing** offers Off, Gentle (250 ms), Strong (750 ms), or 50–5000 ms. The
@@ -44,7 +54,7 @@ Labels are optional, at most five printable ASCII characters, and appear in
 three fixed rows at 2×2. Hidden settings keep their validation bounds.
 
 Warnings retain source, quality, freshness and operating-context gates. High,
-Low, Outside window and Inside window apply to direct rules; lambda retains
+Low, Outside window and Inside window apply to direct scalar rules; lambda retains
 qualified deviation from its verified target and required warm/load/fuel-cut
 context. Choosing a window initializes illustrative channel-domain endpoints;
 configure your own intended thresholds.
@@ -58,8 +68,28 @@ examples, not recommended vehicle limits.
 | --- | --- |
 | High | clear < trigger |
 | Low | trigger < clear |
+| Ignition group Low | trigger ≤ clear ≤ 0 |
 | Outside window | trigger low < clear low ≤ clear high < trigger high |
 | Inside window | clear low < trigger low ≤ trigger high < clear high |
+
+The ignition group shares one message and threshold pair across all four
+cylinders. It activates strictly below the trigger, unlike scalar Low rules,
+which include equality. Every cylinder must be fresh and at or above the clear
+threshold to complete clearing. Missing data cannot confirm a clear. Defaults
+are DemoOnly, trigger/clear 0°, activation 1000 ms, clear 500 ms, and
+**Ignition retarded**. Changing the warning threshold does not change raw RET
+status in the tile. There is no load gate or Vehicle applicability.
+
+**Ignition warning popup** chooses one global message for any affected cylinder
+or separate affected-cylinder lines. Cylinder lines occupy a dedicated page,
+even in three-message mode, using the widget's warning colours. Up to four lines
+are generated in cylinder-number order, such as `Cylinder 1 Ignition retarded`.
+The configured message remains at most 20 printable ASCII bytes, with no embedded
+newlines; the generated prefix makes each line at most 31 bytes. The compact
+text and status/page footers are clipped to a 216×136 panel in either orientation.
+Remembered episodes retain their cylinder identities and unavailable status;
+they do not create fresh values. The same priority, latch, snooze and completed-page
+acknowledgment rules below apply to the group as one warning rule.
 
 Dwell advances only with newly admitted measurements. Repainting or time with
 no data cannot confirm activation or clear. Priority sorts Critical, High,

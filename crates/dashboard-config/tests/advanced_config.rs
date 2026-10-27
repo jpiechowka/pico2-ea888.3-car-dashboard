@@ -6,7 +6,7 @@ use dashboard_config::*;
 /// Current defaults serialize compactly with explicit advanced, history and LED fields.
 fn complete_defaults_and_compact_output() {
     let config = validate(default_config()).unwrap();
-    assert_eq!(VERSION, 6, "BLE extends the orientation contract");
+    assert_eq!(VERSION, 7, "group widgets extend the scalar presentation contract");
     let json = to_json(&config).unwrap();
     assert!(!json.contains('\n'));
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();

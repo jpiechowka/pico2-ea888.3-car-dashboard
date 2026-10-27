@@ -8,7 +8,7 @@ use dashboard_config::{
     Span,
     ValidatedConfig,
     ValidationError,
-    default_widget,
+    default_widget_for_channel,
     validate,
 };
 use dashboard_core::config::HEADER_HEIGHT;
@@ -424,7 +424,7 @@ pub fn validate_draft_drop(
                 .expect("at most 63 occupied IDs before adding a widget");
             candidate
                 .widgets
-                .push(default_widget(channel, id, view, placement))
+                .push(default_widget_for_channel(channel, id, view, placement))
                 .map_err(|_| GeometryError::Capacity)?;
         }
     }

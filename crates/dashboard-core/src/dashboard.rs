@@ -191,12 +191,12 @@ impl DashboardScene<'_> {
     ) -> Option<CellText> {
         let layout = self.layout.as_ref()?;
         let widget = layout.widget(cell)?;
+        let Some(channel) = widget.channel.scalar() else {
+            return Some(crate::widgets::ignition::text(widget, self.measurements, self.now_ms));
+        };
         let current = match self.readings {
             Some(readings) => readings.widget(cell)?.value,
-            None => {
-                self.measurements
-                    .value_at(SensorId::from_channel(widget.channel), self.now_ms)
-            }
+            None => self.measurements.value_at(SensorId::from_channel(channel), self.now_ms),
         };
         Some(configured_scene::widget_text_with_value(
             widget,
@@ -212,13 +212,15 @@ impl DashboardScene<'_> {
     /// Returns converted current/scale/raw-held-peak data for configured slot `cell`.
     /// Prepared current/peak values are preferred; fallback uses the widget's global
     /// rule index. Missing layout/widget/prepared slot returns `None`; unavailable
-    /// measurements remain absent inside an otherwise valid reading.
+    /// measurements remain absent inside an otherwise valid reading. Cylinder groups
+    /// return None because they have four observations and no scalar gauge.
     pub fn gauge_reading(
         &self,
         cell: usize,
     ) -> Option<crate::widgets::gauge::Reading> {
         let layout = self.layout.as_ref()?;
         let widget = layout.widget(cell)?;
+        let channel = widget.channel.scalar()?;
         let (value, peak) = match self.readings {
             Some(readings) => {
                 let reading = readings.widget(cell)?;
@@ -226,8 +228,7 @@ impl DashboardScene<'_> {
             }
             None => {
                 (
-                    self.measurements
-                        .value_at(SensorId::from_channel(widget.channel), self.now_ms),
+                    self.measurements.value_at(SensorId::from_channel(channel), self.now_ms),
                     self.measurements
                         .peak_at(crate::alarms::RuleIndex::new(layout.rule_index(cell)?)?, self.now_ms),
                 )
@@ -244,13 +245,17 @@ impl DashboardScene<'_> {
     }
 
     /// Returns the canonical sensor index for visible slot `cell`, or `None` beyond
-    /// the configured view/legacy eight cells. Configured order follows the validated widget table.
+    /// the configured view/legacy eight cells or for a four-cylinder group.
+    /// Configured order follows the validated widget table; groups never borrow a scalar identity.
     pub fn cell_sensor(
         &self,
         cell: usize,
     ) -> Option<usize> {
         if let Some(layout) = &self.layout {
-            return layout.widget(cell).map(|w| SensorId::from_channel(w.channel) as usize);
+            return layout
+                .widget(cell)
+                .and_then(|w| w.channel.scalar())
+                .map(|channel| SensorId::from_channel(channel) as usize);
         }
         CELL_SENSORS.get(cell).copied()
     }
@@ -540,7 +545,8 @@ struct CellKey {
     quality: Quality,
     /// Actual source provenance, preventing equal numeric values from hiding source replacement.
     source: Source,
-    /// Exact bounded strings used by the corresponding renderer.
+    /// Exact bounded strings; ignition lanes4/5 additionally retain four qualities
+    /// and provenance without increasing this fixed cache record.
     text: CellText,
     /// Visible cell fill after warning phase/palette policy.
     background: Rgb565,
@@ -562,6 +568,25 @@ impl DashboardScene<'_> {
         &self,
         cell: usize,
     ) -> Quality {
+        if self
+            .layout
+            .as_ref()
+            .and_then(|layout| layout.widget(cell))
+            .is_some_and(|widget| widget.channel.scalar().is_none())
+        {
+            // Only controls shared warning blinking. Each visible cylinder is
+            // independently qualified by the group formatter and warning owner.
+            return if crate::ignition::Cylinder::ALL.into_iter().any(|cylinder| {
+                self.measurements
+                    .ignition
+                    .value_at(cylinder, self.measurements.mode, self.now_ms)
+                    .is_some()
+            }) {
+                Quality::Valid
+            } else {
+                Quality::Unknown
+            };
+        }
         let Some(sensor) = self.cell_sensor(cell) else {
             return Quality::Unknown;
         };
@@ -581,6 +606,31 @@ impl DashboardScene<'_> {
         &self,
         cell: usize,
     ) -> Option<CellKey> {
+        if let Some(layout) = &self.layout
+            && let Some(widget) = layout.widget(cell)
+            && widget.channel.scalar().is_none()
+        {
+            let warning = self.widget_warning(cell)?;
+            return Some(CellKey {
+                widget: layout
+                    .configuration()
+                    .cache_identity()
+                    .zip(layout.rule_index(cell).map(|index| index as u8)),
+                quality: self.quality(cell),
+                source: Source::Unknown,
+                text: self.configured_text(cell)?,
+                background: configured_scene::panel_color(if warning.blink {
+                    widget.colors.warning.background
+                } else {
+                    widget.colors.background
+                }),
+                flags: [false, warning.blink, warning.unavailable],
+                warning_marker: warning.marker,
+                trend: None,
+                graph: None,
+                gauge: None,
+            });
+        }
         let sensor = self.cell_sensor(cell)?;
         let state = &self.measurements.sensors[sensor];
         let value = state.value().unwrap_or(0.0);

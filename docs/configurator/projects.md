@@ -30,7 +30,7 @@ The container is binary and uncompressed, with no file paths, links or archive e
 
 - 32-byte header: `EAVPROJ\0`, u16 version 2, u16 descriptor count 5, u32 exact total length, u32 table offset 32, eight zero reserved bytes, CRC32 of the first 28 bytes.
 - Five 48-byte descriptors in fixed order: u16 section kind, u16 zero flags, u32 absolute offset, u32 length, u32 CRC32, 32-byte SHA256.
-- Section kinds: canonical dashboard EAV6, EASP2 startup profile, optional EASA converted asset, optional canonical Recipe2 JSON, optional original artwork.
+- Section kinds: canonical dashboard EAV7, EASP2 startup profile, optional EASA converted asset, optional canonical Recipe2 JSON, optional original artwork.
 - Present sections are tightly concatenated. Missing optional sections have zero offset/length/checksums. Duplicate/reordered sections, overlaps, gaps, trailing bytes and unknown flags are rejected.
 
 | Component | Bound |
@@ -46,7 +46,7 @@ The container is binary and uncompressed, with no file paths, links or archive e
 The profile uses the existing EASP16 implementation, rather than the earlier prospective 32-byte research design. Custom theme requires asset and recipe; procedural themes carry neither. Full original hash, length and PNG/GIF kind must agree with the recipe. Original decoding remains the converter's responsibility on import/reconversion; the package reader and native build helper do not decode PNG/GIF. Recipe2 serialization is canonical and includes target geometry, converter version, source/output hashes, source presence, scaling/matte/timing/sprite-sheet options and a bounded label. Asset geometry must equal the effective Splash geometry, resolved from its override and the dashboard default.
 
 EAVP1 import uses frozen canonical EAV4, EASP1 and Recipe1 decoders before migration.
-The migrated project writes EAVP2 with EAV6/EASP2/Recipe2; existing EASA1 pixels,
+The migrated project writes EAVP2 with EAV7/EASP2/Recipe2; existing EASA1 pixels,
 original bytes and their hashes remain unchanged, with `dashboard-startup-tools/1`
 attribution retained. EAVP2 admits that legacy landscape artwork. New conversions
 use EASA2 and converter/2. A legacy recipe cannot claim portrait or silently claim
@@ -62,11 +62,13 @@ for converted-only projects. Flip-only changes need no reconversion.
 
 Native builds upload the converted-only accepted project and bind its complete reduced-project SHA256, profile, asset and normalized build options. Original artwork stays in Studio and portable complete exports.
 
-EAVP2 projects containing canonical EAV5 are also accepted and migrate to EAV6
-with BLE disabled. The frozen v5 decoder verifies the original dashboard bytes
-before migration; startup profile, artwork, recipe and original bytes keep their
-existing checks and are not discarded. New exports retain EAVP2 framing with an
-EAV6 dashboard. A BLE edit changes the complete project/build identity.
+EAVP2 projects containing canonical EAV5 or EAV6 are also accepted and migrate to
+EAV7. The frozen decoder verifies the original dashboard bytes before migration;
+v5 gains disabled BLE, while v6 retains its BLE settings. Startup profile,
+artwork, recipe and original bytes keep their existing checks and are not
+discarded. New exports retain EAVP2 framing with an EAV7 dashboard, including
+four-cylinder readout and warning-presentation settings. Widget and BLE edits
+change the complete project/build identity.
 
 ## Immutable asset admission
 

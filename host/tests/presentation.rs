@@ -377,7 +377,12 @@ fn all_readout_modes_obey_capabilities_and_keep_afr_assumptions_visible_only_wit
                 (Channel::Water, &[Readout::Celsius, Readout::Fahrenheit][..]),
                 (Channel::Battery, &[Readout::Volts][..]),
             ] {
-                let mut widget = base.widgets.iter().find(|w| w.channel == channel).unwrap().clone();
+                let mut widget = base
+                    .widgets
+                    .iter()
+                    .find(|w| w.channel == channel.into())
+                    .unwrap()
+                    .clone();
                 widget.gauge.kind = kind;
                 widget.placement.span = span;
                 for &readout in readouts {

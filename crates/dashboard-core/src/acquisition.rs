@@ -17,6 +17,7 @@ use crate::alarms::{
     demo_rules,
 };
 use crate::cache_diagnostics::{CacheExhaustionCause, CacheExhaustionStatus};
+use crate::ignition::{Cylinder, IgnitionSample, IgnitionSnapshot, valid_degrees};
 use crate::peak_hold::{PeakHolds, PeakSnapshot};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
@@ -118,6 +119,8 @@ pub struct PublicationIdentity {
 /// monotonic time and never advance producer warning dwell by redrawing.
 #[derive(Clone, Copy, Debug)]
 pub struct DashboardSnapshot {
+    /// Independently qualified synthetic cylinder corrections; Vehicle is unsupported.
+    pub ignition: IgnitionSnapshot,
     /// Last-good canonical values/statistics by channel; not inherently fresh.
     pub sensors: [SensorSnapshot; SENSOR_COUNT],
     /// Source, sample identity and quality corresponding to each channel's statistics.
@@ -147,6 +150,7 @@ pub struct DashboardSnapshot {
 impl DashboardSnapshot {
     /// Vehicle-mode absence with alarms disabled and no trusted transport/cache identity.
     pub const EMPTY: Self = Self {
+        ignition: IgnitionSnapshot::EMPTY,
         sensors: [SensorSnapshot::EMPTY; SENSOR_COUNT],
         metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
         mode: DataMode::Vehicle,
@@ -197,6 +201,25 @@ impl DashboardSnapshot {
         self.rule_alerts.eligibility(index, self, now)
     }
 
+    /// Returns fresh active cylinder bits for grouped rule `index` at `now`
+    /// milliseconds. Scalar/disabled/pending/unavailable rules return zero.
+    pub fn ignition_warning_mask_at(
+        &self,
+        index: RuleIndex,
+        now: u64,
+    ) -> u8 {
+        self.rule_alerts.ignition_mask_at(index, self, now)
+    }
+
+    /// Returns remembered cylinder membership of a latched grouped `index`,
+    /// including unavailable members. These bits never qualify a live value.
+    pub fn ignition_warning_latched_mask(
+        &self,
+        index: RuleIndex,
+    ) -> u8 {
+        self.rule_alerts.ignition_latched_mask(index)
+    }
+
     /// Returns held canonical extremum for widget `index` only if its channel
     /// is currently value-qualified at `now` milliseconds; otherwise `None`.
     /// Producer tick owns hold deadlines; this read does not recompute their expiry.
@@ -205,7 +228,7 @@ impl DashboardSnapshot {
         index: RuleIndex,
         now: u64,
     ) -> Option<f32> {
-        self.value_at(self.rule_alerts.channel(index), now)?;
+        self.value_at(self.rule_alerts.channel(index)?, now)?;
         self.peaks.value(index)
     }
 
@@ -316,7 +339,8 @@ impl PartialEq for DashboardSnapshot {
         &self,
         other: &Self,
     ) -> bool {
-        self.sensors == other.sensors
+        self.ignition == other.ignition
+            && self.sensors == other.sensors
             && self.metadata == other.metadata
             && self.mode == other.mode
             && self.sequence == other.sequence
@@ -357,12 +381,15 @@ impl Alarms {
     /// Applies source/time-checked `inputs`, verified optional `contexts`, and
     /// monotonic `now` milliseconds to the active variant. `config` must be the
     /// immutable configured handle; panics if absent for a configured engine.
+    /// `ignition` carries independent group observations and outer raw sequence;
+    /// legacy policy ignores it, while configured group rules qualify it separately.
     fn update_inputs(
         &mut self,
         config: Option<&ValidatedConfig>,
         inputs: &Inputs<'_>,
         contexts: &[Option<Context>; 8],
         now: u64,
+        ignition: (&IgnitionSnapshot, u64),
     ) {
         match self {
             Self::Legacy(e) => {
@@ -374,6 +401,7 @@ impl Alarms {
                     inputs,
                     contexts,
                     now,
+                    ignition,
                 )
             }
         }
@@ -382,6 +410,8 @@ impl Alarms {
 
 /// Indivisible mutable state owned alongside an immutable configuration handle.
 struct AcquisitionState {
+    /// Single-owner independent cylinder observations, without history or scalar alarms.
+    ignition: IgnitionSnapshot,
     /// Single-owner per-channel statistics and sampling rings.
     sensors: [SensorState; SENSOR_COUNT],
     /// Per-channel accepted provenance, ordering and quality metadata.
@@ -422,6 +452,7 @@ impl AcquisitionState {
     /// is issued until the enclosing immutable configuration binding is installed.
     const fn base(alarms: Alarms) -> Self {
         Self {
+            ignition: IgnitionSnapshot::EMPTY,
             sensors: SENSOR_BASE,
             metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
             mode: DataMode::Vehicle,
@@ -447,6 +478,31 @@ impl AcquisitionState {
         }
     }
 
+    /// Invalidates grouped policy support before new observations replace gap
+    /// evidence. Untouched cylinders are qualified at `now` milliseconds. An
+    /// optional typed `replacement` qualifies its prior support at the incoming
+    /// capture time, preserving capture-contiguous evidence despite delivery lag.
+    /// Caller must preflight all required counters before invoking this mutation.
+    fn prepare_ignition(
+        &mut self,
+        now: u64,
+        replacement: Option<(Cylinder, u64)>,
+    ) {
+        let Alarms::Configured(engine) = &mut self.alarms else {
+            return;
+        };
+        let mut unavailable = 0u8;
+        for cylinder in Cylinder::ALL {
+            let at = replacement
+                .filter(|(replaced, _)| *replaced == cylinder)
+                .map_or(now, |(_, captured)| captured);
+            if self.ignition.value_at(cylinder, self.mode, at).is_none() {
+                unavailable |= 1 << cylinder.index();
+            }
+        }
+        engine.invalidate_ignition_support(unavailable);
+    }
+
     /// Invalidates existing history of channel `index` when its last-good sample
     /// is stale or future-dated relative to `now` milliseconds. Panics for index >=8;
     /// internal callers use the canonical channel arrays.
@@ -466,7 +522,9 @@ impl AcquisitionState {
 
     /// Advances history/highlight/held-peak/snooze expiry at `now` milliseconds
     /// using immutable optional `config`; reversed time clears held peaks and
-    /// invalidates alarm freshness, without inventing measurements. Publication
+    /// invalidates alarm freshness and makes existing valid cylinder observations
+    /// sticky InvalidPayload, without inventing measurements. Cylinder invalidation
+    /// preflights the raw counter before any mutation and panics on exhaustion. Publication
     /// advances only for changed presentation state. Configured variant requires config.
     fn tick(
         &mut self,
@@ -475,6 +533,12 @@ impl AcquisitionState {
     ) {
         let mut changed = false;
         if now < self.last_ms {
+            if self.ignition.has_valid_observation() {
+                let next = self.sequence.checked_add(1).expect("measurement sequence exhausted");
+                self.ignition.invalidate_clock(self.last_ms);
+                self.sequence = next;
+                changed = true;
+            }
             changed |= self.peaks.snapshot().valid_mask() != 0;
             self.peaks.clear();
         }
@@ -531,6 +595,7 @@ impl AcquisitionState {
     ) -> Self {
         let origin = ORIGIN_ISSUER.issue().ok();
         Self {
+            ignition: IgnitionSnapshot::for_mode(mode),
             sensors: SENSOR_BASE,
             metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
             mode,
@@ -789,6 +854,7 @@ impl AcquisitionState {
         config: Option<&ValidatedConfig>,
     ) -> DashboardSnapshot {
         DashboardSnapshot {
+            ignition: self.ignition,
             sensors: core::array::from_fn(|i| {
                 self.sensors[i].tracked_snapshot(self.origin, SensorId::ALL[i].channel())
             }),
@@ -846,6 +912,7 @@ impl AcquisitionState {
             },
             &self.contexts,
             now_ms,
+            (&self.ignition, self.sequence),
         );
         let after = match &self.alarms {
             Alarms::Legacy(e) => (e.snapshot(), RuleAlerts::DISABLED),
@@ -1082,6 +1149,7 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
             .expect("configured policy has immutable handle")
             .configuration();
         self.state.mode = mode;
+        self.state.ignition = IgnitionSnapshot::for_mode(mode);
         self.state.expected_sources = sources;
         self.state.freshness = config.config().sources.map(|source| source.freshness_ms);
         let Alarms::Configured(engine) = &mut self.state.alarms else {
@@ -1103,6 +1171,126 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
     /// Returns the immutable bound document, or `None` for legacy owners.
     pub fn configuration(&self) -> Option<&ValidatedConfig> {
         self.configuration.as_ref().map(ConfigurationHandle::configuration)
+    }
+
+    /// Admits signed-degree `sample` at monotonic `now_ms` only in Demo mode.
+    /// Source/future/order failures preserve all state. Invalid degrees publish
+    /// InvalidPayload and consume candidate identity, retaining hidden last-good
+    /// data. Returns numeric admission status; panics before mutation on outer
+    /// sequence exhaustion. Updates grouped warning policy without adding scalar
+    /// measurements, history or peak holds.
+    pub fn ingest_ignition(
+        &mut self,
+        sample: IgnitionSample,
+        now_ms: u64,
+    ) -> Result<(), SampleError> {
+        self.state.ignition.check_sample(sample, self.state.mode, now_ms)?;
+        let next = self
+            .state
+            .sequence
+            .checked_add(1)
+            .expect("measurement sequence exhausted");
+        self.state
+            .prepare_ignition(now_ms, Some((sample.cylinder, sample.received_at_ms)));
+        let valid = self.state.ignition.accept(sample);
+        self.state.sequence = next;
+        self.state.last_ms = self.state.last_ms.max(now_ms);
+        self.state.publish_change();
+        self.state.update_alarms(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            now_ms,
+        );
+        if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
+    }
+
+    /// Admits four independent signed-degree Demo `values` in cylinder-number
+    /// order at `captured_ms` milliseconds. Returns whether any entry changed;
+    /// Vehicle, invalid numeric entries and duplicate/regressed times are ignored.
+    /// Preflights the outer counter and every accepted cylinder counter before
+    /// any mutation, panicking on exhaustion. One batch advances publication once.
+    pub fn ingest_ignition_demo(
+        &mut self,
+        values: [f32; 4],
+        captured_ms: u64,
+    ) -> bool {
+        if self.state.mode != DataMode::Demo {
+            return false;
+        }
+        let mut accepted = 0u8;
+        for cylinder in Cylinder::ALL {
+            if valid_degrees(values[cylinder.index()])
+                && self
+                    .state
+                    .ignition
+                    .received_at_ms(cylinder)
+                    .is_none_or(|at| captured_ms > at)
+                && captured_ms >= self.state.ignition.status_at_ms(cylinder)
+            {
+                self.state
+                    .ignition
+                    .sequence(cylinder)
+                    .checked_add(1)
+                    .expect("cylinder sequence exhausted");
+                accepted |= 1 << cylinder.index();
+            }
+        }
+        if accepted == 0 {
+            return false;
+        }
+        let next = self
+            .state
+            .sequence
+            .checked_add(1)
+            .expect("measurement sequence exhausted");
+        self.state.prepare_ignition(captured_ms, None);
+        for cylinder in Cylinder::ALL {
+            if accepted & (1 << cylinder.index()) != 0 {
+                self.state.ignition.accept(IgnitionSample {
+                    cylinder,
+                    degrees: values[cylinder.index()],
+                    received_at_ms: captured_ms,
+                    sequence: self.state.ignition.sequence(cylinder) + 1,
+                    source: Source::Demo,
+                });
+            }
+        }
+        self.state.sequence = next;
+        self.state.last_ms = self.state.last_ms.max(captured_ms);
+        self.state.publish_change();
+        self.state.update_alarms(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            captured_ms,
+        );
+        true
+    }
+
+    /// Marks `cylinder` with unavailable `quality` at non-regressed monotonic
+    /// `at_ms`, preserving hidden last-good data and source. Returns false for
+    /// Valid/Stale or duplicate/older faults. Panics before mutation on outer
+    /// sequence exhaustion; never creates a valid value or a scalar warning.
+    pub fn mark_ignition_fault(
+        &mut self,
+        cylinder: Cylinder,
+        quality: Quality,
+        at_ms: u64,
+    ) -> bool {
+        if !self.state.ignition.accepts_fault(cylinder, quality, at_ms) {
+            return false;
+        }
+        let next = self
+            .state
+            .sequence
+            .checked_add(1)
+            .expect("measurement sequence exhausted");
+        self.state.ignition.fault(cylinder, quality, at_ms);
+        self.state.sequence = next;
+        self.state.last_ms = self.state.last_ms.max(at_ms);
+        self.state.publish_change();
+        self.state.update_alarms(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            at_ms,
+        );
+        true
     }
 
     /// Admits typed `sample` at monotonic `now_ms` milliseconds without operating
@@ -1175,6 +1363,8 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
     /// Advance freshness and invalidate expired dwell without inventing measurements.
     /// Uses monotonic `now_ms` milliseconds; clock reversal clears held peaks and
     /// graph continuity and makes policy data unavailable rather than rewinding dwell.
+    /// Existing valid cylinder observations become sticky InvalidPayload until a new
+    /// sample is accepted; sequence exhaustion panics before reversal mutation.
     pub fn tick(
         &mut self,
         now_ms: u64,
@@ -1349,8 +1539,8 @@ mod cache_tests {
         };
         assert!(!vehicle_rules.enabled());
         assert!(demo_rules.enabled());
-        assert_eq!(vehicle_rules.snapshot().channel(rule), SensorId::Boost);
-        assert_eq!(demo_rules.snapshot().channel(rule), SensorId::Boost);
+        assert_eq!(vehicle_rules.snapshot().channel(rule), Some(SensorId::Boost));
+        assert_eq!(demo_rules.snapshot().channel(rule), Some(SensorId::Boost));
         assert_eq!(configured.snapshot().warning_command_result(), CommandResult::EMPTY);
         assert_eq!(demo.snapshot().warning_event_serial(), 0);
     }
@@ -1595,6 +1785,76 @@ mod warning_tests {
         assert_eq!(
             borrowed.snapshot().warning_eligibility(RuleIndex::new(0).unwrap(), 100),
             owned.snapshot().warning_eligibility(RuleIndex::new(0).unwrap(), 100)
+        );
+    }
+}
+
+#[cfg(test)]
+/// Terminal raw-sequence guards at each cylinder mutation boundary.
+mod ignition_sequence_tests {
+    extern crate std;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    /// Catches exhausted outer counters changing a cylinder, publication or clock
+    /// watermark before the panic, including a reversed tick's sticky fault.
+    #[test]
+    fn all_cylinder_mutations_preflight_outer_sequence() {
+        for operation in 0..4 {
+            let mut owner = AcquisitionModel::demo();
+            owner.ingest_ignition_demo([-1.0; 4], 100);
+            owner.state.sequence = u64::MAX;
+            let before = owner.snapshot();
+            let before_time = owner.state.last_ms;
+            assert!(
+                catch_unwind(AssertUnwindSafe(|| {
+                    match operation {
+                        0 => {
+                            let _ = owner.ingest_ignition(
+                                IgnitionSample {
+                                    cylinder: Cylinder::One,
+                                    degrees: f32::NAN,
+                                    received_at_ms: 101,
+                                    sequence: 2,
+                                    source: Source::Demo,
+                                },
+                                101,
+                            );
+                        }
+                        1 => {
+                            owner.ingest_ignition_demo([-2.0; 4], 101);
+                        }
+                        2 => {
+                            owner.mark_ignition_fault(Cylinder::Four, Quality::TransportError, 101);
+                        }
+                        _ => {
+                            owner.tick(99);
+                        }
+                    }
+                }))
+                .is_err()
+            );
+            assert_eq!(owner.snapshot(), before);
+            assert_eq!(owner.snapshot().publication_identity(), before.publication_identity());
+            assert_eq!(owner.state.last_ms, before_time);
+        }
+    }
+
+    /// Catches using raw sequence as publication identity or dropping grouped
+    /// changes after publication exhaustion; numeric acquisition must remain live.
+    #[test]
+    fn exhausted_publication_identity_does_not_freeze_cylinders() {
+        let mut owner = AcquisitionModel::demo();
+        owner.state.publication = u64::MAX;
+        owner.ingest_ignition_demo([0.0, -1.0, -2.0, -3.0], 0);
+        let mut displayed = owner.snapshot();
+        assert_eq!(displayed.publication_identity(), None);
+        owner.ingest_ignition_demo([0.0, -1.0, -2.0, -4.0], 1);
+        assert!(displayed.accept(owner.snapshot()));
+        assert_eq!(
+            displayed.ignition.value_at(Cylinder::Four, DataMode::Demo, 1),
+            Some(-4.0)
         );
     }
 }

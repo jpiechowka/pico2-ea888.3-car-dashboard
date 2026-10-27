@@ -214,10 +214,20 @@ def configuration_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
     # general exemption for missing helpers or an instruction-effects proof.
     orientation = any("11orientation11Orientation" in n for n in functions)
     ble = any("3ble11BleSettings" in n for n in functions)
+    ignition = any("27IgnitionWarningPresentation" in n for n in functions)
 
     def reviewed_inline(*tokens: str) -> set[int]:
         addresses = select("dashboard_config", *tokens, optional=True)
         require(len(addresses) <= 1, "ambiguous reviewed inline stack path: " + str(tokens))
+        return addresses
+
+    def reviewed_method(identity: str) -> set[int]:
+        """Count an optional exact mangled method, normalizing only crate disambiguators."""
+        names = {n for n in functions if re.sub(r"Cs[A-Za-z0-9]+_", "Cs_", n) == identity}
+        addresses = {functions[n][0] & ~1 for n in names}
+        require(len(addresses) <= 1, "ambiguous reviewed inline stack path: " + identity)
+        require(all(a in sizes for a in addresses), "missing config frame metadata: " + identity)
+        covered.update(names)
         return addresses
 
     loader = select("dashboard_config", "ConfigSlot", "12load_at_boot")
@@ -242,7 +252,12 @@ def configuration_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
     widget_colors = branch(dec("12WidgetColors"), color, warning_colors)
     widget_children = [utf8, warning, widget_colors, dec("10GraphRange"), dec("5Gauge")]
     if v4:
-        widget_children.append(branch(dec("15AdvancedDisplay"), utf8, dec("13PeakSelection")))
+        advanced_children = [utf8, dec("13PeakSelection")]
+        if ignition:
+            # Oct27 schema7 LLVM23: AdvancedDisplay384 -> popup decoder16.
+            # The selector is a leaf; it is not a sibling of AdvancedDisplay.
+            advanced_children.append(dec("27IgnitionWarningPresentation"))
+        widget_children.append(branch(dec("15AdvancedDisplay"), *advanced_children))
     widget_parent = (
         reviewed_inline("12next_element", "6WidgetE") if orientation else dec("6WidgetE")
     )
@@ -306,6 +321,9 @@ def configuration_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
             reviewed_inline("15serialize_field", "9Secondary") if orientation else ser("9Secondary")
         )
         serial_widget_children.extend([utf8, ser("7Readout"), secondary, ser("13PeakSelection")])
+    if ignition:
+        # Oct27: compare_canonical56 -> Widget72 -> popup serializer8.
+        serial_widget_children.append(ser("27IgnitionWarningPresentation"))
     serial_widget = branch(ser("6Widget"), *serial_widget_children)
     serial_fuel = branch(ser("4Fuel"), ser("serialize_fieldf"))
     serial_controls = branch(ser("10ControlMap"), ser("13ControlAction"))
@@ -346,17 +364,30 @@ def configuration_frames(functions: FunctionTable, sizes: FrameSizes) -> int:
         # Retain admission for frozen predecessor captures.
         colour_validation = select("dashboard_config", "12WidgetColors12invalid_role")
         fuel_validation = select("dashboard_config", "4fuel13stoichiometry")
+    if ignition:
+        # Oct27 ig27-d2 validate_ref312 directly calls compatible_widget8.
+        # Gauge::valid_domain finite/range/span checks inline into validate_ref
+        # at0x100476d0..0x1004772c. Count that exact method if later outlined;
+        # unknown descendants still fail below. Frozen shapes retain Gauge::valid.
+        gauge_validation = reviewed_method(
+            "_RNvMs0_NtCs_16dashboard_config10appearanceNtB5_5Gauge12valid_domain"
+        )
+        readout_validation = select("dashboard_config", "7Readout17compatible_widget")
+    else:
+        gauge_validation = select("dashboard_config", "5Gauge5valid")
+        readout_validation = set()
     validation = branch(
         validate,
         colour_validation,
         fuel_validation,
+        gauge_validation,
+        readout_validation,
         outlined("8controls17validate_controls"),
         outlined("8validate10text_valid"),
         *[
             select("dashboard_config", token)
             for token in (
                 "9Placement11occupied_in" if orientation else "9Placement8occupied",
-                "5Gauge5valid",
                 "5Color9contrasts",
                 "7catalog10definition",
                 "6AccessNt",

@@ -211,7 +211,7 @@ fn multiple_collisions_can_be_repaired_in_steps_with_export_blocked_between_them
     editor
         .apply(Edit::AddWidget {
             view: 1,
-            channel: Channel::Oil,
+            channel: Channel::Oil.into(),
             placement: placement(0, 1, Span::OneByOne),
         })
         .unwrap();
@@ -248,7 +248,7 @@ fn rejected_new_widget_is_selectable_movable_and_cancellable() {
         editor
             .apply(Edit::AddWidget {
                 view: 1,
-                channel: Channel::Oil,
+                channel: Channel::Oil.into(),
                 placement: placement(0, 0, Span::OneByOne)
             })
             .is_err()
@@ -264,7 +264,7 @@ fn rejected_new_widget_is_selectable_movable_and_cancellable() {
     assert_eq!(editor.diagnostic().unwrap().config.widgets.len(), 3);
     assert_eq!(editor.preview().config().widgets.len(), 2);
     assert_eq!(
-        editor.begin_pointer(3, PointerTarget::Library(Channel::Egt)),
+        editor.begin_pointer(3, PointerTarget::Library(Channel::Egt.into())),
         Err(EditorError::InvalidDraft)
     );
     editor.discard_raw().unwrap();

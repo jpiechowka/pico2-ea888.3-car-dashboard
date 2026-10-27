@@ -79,7 +79,7 @@ registry! {
     GaugeMaximum, Widget, Views, Gauge, "Scale maximum", "gauge boost canonical range";
     GaugeExpand, Widget, Views, Gauge, "Expand with observed values", "gauge extrema";
     Decimals, Widget, Views, Readout, "Decimal places", "precision";
-    Readout, Widget, Views, Readout, "Primary readout", "units boost psi bar kpa lambda afr celsius fahrenheit";
+    Readout, Widget, Views, Readout, "Primary readout", "units boost psi bar kpa lambda afr celsius fahrenheit ignition cylinder numeric status ok ret";
     Secondary, Widget, Views, Readout, "Secondary boost unit", "psi bar kpa companion";
     Smoothing, Widget, Views, Readout, "Smoothing time (ms)", "current-value smoothing interpolation";
     Graph, Widget, Views, HistoryStatistics, "History graph", "channel trend";
@@ -98,6 +98,7 @@ registry! {
     BandLabel, Band, Views, Gauge, "Band label", "gauge text";
     BandColor, Band, Views, Gauge, "Band colour", "gauge color";
     WarningEnabled, Widget, Views, Warnings, "Enable warning", "alarm";
+    IgnitionWarningPresentation, Widget, Views, Warnings, "Ignition warning popup", "cylinder lines global retard shared message threshold";
     WarningApplicability, Widget, Views, Warnings, "Applies to", "warning vehicle demo";
     WarningMode, Widget, Views, Warnings, "Rule type", "warning high low outside inside lambda";
     WarningTrigger, Widget, Views, Warnings, "Trigger", "warning threshold low";
@@ -617,6 +618,16 @@ impl Registry {
             Field::Placement => Span,
             Field::Label => Label,
             Field::Decimals => Decimals,
+            Field::Graph => Graph,
+            Field::Average => Average,
+            Field::Extrema => Extrema,
+            Field::Trend => Trend,
+            Field::GaugeKind => GaugeStyle,
+            Field::WarningEnabled => WarningEnabled,
+            Field::WarningApplicability => WarningApplicability,
+            Field::IgnitionWarningPresentation => IgnitionWarningPresentation,
+            Field::PeakMode => PeakMode,
+            Field::ReferenceMode => ReferenceMode,
             Field::Readout | Field::Afr => Readout,
             Field::Secondary => Secondary,
             Field::Smoothing => Smoothing,
@@ -964,15 +975,18 @@ impl Registry {
     ) -> Capability {
         use FieldKey::*;
         let c = w.capabilities();
+        let scalar = w.channel.scalar().is_some();
         let active = match key {
+            GaugeStyle | Smoothing => scalar,
+            IgnitionWarningPresentation => !scalar,
             GaugeMinimum | GaugeMaximum | GaugeExpand => !w.gauge.kind.is_numeric(),
             Graph | GraphMode | Trend => c.history,
             GraphMinimum | GraphMaximum => c.history && matches!(w.display.graph_range, GraphRange::Fixed { .. }),
             Average | Extrema => c.statistics,
             PeakMode | PeakHold | ReferenceMode | Reference | BandMinimum | BandMaximum | BandColor => c.markers,
             BandLabel => c.band_labels,
-            Secondary => w.channel == Channel::Boost && c.secondary,
-            WarningLoad => w.channel == Channel::Lambda,
+            Secondary => w.channel == WidgetChannel::Boost && c.secondary,
+            WarningLoad => w.channel == WidgetChannel::Lambda,
             WarningTriggerHigh | WarningClearHigh => {
                 matches!(w.warning.mode, LimitMode::OutsideWindow | LimitMode::InsideWindow)
             }

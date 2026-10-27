@@ -28,3 +28,21 @@ pub fn values(elapsed_ms: u64) -> [f32; 8] {
         1.0 + 0.25 * wave(450),
     ]
 }
+
+/// Returns four synthetic signed corrections in degrees at acquisition
+/// `elapsed_ms` milliseconds, in cylinder-number order. Independent phases range
+/// from -6 to +1 degrees, including zero plateaus, to exercise OK/RET rendering.
+/// Integer phase reduction handles the full u64 uptime range without overflow;
+/// this generator supplies no ECU measurement, decoder or vehicle qualification.
+pub fn ignition_values(elapsed_ms: u64) -> [f32; 4] {
+    let phase = elapsed_ms % 8_000;
+    core::array::from_fn(|index| {
+        let local = (phase + index as u64 * 1_700) % 8_000;
+        match local {
+            0..2_000 => 0.0,
+            2_000..4_000 => -6.0 * (local - 2_000) as f32 / 2_000.0,
+            4_000..6_000 => -6.0 + 6.0 * (local - 4_000) as f32 / 2_000.0,
+            _ => (local - 6_000) as f32 / 2_000.0,
+        }
+    })
+}

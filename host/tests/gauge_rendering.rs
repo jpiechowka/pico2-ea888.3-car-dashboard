@@ -959,7 +959,7 @@ fn each_active_palette_role_has_its_own_pixels_without_leaking_from_the_cell() {
                 span: Span::TwoByTwo,
             },
         );
-        if w.channel == Channel::Boost {
+        if w.channel == Channel::Boost.into() {
             w.advanced.secondary = Secondary::Psi;
         }
         w.display.graph = true;

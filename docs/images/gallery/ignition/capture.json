@@ -1,0 +1,371 @@
+{
+  "captured_date": "2026-10-27",
+  "base_commit": "a2faf6c3f04de0328aca93e17bd4704aee9216c0",
+  "source_state": "Ignition widget working tree published with this manifest; code content hashes below",
+  "synthetic": true,
+  "hardware_validation": false,
+  "browser": "Codex in-app browser, isolated loopback origin",
+  "viewport_capture_pixels": [
+    1265,
+    712
+  ],
+  "bundle": {
+    "file": "dashboard-configurator-349236fbb9c761d8_bg.wasm",
+    "sha256": "c377e5cb32547e770b65f8d51e5f68ae7de8aabe3c4869ef5759ecb7d3605370"
+  },
+  "source_file_hashes": {
+    "host/examples/widget_gallery.rs": "7399ab2a07b06f2036373dc3bb96dd928b1d5962b7fb4f27cf3505b18ec5a61b",
+    "crates/dashboard-core/src/widgets/ignition.rs": "8eb7aa8470f978e0bfd6b05685fab3493dc0b23fdfd0c47d82db6647a485bf79",
+    "configurator/src/preview.rs": "4617f118e4d58b6b78f4ce4744ef4795b4d2b13f5b27e847043521776b5a54b1",
+    "crates/dashboard-core/src/ignition.rs": "788f0896b9a41689baf8c0231c235e4d6f94f3e375d9e9f8296eaa8f700b0304"
+  },
+  "images": {
+    "full/ignition-combined-landscape-1x1.png": {
+      "sha256": "53b88e354bc4f822a7cb6230889d33b07dabc9d1d9af99f47287b01cf4b96cd6",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-combined-landscape-2x1.png": {
+      "sha256": "1cad348058f26d02aec54f623af33cdf18900a165d3e1a80a53f66f2a73da2aa",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-combined-landscape-2x2.png": {
+      "sha256": "2fb06e42a84406e044464f4c77df16eb5a45f083f784b4620f7ad70ee931ef86",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-combined-portrait-1x1.png": {
+      "sha256": "f82f990c52862391fb717de7ca7828c3771285b12c494226aba6d7d22c7c80d4",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-combined-portrait-2x1.png": {
+      "sha256": "b13f1ffd25bcd46975d85fb78f0fdd6608d4e58ec0aa380e7ab14637cbf07a31",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-combined-portrait-2x2.png": {
+      "sha256": "e0c49329685960684937d9b7b9fb98f1827709f9f548ef48c769cd37619f7012",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-numeric-landscape-1x1.png": {
+      "sha256": "2329086ceaf7214ac47e9770204e6734f1c0f517fe846f0c5bfccdd03e084f95",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-numeric-landscape-2x1.png": {
+      "sha256": "48f1d8dd8f9e24f4f19c4529b76783d24f31f26dd4e3cfa0cbaf2c3342cc8b05",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-numeric-landscape-2x2.png": {
+      "sha256": "108025f627ae9908c2359cecd3b0713cdb0fec21bc2288b807210d56680ff32d",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-numeric-portrait-1x1.png": {
+      "sha256": "1ef15cf1442de83907ee90310be89f6ddc29d976e0610bce1861a68afc676949",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-numeric-portrait-2x1.png": {
+      "sha256": "3e5487016dd06c3f3b17f41b33b7d688d14bd270c1921635fbaa75a9bc38e2b0",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-numeric-portrait-2x2.png": {
+      "sha256": "93fe1cbf665c99753aa0c8e416d523f6c96c4761feb97a448147670b73244c01",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-status-landscape-1x1.png": {
+      "sha256": "8df8dfa9c25eb07fd9bd98531b0bbea4217c68383408ffba735b798285b36a8a",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-status-landscape-2x1.png": {
+      "sha256": "ed2ea71ac85476305b360f81ef627b604c6707c30b1e8c59fb9705753e65dfd3",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-status-landscape-2x2.png": {
+      "sha256": "7c90e9e8a8d4314c7cd607ddadffb471f6c86935de82837f4ac6692007c0e603",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-status-portrait-1x1.png": {
+      "sha256": "fb75fde2fb58f59ec3ab3470d479ddde934f4675c9c7cad09e4ef840163abba1",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-status-portrait-2x1.png": {
+      "sha256": "cae0633f5e22922fd2398387e839c95aad451eb134b2843b513e4b33303c6fd5",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-status-portrait-2x2.png": {
+      "sha256": "78c8488bdb6e5a7878a340ddb92150d7a91c4d445e681362986736c9a440f9a8",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-warning-cylinders-landscape.png": {
+      "sha256": "c7c474e31fbdf4ed0543c2173ed5f8ca6bda15092ae337e1ff85b384f284e67d",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-warning-cylinders-portrait.png": {
+      "sha256": "ce78503d263986b36c47c6801be4e6727edea9dbfdfe86fd892b2eede3a94ca7",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "full/ignition-warning-global-landscape.png": {
+      "sha256": "c2ce3e9535b7cf3cac8847fe78e7e4b12e5340c9da5920140a198484991f41c1",
+      "pixels": [
+        320,
+        240
+      ]
+    },
+    "full/ignition-warning-global-portrait.png": {
+      "sha256": "4a1b3f0181daf593c9400a688efd84d4b58fb291f1fbd2b20d8ce6d538c3aea6",
+      "pixels": [
+        240,
+        320
+      ]
+    },
+    "ignition-combined-landscape-1x1.png": {
+      "sha256": "49851a1ececea5af3a75e163bee17725f47996d81c3e298bf0cb5228486859e4",
+      "pixels": [
+        80,
+        107
+      ]
+    },
+    "ignition-combined-landscape-2x1.png": {
+      "sha256": "8c48d911570306ce105d11677d88fb4b387efc0d61bd0b041e5725ed74abdbe1",
+      "pixels": [
+        160,
+        107
+      ]
+    },
+    "ignition-combined-landscape-2x2.png": {
+      "sha256": "20794c10a8a9dced2862a20e82415c6c9f6b46366481346a9af72bd708897c91",
+      "pixels": [
+        160,
+        214
+      ]
+    },
+    "ignition-combined-portrait-1x1.png": {
+      "sha256": "e49f5401234016afdd2d7dc677f796157548f4c41fa3d4e5b22bd7e412d32b6b",
+      "pixels": [
+        120,
+        73
+      ]
+    },
+    "ignition-combined-portrait-2x1.png": {
+      "sha256": "166b7fa59c5ed1276d64b982fb97ed39fe50da87449cf84f125c2766213cad49",
+      "pixels": [
+        240,
+        73
+      ]
+    },
+    "ignition-combined-portrait-2x2.png": {
+      "sha256": "a864e9e3d83eb7d11553e3eb2d8802a009cd7939d42ced150c6378a8dcb183a8",
+      "pixels": [
+        240,
+        147
+      ]
+    },
+    "ignition-numeric-landscape-1x1.png": {
+      "sha256": "9882ec1273d64deada9d4a8547168eae43b4557cc2480b8355acd7604ec761ff",
+      "pixels": [
+        80,
+        107
+      ]
+    },
+    "ignition-numeric-landscape-2x1.png": {
+      "sha256": "078b5b8fd2a1e17c2ee1b1e70b5310ba106523aa26042cc870412f19ef2e90a9",
+      "pixels": [
+        160,
+        107
+      ]
+    },
+    "ignition-numeric-landscape-2x2.png": {
+      "sha256": "f9cfe04cea00463269a51b646474d362f8e194247dc739ac8b0974828d1245e0",
+      "pixels": [
+        160,
+        214
+      ]
+    },
+    "ignition-numeric-portrait-1x1.png": {
+      "sha256": "4cd6e1dfc08e80b63cbe98708b5fa6297a43226ca9013c4f9c27af5fceddb1d3",
+      "pixels": [
+        120,
+        73
+      ]
+    },
+    "ignition-numeric-portrait-2x1.png": {
+      "sha256": "ec77dfef3b5a620ad01a76cc3c869e130ca0e13b8de0872bd9da2be84c57b7bc",
+      "pixels": [
+        240,
+        73
+      ]
+    },
+    "ignition-numeric-portrait-2x2.png": {
+      "sha256": "145e893d3ebbf99f47eda4a15b22629fba5c52e5e647fb722b53322dd787a07f",
+      "pixels": [
+        240,
+        147
+      ]
+    },
+    "ignition-status-landscape-1x1.png": {
+      "sha256": "503a03227f002fa1b802f6eeca0c85073a65b6e0af98370d50f1a09391faa993",
+      "pixels": [
+        80,
+        107
+      ]
+    },
+    "ignition-status-landscape-2x1.png": {
+      "sha256": "335a5fb4d14341d045edd61d4f92a2ee15a0bfa06b60c7e89e698cbf410e5df1",
+      "pixels": [
+        160,
+        107
+      ]
+    },
+    "ignition-status-landscape-2x2.png": {
+      "sha256": "10cc1f0fd7d0a733e544f085f37cef13612278fc8fcbaea6aee9322c38301627",
+      "pixels": [
+        160,
+        214
+      ]
+    },
+    "ignition-status-portrait-1x1.png": {
+      "sha256": "8b1bf89ccd3495513890b2d8a1d39fc30f62cd7373b369525e3e8d9afcfa80a0",
+      "pixels": [
+        120,
+        73
+      ]
+    },
+    "ignition-status-portrait-2x1.png": {
+      "sha256": "da9b4d5bb9ec06dd9ca087f867dad69cdbcd8e12ff79e65c0e12ef592c010ffc",
+      "pixels": [
+        240,
+        73
+      ]
+    },
+    "ignition-status-portrait-2x2.png": {
+      "sha256": "aff942a9a1c179281a51d7f1716787c55047e88d7d8a730b4962f37b1648018d",
+      "pixels": [
+        240,
+        147
+      ]
+    },
+    "ignition-warning-cylinders-landscape.png": {
+      "sha256": "6ac1615ee8ccdce207ae88a874ec1d15daef11869570f1dab7af0d08a7ccaeea",
+      "pixels": [
+        160,
+        214
+      ]
+    },
+    "ignition-warning-cylinders-portrait.png": {
+      "sha256": "bd3cfa7eacfa08ae865cffe0a5e5f7b5c6dbd05f997b6078994badb24e6353a9",
+      "pixels": [
+        240,
+        147
+      ]
+    },
+    "ignition-warning-global-landscape.png": {
+      "sha256": "cd5e9b86030da2d552a005971e5b54684dc774bf45ef85c29a89344b4039a7bb",
+      "pixels": [
+        160,
+        214
+      ]
+    },
+    "ignition-warning-global-portrait.png": {
+      "sha256": "8318a91e2db124609659b68f8d3fe0f4050d378ebf45d8f57560c737866e347a",
+      "pixels": [
+        240,
+        147
+      ]
+    },
+    "studio-combined.jpg": {
+      "sha256": "4b42aeb7926ff38b1e1bae9a8cac3d3097b7b96c7dcdd2cf5ab570aabc5f9493",
+      "pixels": [
+        1265,
+        1354
+      ]
+    },
+    "studio-cylinder-warning.jpg": {
+      "sha256": "e055b486dc4251fe5f09716eb48936de5859ce7840d31b288c4576eea4130faf",
+      "pixels": [
+        1265,
+        712
+      ]
+    },
+    "studio-global-warning.jpg": {
+      "sha256": "11c4362696f62f4a6e773e749d805d27f048747b4bb3469ed1eea2ca7fe5d4cc",
+      "pixels": [
+        1265,
+        712
+      ]
+    }
+  },
+  "native_fixture": {
+    "producer": "host/examples/widget_gallery.rs",
+    "degrees": [
+      0,
+      -2.5,
+      0,
+      -1.25
+    ],
+    "fresh_interval_ms": 50,
+    "dwell_duration_ms": 2000,
+    "readout_warnings": false,
+    "warning_examples": "Global or CylinderLines, C2/C4, default dwell"
+  },
+  "browser_images": {
+    "studio-combined.jpg": "Landscape 2x2, combined1 decimal, Animated Demo, full page",
+    "studio-global-warning.jpg": "Landscape2x2, Channel minima test, one global popup, viewport",
+    "studio-cylinder-warning.jpg": "Portrait2x2, Channel minima test, four default-message cylinder lines, viewport"
+  }
+}

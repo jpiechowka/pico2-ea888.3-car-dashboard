@@ -14,6 +14,8 @@ enum Setting {
     Reference,
     /// Warning ordering priority, independent of qualification.
     Priority,
+    /// Global warning message or one line for every affected ignition cylinder.
+    IgnitionWarning,
 }
 
 /// Returns `setting`'s selector for widget `id` in `ui` with visible `label`.
@@ -42,12 +44,15 @@ fn WidgetChoice(
         Readout::Lambda,
         Readout::Afr,
         Readout::LambdaAndAfr,
+        Readout::IgnitionNumeric,
+        Readout::IgnitionStatus,
+        Readout::IgnitionStatusAndNumber,
     ];
     let options = match setting {
         Setting::Readout => {
             readouts
                 .into_iter()
-                .filter(|r| r.compatible(channel))
+                .filter(|r| r.compatible_widget(channel))
                 .map(|r| {
                     (
                         format!("{r:?}"),
@@ -62,6 +67,9 @@ fn WidgetChoice(
                             Readout::Lambda => "Lambda",
                             Readout::Afr => "AFR estimate",
                             Readout::LambdaAndAfr => "Lambda + AFR estimate",
+                            Readout::IgnitionNumeric => "Numeric · signed degrees",
+                            Readout::IgnitionStatus => "Status · OK / RET",
+                            Readout::IgnitionStatusAndNumber => "Status + number · RET −2.5°",
                         }
                         .to_string(),
                     )
@@ -79,6 +87,12 @@ fn WidgetChoice(
                 ("Critical", "Critical"),
             ])
         }
+        Setting::IgnitionWarning => {
+            choices(&[
+                ("Global", "One warning for any cylinder"),
+                ("CylinderLines", "Separate affected-cylinder lines"),
+            ])
+        }
     };
     let value = Signal::derive(move || {
         ui.widget(id)
@@ -89,6 +103,7 @@ fn WidgetChoice(
                     Setting::Peak => format!("{:?}", w.advanced.peak_mode),
                     Setting::Reference => format!("{:?}", w.advanced.reference_mode),
                     Setting::Priority => format!("{:?}", w.warning.advanced.priority),
+                    Setting::IgnitionWarning => format!("{:?}", w.advanced.ignition_warning),
                 }
             })
             .unwrap_or_default()
@@ -106,6 +121,7 @@ fn WidgetChoice(
             Setting::Peak=>w.advanced.peak_mode=match value.as_str(){"Maximum"=>PeakSelection::Maximum,"Minimum"=>PeakSelection::Minimum,_=>PeakSelection::Off},
             Setting::Reference=>w.advanced.reference_mode=match value.as_str(){"Zero"=>ReferenceMode::Zero,"Manual"=>ReferenceMode::Manual,_=>ReferenceMode::Off},
             Setting::Priority=>w.warning.advanced.priority=match value.as_str(){"Low"=>Priority::Low,"High"=>Priority::High,"Critical"=>Priority::Critical,_=>Priority::Normal},
+            Setting::IgnitionWarning=>w.advanced.ignition_warning=match value.as_str(){"CylinderLines"=>IgnitionWarningPresentation::CylinderLines,_=>IgnitionWarningPresentation::Global},
         }))/>
     }
 }
@@ -148,14 +164,17 @@ pub fn DisplayControls(
     view! {
 
         <WidgetChoice ui id label="Primary readout" setting=Setting::Readout/>
-        <Show when=move ||channel==Channel::Boost>
+        <Show when=move ||channel==WidgetChannel::Boost || (channel.scalar().is_none() && ui.inspection_active())>
             <WidgetChoice ui id label="Secondary boost unit" setting=Setting::Secondary/>
             <p class="hint">"Follow dashboard uses the physical or preview bar / PSI toggle. Fixed bar, PSI and kPa stay fixed. An equal primary and secondary unit is shown once."</p>
         </Show>
-        <Show when=move ||channel==Channel::Lambda><p class="hint">"AFR = lambda × the Fuel & AFR assumption, never measured fuel composition or ECU requested AFR. Lambda and AFR share the same prepared current reading."</p></Show>
-        <Show when=move ||ui.widget(id).is_some_and(|w|!w.capabilities().secondary)><p class="hint">"A compact 1 × 1 gauge shows one readout. Secondary boost units and the AFR companion return at 2 × 1 or 2 × 2; stored choices are retained."</p></Show>
+        <Show when=move ||channel==WidgetChannel::Lambda><p class="hint">"AFR = lambda × the Fuel & AFR assumption, never measured fuel composition or ECU requested AFR. Lambda and AFR share the same prepared current reading."</p></Show>
+        <Show when=move ||channel.scalar().is_some() && ui.widget(id).is_some_and(|w|!w.capabilities().secondary)><p class="hint">"A compact 1 × 1 gauge shows one readout. Secondary boost units and the AFR companion return at 2 × 1 or 2 × 2; stored choices are retained."</p></Show>
+        <Show when=move ||channel.scalar().is_none()><p class="hint">"Four cylinders: 1 / 2 above 3 / 4, in every size. Signed correction degrees; RET means the fresh raw value is negative. OK means no negative correction in this sample, not engine health. Status + number shows both together, including OK 0.0°. Missing, stale or faulted samples never show OK. Studio and firmware Demo use synthetic values; vehicle acquisition is unavailable. Gauges, history, smoothing and secondary units are unsupported."</p></Show>
+        <Show when=move ||channel.scalar().is_some() || ui.inspection_active()>
         <Preset ui field=RawField::Widget(id,WidgetField::SmoothingMilliseconds) label="Current-value smoothing" options=choices(&[("0","Off"),("250","Gentle · 250 ms"),("750","Strong · 750 ms")])/>
         <TextField ui field=RawField::Widget(id,WidgetField::SmoothingMilliseconds) label="Smoothing time (ms)" hint="0 = Off; custom 50–5000. Current number and gauge only; history, statistics, peaks and warning thresholds use raw canonical readings."/>
+        </Show>
     }
 }
 
@@ -224,6 +243,10 @@ pub fn WarningControls(
     id: u16,
 ) -> impl IntoView {
     view! {
+        <Show when=move ||ui.widget(id).is_some_and(|w|w.channel==WidgetChannel::IgnitionRetard) || ui.inspection_active()>
+            <WidgetChoice ui id label="Ignition warning popup" setting=Setting::IgnitionWarning/>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.channel==WidgetChannel::IgnitionRetard)><p class="hint">"All four cylinders share this message and signed-degree thresholds. Trigger is strictly below the configured value; clear is at or above its value. Both limits may be zero. RET in the widget still means any raw negative value, independently of the warning threshold. Choose one global message or separate lines for the affected cylinders. Only fresh qualified samples can activate a warning; vehicle data is unavailable."</p></Show>
+        </Show>
         <Show when=move ||ui.invalid() || ui.widget(id).is_some_and(|w|matches!(w.warning.mode,LimitMode::OutsideWindow|LimitMode::InsideWindow))>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningTriggerHigh) label="Trigger high"/><TextField ui field=RawField::Widget(id,WidgetField::WarningClearHigh) label="Clear high"/></div>
             <p class="hint">"Outside: trigger low < clear low ≤ clear high < trigger high. Inside: clear low < trigger low ≤ trigger high < clear high. Selecting a window starts with channel-domain example bounds; configure your own thresholds."</p>
@@ -233,8 +256,8 @@ pub fn WarningControls(
         <TextField ui field=RawField::Widget(id,WidgetField::WarningSnoozeSeconds) label="Acknowledgment snooze (seconds)" hint="0 = Off; otherwise 5–900. Acknowledgment suppresses attention for this time, preserving active/latch indication; a new episode interrupts snooze."/>
         <p class="hint">"Enabled latch or snooze requires an onboard Dashboard button bound to Acknowledge warnings in Device controls. Stale latches retain LATCHED / DATA STALE; statistics reset does not acknowledge a warning."</p>
         <p class="hint">{move ||ui.widget(id).map(|w|{
-            let (low,high)=if w.channel==Channel::Lambda{(0.,2.)}else{w.channel.domain()};
-            format!("Threshold units: {} · canonical domain {} to {}. Display units and smoothing never change these thresholds.",match w.channel{Channel::Boost=>"relative bar",Channel::Battery=>"volts",Channel::Lambda=>"lambda deviation",_=>"°C"},low,high)
+            let (low,high)=if w.channel==WidgetChannel::Lambda{(0.,2.)}else{w.channel.domain()};
+            format!("Threshold units: {} · canonical domain {} to {}. Display units and smoothing never change these thresholds.",match w.channel{WidgetChannel::Boost=>"relative bar",WidgetChannel::Battery=>"volts",WidgetChannel::Lambda=>"lambda deviation",WidgetChannel::IgnitionRetard=>"signed degrees",_=>"°C"},low,high)
         }).unwrap_or_default()}</p>
     }
 }

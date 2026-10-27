@@ -55,12 +55,21 @@ impl Reading {
     /// Returns canonical-unit reading for `widget` from coherent `snapshot` at
     /// freshness clock `now` milliseconds. Scale uses raw extrema and configured
     /// range policy; unavailable current data stays `None`, and no peak is supplied.
+    /// A cylinder group has no scalar indicator and returns configured bounds only.
     pub fn new(
         widget: &Widget,
         snapshot: &DashboardSnapshot,
         now: u64,
     ) -> Self {
-        let id = SensorId::from_channel(widget.channel);
+        let Some(channel) = widget.channel.scalar() else {
+            return Self {
+                min: widget.gauge.min,
+                max: widget.gauge.max,
+                value: None,
+                peak: None,
+            };
+        };
+        let id = SensorId::from_channel(channel);
         let state = snapshot.sensor(id);
         let (min, max) = widget.gauge.limits(state.minimum(), state.maximum());
         Self {
@@ -75,6 +84,7 @@ impl Reading {
     /// Returns display-unit reading for `widget` using `snapshot` extrema, supplied
     /// canonical `value`/`peak`, conversion `unit` and AFR stoichiometric assumption
     /// `stoich`. No freshness check is repeated for supplied values; caller owns qualification.
+    /// Group selectors discard supplied scalar values/peaks and return inert configured bounds.
     pub fn presented(
         widget: &Widget,
         snapshot: &DashboardSnapshot,
@@ -83,7 +93,15 @@ impl Reading {
         unit: crate::presentation::Unit,
         stoich: f32,
     ) -> Self {
-        let state = snapshot.sensor(SensorId::from_channel(widget.channel));
+        let Some(channel) = widget.channel.scalar() else {
+            return Self {
+                min: widget.gauge.min,
+                max: widget.gauge.max,
+                value: None,
+                peak: None,
+            };
+        };
+        let state = snapshot.sensor(SensorId::from_channel(channel));
         let (min, max) = widget.gauge.limits(state.minimum(), state.maximum());
         Self {
             min: unit.value(min, stoich),

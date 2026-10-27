@@ -2,7 +2,44 @@
 use dashboard_config::{Applicability, LimitMode, MAX_WIDGETS, ValidatedConfig};
 
 use super::*;
+use crate::ignition::{Cylinder, FRESHNESS_MS, IgnitionSnapshot};
 use crate::warning_state::{CommandResult, WarningCommand, WarningEligibility};
+
+/// One-byte status plus group marker and current four-cylinder membership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublishedStatus(
+    /// Raw status in bits0..2, member mask in bits3..6, group marker in bit7.
+    u8,
+);
+impl PublishedStatus {
+    /// Returns the encoded raw `status`; `group` selects grouped interpretation and `mask`
+    /// supplies its bounded low-four membership bits. No scalar channel is implied.
+    const fn new(
+        status: Status,
+        group: bool,
+        mask: u8,
+    ) -> Self {
+        Self(status as u8 | ((mask & 15) << 3) | if group { 128 } else { 0 })
+    }
+
+    /// Returns the raw decision; impossible private encodings fail unavailable.
+    const fn status(self) -> Status {
+        match self.0 & 7 {
+            0 => Status::Disabled,
+            1 => Status::Unavailable,
+            2 => Status::Normal,
+            3 => Status::Pending,
+            4 => Status::Active,
+            _ => Status::Unavailable,
+        }
+    }
+
+    /// Returns whether this slot is a group rather than a scalar/unused position.
+    const fn group(self) -> bool { self.0 & 128 != 0 }
+
+    /// Returns the published current group membership, independent of current age.
+    const fn mask(self) -> u8 { (self.0 >> 3) & 15 }
+}
 
 /// Valid index into the fixed 64-widget/rule storage, not a canonical channel index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,12 +64,11 @@ impl RuleIndex {
 /// Coherent configured-rule publication; raw validity and remembered episodes differ.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuleAlerts {
-    /// Raw state per configured widget, disabled for unused slots.
-    states: [Status; MAX_WIDGETS],
+    /// Packed raw state/member bits per configured widget; unused slots are disabled.
+    states: [PublishedStatus; MAX_WIDGETS],
     /// Inclusive raw-validity deadlines in monotonic milliseconds.
     expires: [u64; MAX_WIDGETS],
-    // Two 3-bit channel IDs per byte; avoids copying configuration in Watch.
-    /// Two channel nibbles per byte; low three bits identify canonical channel.
+    /// Two nibbles per byte: scalar IDs 0..7/unused8, or group episode-member masks.
     channels: [u8; MAX_WIDGETS / 2],
     /// Latest non-reversed raw-policy evaluation time in milliseconds.
     evaluated_at: u64,
@@ -52,9 +88,9 @@ pub struct RuleAlerts {
 impl RuleAlerts {
     /// All rules disabled, no episodes, no command result and event watermark zero.
     pub const DISABLED: Self = Self {
-        states: [Status::Disabled; MAX_WIDGETS],
+        states: [PublishedStatus::new(Status::Disabled, false, 0); MAX_WIDGETS],
         expires: [0; MAX_WIDGETS],
-        channels: [0; MAX_WIDGETS / 2],
+        channels: [0x88; MAX_WIDGETS / 2],
         evaluated_at: 0,
         latched: 0,
         cleared: 0,
@@ -64,14 +100,66 @@ impl RuleAlerts {
         result: CommandResult::EMPTY,
     };
 
-    /// Returns the packed canonical channel for widget `index`; unused slots map
-    /// to Boost but remain Disabled and have no held value.
+    /// Returns the packed scalar channel for widget `index`, or None for grouped
+    /// widgets and unused positions. Disabled scalar widgets retain their identity.
     pub(crate) fn channel(
         &self,
         index: RuleIndex,
-    ) -> SensorId {
+    ) -> Option<SensorId> {
         let i = index.index();
-        SensorId::ALL[((self.channels[i / 2] >> ((i % 2) * 4)) & 7) as usize]
+        if self.states[i].group() {
+            return None;
+        }
+        SensorId::ALL
+            .get(((self.channels[i / 2] >> ((i % 2) * 4)) & 15) as usize)
+            .copied()
+    }
+
+    /// Returns current fresh group membership for `index` using coherent `samples`
+    /// at `now` milliseconds; only raw Active statuses yield a nonzero mask.
+    pub(crate) fn ignition_mask_at(
+        &self,
+        index: RuleIndex,
+        samples: &DashboardSnapshot,
+        now: u64,
+    ) -> u8 {
+        let state = self.states[index.index()];
+        if !state.group() || state.status() != Status::Active || now < self.evaluated_at {
+            return 0;
+        }
+        self.fresh_group_mask(state.mask(), samples, now)
+    }
+
+    /// Returns remembered episode members for group `index`, including faulted
+    /// members; scalar/unused/unlatched slots return zero and imply no live data.
+    pub(crate) fn ignition_latched_mask(
+        &self,
+        index: RuleIndex,
+    ) -> u8 {
+        let i = index.index();
+        if self.states[i].group() && self.latched & (1u64 << i) != 0 {
+            (self.channels[i / 2] >> ((i % 2) * 4)) & 15
+        } else {
+            0
+        }
+    }
+
+    /// Returns low-four `mask` filtered through exact Demo/source/freshness checks
+    /// in coherent `samples` at monotonic `now` milliseconds, without mutating dwell.
+    fn fresh_group_mask(
+        &self,
+        mask: u8,
+        samples: &DashboardSnapshot,
+        now: u64,
+    ) -> u8 {
+        let mut fresh = 0;
+        for cylinder in Cylinder::ALL {
+            let bit = 1 << cylinder.index();
+            if mask & bit != 0 && samples.ignition.value_at(cylinder, samples.mode, now).is_some() {
+                fresh |= bit;
+            }
+        }
+        fresh
     }
 
     /// Returns raw status qualified with `samples` at `now` milliseconds plus
@@ -103,12 +191,30 @@ impl RuleAlerts {
         now: u64,
     ) -> Status {
         let i = index.index();
-        let channel = (self.channels[i / 2] >> ((i % 2) * 4)) & 7;
-        let status = self.states[i];
+        let published = self.states[i];
+        let status = published.status();
+        if published.group() {
+            if status == Status::Disabled {
+                return status;
+            }
+            let qualified = match status {
+                Status::Active | Status::Pending => self.fresh_group_mask(published.mask(), samples, now) != 0,
+                Status::Normal => self.fresh_group_mask(15, samples, now) == 15,
+                _ => false,
+            };
+            return if now >= self.evaluated_at && qualified {
+                status
+            } else {
+                Status::Unavailable
+            };
+        }
         if status != Status::Disabled
             && (now < self.evaluated_at
                 || now > self.expires[i]
-                || samples.value_at(SensorId::ALL[channel as usize], now).is_none())
+                || self
+                    .channel(index)
+                    .and_then(|channel| samples.value_at(channel, now))
+                    .is_none())
         {
             Status::Unavailable
         } else {
@@ -138,6 +244,124 @@ impl EpisodeState {
         activation_serial: 0,
         snooze_until_ms: 0,
     };
+}
+
+impl State {
+    /// Evaluates shared group `warning` from independent `ignition` observations
+    /// at `now` milliseconds and owner raw `sequence`. Returns raw status/current
+    /// member mask. Hysteresis uses strict negative-side trigger and inclusive
+    /// clear; only capture timestamps advance shared dwell. All four cylinders
+    /// must be fresh and clear to complete clearing, including a remembered latch.
+    /// Writes `expires` with the inclusive support deadline in monotonic milliseconds
+    /// when support is available; unavailable early returns retain the prior deadline.
+    fn advance_ignition(
+        &mut self,
+        ignition: &IgnitionSnapshot,
+        sequence: u64,
+        warning: &dashboard_config::WarningSettings,
+        now: u64,
+        expires: &mut u64,
+    ) -> (Status, u8) {
+        let mut fresh = 0u8;
+        let mut clear = 0u8;
+        let mut hysteresis = self.group_hysteresis;
+        let mut newest_active = 0u64;
+        let mut newest = 0u64;
+        let mut oldest = u64::MAX;
+        for cylinder in Cylinder::ALL {
+            let bit = 1 << cylinder.index();
+            let Some(value) = ignition.value_at(cylinder, DataMode::Demo, now) else {
+                hysteresis &= !bit;
+                continue;
+            };
+            let at = ignition.received_at_ms(cylinder).expect("qualified group timestamp");
+            fresh |= bit;
+            newest = newest.max(at);
+            oldest = oldest.min(at);
+            if value >= warning.clear {
+                clear |= bit;
+                hysteresis &= !bit;
+            }
+            if value < warning.trigger {
+                hysteresis |= bit;
+            }
+            if hysteresis & bit != 0 {
+                newest_active = newest_active.max(at);
+            }
+        }
+        if self
+            .seen()
+            .is_some_and(|(_, previous)| newest.checked_sub(previous).is_some_and(|gap| gap > FRESHNESS_MS))
+        {
+            self.invalidate();
+            // A separated observation must trigger again, not inherit an old
+            // cylinder's hysteresis through a period with no supporting samples.
+            hysteresis = 0;
+            for cylinder in Cylinder::ALL {
+                if ignition
+                    .value_at(cylinder, DataMode::Demo, now)
+                    .is_some_and(|value| value < warning.trigger)
+                {
+                    hysteresis |= 1 << cylinder.index();
+                }
+            }
+        }
+        self.group_hysteresis = hysteresis;
+        let all_clear = fresh == 15 && clear == 15;
+        if hysteresis == 0 && fresh != 15 {
+            self.invalidate();
+            return (Status::Unavailable, 0);
+        }
+        let clearing =
+            self.flags & ACTIVE != 0 && all_clear || self.flags & (LATCHED | CLEARED) == LATCHED && all_clear;
+        let condition_at = if clearing { newest } else { newest_active };
+        let supported_until = if clearing { oldest } else { newest_active };
+        *expires = supported_until.saturating_add(FRESHNESS_MS);
+        if self.seen().is_some_and(|(seen, _)| sequence < seen) {
+            self.invalidate();
+            return (Status::Unavailable, 0);
+        }
+        let distinct = self.seen().is_none_or(|(seen, _)| sequence > seen);
+        if distinct {
+            let previous_at = self.at;
+            self.record(sequence, previous_at.max(newest));
+            self.flags |= VALID;
+            if clearing || hysteresis != 0 && self.flags & ACTIVE == 0 {
+                if self.flags & PENDING == 0 || (self.flags & PENDING_CLEAR != 0) != clearing {
+                    self.since = condition_at;
+                    self.flags |= PENDING;
+                    if clearing {
+                        self.flags |= PENDING_CLEAR;
+                    } else {
+                        self.flags &= !PENDING_CLEAR;
+                    }
+                }
+                if supported_until >= self.since
+                    && supported_until - self.since >= u64::from(if clearing { warning.off_ms } else { warning.on_ms })
+                {
+                    if clearing {
+                        self.flags &= !ACTIVE;
+                        self.flags |= CLEARED;
+                    } else {
+                        self.flags |= ACTIVE;
+                        self.flags &= !CLEARED;
+                    }
+                    self.flags &= !(PENDING | PENDING_CLEAR);
+                }
+            } else {
+                self.flags &= !(PENDING | PENDING_CLEAR);
+            }
+        }
+        let status = self.status();
+        let mask = if hysteresis != 0 {
+            hysteresis
+        } else if status == Status::Active || clearing && self.flags & LATCHED != 0 {
+            self.group_members & fresh
+        } else {
+            0
+        };
+        (status, mask)
+    }
 }
 
 /// Mutable policy state inseparable from its enclosing immutable configuration.
@@ -190,8 +414,8 @@ impl RuleEngineState {
     // supplies the configuration from its immutable stored handle.
     /// Initializes fresh empty storage from immutable `config`, explicit `mode`
     /// and exact `sources`. Enables Demo rules or VehicleAndDemo applicability;
-    /// enabled slots begin Unavailable. Construction-only: masks/channels use OR,
-    /// so rerunning this on existing state is not a supported configuration change.
+    /// enabled slots begin Unavailable. Grouped rules admit Demo only and never
+    /// acquire scalar identities. Construction-only; existing episodes are not reset.
     pub(crate) fn initialize_bound_policy(
         &mut self,
         config: &ValidatedConfig,
@@ -200,12 +424,17 @@ impl RuleEngineState {
     ) {
         self.sources = sources;
         for (i, widget) in config.config().widgets.iter().enumerate() {
-            self.alerts.channels[i / 2] |= (widget.channel.index() as u8) << ((i % 2) * 4);
+            let shift = (i % 2) * 4;
+            let group = widget.channel.scalar().is_none();
+            let identity = widget.channel.scalar().map_or(0, |channel| channel.index() as u8);
+            self.alerts.channels[i / 2] = (self.alerts.channels[i / 2] & !(15 << shift)) | (identity << shift);
+            self.alerts.states[i] = PublishedStatus::new(Status::Disabled, group, 0);
             if widget.warning.enabled
                 && (mode == DataMode::Demo || widget.warning.applicability == Applicability::VehicleAndDemo)
+                && (!group || mode == DataMode::Demo)
             {
                 self.enabled |= 1 << i;
-                self.alerts.states[i] = Status::Unavailable;
+                self.alerts.states[i] = PublishedStatus::new(Status::Unavailable, group, 0);
             }
         }
     }
@@ -216,6 +445,33 @@ impl RuleEngineState {
     /// Returns whether any applicable configured rule exists, independent of data availability.
     pub(crate) const fn enabled(&self) -> bool { self.enabled != 0 }
 
+    /// Drops group hysteresis supported by `unavailable` cylinder bits before
+    /// replacement observations overwrite their prior ages. Losing every active
+    /// supporter or any shared-clear evidence breaks raw dwell/activation while
+    /// preserving episode membership and acknowledgment. Caller preflights the
+    /// impending acquisition mutation and evaluates/publishes afterward.
+    pub(crate) fn invalidate_ignition_support(
+        &mut self,
+        unavailable: u8,
+    ) {
+        if unavailable == 0 {
+            return;
+        }
+        let mut enabled = self.enabled;
+        while enabled != 0 {
+            let i = enabled.trailing_zeros() as usize;
+            enabled &= enabled - 1;
+            if !self.alerts.states[i].group() {
+                continue;
+            }
+            let state = &mut self.states[i].raw;
+            state.group_hysteresis &= !unavailable;
+            if state.group_hysteresis == 0 || state.flags & PENDING_CLEAR != 0 {
+                state.invalidate();
+            }
+        }
+    }
+
     /// Returns source-bound canonical rule for widget `i` in immutable `config`,
     /// or `None` without an admitted source. Panics if i is outside configured
     /// widgets; internal enabled-mask callers guarantee the bound and validation.
@@ -225,7 +481,8 @@ impl RuleEngineState {
         i: usize,
     ) -> Option<Rule> {
         let widget = &config.config().widgets[i];
-        let source = self.sources[widget.channel.index()]?;
+        let channel = widget.channel.scalar()?;
+        let source = self.sources[channel.index()]?;
         let warning = &widget.warning;
         let limit = match warning.mode {
             LimitMode::OutsideWindow => {
@@ -267,7 +524,7 @@ impl RuleEngineState {
         // The immutable validated document establishes numeric invariants;
         // admission still binds every measurement to this channel/source.
         Some(Rule {
-            sensor: SensorId::from_channel(widget.channel),
+            sensor: SensorId::from_channel(channel),
             source,
             limit,
             on_ms: warning.on_ms.into(),
@@ -281,12 +538,15 @@ impl RuleEngineState {
     /// checked-by-saturation episode IDs, clear acknowledgment, optionally latch,
     /// and interrupt every snooze. Reversal invalidates raw decisions/snoozes,
     /// preserving remembered episodes; MAX serial keeps visibility but disables ack.
+    /// `ignition` supplies independent cylinder observations and outer raw sequence;
+    /// joined group members also issue new events so older acknowledgments cannot cover them.
     pub(crate) fn update_inputs(
         &mut self,
         config: &ValidatedConfig,
         samples: &Inputs<'_>,
         contexts: &[Option<Context>; 8],
         now: u64,
+        ignition: (&IgnitionSnapshot, u64),
     ) {
         let backwards = now < self.last_ms;
         if !backwards {
@@ -297,27 +557,52 @@ impl RuleEngineState {
         while enabled != 0 {
             let i = enabled.trailing_zeros() as usize;
             enabled &= enabled - 1;
-            let Some(rule) = self.rule(config, i) else {
+            let group = self.alerts.states[i].group();
+            let rule = self.rule(config, i);
+            if !group && rule.is_none() {
                 continue;
-            };
+            }
             let episode = &mut self.states[i];
             let state = &mut episode.raw;
             let was_active = state.flags & ACTIVE != 0;
-            self.alerts.states[i] = if backwards {
-                state.consume(rule, samples, now);
+            let previous_members = state.group_members;
+            let (status, mask) = if backwards {
+                if let Some(rule) = rule {
+                    state.consume(rule, samples, now);
+                }
                 state.invalidate();
-                Status::Unavailable
-            } else {
-                state.advance(
-                    rule,
-                    samples,
-                    contexts[rule.sensor as usize],
+                state.group_hysteresis = 0;
+                (Status::Unavailable, 0)
+            } else if group {
+                state.advance_ignition(
+                    ignition.0,
+                    ignition.1,
+                    &config.config().widgets[i].warning,
                     now,
                     &mut self.alerts.expires[i],
                 )
+            } else {
+                let rule = rule.expect("scalar enabled rule with source");
+                (
+                    state.advance(
+                        rule,
+                        samples,
+                        contexts[rule.sensor as usize],
+                        now,
+                        &mut self.alerts.expires[i],
+                    ),
+                    0,
+                )
             };
-            let status = self.alerts.states[i];
-            if status == Status::Active && !was_active {
+            self.alerts.states[i] = PublishedStatus::new(status, group, mask);
+            let new_member = group && mask & !previous_members != 0;
+            if group && status == Status::Active {
+                if !was_active && state.flags & LATCHED == 0 {
+                    state.group_members = 0;
+                }
+                state.group_members |= state.group_hysteresis;
+            }
+            if status == Status::Active && (!was_active || new_member) {
                 self.alerts.event_serial = self.alerts.event_serial.saturating_add(1);
                 // MAX is a terminal watermark, never an issued episode identity.
                 episode.activation_serial = if self.alerts.event_serial == u64::MAX {
@@ -351,8 +636,16 @@ impl RuleEngineState {
         self.alerts.cleared = 0;
         self.alerts.acknowledged = 0;
         self.alerts.snoozed = 0;
-        for (i, item) in self.states.iter().enumerate() {
+        for (i, item) in self.states.iter_mut().enumerate() {
             let bit = 1u64 << i;
+            if self.alerts.states[i].group() {
+                if item.raw.flags & (LATCHED | ACTIVE) == 0 {
+                    item.raw.group_members = 0;
+                }
+                let shift = (i % 2) * 4;
+                self.alerts.channels[i / 2] =
+                    (self.alerts.channels[i / 2] & !(15 << shift)) | ((item.raw.group_members & 15) << shift);
+            }
             if item.raw.flags & CLEARED != 0 {
                 self.alerts.cleared |= bit;
             }
@@ -436,7 +729,7 @@ impl RuleEngineState {
             if command.rules & bit == 0
                 || item.activation_serial == 0
                 || item.activation_serial > command.observed_event_serial
-                || (self.alerts.states[i] != Status::Active && item.raw.flags & LATCHED == 0)
+                || (self.alerts.states[i].status() != Status::Active && item.raw.flags & LATCHED == 0)
             {
                 continue;
             }
@@ -578,6 +871,7 @@ mod tests {
                 },
                 &[None; 8],
                 at,
+                (&IgnitionSnapshot::EMPTY, 0),
             );
         }
         assert_eq!(engine.alerts.event_serial, u64::MAX);
@@ -585,7 +879,7 @@ mod tests {
             engine.states[0].activation_serial, 0,
             "exhaustion is not an issued serial"
         );
-        assert_eq!(engine.alerts.states[0], Status::Active);
+        assert_eq!(engine.alerts.states[0].status(), Status::Active);
         assert_eq!(engine.alerts.latched, 1);
         let command = WarningCommand {
             request_id: 1,

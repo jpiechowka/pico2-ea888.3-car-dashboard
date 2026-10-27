@@ -84,6 +84,9 @@ for warnings, fuel/AFR, ECU source evidence, local saving and import/export.
 Choose numeric/history, circular, needle, horizontal, vertical or segmented
 gauges. [Gauge and colour controls](docs/configurator/gauges-and-colours.md) include
 fixed or expanding scales, per-widget palettes and separate combined warnings.
+The **Ignition retard** widget places all four cylinders in one cross layout,
+including a 1×1 cell. Studio preview and firmware Demo share its synthetic signals;
+choose numbers, OK/RET, or status and number together. [Examples and warnings](#four-cylinder-ignition-retard).
 
 A practical native build and verified download succeeded on Windows 11 Pro with an i9-13900HX and
 31.8 GiB RAM; a minimum RAM specification has not been established. The earlier
@@ -181,7 +184,8 @@ changes, recovery and completion-bound LED/backlight state without a Pico.*
 
 Open **Device → Bluetooth connection** to select an explicit peer address,
 MC+/CX/test-peer profile, reconnect policy and bounded connection/response timing.
-BLE starts disabled, including in older imported projects. Invalid addresses or
+BLE starts disabled in defaults and pre-version-6 imports; version-6 and later
+projects preserve their existing settings. Invalid addresses or
 timings remain visible for repair and block export/build. Existing dashboard,
 startup, LED and encoder settings stay available.
 
@@ -222,7 +226,55 @@ fixture are described in the [gallery](docs/configurator/gallery.md#shared-rende
 | **Intake air**<br>[![Synthetic Intake air: 30 °C](docs/images/gallery/widgets/widget-iat.png)](docs/images/gallery/widgets/full/widget-iat.png)<br>30 °C | **Exhaust gas**<br>[![Synthetic Exhaust gas: 700 °C; vehicle source unqualified](docs/images/gallery/widgets/widget-egt.png)](docs/images/gallery/widgets/full/widget-egt.png)<br>700 °C; vehicle source unqualified |
 | **ECU voltage**<br>[![Synthetic ECU voltage: 13.8 V; not a battery-post measurement](docs/images/gallery/widgets/widget-ecu-voltage.png)](docs/images/gallery/widgets/full/widget-ecu-voltage.png)<br>13.8 V; not a battery-post measurement | **Lambda & AFR**<br>[![Synthetic Lambda & AFR: Lambda 1.00; gasoline-equivalent AFR 14.7](docs/images/gallery/widgets/widget-lambda-afr.png)](docs/images/gallery/widgets/full/widget-lambda-afr.png)<br>Lambda 1.00; gasoline-equivalent AFR 14.7 |
 
-### Six styles, three sizes
+### Four-cylinder ignition retard
+
+[![Ignition widget controls and synthetic Studio preview](docs/images/gallery/ignition/studio-combined.jpg)](docs/configurator/gallery.md#ignition-retard-previews)
+
+Add **Ignition retard** from the widget library. The cross orders cylinders 1/2
+above 3/4, independent of firing order. Each cell shows a signed correction in
+degrees, **OK/RET**, or both, such as **RET −2.5°** and **OK 0.0°**. All three
+modes support 1×1, 2×1 and 2×2 in landscape or portrait, including mounting flips.
+Precision is configurable from zero to three decimals. The compact combined
+layout places status beside the cylinder label and the number below it.
+
+| Mode | Landscape 1×1 | Portrait 1×1 | Landscape 2×2 |
+|---|---|---|---|
+| Numbers | [![Synthetic ignition numeric 1x1](docs/images/gallery/ignition/ignition-numeric-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-numeric-landscape-1x1.png) | [![Synthetic portrait ignition numbers](docs/images/gallery/ignition/ignition-numeric-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-numeric-portrait-1x1.png) | [![Synthetic ignition numbers 2x2](docs/images/gallery/ignition/ignition-numeric-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-numeric-landscape-2x2.png) |
+| OK / RET | [![Synthetic ignition status 1x1](docs/images/gallery/ignition/ignition-status-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-status-landscape-1x1.png) | [![Synthetic portrait ignition status](docs/images/gallery/ignition/ignition-status-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-status-portrait-1x1.png) | [![Synthetic ignition status 2x2](docs/images/gallery/ignition/ignition-status-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-status-landscape-2x2.png) |
+| Status + number | [![Synthetic combined ignition 1x1](docs/images/gallery/ignition/ignition-combined-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-combined-landscape-1x1.png) | [![Synthetic portrait combined ignition](docs/images/gallery/ignition/ignition-combined-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-combined-portrait-1x1.png) | [![Synthetic combined ignition 2x2](docs/images/gallery/ignition/ignition-combined-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-combined-landscape-2x2.png) |
+
+**RET means a fresh raw value below zero**, even if rounding displays −0.0°.
+OK means no negative correction in that sample; it is not an engine-health claim.
+Each cylinder expires independently after 500 ms. Missing, stale and faulty data
+show **NO DATA**, **STALE**, **LINK ERR** or **INVALID**, never a fabricated zero.
+The current Vehicle client has no ignition producer and shows **N/A**; the owner's
+working OBDeleven readings do not yet provide a qualified decoder in this firmware.
+The widget has no scalar history, smoothing, gauge, peak hold or AFR companion.
+
+One shared warning threshold, message and timing policy applies to all cylinders.
+The default Demo rule uses raw value **< 0°**, 1000 ms activation dwell and 500 ms
+clear dwell, with **Ignition retarded** as editable text. Clearing requires fresh
+clear values from all four cylinders. Choose a global popup or separate cylinder
+lines; for example, **Cylinder 2 Ignition retarded** and **Cylinder 4 Ignition
+retarded** appear on different lines. RET/OK readout remains independent of the
+warning threshold and dwell. Existing priority, latch, snooze, acknowledgment and
+warning LED settings apply; saved samples cannot manufacture a fresh warning.
+
+| Global warning | Separate cylinder lines |
+|---|---|
+| [![Synthetic global ignition warning](docs/images/gallery/ignition/full/ignition-warning-global-landscape.png)](docs/images/gallery/ignition/full/ignition-warning-global-landscape.png) | [![Synthetic separate cylinder warning lines](docs/images/gallery/ignition/full/ignition-warning-cylinders-landscape.png)](docs/images/gallery/ignition/full/ignition-warning-cylinders-landscape.png) |
+
+These are actual shared-renderer pixels with synthetic values 0, −2.5, 0 and
+−1.25°. [All sizes and reproduction](docs/configurator/gallery.md#ignition-retard-previews)
+and the [software validation record](docs/validation/ignition-retard-widget-2026-10-27.md)
+cover migration, warnings, clipping, browser round trips and linked image bounds.
+The checked BLE dashboard has 65,544 bytes of headroom, only 8 bytes above the
+unchanged admission floor; further static growth needs corresponding savings.
+The [warning/quality contracts](docs/configurator/advanced-controls.md) describe
+the remaining limits. Current exports use schema 7; host import migrates versions 1–6 while
+preserving their settings and complete-project artwork.
+
+### Six scalar styles, three sizes
 
 The landscape 4×2 grid supports 1×1 (80×107), 2×1 (160×107) and 2×2 (160×214)
 widgets below the 26-pixel header. Portrait uses two 120-pixel columns and four

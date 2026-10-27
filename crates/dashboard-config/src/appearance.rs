@@ -1,6 +1,6 @@
 //! Shared widget capabilities, canonical gauge limits and quantized RGB565 appearance contracts.
 //! Visibility and validation are separate: hidden options/colors remain stored and admissible.
-/// Shared style/span truth. Channel compatibility is independently validated.
+/// Shared selector/style/span truth. Readout compatibility is independently validated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WidgetCapabilities {
     /// Layout can display secondary units/readout decoration.
@@ -21,8 +21,19 @@ use serde::{Deserialize, Serialize};
 use crate::Channel;
 
 impl crate::Widget {
-    /// Return style/span capabilities; does not mutate or discard dormant option values.
+    /// Return selector/style/span capabilities; group widgets expose no scalar decorations.
+    /// Does not mutate or discard dormant option values.
     pub fn capabilities(&self) -> WidgetCapabilities {
+        if self.channel.scalar().is_none() {
+            return WidgetCapabilities {
+                secondary: false,
+                history: false,
+                markers: false,
+                bands: false,
+                band_labels: false,
+                statistics: false,
+            };
+        }
         let numeric = self.gauge.kind.is_numeric();
         WidgetCapabilities {
             secondary: numeric || self.placement.span != crate::Span::OneByOne,
@@ -40,8 +51,8 @@ impl crate::Widget {
     /// Return whether graph is enabled and the current layout supports history.
     pub fn shows_graph(&self) -> bool { self.capabilities().history && self.display.graph }
 
-    /// Return whether trend is enabled for a numeric layout.
-    pub fn shows_trend(&self) -> bool { self.gauge.kind.is_numeric() && self.display.trend }
+    /// Return whether trend is enabled for a scalar numeric layout.
+    pub fn shows_trend(&self) -> bool { self.capabilities().history && self.display.trend }
 
     /// Return whether average is enabled in a statistics-capable layout.
     pub fn shows_average(&self) -> bool { self.supports_statistics() && self.display.average }
@@ -134,7 +145,16 @@ impl Gauge {
         self,
         channel: Channel,
     ) -> bool {
-        let (low, high) = channel.domain();
+        self.valid_domain(channel.domain())
+    }
+
+    /// Return whether endpoints fit the finite inclusive `domain` and are at least 0.001 apart.
+    /// Used for dormant group bounds without introducing a scalar identity.
+    pub fn valid_domain(
+        self,
+        domain: (f32, f32),
+    ) -> bool {
+        let (low, high) = domain;
         self.min.is_finite()
             && self.max.is_finite()
             && self.min >= low

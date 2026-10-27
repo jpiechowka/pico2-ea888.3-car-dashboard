@@ -5,7 +5,9 @@ use heapless::String;
 
 use crate::thresholds::BAR_TO_PSI;
 
-/// Six visible text lanes, each bounded to 16 UTF-8 bytes; unused lanes are empty.
+/// Six text lanes, each bounded to16 UTF-8 bytes. Scalar lanes are visible text;
+/// ignition uses lanes0..4 for cylinders and lanes4/5 for key-only quality/source
+/// metadata. Unused lanes are empty; consumers must select the matching renderer.
 pub type CellText = [String<16>; 6];
 /// Returns six empty owned text lanes without allocation.
 fn empty() -> CellText { core::array::from_fn(|_| String::new()) }

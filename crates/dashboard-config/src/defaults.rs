@@ -24,7 +24,7 @@ pub fn default_widget(
     Widget {
         id,
         view,
-        channel,
+        channel: channel.into(),
         placement,
         label: channel.label().try_into().expect("bounded built-in label"),
         gauge: Gauge::for_channel(channel),
@@ -191,4 +191,65 @@ pub(crate) fn fill_default_config(config: &mut Config) {
     config.reduced_motion = false;
     config.led = LedSettings::DEFAULT;
     config.orientation = Orientation::Landscape;
+}
+
+/// Return the group widget with caller `id`, `view` and `placement`, without validating their geometry.
+/// Defaults show simultaneous status/number at one decimal and a global DemoOnly ignition warning.
+/// Shared trigger/clear zero means strictly negative degrees trigger and zero clears after dwell.
+/// Dormant degree bounds are representation limits, not recommended engine limits.
+pub fn default_ignition_widget(
+    id: u16,
+    view: u8,
+    placement: Placement,
+) -> Widget {
+    Widget {
+        id,
+        view,
+        channel: WidgetChannel::IgnitionRetard,
+        placement,
+        label: "IGN RETARD".try_into().expect("bounded built-in label"),
+        display: DisplayOptions {
+            decimals: 1,
+            graph: false,
+            average: false,
+            extrema: false,
+            trend: false,
+            afr: false,
+            graph_range: GraphRange::Auto,
+        },
+        warning: WarningSettings {
+            enabled: true,
+            applicability: Applicability::DemoOnly,
+            mode: LimitMode::Low,
+            trigger: 0.0,
+            clear: 0.0,
+            min_load_percent: 0.0,
+            on_ms: 1000,
+            off_ms: 500,
+            message: "Ignition retarded".try_into().expect("bounded built-in warning"),
+            advanced: AdvancedWarning::DEFAULT,
+        },
+        gauge: Gauge {
+            kind: GaugeKind::Numeric,
+            min: -327.68,
+            max: 327.67,
+            expand: false,
+        },
+        colors: WidgetColors::default(),
+        advanced: AdvancedDisplay::for_ignition(),
+    }
+}
+
+/// Return scalar or group defaults for `channel`, preserving caller `id`, `view`
+/// and `placement` without validating their identity or geometry.
+pub fn default_widget_for_channel(
+    channel: WidgetChannel,
+    id: u16,
+    view: u8,
+    placement: Placement,
+) -> Widget {
+    match channel.scalar() {
+        Some(scalar) => default_widget(scalar, id, view, placement),
+        None => default_ignition_widget(id, view, placement),
+    }
 }

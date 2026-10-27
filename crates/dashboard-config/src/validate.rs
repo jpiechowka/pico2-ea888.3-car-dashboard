@@ -40,6 +40,27 @@ pub enum ErrorCode {
 /// Repair field, including bounded subcoordinates for bands, controls and LED patterns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
+    /// Ignition popup presentation; scalar widgets require Global.
+    IgnitionWarningPresentation,
+    /// Warning data-mode applicability; ignition currently permits DemoOnly.
+    WarningApplicability,
+    /// Historical graph enable flag.
+    Graph,
+    /// Accumulated average enable flag.
+    Average,
+    /// Accumulated extrema enable flag.
+    Extrema,
+    /// Trend enable flag.
+    Trend,
+    /// Widget presentation family.
+    GaugeKind,
+    /// Warning-rule participation flag.
+    WarningEnabled,
+    /// Peak marker selection.
+    PeakMode,
+    /// Reference marker selection.
+    ReferenceMode,
+
     /// BLE address/type/enable combination, displayed at the address field.
     BlePeer,
     /// BLE connection deadline in milliseconds.
@@ -291,6 +312,17 @@ impl core::fmt::Display for ValidationLocation {
             write!(f, "/{group}/{}", channel.index())?;
         }
         let path = match self.field {
+            IgnitionWarningPresentation => "advanced/ignition_warning",
+            WarningApplicability => "warning/applicability",
+            Graph => "display/graph",
+            Average => "display/average",
+            Extrema => "display/extrema",
+            Trend => "display/trend",
+            GaugeKind => "gauge/kind",
+            WarningEnabled => "warning/enabled",
+            PeakMode => "advanced/peak_mode",
+            ReferenceMode => "advanced/reference_mode",
+
             BlePeer => "ble/peer/address",
             BleConnectTimeout => "ble/connect_timeout_ms",
             BleResponseTimeout => "ble/response_timeout_ms",
@@ -687,14 +719,14 @@ pub fn visit_validation(
         location = ValidationLocation {
             view: view_index.filter(|_| unambiguous_view).map(|i| i as u8),
             widget: Some(i as u8),
-            channel: Some(widget.channel),
+            channel: widget.channel.scalar(),
             field: Field::Version,
         };
         let at = |code, field| {
             ValidationError {
                 view: Some(widget.view),
                 widget: Some(widget.id),
-                channel: Some(widget.channel),
+                channel: widget.channel.scalar(),
                 ..error(code, field)
             }
         };
@@ -738,14 +770,34 @@ pub fn visit_validation(
                 },
             })
         })?;
+        if widget.channel.scalar().is_none() {
+            for (enabled, field) in [
+                (widget.display.graph, Field::Graph),
+                (widget.display.average, Field::Average),
+                (widget.display.extrema, Field::Extrema),
+                (widget.display.trend, Field::Trend),
+                (!widget.gauge.kind.is_numeric(), Field::GaugeKind),
+                (widget.advanced.smoothing_ms != 0, Field::Smoothing),
+                (widget.advanced.peak_mode != PeakSelection::Off, Field::PeakMode),
+                (
+                    widget.advanced.reference_mode != ReferenceMode::Off,
+                    Field::ReferenceMode,
+                ),
+                (!widget.advanced.bands().is_empty(), Field::BandCount),
+            ] {
+                if enabled {
+                    issue!(at(ErrorCode::Incompatible, field));
+                }
+            }
+        }
         let display = widget.display;
-        if !widget.gauge.valid(widget.channel) {
+        if !widget.gauge.valid_domain(widget.channel.domain()) {
             issue!(at(ErrorCode::Bounds, Field::GaugeRange));
         }
         if display.decimals > 3 {
             issue!(at(ErrorCode::Bounds, Field::Decimals));
         }
-        if display.afr && widget.channel != Channel::Lambda {
+        if display.afr && widget.channel != WidgetChannel::Lambda {
             issue!(at(ErrorCode::Incompatible, Field::Afr));
         }
         let (low, high) = widget.channel.domain();
@@ -755,13 +807,16 @@ pub fn visit_validation(
             issue!(at(ErrorCode::Bounds, Field::GraphRange));
         }
         let advanced = &widget.advanced;
-        if !advanced.readout.compatible(widget.channel) {
+        if widget.channel.scalar().is_some() && advanced.ignition_warning != IgnitionWarningPresentation::Global {
+            issue!(at(ErrorCode::Incompatible, Field::IgnitionWarningPresentation));
+        }
+        if !advanced.readout.compatible_widget(widget.channel) {
             issue!(at(ErrorCode::Incompatible, Field::Readout));
         }
         if display.afr != advanced.readout.includes_afr() {
             issue!(at(ErrorCode::Incompatible, Field::Afr));
         }
-        if widget.channel != Channel::Boost && advanced.secondary != Secondary::None {
+        if widget.channel != WidgetChannel::Boost && advanced.secondary != Secondary::None {
             issue!(at(ErrorCode::Incompatible, Field::Secondary));
         }
         if advanced.smoothing_ms != 0 && !(50..=5_000).contains(&advanced.smoothing_ms) {
@@ -771,7 +826,8 @@ pub fn visit_validation(
             issue!(at(ErrorCode::Bounds, Field::PeakHold));
         }
         if !advanced.reference.is_finite()
-            || (advanced.reference_mode == ReferenceMode::Manual && !in_range(advanced.reference, low, high))
+            || ((advanced.reference_mode == ReferenceMode::Manual || widget.channel.scalar().is_none())
+                && !in_range(advanced.reference, low, high))
         {
             issue!(at(ErrorCode::Bounds, Field::Reference));
         }
@@ -795,6 +851,17 @@ pub fn visit_validation(
             }
         }
         let warning = &widget.warning;
+        if widget.channel.scalar().is_none() {
+            if warning.mode != LimitMode::Low {
+                issue!(at(ErrorCode::Incompatible, Field::WarningMode));
+            }
+            if warning.applicability != Applicability::DemoOnly {
+                issue!(at(ErrorCode::Incompatible, Field::WarningApplicability));
+            }
+            if warning.min_load_percent != 0.0 {
+                issue!(at(ErrorCode::Incompatible, Field::WarningLoad));
+            }
+        }
         let extra = warning.advanced;
         if extra.snooze_s != 0 && !(5..=900).contains(&extra.snooze_s) {
             issue!(at(ErrorCode::Bounds, Field::WarningSnooze));
@@ -823,11 +890,13 @@ pub fn visit_validation(
         } {
             issue!(at(ErrorCode::Bounds, Field::WarningClearHigh));
         }
-        if (widget.channel == Channel::Lambda) != (warning.mode == LimitMode::LambdaDeviation) {
+        if (widget.channel == WidgetChannel::Lambda) != (warning.mode == LimitMode::LambdaDeviation) {
             issue!(at(ErrorCode::Incompatible, Field::WarningMode));
         }
         let (low, high) = if warning.mode == LimitMode::LambdaDeviation {
             (0.0, 2.0)
+        } else if widget.channel.scalar().is_none() {
+            (low, 0.0)
         } else {
             (low, high)
         };
@@ -839,7 +908,13 @@ pub fn visit_validation(
         }
         let ordered = match warning.mode {
             LimitMode::High | LimitMode::LambdaDeviation => warning.clear < warning.trigger,
-            LimitMode::Low => warning.clear > warning.trigger,
+            LimitMode::Low => {
+                if widget.channel.scalar().is_none() {
+                    warning.clear >= warning.trigger
+                } else {
+                    warning.clear > warning.trigger
+                }
+            }
             LimitMode::OutsideWindow => {
                 warning.trigger < warning.clear
                     && warning.clear <= extra.clear_high

@@ -76,7 +76,7 @@ pub fn maximum() -> Config {
             [Priority::Low, Priority::Normal, Priority::High, Priority::Critical][index % 4];
         widget.warning.advanced.latch = index % 2 == 0;
         widget.warning.advanced.snooze_s = 900 - index as u16;
-        if widget.channel != Channel::Lambda {
+        if widget.channel != Channel::Lambda.into() {
             let a = min + step;
             let b = min + 2. * step;
             let c = max - 2. * step;

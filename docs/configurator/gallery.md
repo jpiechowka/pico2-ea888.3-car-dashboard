@@ -170,8 +170,8 @@ operation additionally needs the supported Windows setup and pinned tools; see
 
 ## Shared-renderer widgets
 
-The [README comparison](../../README.md#widget-gallery) shows eight channels and
-all six styles at three spans. Crops retain native dimensions and link to their
+The [README comparison](../../README.md#widget-gallery) shows eight scalar channels,
+all six scalar styles at three spans, and the four-cylinder ignition group. Crops retain native dimensions and link to their
 full 320×240 source frames. The fixture uses synthetic observations every 50 ms to
 118,000 ms with FPS hidden, warnings disabled and a labelled SYNTHETIC view.
 Boost is 1.20 bar with a PSI companion; temperatures are 95/90/80/30/700 °C,
@@ -189,6 +189,54 @@ widget crops, configuration EAVs and coverage.tsv. Committed PNGs are lossless
 conversions of those PPM pixels. Rendering stills do not establish animation,
 physical scanout or warning timing. The distinct measured performance pass is
 separate; [benchmark scope](../performance/benchmark-coverage.md) remains explicit.
+
+### Ignition retard previews
+
+[![Studio ignition readout selector and shared Demo rendering](../images/gallery/ignition/studio-combined.jpg)](../images/gallery/ignition/studio-combined.jpg)
+
+The readout selector offers numbers, status or both. These controls use the same
+renderer and synthetic producer as firmware Demo. The following browser captures
+show one global warning and all four separate cylinder lines; each uses the
+explicit Channel minima test pattern, not a vehicle measurement.
+
+| Global message | Separate cylinder lines |
+| --- | --- |
+| [![Studio global ignition warning](../images/gallery/ignition/studio-global-warning.jpg)](../images/gallery/ignition/studio-global-warning.jpg) | [![Studio four cylinder warning lines](../images/gallery/ignition/studio-cylinder-warning.jpg)](../images/gallery/ignition/studio-cylinder-warning.jpg) |
+
+The same gallery command also emits all three ignition readouts at all three
+spans in landscape and portrait, plus Global/CylinderLines warning frames.
+The fixture admits signed degrees `[0,-2.5,0,-1.25]` every 50 ms for two seconds.
+Readout examples disable warnings; warning examples use the shared default dwell
+and actual warning pager. The SYNTHETIC label and hidden FPS avoid attributing
+these pixels to a vehicle or physical display measurement.
+
+| Combined readout | 1×1 | 2×1 | 2×2 |
+|---|---|---|---|
+| Landscape | [![Combined landscape 1x1](../images/gallery/ignition/ignition-combined-landscape-1x1.png)](../images/gallery/ignition/full/ignition-combined-landscape-1x1.png) | [![Combined landscape 2x1](../images/gallery/ignition/ignition-combined-landscape-2x1.png)](../images/gallery/ignition/full/ignition-combined-landscape-2x1.png) | [![Combined landscape 2x2](../images/gallery/ignition/ignition-combined-landscape-2x2.png)](../images/gallery/ignition/full/ignition-combined-landscape-2x2.png) |
+| Portrait | [![Combined portrait 1x1](../images/gallery/ignition/ignition-combined-portrait-1x1.png)](../images/gallery/ignition/full/ignition-combined-portrait-1x1.png) | [![Combined portrait 2x1](../images/gallery/ignition/ignition-combined-portrait-2x1.png)](../images/gallery/ignition/full/ignition-combined-portrait-2x1.png) | [![Combined portrait 2x2](../images/gallery/ignition/ignition-combined-portrait-2x2.png)](../images/gallery/ignition/full/ignition-combined-portrait-2x2.png) |
+
+The [native PNG directory](../images/gallery/ignition/) contains every numeric,
+status and combined case with full-frame counterparts. The smallest portrait
+example still shows status and number together in each quadrant. Full portrait
+frames are 240×320, landscape 320×240. Captions retain the signed input values;
+one decimal rounds −1.25° to the renderer's visible −1.2°.
+
+[![Four-cylinder warning in portrait](../images/gallery/ignition/full/ignition-warning-cylinders-portrait.png)](../images/gallery/ignition/full/ignition-warning-cylinders-portrait.png)
+
+CylinderLines uses one bounded page with a separate line for each affected
+cylinder, sharing threshold/message settings. These default examples identify
+cylinders 2 and 4. Maximum text, all four lines, stale data, ACK/latch and retained
+redraw boundaries have separate tests; optical legibility on the physical panel
+is not established by a native PNG.
+
+Captured from the optimized production bundle on 27 October 2026, on an isolated
+loopback origin. [Capture identities](../images/gallery/ignition/capture.json)
+record the Wasm, image and selected source hashes. Actual browser checks include
+export/reimport, reload, all modes/spans/mountings, invalid-edit repair, extreme
+text and independent missing/stale/faulted samples. The false scalar-only
+portrait fit advisory was reproduced and corrected before final browser capture.
+All 26 existing scalar gallery crops remain pixel-identical. See the
+[validation record](../validation/ignition-retard-widget-2026-10-27.md).
 
 ## Capture record
 

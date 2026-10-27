@@ -28,6 +28,7 @@ pub mod diagnostics;
 pub mod discovery;
 pub mod display;
 pub mod health;
+pub mod ignition;
 pub mod input_model;
 pub mod input_trace;
 pub mod logging;
@@ -61,6 +62,7 @@ mod profiling {
 /// Fixed state containers shared by acquisition and presentation.
 mod state {
     pub mod extrema;
+    mod finite_optional;
     pub mod history;
     pub mod pages;
     pub mod popup;

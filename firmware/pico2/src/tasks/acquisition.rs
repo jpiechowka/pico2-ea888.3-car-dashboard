@@ -106,7 +106,8 @@ fn publish_snapshot(
 
 #[embassy_executor::task]
 /// Owns source `resources` indefinitely on core1. `start_time` anchors demo
-/// animation; `stack_bottom` and `stack_top` bound stack observations. Publishes
+/// scalar/cylinder generation independently of screen/startup state;
+/// `stack_bottom` and `stack_top` bound stack observations. Publishes
 /// samples/statistics coherently, acknowledges reset generations, and bounds normal
 /// publication to 100 Hz. Maintenance drains wired commands before parking, keeps
 /// IRQs available and resumes through fresh protocol qualification. No catch-up
@@ -244,10 +245,10 @@ pub async fn acquisition_task(
         }
         #[cfg(not(feature = "longan-rx12"))]
         if cfg!(feature = "demo") {
-            model.ingest_batch(
-                dashboard_pico2::demo::values(start_time.elapsed().as_millis()),
-                Instant::now().as_millis(),
-            );
+            let elapsed_ms = start_time.elapsed().as_millis();
+            let captured_ms = Instant::now().as_millis();
+            model.ingest_batch(dashboard_pico2::demo::values(elapsed_ms), captured_ms);
+            model.ingest_ignition_demo(dashboard_pico2::demo::ignition_values(elapsed_ms), captured_ms);
         }
         #[cfg(feature = "longan-rx12")]
         {

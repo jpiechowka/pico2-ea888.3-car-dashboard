@@ -1,7 +1,7 @@
 # Configuration v1 contract
 
 Historical wire contract, retained for explicit migration. New exports and
-firmware use [current v6](configuration-format.md#current-v6-contract).
+firmware use [current v7](configuration-format.md#current-v7-contract).
 
 This closes the typed model used by the [design](design.md). Field/enum order
 is part of the Postcard version1 protocol. A future incompatible edit requires

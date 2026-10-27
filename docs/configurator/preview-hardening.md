@@ -22,7 +22,8 @@
 5. Exercise elapsed-time animation, extreme values, rounding/size transitions,
    both retained buffers, invalid/repair/discard lifecycles, and the production
    demo generator at the preview boundary. Firmware and browser already share
-   `dashboard_core::demo::values`; the raster export example now uses it too.
+   `dashboard_core::demo::values` and the four-cylinder
+   `dashboard_core::demo::ignition_values` generator.
 6. Verify native tests with both outline modes, Rust/Wasm builds, a Pico 2 W
    280/70 build and memory gate, actual browser interactions, and repeated
    focused benchmarks. Review the complete change before pushing master.
@@ -70,6 +71,17 @@ screen; the marked placement and attempted size remain inspectable. Out-of-bound
 placements are explicitly listed. The browser banner, frame and widget badges
 stay visible while the draft is invalid, and the pixel header contains its own
 INVALID PREVIEW watermark. These pixels are not an exact firmware prediction.
+
+The ignition group is projected with its own compatible readout and bounded
+precision, preserving all four cross-layout cells. Unsupported scalar settings
+are reported and remain repairable; the projection does not rewrite the rejected
+widget. Warnings remain suspended during invalid inspection. Valid appearance
+previews ingest shared synthetic cylinder values throughout replay and at the
+final sample time. Min/max/zero/width test values cover the group separately from
+the eight scalar channels. Invalid group overrides fail before changing the
+prepared snapshot or pixels. The persistent diagnostic simulator can leave
+observations missing, expire them without samples, or fault one cylinder without
+changing the other three. See [sample quality](../vehicle/sample-quality.md).
 
 ## Verification, 12 October 2026
 

@@ -82,7 +82,7 @@ impl LegacyConfig {
                 .push(Widget {
                     id: w.id,
                     view: w.view,
-                    channel: w.channel,
+                    channel: w.channel.into(),
                     placement: w.placement,
                     label: w.label,
                     advanced: AdvancedDisplay::for_channel(w.channel, w.display.afr),
@@ -173,7 +173,7 @@ impl LegacyConfigV2 {
                 .push(Widget {
                     id: w.id,
                     view: w.view,
-                    channel: w.channel,
+                    channel: w.channel.into(),
                     placement: w.placement,
                     label: w.label,
                     advanced: AdvancedDisplay::for_channel(w.channel, w.display.afr),

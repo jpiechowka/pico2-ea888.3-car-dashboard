@@ -238,7 +238,10 @@ configuration. The settings journal format is unchanged.
 
 Selected source routes, poll periods and tighter freshness limits apply before
 sample publication and alarm expiry. Unsupported or unresolved catalogue entries
-remain unavailable. Eight channel histories remain shared across all widgets.
+remain unavailable. Eight scalar channel histories remain shared across scalar
+widgets. The ignition widget uses a separate four-cylinder group with independent
+quality and timestamps; only explicit Demo supplies values, with no vehicle
+decoder, poll route or history allocation.
 
 The runtime crate is `no_std` and allocation-free. JSON and file I/O are host-only
 build dependencies; Cargo's resolver separates their features from the ARM crate.

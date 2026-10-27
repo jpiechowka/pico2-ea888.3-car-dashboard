@@ -277,7 +277,7 @@ fn configured_dual_units_share_channel_history_and_new_owner_clears_it() {
     let mut twin = raw
         .widgets
         .iter()
-        .find(|w| w.channel == Channel::Lambda)
+        .find(|w| w.channel == Channel::Lambda.into())
         .unwrap()
         .clone();
     twin.placement = placement;
@@ -304,7 +304,7 @@ fn configured_dual_units_share_channel_history_and_new_owner_clears_it() {
             .config()
             .widgets
             .iter()
-            .filter(|w| w.channel == Channel::Lambda)
+            .filter(|w| w.channel == Channel::Lambda.into())
             .count(),
         2
     );

@@ -110,6 +110,9 @@ fn seeded_json_and_frozen_migrations_converge_to_current_slot() {
         include_bytes!("fixtures/v2-default.json"),
         include_bytes!("fixtures/v3-default.json"),
         include_bytes!("fixtures/v4-default.json"),
+        include_bytes!("fixtures/v5-default.json"),
+        include_bytes!("fixtures/v6-default.json"),
+        include_bytes!("fixtures/v6-mixed.json"),
     ] {
         let migrated = from_json_bytes(fixture).unwrap();
         let canonical = encode(&migrated, &mut buffer).unwrap();

@@ -763,8 +763,8 @@ fn preview_reuses_complete_buffers_and_populates_only_demo_histories() {
         let now = preview.rendered_at_ms().unwrap();
         assert_eq!(snapshot.mode, DataMode::Demo);
         assert_eq!(
-            snapshot.sequence, 61,
-            "work is a fixed 60 history points and one final dwell point"
+            snapshot.sequence, 122,
+            "work is 60 history points plus one final point, each with one scalar and one cylinder batch"
         );
         for sensor in SensorId::ALL {
             assert_eq!(snapshot.metadata[sensor as usize].source, Source::Demo);
@@ -1004,7 +1004,7 @@ fn immediate_warning_demo_compresses_dwell_without_changing_the_export_document(
     let page = preview.warning_page().unwrap();
     assert_eq!(page.lines()[0].as_str(), "Warning 1");
     assert_eq!((page.number, page.total), (1, 4));
-    assert_eq!(snapshot.sequence, 61);
+    assert_eq!(snapshot.sequence, 122);
     assert_eq!(config, before);
 }
 
@@ -1079,11 +1079,11 @@ fn warning_pages_use_configured_messages_modes_intervals_and_scope() {
 fn warning_demo_preserves_threshold_enablement_and_synthetic_context_gates() {
     let mut config = default_config();
     for widget in &mut config.widgets {
-        widget.warning.enabled = widget.channel == Channel::Oil || widget.channel == Channel::Lambda;
-        if widget.channel == Channel::Oil {
+        widget.warning.enabled = widget.channel == WidgetChannel::Oil || widget.channel == WidgetChannel::Lambda;
+        if widget.channel == WidgetChannel::Oil {
             widget.warning.trigger = 170.0;
         }
-        if widget.channel == Channel::Lambda {
+        if widget.channel == WidgetChannel::Lambda {
             widget.warning.min_load_percent = 90.0;
         }
     }
@@ -1263,7 +1263,7 @@ fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
     assert_eq!(preview.snapshot().unwrap().sensors[0].history().count(), 1);
     sim.advance_to(start + 1_000_000, None);
     preview.render_simulation(&sim).unwrap();
-    assert_eq!(preview.snapshot().unwrap().sequence, 3);
+    assert_eq!(preview.snapshot().unwrap().sequence, 6);
     assert_eq!(preview.warning_page(), None);
     preview
         .render_appearance(sim.config(), 1, PreviewOptions::default())
@@ -1287,7 +1287,7 @@ fn appearance_history_stays_fixed_work_for_every_duration_and_has_its_own_origin
         preview.render_appearance(&cfg, 1, PreviewOptions::default()).unwrap();
         assert_eq!(preview.mode(), PreviewMode::Appearance);
         let generated = preview.snapshot().unwrap();
-        assert_eq!(generated.sequence, 61, "fixed 60+1 synthetic observations");
+        assert_eq!(generated.sequence, 122, "fixed 60+1 scalar and cylinder batches");
         for i in 0..8 {
             let history = generated.sensors[i].history();
             assert_eq!(history.duration_seconds(), seconds);

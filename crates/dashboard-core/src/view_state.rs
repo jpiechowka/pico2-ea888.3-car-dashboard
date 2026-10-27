@@ -110,16 +110,18 @@ pub struct WarningPage {
     count: u8,
     /// One-based visible page number in the current eligible set.
     pub number: u8,
-    /// Total pages for the selected one- or three-row presentation mode.
+    /// Total ordinary pages plus dedicated grouped cylinder pages.
     pub total: u8,
     /// Caller-resolved blink phase, independent of rendered frame count.
     pub blink: bool,
-    /// Per-rule palette in CycleOne or shared list palette in ListThree.
+    /// Per-rule palette in CycleOne/dedicated group pages, shared ListThree palette otherwise.
     pub colors: dashboard_config::WarningColors,
     /// Widget-index rule mask for acknowledgment; duplicate messages retain distinct bits.
     pub rules: u64,
     /// Status label identity for each rendered row; included in retained equality keys.
     statuses: [WarningLabel; 3],
+    /// Dedicated cylinder-page membership; zero selects ordinary stored rows.
+    cylinders: u8,
 }
 impl WarningPage {
     /// Explicit preview sample; no alarm identity and never an acquisition result.
@@ -142,6 +144,7 @@ impl WarningPage {
             colors,
             rules: 0,
             statuses: [WarningLabel::None; 3],
+            cylinders: 0,
         }
     }
 
@@ -154,8 +157,13 @@ impl WarningPage {
         self.statuses[row].text()
     }
 
-    /// Returns only the initialized warning-message rows, at most three.
+    /// Returns stored warning-message rows, at most three. A dedicated cylinder
+    /// page stores one shared message and uses cylinder_mask() to generate its lines.
     pub fn lines(&self) -> &[PopupText] { &self.lines[..usize::from(self.count)] }
+
+    /// Returns low-four cylinder bits for a dedicated group page, or zero for
+    /// ordinary pages. Group pages store the shared message exactly once in lines().
+    pub const fn cylinder_mask(&self) -> u8 { self.cylinders }
 }
 
 /// Compact label identity, preserving latch/ack/staleness distinctions in render keys.
@@ -275,6 +283,8 @@ impl WarningPager {
     /// view, then widget order. New runs/views restart; new activations interrupt with
     /// the first eligible page without resetting the rotation deadline. Catch-up skips
     /// whole cycles arithmetically; a removed cursor uses its next surviving successor.
+    /// CylinderLines groups always own a dedicated page, including in ListThree;
+    /// ordinary mixed pages still hold up to three messages and preserve rule indices.
     /// Caller resets this owner when replacing configuration and excludes feedback/off-screen periods via pause.
     pub fn select(
         &mut self,
@@ -360,7 +370,25 @@ impl WarningPager {
         } else {
             3
         };
-        let total = count.div_ceil(per_page);
+        let grouped_pages = eligible.iter().any(|rule| cylinder_lines(config, usize::from(*rule)));
+        // Ranks are no longer needed after successor selection. Reuse that
+        // bounded array for mixed page starts without another stack allocation.
+        let mut total = count.div_ceil(per_page);
+        let mut page_index = index / per_page;
+        if grouped_pages {
+            total = 0;
+            let mut start = 0;
+            while start < count {
+                ranks[total] = start as u8;
+                total += 1;
+                start = page_end(config, eligible, start, per_page);
+            }
+            page_index = ranks[..total]
+                .iter()
+                .rposition(|&start| usize::from(start) <= index)
+                .unwrap_or(0);
+            index = usize::from(ranks[page_index]);
+        }
         let steps = (now - self.anchor) / u64::from(presentation.page_ms);
         if steps != 0 {
             self.interrupted = false;
@@ -370,12 +398,18 @@ impl WarningPager {
             let advance = steps - u64::from(!fresh && retained_index.is_none());
             // Reach the wrap once, then skip complete cycles arithmetically.
             // Work stays bounded even after a multi-day display stall.
-            let to_wrap = (count - index).div_ceil(per_page) as u64;
-            index = if advance < to_wrap {
-                index + advance as usize * per_page
+            if grouped_pages {
+                page_index = (page_index + (advance % total as u64) as usize) % total;
+                index = usize::from(ranks[page_index]);
             } else {
-                ((advance - to_wrap) % total as u64) as usize * per_page
-            };
+                let to_wrap = (count - index).div_ceil(per_page) as u64;
+                index = if advance < to_wrap {
+                    index + advance as usize * per_page
+                } else {
+                    ((advance - to_wrap) % total as u64) as usize * per_page
+                };
+                page_index = index / per_page;
+            }
             self.anchor += steps * u64::from(presentation.page_ms);
         }
         if fresh || steps != 0 || retained_index.is_some() {
@@ -386,30 +420,77 @@ impl WarningPager {
         // that retained cursor without granting the interruption a new period.
         if self.interrupted || (new_event && !fresh) {
             index = 0;
+            page_index = 0;
         }
+        let dedicated = cylinder_lines(config, usize::from(eligible[index]));
         let mut result = WarningPage {
             lines: [PopupText::EMPTY; 3],
             count: 0,
-            number: (index / per_page) as u8 + 1,
+            number: page_index as u8 + 1,
             total: total as u8,
             blink,
-            colors: if presentation.mode == WarningMode::CycleOne {
+            colors: if presentation.mode == WarningMode::CycleOne || dedicated {
                 config.config().widgets[usize::from(eligible[index])].colors.warning
             } else {
                 config.config().warning_colors
             },
             rules: 0,
             statuses: [WarningLabel::None; 3],
+            cylinders: 0,
         };
-        for &rule in eligible.iter().skip(index).take(per_page) {
+        let end = if grouped_pages {
+            page_end(config, eligible, index, per_page)
+        } else {
+            (index + per_page).min(count)
+        };
+        for &rule in &eligible[index..end] {
             let i = usize::from(rule);
             result.lines[usize::from(result.count)] =
                 PopupText::new(&config.config().widgets[i].warning.message).expect("validated warning message");
             let eligibility = samples.warning_eligibility(RuleIndex::new(i).unwrap(), now);
+            if dedicated {
+                let rule_index = RuleIndex::new(i).expect("bounded eligible index");
+                result.cylinders = if eligibility.status == crate::alarms::Status::Active {
+                    samples.ignition_warning_mask_at(rule_index, now)
+                } else {
+                    samples.ignition_warning_latched_mask(rule_index)
+                };
+            }
             result.statuses[usize::from(result.count)] = WarningLabel::of(eligibility);
             result.count += 1;
             result.rules |= 1 << i;
         }
         Some(result)
     }
+}
+
+/// Returns whether admitted widget `index` in `config` requests dedicated per-cylinder
+/// warning lines. Internal callers supply indices from the same config's widgets.
+fn cylinder_lines(
+    config: &ValidatedConfig,
+    index: usize,
+) -> bool {
+    let widget = &config.config().widgets[index];
+    widget.channel.scalar().is_none()
+        && widget.advanced.ignition_warning == dashboard_config::IgnitionWarningPresentation::CylinderLines
+}
+
+/// Returns the exclusive end of a page beginning at eligible `start`. Ordinary
+/// pages contain at most `per_page` (1 or3) entries and stop before a cylinder
+/// page; cylinder pages own one message and generate up to four lines. Caller
+/// supplies a valid start into `eligible`, whose rule indices belong to `config`.
+fn page_end(
+    config: &ValidatedConfig,
+    eligible: &[u8],
+    start: usize,
+    per_page: usize,
+) -> usize {
+    if cylinder_lines(config, usize::from(eligible[start])) {
+        return start + 1;
+    }
+    let mut end = start + 1;
+    while end < eligible.len() && end - start < per_page && !cylinder_lines(config, usize::from(eligible[end])) {
+        end += 1;
+    }
+    end
 }

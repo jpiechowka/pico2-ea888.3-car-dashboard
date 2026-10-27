@@ -207,22 +207,26 @@ impl Draft {
             .filter(|w| {
                 accepted.config().widgets.iter().find(|a| a.id == w.id) != Some(*w)
                     || self.config.view_orientation(w.view) != accepted.config().view_orientation(w.view)
-                    || (w.channel == Channel::Lambda && self.config.fuel != accepted.config().fuel)
-                    || self.config.sources[w.channel.index()] != accepted.config().sources[w.channel.index()]
+                    || (w.channel == WidgetChannel::Lambda && self.config.fuel != accepted.config().fuel)
+                    || w.channel.scalar().is_some_and(|channel| {
+                        self.config.sources[channel.index()] != accepted.config().sources[channel.index()]
+                    })
                     || self.config.warnings != accepted.config().warnings
-                    || self.config.history_seconds[w.channel.index()]
-                        != accepted.config().history_seconds[w.channel.index()]
+                    || w.channel.scalar().is_some_and(|channel| {
+                        self.config.history_seconds[channel.index()]
+                            != accepted.config().history_seconds[channel.index()]
+                    })
                     || self.config.reduced_motion != accepted.config().reduced_motion
                     || self.config.views.iter().find(|v| v.id == w.view)
                         != accepted.config().views.iter().find(|v| v.id == w.view)
                     || self.raw.iter().any(|input| {
                         match input.field {
                             RawField::Widget(id, _) => id == w.id,
-                            RawField::Fuel(_) => w.channel == Channel::Lambda,
-                            RawField::Source(channel, _) => channel == w.channel,
+                            RawField::Fuel(_) => w.channel == WidgetChannel::Lambda,
+                            RawField::Source(channel, _) => Some(channel) == w.channel.scalar(),
                             RawField::ViewName(id) => id == w.view,
                             RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => true,
-                            RawField::HistorySeconds(channel) => channel == w.channel,
+                            RawField::HistorySeconds(channel) => Some(channel) == w.channel.scalar(),
                             RawField::ControlHoldMilliseconds | RawField::Led { .. } | RawField::Ble(_) => false,
                         }
                     })
@@ -439,10 +443,22 @@ pub(crate) fn isolated_widget_in(
     safe.placement.row = safe.placement.row.min(geometry.rows() - safe.placement.span.rows());
     safe.label = "INVALID".try_into().ok()?;
     safe.display.decimals = safe.display.decimals.min(3);
-    safe.display.afr &= safe.channel == Channel::Lambda;
-    if !safe.gauge.valid(safe.channel) {
+    let Some(channel) = safe.channel.scalar() else {
+        // This is a disposable diagnostic projection; the full rejected widget stays in the editor.
+        let mut projection = default_ignition_widget(safe.id, safe.view, safe.placement);
+        projection.label = safe.label;
+        projection.display.decimals = safe.display.decimals;
+        projection.warning.enabled = false;
+        if safe.advanced.readout.compatible_widget(safe.channel) {
+            projection.advanced.readout = safe.advanced.readout;
+        }
+        config.widgets.push(projection).ok()?;
+        return validate(config).ok();
+    };
+    safe.display.afr &= safe.channel == WidgetChannel::Lambda;
+    if !safe.gauge.valid(channel) {
         let kind = safe.gauge.kind;
-        safe.gauge = Gauge::for_channel(safe.channel);
+        safe.gauge = Gauge::for_channel(channel);
         safe.gauge.kind = kind;
     }
     let (low, high) = safe.channel.domain();
@@ -452,12 +468,12 @@ pub(crate) fn isolated_widget_in(
         safe.display.graph_range = GraphRange::Auto;
     }
     safe.colors = WidgetColors::default();
-    let defaults = AdvancedDisplay::for_channel(safe.channel, safe.display.afr);
-    if !safe.advanced.readout.compatible(safe.channel) {
+    let defaults = AdvancedDisplay::for_channel(channel, safe.display.afr);
+    if !safe.advanced.readout.compatible_widget(safe.channel) {
         safe.advanced.readout = defaults.readout;
     }
     safe.display.afr = safe.advanced.readout.includes_afr();
-    if safe.channel != Channel::Boost {
+    if safe.channel != WidgetChannel::Boost {
         safe.advanced.secondary = Secondary::None;
     }
     if safe.advanced.smoothing_ms != 0 && !(50..=5000).contains(&safe.advanced.smoothing_ms) {
@@ -498,7 +514,7 @@ pub(crate) fn isolated_widget_in(
         band.color = safe.colors.gauge;
     }
     safe.advanced.set_bands(&bands).ok()?;
-    safe.warning = default_widget(safe.channel, safe.id, safe.view, safe.placement).warning;
+    safe.warning = default_widget_for_channel(safe.channel, safe.id, safe.view, safe.placement).warning;
     safe.warning.enabled = false;
     config.widgets.push(safe).ok()?;
     validate(config).ok()
@@ -516,10 +532,16 @@ fn projection_notes(widget: &Widget) -> Vec<String> {
             widget.id
         ))
     };
-    if !a.readout.compatible(widget.channel) {
+    if widget.channel == WidgetChannel::IgnitionRetard {
+        add(
+            "group settings",
+            "a bounded four-cylinder projection with scalar features disabled",
+        );
+    }
+    if !a.readout.compatible_widget(widget.channel) {
         add("readout", "the channel's default unit");
     }
-    if widget.channel != Channel::Boost && a.secondary != Secondary::None {
+    if widget.channel != WidgetChannel::Boost && a.secondary != Secondary::None {
         add("secondary unit", "no secondary");
     }
     if a.smoothing_ms != 0 && !(50..=5000).contains(&a.smoothing_ms) {

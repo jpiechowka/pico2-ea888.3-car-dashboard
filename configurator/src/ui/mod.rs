@@ -407,7 +407,7 @@ impl Ui {
 
     /// Returns inspected candidate ID/channel only when registry identity is current
     /// and unambiguous, otherwise None; absent inspection uses the editing selection.
-    fn inspected_widget(self) -> Option<(u16, Channel)> {
+    fn inspected_widget(self) -> Option<(u16, WidgetChannel)> {
         self.editor.with(|e| {
             if let Some(target) = self.inspection.get() {
                 let resolved = Registry::resolve(e, target).ok()?;

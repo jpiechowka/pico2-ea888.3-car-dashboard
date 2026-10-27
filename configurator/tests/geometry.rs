@@ -208,7 +208,7 @@ fn shared_validation_allows_self_occupancy_and_rejects_collisions_without_mutati
         }))
     ));
     assert!(matches!(
-        validate_drop(&config, 1, PointerTarget::Library(Channel::Oil), occupied),
+        validate_drop(&config, 1, PointerTarget::Library(Channel::Oil.into()), occupied),
         Err(GeometryError::Validation(ValidationError {
             code: ErrorCode::Overlap,
             ..
@@ -237,7 +237,7 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
         validate_drop(
             &config,
             1,
-            PointerTarget::Library(Channel::Oil),
+            PointerTarget::Library(Channel::Oil.into()),
             place(2, 1, Span::TwoByOne)
         ),
         Ok(())
@@ -246,7 +246,7 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
         validate_drop(
             &config,
             200,
-            PointerTarget::Library(Channel::Oil),
+            PointerTarget::Library(Channel::Oil.into()),
             place(0, 0, Span::OneByOne)
         ),
         Err(GeometryError::MissingView)
@@ -280,7 +280,7 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
         validate_drop(
             &full,
             1,
-            PointerTarget::Library(Channel::Oil),
+            PointerTarget::Library(Channel::Oil.into()),
             place(0, 0, Span::OneByOne)
         ),
         Err(GeometryError::Capacity)
@@ -386,7 +386,7 @@ fn real_drag_uses_original_anchor_and_library_uses_pointed_cell() {
                 RECT,
                 x,
                 y,
-                PointerTarget::Library(Channel::Oil),
+                PointerTarget::Library(Channel::Oil.into()),
                 Span::OneByOne,
                 GrabOffset::center(Span::OneByOne)
             )
@@ -410,7 +410,7 @@ fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
                 RECT,
                 100.0 + dx,
                 200.0 + dy,
-                PointerTarget::Library(Channel::Oil),
+                PointerTarget::Library(Channel::Oil.into()),
                 Span::OneByOne,
                 GrabOffset::TOP_LEFT,
             )
@@ -422,7 +422,7 @@ fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
                     RECT,
                     100.0,
                     200.0,
-                    PointerTarget::Library(Channel::Oil),
+                    PointerTarget::Library(Channel::Oil.into()),
                     Span::OneByOne,
                     GrabOffset::TOP_LEFT,
                 )
@@ -438,7 +438,7 @@ fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
                 RECT,
                 x,
                 y,
-                PointerTarget::Library(Channel::Oil),
+                PointerTarget::Library(Channel::Oil.into()),
                 Span::OneByOne,
                 GrabOffset::TOP_LEFT
             ),

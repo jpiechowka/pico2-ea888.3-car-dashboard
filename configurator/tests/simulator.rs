@@ -595,13 +595,13 @@ fn persistent_samples_keep_history_and_restart_resets_origin() {
         sim.advance_to(start + offset, Some([1., 95., water, 80., 30., 700., 13.8, 1.]));
     }
     let snap = sim.snapshot();
-    assert_eq!(snap.sequence, 3);
+    assert_eq!(snap.sequence, 6);
     assert_eq!(snap.sensor(SensorId::Water).minimum(), Some(90.));
     assert_eq!(snap.sensor(SensorId::Water).maximum(), Some(110.));
     assert_eq!(snap.sensor(SensorId::Water).history().count(), 3);
     let identity = snap.sensor(SensorId::Water).graph_cache_identity();
     sim.advance_to(start + 1_000_000_000, None);
-    assert_eq!(sim.snapshot().sequence, 3);
+    assert_eq!(sim.snapshot().sequence, 6);
     assert_ne!(sim.snapshot().sensor(SensorId::Water).graph_cache_identity(), identity);
     assert_eq!(sim.snapshot().sensor(SensorId::Water).history().bounds(), None);
     assert_eq!(sim.snapshot().value_at(SensorId::Water, sim.now_ms()), None);
@@ -631,6 +631,7 @@ fn owned_and_borrowed_ingestion_match_including_rejected_values() {
     for (offset, water) in [(0, 95.0), (250, f32::NAN), (200, 99.0), (500, 110.0)] {
         let values = [1., 95., water, 80., 30., 700., 13.8, 1.];
         borrowed.ingest_batch(values, start + offset);
+        borrowed.ingest_ignition_demo(dashboard_core::demo::ignition_values(start + offset), start + offset);
         borrowed.tick(start + offset);
         sim.advance_to(start + offset, Some(values));
         assert_eq!(sim.snapshot(), borrowed.snapshot());

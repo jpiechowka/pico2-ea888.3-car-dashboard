@@ -273,6 +273,8 @@ fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
         include_bytes!("fixtures/v2-default.eav").as_slice(),
         include_bytes!("fixtures/v3-default.eav").as_slice(),
         include_bytes!("fixtures/v4-default.eav").as_slice(),
+        include_bytes!("fixtures/v5-default.eav").as_slice(),
+        include_bytes!("fixtures/v6-default.eav").as_slice(),
     ] {
         let loaded = slot.load_at_boot(bytes);
         assert_eq!(loaded.fault, Some(ConfigError::Version));

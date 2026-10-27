@@ -600,7 +600,8 @@ impl ControlSimulator {
         }
     }
 
-    /// Advances accepted acquisition to `now_ms` with optional canonical Channel::ALL `values`, preserving actual
+    /// Advances accepted acquisition to `now_ms` with optional canonical Channel::ALL `values` and the shared
+    /// synthetic cylinder generator at that time, preserving actual
     /// warning dwell. None ticks time/results without samples; backdated admission follows shared gates. Updates
     /// feedback/LED and summary-only backlight completion when enabled; low-level caller must enforce
     /// inspection/source policy before using this route.

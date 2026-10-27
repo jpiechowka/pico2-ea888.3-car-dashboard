@@ -197,7 +197,7 @@ fn hit_list_is_half_open_view_scoped_and_ignores_nonfinite_points() {
     editor
         .apply(Edit::AddWidget {
             view,
-            channel: Channel::Egt,
+            channel: Channel::Egt.into(),
             placement: Placement {
                 column: 0,
                 row: 0,
@@ -219,7 +219,7 @@ fn menu_delete_repairs_overlap_and_can_delete_rejected_new_widgets() {
         editor
             .apply(Edit::AddWidget {
                 view: 1,
-                channel: Channel::Egt,
+                channel: Channel::Egt.into(),
                 placement: Placement {
                     column: 0,
                     row: 0,

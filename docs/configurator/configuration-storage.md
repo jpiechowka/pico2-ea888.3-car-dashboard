@@ -4,11 +4,50 @@ The shared configuration library offers `ConfigSlot` for loading one configurati
 
 The slot's initialized placeholder is private. Loading checks file size, magic, envelope version, exact length and checksum before parsing. The Postcard seed assigns fields individually and fills the bounded view and widget collections one element at a time. Complete input consumption, streaming comparison with canonical serialization and the shared semantic validator are required before a reference escapes. A failed load replaces every field with the reviewed default and publishes the original fault alongside it. The slot exposes no storage getter, mutable validated reference or unchecked conversion.
 
-`ConfigSlot` accepts only current version 6 EAV files, including in host builds with the JSON feature enabled. Owned `decode`, `load_at_boot`, `validate` and `default_config` remain available. Host JSON import and owned binary import continue to upgrade the frozen version 1 through 5 formats. JSON uses strict Serde, including bounded v4 band and flat warning adapters; the explicit seed is private and supports the Postcard sequence representation only.
+`ConfigSlot` accepts only current version 7 EAV files, including in host builds with the JSON feature enabled. Owned `decode`, `load_at_boot`, `validate` and `default_config` remain available. Host JSON import and owned binary import upgrade the frozen version 1 through 6 formats. JSON uses strict Serde, including bounded band and flat warning adapters; the explicit seed is private and supports the Postcard sequence representation only.
 
-The current v6 schema adds bounded BLE settings after v5 device/view orientation. Capacity remains eight views and sixty-four widgets, with a 16 KiB EAV limit and 128 KiB JSON limit. Current 32-bit size guards are Config14,596, ValidatedConfig14,608 and BootConfig/ConfigSlot14,620 bytes. Historical v4 measurements were 14,576/14,588/14,600 bytes and were admitted against that release's whole-artifact headroom and stack reserves. Type-size guards do not establish the current linked image's RAM or stack peak. The slot path uses no heap, configuration-sized decode temporary or configuration-sized canonicality buffer. Its defaults and semantic validation are shared with the owned APIs.
+Version 7 adds the four-cylinder `IgnitionRetard` widget selector, three readouts
+and the required `Global`/`CylinderLines` popup selector. The eight scalar source
+settings and histories remain separate; `WidgetChannel` has nine selectors and
+is not a scalar channel index. Frozen scalar migrations preserve their settings
+and receive `Global`. Version 6 introduced bounded BLE settings after version 5
+device/view orientation; both remain preserved. See the [current wire contract](configuration-format.md#current-v7-contract).
+
+Capacity remains eight views and sixty-four widgets, with a 16 KiB EAV limit and
+128 KiB JSON limit. Current 32-bit size guards remain Config 14,596,
+ValidatedConfig 14,608 and BootConfig/ConfigSlot 14,620 bytes. Widget remains at
+most 220 bytes and AdvancedDisplay exactly 64 bytes: its new one-byte popup
+selector uses existing layout padding. Padding is never a wire field; the
+selector is explicitly serialized after `reference_mode`. Historical v4
+measurements were 14,576/14,588/14,600 bytes and were admitted against that
+release's whole-artifact headroom and stack reserves. Type-size guards do not
+establish a linked image's RAM or stack peak. The slot path uses no heap,
+configuration-sized decode temporary or configuration-sized canonicality buffer.
+Its defaults and semantic validation are shared with the owned APIs.
 
 Creating a local slot still puts its storage on the caller's stack. Firmware uses one `ConstStaticCell<ConfigSlot>` initialized with `ConfigSlot::new()`. Core0 takes it once, loads the embedded bytes, then publishes `&'static BootConfig` before Core1 starts. The thin startup task spawns the dashboard task and returns before its large runtime frame is polled. That lifetime boundary must remain intact.
+
+Host migration/admission in the configuration CLI and firmware build script runs
+on a joined 2 MiB worker stack. Spawn/admission failures reject the operation;
+this host reserve does not change either device stack or an image gate.
+
+## Schema 7 named-path accounting
+
+The practical gate counts the popup selector decoder under AdvancedDisplay and
+its serializer under Widget and canonical comparison. `Readout::compatible_widget`
+is a required emitted validation child in the reviewed schema 7 family.
+`Gauge::valid_domain` is inlined in that family's counted `validate_ref`; if the
+exact method is emitted separately, its frame is counted beneath validation.
+Missing or ambiguous required boundaries, missing metadata and unreviewed
+configuration helpers reject admission. Frozen predecessor families retain
+their original required gauge boundary.
+
+The literal schema 7 fixture and mutation tests in
+`firmware/scripts/test_stack_budget.py` preserve parent/child accounting and
+the unchanged allowances and reserves. These checks describe conservative
+named paths, not a complete instruction or physical stack proof. Every final
+image still needs its own source/options-bound ELF/UF2 and memory admission;
+the historical figures below do not admit schema 7 images.
 
 ## Historical v3 target admission, 13 October 2026
 
@@ -47,7 +86,7 @@ The actual `static_cell` source initializes its `UnsafeCell<T>` in `const fn new
 
 Compared with `controls5-demo280-traced` and `controls5-vehicle280-traced`, total static RAM, Core0 headroom, Core1 admission and dashboard admission are unchanged. Boot admission decreases from 50,536 to 2,356 bytes, a 48,180-byte reduction. Initialized RAM grows by 9,688 bytes while `.bss` shrinks by 9,696 bytes; alignment leaves the total unchanged. The flash LOAD end increases by 9,128 bytes for Demo and 9,136 bytes for Vehicle, remaining below the settings journal at `0x101fe000`.
 
-## Reviewed call paths
+## Historical v3 reviewed call paths
 
 Both linked images have the same configuration frames. The initializer is 8 bytes and the slot loader is 768 bytes. Header/CRC checks, the top-level seed, both vector seed loops, clear operations and fallback construction are inlined into that loader. Legal constant embedded-header checks can be folded by LLVM. Collection clear reduces length; these element types need no drop calls. Disassembly shows per-field/per-element stores and copies into the static object, with no whole-Config return, assignment or local decode buffer. Owned `load_at_boot`, `decode` and `default_config` are absent from the linked firmware path.
 

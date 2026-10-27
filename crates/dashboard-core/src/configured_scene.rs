@@ -35,7 +35,7 @@ pub(crate) enum WarningMarker {
 }
 impl WarningMarker {
     /// Returns the fixed badge text, or an empty string when no badge is needed.
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::None => "",
             Self::ActiveAck => "ACTIVE / ACK",
@@ -204,7 +204,10 @@ pub fn widget_text(
         psi,
         stoich,
         fuel,
-        snapshot.value_at(SensorId::from_channel(widget.channel), now),
+        widget
+            .channel
+            .scalar()
+            .and_then(|channel| snapshot.value_at(SensorId::from_channel(channel), now)),
     )
 }
 
@@ -224,8 +227,11 @@ pub fn widget_text_with_value(
     fuel: &Fuel,
     current: Option<f32>,
 ) -> CellText {
+    let Some(channel) = widget.channel.scalar() else {
+        return crate::widgets::ignition::text(widget, snapshot, now);
+    };
     let mut text = core::array::from_fn(|_| heapless::String::new());
-    let id = SensorId::from_channel(widget.channel);
+    let id = SensorId::from_channel(channel);
     let Some(value) = current else {
         text[0].push_str("--").ok();
         text[5].push_str(snapshot.quality(id, now).label()).ok();
@@ -233,7 +239,7 @@ pub fn widget_text_with_value(
     };
     let state = snapshot.sensor(id);
     let unit = Unit::resolve(widget.advanced.readout, psi);
-    let suffix = match widget.channel {
+    let suffix = match channel {
         Channel::Boost => "",
         _ => unit.suffix(),
     };
@@ -427,7 +433,21 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         .ok();
     let interior = Rectangle::new(outer.top_left + Point::new(2, 2), outer.size - Size::new(4, 4));
     let mut display = clipped.clipped(&interior);
-    let id = SensorId::from_channel(widget.channel);
+    let Some(channel) = widget.channel.scalar() else {
+        if let Some(text) = scene.configured_text(slot) {
+            let indication = scene.widget_warning(slot).expect("validated visible warning");
+            let mut palette = palette;
+            if indication.blink {
+                palette.background = palette.warning.background;
+                palette.label = palette.warning.foreground;
+                palette.value = palette.warning.foreground;
+                display.clear(panel_color(palette.background)).ok();
+            }
+            crate::widgets::ignition::draw(&mut display, interior, &widget.label, palette, &text, &indication).ok();
+        }
+        return;
+    };
+    let id = SensorId::from_channel(channel);
     let quality = scene.quality(slot);
     let valid = quality == Quality::Valid;
     let indication = scene.widget_warning(slot).expect("validated visible warning");
@@ -911,7 +931,10 @@ fn draw_portrait_widget<D: DrawTarget<Color = Rgb565>>(
     indication: WidgetWarning,
 ) {
     let valid = scene.quality(slot) == Quality::Valid;
-    let state = scene.measurements.sensor(SensorId::from_channel(widget.channel));
+    let Some(channel) = widget.channel.scalar() else {
+        return;
+    };
+    let state = scene.measurements.sensor(SensorId::from_channel(channel));
     let foreground = |color| {
         panel_color(if indication.blink {
             palette.warning.foreground

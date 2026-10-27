@@ -308,13 +308,13 @@ fn widget_rows_preserve_configured_readouts_and_secondary_units() {
         .unwrap();
     let editor = Editor::new(config).unwrap();
     let report = ResourceCache::default().inspect(&editor).unwrap().accepted.unwrap();
-    assert_eq!(report.widgets[0].channel, Channel::Boost);
+    assert_eq!(report.widgets[0].channel, WidgetChannel::Boost);
     assert_eq!(report.widgets[0].readout, Readout::Kpa);
     assert_eq!(report.widgets[0].secondary, Secondary::Psi);
     assert!(report.widgets[0].capabilities.secondary);
     assert_eq!(report.widgets[1].readout, Readout::Fahrenheit);
     assert_eq!(report.widgets[2].readout, Readout::LambdaAndAfr);
-    assert_eq!(canonical_unit(report.widgets[2].channel), "λ");
+    assert_eq!(canonical_unit(report.widgets[2].channel.scalar().unwrap()), "λ");
 }
 
 /// Synthetic full option identity; fields independently participate in equality.

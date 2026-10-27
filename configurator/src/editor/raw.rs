@@ -172,7 +172,7 @@ pub(crate) fn apply_raw(
                                     field: Field::BandLabel(i),
                                     widget: Some(id),
                                     view: Some(widget.view),
-                                    channel: Some(widget.channel),
+                                    channel: widget.channel.scalar(),
                                 })
                             })?
                         }

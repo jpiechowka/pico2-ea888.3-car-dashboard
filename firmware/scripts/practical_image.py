@@ -18,8 +18,9 @@ from elf_image import InspectableImage
 from script_values import object_fields
 from validation import require
 
-# Current-only device envelope; historical files migrate through host tooling.
-CURRENT_EAV_VERSION = 6
+# Current-only device envelope, matched against the shipped EAV by regression test.
+# Historical schemas 1..6 migrate through host tooling before image admission.
+CURRENT_EAV_VERSION = 7
 
 ASSUMPTIONS = (
     "supported_rp2350_pico2_fresh_boot_and_selected_profile",

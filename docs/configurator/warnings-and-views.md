@@ -1,11 +1,20 @@
 # Warning instances and named views
 
-Each configured widget owns its warning rule. The eight channels still share
-one acquisition history and poll schedule. Rule indices and channel indices
+Each configured widget owns its warning rule. Scalar widgets share the eight
+per-channel acquisition histories and poll schedules. Rule indices and channel indices
 are separate: rule 63 may observe channel 0, with a different threshold from
 another widget using that channel. Disabled and DemoOnly rules cannot enable
 vehicle alarms. Source quality, freshness, operating context, hysteresis,
 accepted-sample dwell and sequence guards remain enforced before publication.
+
+An ignition widget instead observes four independent cylinder samples through
+one shared DemoOnly rule, with no scalar history or poll route. A fresh affected
+cylinder can support activation; clearing needs all four fresh and clear.
+Unavailable cylinders lose hysteresis support. Shared activation dwell resets
+when no supporter remains; clear dwell resets when all-four freshness is lost.
+Remembered latch membership stays distinct from current fresh membership.
+A new member joining an active episode advances its acknowledgment identity.
+See [sample quality](../vehicle/sample-quality.md) for the acquisition boundary.
 
 Dashboard rotation selects an ordered view using signed modulo. The selected
 view survives Debug/Logs and resets to the configured boot view at reboot.
@@ -22,8 +31,10 @@ two-second, completion-gated Off cycle are unchanged.
 
 Warnings sort Critical, High, Normal, Low priority, then configured view and
 widget order. CycleOne shows one message;
-ListThree shows up to three 20-character lines, with further pages rotating
-by elapsed time. AllViews and CurrentView scopes are configurable. Active-set
+ListThree shows up to three ordinary 20-character messages. An ignition rule
+using CylinderLines owns a dedicated page of up to four prefixed cylinder lines
+in either mode; its configured message remains one bounded 20-byte value.
+Further pages rotate by elapsed time. AllViews and CurrentView scopes are configurable. Active-set
 changes preserve a still-eligible cursor unless a new episode or higher priority
 requires interruption. User feedback takes priority. Debug and
 Logs remain clear. The next visible warning sequence restarts after feedback.

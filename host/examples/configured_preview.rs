@@ -11,7 +11,7 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::{decode, default_config, validate};
 use dashboard_host_validation::{AlignedFrame, colors};
 
-/// Loads optional configuration/view CLI arguments and writes a P6 snapshot after 60 synthetic samples.
+/// Loads optional configuration/view CLI arguments and writes a P6 snapshot after 60 synthetic scalar/group batches.
 /// Missing arguments, invalid config/view and I/O failures panic. Config/view admission precedes opening
 /// the output, so rejected input preserves it; later write failure may leave a partial replacement file.
 fn main() {
@@ -36,6 +36,7 @@ fn main() {
     for n in 0..60 {
         let now = n * 2000;
         model.ingest_batch(dashboard_host_validation::demo::values(now), now);
+        model.ingest_ignition_demo(dashboard_host_validation::demo::ignition_values(now), now);
         presentation.prepare(&config, &model.snapshot(), view, now, false);
     }
     let snapshot = model.snapshot();

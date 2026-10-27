@@ -1,7 +1,7 @@
 # Linked RAM boundaries and sampled stack depth
 
 The [20 October diagnostics re-audit](../validation/diagnostics-reaudit-2026-10-20.md)
-records current measurement semantics and checked images. Dated tables below
+records measurement semantics and the images checked on that date. Dated tables below
 remain evidence for their exact earlier artifacts.
 
 ## Current linker conventions
@@ -18,6 +18,37 @@ maps, exact scratch-bank origins and sizes, and independent one-byte overflow
 rejection in each bank. The [complete upstream comparison](../dependencies/full-code-audit-2026-10-20.md)
 accounts for the optional whole-program RAM execution mode and preserves this
 project's XIP, boot metadata, settings and capture reservations.
+
+## Schema 7 storage and admission boundaries
+
+The four-cylinder ignition group is separate from the eight scalar source,
+history and extrema slots. Each private observation occupies 32 bytes; the
+complete group is 128 bytes. Private finite optional values remove 128 bytes
+from the eight scalar snapshots without changing finite values or absence,
+so adding the group retains the measured ARM `DashboardSnapshot` size of
+4,144 bytes under its existing 4,160-byte ceiling. The measured ARM acquisition
+owner is 16,184 bytes under the existing 16,384-byte ceiling.
+
+Group warning status and member masks use existing state padding and packed
+publication fields: `RuleAlerts` remains 680 bytes and `WarningPage` 88 bytes.
+The configuration guards remain 14,596/14,608/14,620 bytes for Config,
+ValidatedConfig and BootConfig/ConfigSlot. These are type-layout measurements
+and guards, not final linked static RAM, task-stack peaks or physical high-water.
+See [configuration storage](../configurator/configuration-storage.md) for the
+schema 7 decoder/serializer paths and [sample quality](../vehicle/sample-quality.md)
+for independently qualified cylinder data.
+
+Both 153,600-byte framebuffers, the 32,768-byte core 1 stack, the 65,536-byte
+core 0 headroom floor and the 8,192/4,096-byte core 0/core 1 reserves remain
+unchanged. Final images require their own exact source/options-bound admission.
+The host CLI/build script's 2 MiB worker is a separate host allocation and
+cannot justify any change to those target limits.
+
+The [27 October widget image matrix](../validation/ignition-retard-widget-2026-10-27.md#linked-images-and-memory)
+checks seven dashboard and four standalone utility images. BLE/target-bench
+allocates 458,744 bytes and leaves 65,544 bytes, only eight bytes above the
+unchanged 65,536-byte floor. That difference is static admission margin, not
+measured spare runtime stack. Probe/NGM allocations remain 410,120/410,880 bytes.
 
 ## Original linked-boundary repair
 
@@ -92,7 +123,7 @@ proof by changing the result schema. The retained Source/Tail composition stops
 at the original configuration Visitor return for its historical SizeZ family; loader
 finalization, validation, diagnostics and complete resource composition remain
 open. Its authored v4 machine/layout contracts also require a separately reviewed
-port for current v6 images. A successful historical component replay would close
+port for current v7 images. A successful historical component replay would close
 that component only, not the full current-image gate.
 
 ### Experimental validator allocation repair (2026-10-17)
@@ -163,7 +194,7 @@ left 151024 bytes before the core 0 stack top. These numbers vary with features
 and source changes. They are allocation evidence, not measured worst-case
 stack use. The ELF check and linker assertions are the continuing gates.
 
-### Current audit images (2026-10-20)
+### Historical audit images (2026-10-20)
 
 The full-code/diagnostics audit's stock and 280/70 traced BLE dashboard images
 allocate 458520 bytes and leave 65768 bytes before the core-0 stack top. This
@@ -172,7 +203,7 @@ not a physical stack measurement or an additional free-allocation budget.
 The corresponding standalone probe images allocate 406432 bytes and leave
 117856 bytes. Both retain two 153600-byte buffers and the 32768-byte core-1
 stack. Source, compiler, features, named stack bounds and exact artifact hashes
-are recorded in the [current image evidence](../validation/full-code-audit-2026-10-20.md#final-linked-images).
+are recorded in the [dated image evidence](../validation/full-code-audit-2026-10-20.md#final-linked-images).
 
 ### BLE prototype integration evidence (2026-10-18)
 

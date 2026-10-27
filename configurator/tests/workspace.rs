@@ -97,7 +97,9 @@ fn duplicate_and_export_use_real_reducers_and_capacity_reasons() {
     assert_eq!((editor.stamp(), editor.history_len()), before);
     assert!(editor.import_is_current(import));
     editor.cancel_import(import).unwrap();
-    let pointer = editor.begin_pointer(9, PointerTarget::Library(Channel::Oil)).unwrap();
+    let pointer = editor
+        .begin_pointer(9, PointerTarget::Library(Channel::Oil.into()))
+        .unwrap();
     let stamp = editor.stamp();
     assert_eq!(
         Command::Undo.availability(&editor, stamp),
@@ -512,7 +514,9 @@ fn every_owner_kind_is_checked_and_nonobject_authority_cannot_create_raw_fields(
 fn located_raw_rechecks_pointer_and_fixed_variant_band_bounds() {
     let mut editor = Editor::new(default_config()).unwrap();
     let root = editor.object_inspection_target(InspectionOwner::Root).unwrap();
-    let pointer = editor.begin_pointer(13, PointerTarget::Library(Channel::Oil)).unwrap();
+    let pointer = editor
+        .begin_pointer(13, PointerTarget::Library(Channel::Oil.into()))
+        .unwrap();
     assert_eq!(
         editor.set_located_raw(root, RawField::ControlHoldMilliseconds, "900".into()),
         Err(EditorError::PointerActive)

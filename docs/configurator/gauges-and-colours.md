@@ -10,8 +10,16 @@ numeric reading and warning thresholds remain independent of that scale.
 
 | Presentation | Sizes | History / trend | Average / extrema |
 | --- | --- | --- | --- |
-| Numeric & history | 1×1, 2×1, 2×2 | Optional | Optional |
+| Scalar Numeric & history | 1×1, 2×1, 2×2 | Optional | Optional |
 | Circular arc, needle dial, horizontal, vertical, segmented bar | 1×1, 2×1, 2×2 | Replaced by gauge | Optional at 2×2 |
+| Four-cylinder ignition correction | 1×1, 2×1, 2×2 | Unavailable | Unavailable |
+
+**IGN RETARD** uses Numeric style with four cross-separated cells. Choose signed
+degrees, OK/RET, or both together; combined mode places status by the cylinder
+heading and degrees below. Each cylinder keeps its own unavailable/stale indication.
+The group has no scalar scale indicator, history, smoothing, bands or markers.
+Widget colours and shared Demo-only warning settings remain editable. See
+[advanced controls](advanced-controls.md) for thresholds and cylinder-line popups.
 
 Every style retains fitted values, labels and unavailable-state feedback.
 Lambda offers lambda, AFR estimate or both with declared fuel assumptions;
@@ -34,8 +42,8 @@ Invalid colours remain visible for diagnosis with safe geometry; invalid rules
 or geometry never become the accepted device configuration. Save/export remain
 blocked until repaired or discarded. Use the stress-value selector to inspect
 channel endpoints, extreme digit widths and unavailable AFR. Export JSON for
-editing and `.eav` for a firmware build. Historical v1 through v5 files migrate to the
-current v6 schema. Native landscape/portrait grids and per-screen overrides are
+editing and `.eav` for a firmware build. Historical v1 through v6 files migrate to the
+current v7 schema. Native landscape/portrait grids and per-screen overrides are
 described in [screen orientation](orientation.md). See
 [advanced controls](advanced-controls.md) for smoothing, history, markers,
 bands and warning acknowledgment.

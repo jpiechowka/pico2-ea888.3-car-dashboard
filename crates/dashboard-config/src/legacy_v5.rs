@@ -1,9 +1,10 @@
-//! Frozen host-only v5 container; child wire contracts are unchanged.
+//! Frozen host-only v5 container; widget/readout vocabulary is frozen separately.
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
 
+use crate::legacy_widget_v6::{LegacyWidget, upgrade_widgets};
 use crate::*;
-/// Frozen version-five field order; migration adds only disabled BLE and the current schema number.
+/// Frozen version-five field order; migration adds disabled BLE, Global ignition popup layout and current schema.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LegacyConfigV5 {
@@ -16,7 +17,7 @@ pub(crate) struct LegacyConfigV5 {
     /// Bounded historical view list; order and IDs survive migration.
     pub views: Vec<View, MAX_VIEWS>,
     /// Bounded historical widget list; migration never drops an instance to gain capacity.
-    pub widgets: Vec<Widget, MAX_WIDGETS>,
+    pub widgets: Vec<LegacyWidget, MAX_WIDGETS>,
     /// Eight channel-indexed documentary source selections, retained for current validation.
     pub sources: [ChannelSource; 8],
     /// Historical warning presentation policy, migrated without changing selected scope or timing.
@@ -49,7 +50,7 @@ impl LegacyConfigV5 {
             catalogue_version: self.catalogue_version,
             boot_view: self.boot_view,
             views: self.views,
-            widgets: self.widgets,
+            widgets: upgrade_widgets(self.widgets),
             sources: self.sources,
             warnings: self.warnings,
             fuel: self.fuel,

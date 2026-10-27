@@ -1,7 +1,8 @@
-//! Frozen host-only v4 container. Its children other than View are unchanged.
+//! Frozen host-only v4 container. Its widget/readout vocabulary is frozen separately.
 use serde::{Deserialize, Serialize};
 
 use crate::legacy::{LegacyView, upgrade_views};
+use crate::legacy_widget_v6::{LegacyWidget, upgrade_widgets};
 use crate::*;
 
 /// Frozen version-four field order; orientation and BLE were absent from this container.
@@ -17,7 +18,7 @@ pub(crate) struct LegacyConfigV4 {
     /// Bounded historical view list; order and IDs survive migration.
     views: heapless::Vec<LegacyView, MAX_VIEWS>,
     /// Bounded historical widget list; migration never drops an instance to gain capacity.
-    widgets: heapless::Vec<Widget, MAX_WIDGETS>,
+    widgets: heapless::Vec<LegacyWidget, MAX_WIDGETS>,
     /// Eight channel-indexed documentary source selections, retained for current validation.
     sources: [ChannelSource; 8],
     /// Historical warning presentation policy, migrated without changing selected scope or timing.
@@ -49,7 +50,7 @@ impl LegacyConfigV4 {
             catalogue_version: self.catalogue_version,
             boot_view: self.boot_view,
             views: upgrade_views(self.views),
-            widgets: self.widgets,
+            widgets: upgrade_widgets(self.widgets),
             sources: self.sources,
             warnings: self.warnings,
             fuel: self.fuel,

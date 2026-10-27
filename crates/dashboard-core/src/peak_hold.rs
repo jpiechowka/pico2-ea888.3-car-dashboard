@@ -58,7 +58,7 @@ impl PeakHolds {
         channel: SensorId,
     ) {
         for (i, w) in config.config().widgets.iter().enumerate() {
-            if w.channel == channel.channel() {
+            if w.channel.scalar() == Some(channel.channel()) {
                 self.snapshot.valid &= !(1u64 << i);
             }
         }
@@ -77,7 +77,7 @@ impl PeakHolds {
         at: u64,
     ) {
         for (i, w) in config.config().widgets.iter().enumerate() {
-            if w.channel != channel.channel() || w.advanced.peak_mode == PeakSelection::Off {
+            if w.channel.scalar() != Some(channel.channel()) || w.advanced.peak_mode == PeakSelection::Off {
                 continue;
             }
             let bit = 1u64 << i;
@@ -107,7 +107,7 @@ impl PeakHolds {
     ) -> bool {
         let before = self.snapshot.valid;
         for (i, w) in config.config().widgets.iter().enumerate() {
-            if now >= self.until_ms[i] || !fresh[w.channel.index()] {
+            if now >= self.until_ms[i] || w.channel.scalar().is_none_or(|channel| !fresh[channel.index()]) {
                 self.snapshot.valid &= !(1u64 << i);
             }
         }

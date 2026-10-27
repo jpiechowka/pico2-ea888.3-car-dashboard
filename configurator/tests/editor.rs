@@ -589,7 +589,7 @@ fn fourth_band_rejection_does_not_mutate_widget_or_editor_and_duplicates_copy_se
     let copy = config
         .widgets
         .iter()
-        .find(|w| w.view == e.selection().view && w.channel == Channel::Boost)
+        .find(|w| w.view == e.selection().view && w.channel == WidgetChannel::Boost)
         .unwrap();
     assert_ne!(copy.id, 1);
     assert_eq!(copy.advanced, unchanged);
@@ -826,7 +826,7 @@ fn add(
     editor
         .apply(Edit::AddWidget {
             view: editor.selection().view,
-            channel: Channel::Oil,
+            channel: Channel::Oil.into(),
             placement: placement(column, row, span),
         })
         .unwrap();
@@ -1290,7 +1290,7 @@ fn pointer_cancel_and_rejected_drop_do_not_modify_the_document() {
     assert!(editor.has_invalid_draft());
     editor.discard_raw().unwrap();
     let pointer = editor
-        .begin_pointer(2, PointerTarget::Library(Channel::Lambda))
+        .begin_pointer(2, PointerTarget::Library(Channel::Lambda.into()))
         .unwrap();
     editor.cancel_pointer(pointer).unwrap();
     assert_eq!(
@@ -1299,12 +1299,12 @@ fn pointer_cancel_and_rejected_drop_do_not_modify_the_document() {
     );
     assert_eq!(editor.preview(), &before);
     let pointer = editor
-        .begin_pointer(2, PointerTarget::Library(Channel::Lambda))
+        .begin_pointer(2, PointerTarget::Library(Channel::Lambda.into()))
         .unwrap();
     editor
         .commit_pointer(pointer, 2, placement(2, 0, Span::OneByOne))
         .unwrap();
-    assert_eq!(editor.preview().config().widgets[2].channel, Channel::Lambda);
+    assert_eq!(editor.preview().config().widgets[2].channel, WidgetChannel::Lambda);
 }
 
 #[test]
@@ -1428,9 +1428,10 @@ fn older_or_edited_import_requests_cannot_replace_current_state() {
 fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
+    let version_field = format!("\"version\":{VERSION}");
     let bad_inputs = [
-        good.replacen("\"version\":6", "\"version\":6, \"version\":6", 1),
-        good.replacen("\"version\":6", "\"version\":6, \"unknown\":1", 1),
+        good.replacen(&version_field, &format!("{version_field}, {version_field}"), 1),
+        good.replacen(&version_field, &format!("{version_field}, \"unknown\":1"), 1),
         format!("{good} null"),
         good.replacen("14.7", "null", 1)
             .replacen("\"trigger\":2.5", "\"trigger\":null", 1),

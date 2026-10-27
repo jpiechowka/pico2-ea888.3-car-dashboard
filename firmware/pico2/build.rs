@@ -4,11 +4,30 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+/// Host-only worker reserve in bytes, matching the configuration CLI's bounded
+/// migration stack. Windows' default main-thread stack is insufficient for the
+/// unoptimized explicit-input decoder; this does not change either device stack.
+const BUILD_STACK_BYTES: usize = 2 * 1024 * 1024;
+
+/// Run host admission on its bounded worker stack and wait for all outputs.
+/// Spawn failure panics explicitly; a worker panic resumes on the caller so
+/// Cargo rejects the build without hiding the original admission failure.
+pub(crate) fn main() {
+    let worker = std::thread::Builder::new()
+        .name("dashboard-build-admission".into())
+        .stack_size(BUILD_STACK_BYTES)
+        .spawn(run)
+        .expect("start dashboard build admission worker");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 /// Reads Cargo features/custom clock environment, validates configuration/startup
 /// inputs, and writes generated source, metadata and linker scripts to OUT_DIR.
 /// Emits rerun/identity directives; panics on missing Cargo context, invalid input,
 /// compiler-query failure or filesystem errors so no invalid build is admitted.
-pub(crate) fn main() {
+fn run() {
     use dashboard_config_tools::clocks::{CUSTOM_KEYS, generate, selection};
     for key in CUSTOM_KEYS {
         println!("cargo:rerun-if-env-changed={key}");

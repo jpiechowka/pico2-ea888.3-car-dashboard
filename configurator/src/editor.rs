@@ -251,7 +251,7 @@ pub enum PointerTarget {
     /// Add a widget using shared channel defaults.
     Library(
         /// Channel whose default widget will be inserted.
-        Channel,
+        WidgetChannel,
     ),
 }
 
@@ -647,7 +647,7 @@ pub enum Edit {
         /// Destination view ID.
         view: u8,
         /// Channel supplying shared widget defaults.
-        channel: Channel,
+        channel: WidgetChannel,
         /// Requested grid origin/span, validated for fit/collision.
         placement: Placement,
     },
@@ -2627,7 +2627,7 @@ impl Editor {
                 let id = fresh_widget(&config)?;
                 config
                     .widgets
-                    .push(default_widget(channel, id, view, placement))
+                    .push(default_widget_for_channel(channel, id, view, placement))
                     .map_err(|_| EditorError::WidgetCapacity)?;
                 selection = Selection { view, widget: Some(id) };
             }
@@ -2691,7 +2691,7 @@ impl Editor {
             Edit::SetWarningMode { id, mode } => {
                 let index = widget_index(&config, id)?;
                 let (low, high) = config.widgets[index].channel.domain();
-                let defaults = default_widget(
+                let defaults = default_widget_for_channel(
                     config.widgets[index].channel,
                     id,
                     config.widgets[index].view,

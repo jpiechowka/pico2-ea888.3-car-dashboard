@@ -167,6 +167,7 @@ fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
         FieldKey::PeakMode,
         FieldKey::ReferenceMode,
         FieldKey::WarningEnabled,
+        FieldKey::IgnitionWarningPresentation,
         FieldKey::WarningApplicability,
         FieldKey::WarningMode,
         FieldKey::WarningPriority,

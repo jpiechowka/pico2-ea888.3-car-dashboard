@@ -352,7 +352,7 @@ pub fn install_playback(ui: Ui) {
 /// admission; a full grid produces a notice without changing the project.
 fn add(
     ui: Ui,
-    channel: Channel,
+    channel: WidgetChannel,
 ) {
     if let Some(placement) = ui.free(Span::OneByOne, None) {
         let view = ui.editor.with_untracked(|e| e.selection().view);
@@ -378,11 +378,11 @@ pub fn Library(
     view! {
         <aside class="library panel"><div class="panel-heading"><p class="eyebrow">"SENSOR LIBRARY"</p><h2>"Start with a signal."</h2><p>"Drag onto the grid, or use + to add."</p></div>
             <label class="search"><span aria-hidden="true">"⌕"</span><input type="search" aria-label="Find a sensor" placeholder="Find a sensor" on:input=move |e|search.set(event_target_value(&e))/></label>
-            <div class="library-list"><For each=move || {Channel::ALL.into_iter().filter(|c|format!("{} {:?}",c.label(),c).to_lowercase().contains(&search.get().to_lowercase())).collect::<Vec<_>>()} key=|c|c.index() children=move |channel|view!{
+            <div class="library-list"><For each=move || {WidgetChannel::ALL.into_iter().filter(|c|format!("{} {:?}",c.label(),c).to_lowercase().contains(&search.get().to_lowercase())).collect::<Vec<_>>()} key=|c|c.label() children=move |channel|view!{
                 <div class="library-item"><button class="sensor-drag" aria-label=format!("Drag {}",channel.label()) disabled=move ||ui.inspection_active()
                     on:pointerdown=move |e|start(ui,e,PointerTarget::Library(channel)) on:click=move |e|{if e.detail()==0{add(ui,channel);}}>
-                    <span class="sensor-mark" aria-hidden="true">{match channel{Channel::Boost=>"↗",Channel::Lambda=>"λ",Channel::Battery=>"ϟ",_=>"°"}}</span>
-                    <span><b>{channel.label()}</b><small>{match channel{Channel::Boost=>"Relative pressure",Channel::Lambda=>"Mixture + optional AFR",Channel::Battery=>"ECU module voltage",Channel::Water=>"Coolant temperature",Channel::Oil=>"Engine oil temperature",Channel::Dsg=>"DSG oil temperature",Channel::Iat=>"Intake air temperature",Channel::Egt=>"Exhaust temperature"}}</small></span>
+                    <span class="sensor-mark" aria-hidden="true">{match channel{WidgetChannel::Boost=>"↗",WidgetChannel::Lambda=>"λ",WidgetChannel::Battery=>"ϟ",_=>"°"}}</span>
+                    <span><b>{channel.label()}</b><small>{match channel{WidgetChannel::Boost=>"Relative pressure",WidgetChannel::Lambda=>"Mixture + optional AFR",WidgetChannel::Battery=>"ECU module voltage",WidgetChannel::Water=>"Coolant temperature",WidgetChannel::Oil=>"Engine oil temperature",WidgetChannel::Dsg=>"DSG oil temperature",WidgetChannel::Iat=>"Intake air temperature",WidgetChannel::Egt=>"Exhaust temperature",WidgetChannel::IgnitionRetard=>"Four cylinders · synthetic Demo only"}}</small></span>
                     <span class="grip" aria-hidden="true">"⠿"</span>
                 </button><button class="library-add" aria-label=format!("Add {}",channel.label()) disabled=move ||ui.inspection_active() on:click=move |_|add(ui,channel)>"+"</button></div>
             }/></div>
@@ -496,6 +496,7 @@ pub fn Canvas(
                     boost_psi: ui.psi.get_untracked(),
                     warnings: ui.warnings.get_untracked(),
                     values: ui.sample_set.get_untracked().values(),
+                    ignition_values: ui.sample_set.get_untracked().ignition_values(),
                 };
                 let mut result = Ok(());
                 preview.update(|p| {

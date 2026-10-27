@@ -15,6 +15,10 @@ mod catalog;
 mod led;
 #[cfg(feature = "json")]
 mod legacy_v5;
+#[cfg(feature = "json")]
+mod legacy_v6;
+#[cfg(feature = "json")]
+mod legacy_widget_v6;
 pub use cache_identity::{CacheIdentityStatus, ConfigCacheIdentity};
 mod codec;
 pub mod controls;
@@ -38,7 +42,7 @@ pub use appearance::*;
 pub use catalog::*;
 pub use codec::*;
 pub use controls::*;
-pub use defaults::{default_config, default_widget};
+pub use defaults::{default_config, default_ignition_widget, default_widget, default_widget_for_channel};
 pub use led::*;
 pub use model::*;
 pub use orientation::*;

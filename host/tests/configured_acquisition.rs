@@ -40,7 +40,7 @@ fn immutable_configuration_survives_statistics_resets_and_limits_snapshot_freshn
             .config()
             .widgets
             .iter()
-            .position(|w| w.channel == Channel::Water)
+            .position(|w| w.channel == Channel::Water.into())
             .unwrap(),
     )
     .unwrap();
@@ -68,7 +68,7 @@ fn tightened_freshness_breaks_alarm_dwell_across_measurement_gaps() {
             .config()
             .widgets
             .iter()
-            .position(|w| w.channel == Channel::Water)
+            .position(|w| w.channel == Channel::Water.into())
             .unwrap(),
     )
     .unwrap();

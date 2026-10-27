@@ -555,7 +555,7 @@ fn portrait_peak_highlight_is_visible_and_expires() {
     raw.widgets[0] = raw
         .widgets
         .iter()
-        .find(|w| w.channel == dashboard_config::Channel::Oil)
+        .find(|w| w.channel == dashboard_config::Channel::Oil.into())
         .unwrap()
         .clone();
     raw.widgets.truncate(1);

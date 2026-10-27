@@ -1,6 +1,6 @@
 //! Exact shared framebuffer rendering with explicitly synthetic inputs.
 
-use dashboard_config::{Channel, Config, Geometry, ValidatedConfig, validate};
+use dashboard_config::{Channel, Config, Geometry, ValidatedConfig, WidgetChannel, validate};
 use dashboard_core::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_core::cache_diagnostics::CacheExhaustionStatus;
 use dashboard_core::colors::{BLACK, RED};
@@ -9,6 +9,7 @@ use dashboard_core::dashboard::{DashboardScene, Overlay};
 use dashboard_core::demo;
 use dashboard_core::display::{FrameBuffer, St7789Renderer};
 pub use dashboard_core::display::{HEIGHT, WIDTH};
+use dashboard_core::ignition::Cylinder;
 use dashboard_core::render::FpsMode;
 use dashboard_core::sensor_state::{GRAPH_HISTORY_SIZE, GRAPH_SAMPLE_PERIOD_MS};
 use dashboard_core::vehicle_status::VehicleStatus;
@@ -37,6 +38,19 @@ pub enum SampleSet {
 }
 
 impl SampleSet {
+    /// Returns signed-degree cylinder fixtures in display order, or `None` for shared elapsed-time Demo values.
+    /// Stress extremes stay inside the group representation bounds; zero is a valid reading, not absence.
+    pub fn ignition_values(self) -> Option<[f32; 4]> {
+        let (min, max) = WidgetChannel::IgnitionRetard.domain();
+        match self {
+            Self::Demo => None,
+            Self::Minimum => Some([min; 4]),
+            Self::Maximum => Some([max; 4]),
+            Self::WidthStress => Some([min, max, min, max]),
+            Self::Zero => Some([0.0; 4]),
+        }
+    }
+
     /// Returns canonical values in Channel::ALL order, or None to select the shared elapsed-time demo generator.
     pub fn values(self) -> Option<[f32; 8]> {
         match self {
@@ -73,6 +87,9 @@ pub struct PreviewOptions {
     pub warnings: bool,
     /// Optional canonical channel values in `Channel::ALL` order. Always Demo.
     pub values: Option<[f32; 8]>,
+    /// Optional four signed-degree values in cylinder order, finite and within shared representation bounds.
+    /// Always synthetic; `None` uses the shared elapsed-time Demo generator.
+    pub ignition_values: Option<[f32; 4]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +106,11 @@ pub enum PreviewError {
     InvalidSample(
         /// First invalid channel in canonical channel order.
         Channel,
+    ),
+    /// Synthetic signed-degree override is nonfinite or outside the group representation bounds.
+    InvalidIgnitionSample(
+        /// First invalid cylinder in display order.
+        Cylinder,
     ),
     /// Synthetic timeline or source identity cannot be represented.
     TimeOverflow,
@@ -128,7 +150,7 @@ pub struct Preview {
     framebuffer: Box<FrameBuffer>,
     /// Logical shape of current pixels, including submitted but uncompleted frames.
     geometry: Geometry,
-    /// Current portrait widgets whose measured content lanes do not fit.
+    /// Current scalar portrait widgets whose measured content lanes do not fit.
     fit_issues: Vec<u16>,
     /// Reused opaque RGBA surface, 320*240*4 bytes in current logical row order.
     rgba: Vec<u8>,
@@ -187,8 +209,8 @@ impl Preview {
     /// Returns logical dimensions of current pixels, including submitted frames not yet consumed.
     pub const fn geometry(&self) -> Geometry { self.geometry }
 
-    /// Returns current portrait fit advisories using sampled strings and reserved warning space; future widths may
-    /// differ.
+    /// Returns current scalar portrait fit advisories using sampled strings and reserved warning space; future widths
+    /// may differ.
     pub fn fit_issues(&self) -> &[u16] { &self.fit_issues }
 
     /// Returns shared startup RGBA for `config`, eventual dashboard `view`, `profile` and `elapsed` milliseconds with
@@ -636,7 +658,8 @@ impl Preview {
     }
 
     /// Returns synthetic RGBA for validated `config`, `view` and `options` through shared acquisition/layout/rendering.
-    /// Rebuilds a fixed history plus one sample; canonical overrides must be finite with magnitude at most 1,000,000.
+    /// Rebuilds a fixed history plus one sample; scalar overrides must be finite with magnitude at most 1,000,000,
+    /// and cylinder overrides must be finite signed degrees within the shared ignition representation bounds.
     /// Returns pending/view/sample/time errors before replacing complete pixels/paging. Warning demonstration
     /// compresses only private activation dwell, and source-compatible extrema persist across nonrewinding sample
     /// options. Panics only if shared validation/buffer invariants are violated; no firmware, canvas or scanout
@@ -660,6 +683,14 @@ impl Preview {
                 // Same finite magnitude bound as SensorState's sample gate.
                 if !value.is_finite() || value.abs() > 1_000_000.0 {
                     return Err(PreviewError::InvalidSample(channel));
+                }
+            }
+        }
+        if let Some(values) = options.ignition_values {
+            let (min, max) = WidgetChannel::IgnitionRetard.domain();
+            for (cylinder, value) in Cylinder::ALL.into_iter().zip(values) {
+                if !value.is_finite() || !(min..=max).contains(&value) {
+                    return Err(PreviewError::InvalidIgnitionSample(cylinder));
                 }
             }
         }
@@ -690,9 +721,17 @@ impl Preview {
             let at = options.sample_ms + index as u64 * GRAPH_SAMPLE_PERIOD_MS;
             let accepted = model.ingest_batch(values_at(at), at);
             debug_assert!(accepted, "bounded finite synthetic sample");
+            let accepted =
+                model.ingest_ignition_demo(options.ignition_values.unwrap_or_else(|| demo::ignition_values(at)), at);
+            debug_assert!(accepted, "bounded four-cylinder synthetic sample");
         }
         let accepted = model.ingest_batch(values_at(now), now);
         debug_assert!(accepted, "one final sample advances the visual demo dwell");
+        let accepted = model.ingest_ignition_demo(
+            options.ignition_values.unwrap_or_else(|| demo::ignition_values(now)),
+            now,
+        );
+        debug_assert!(accepted, "final cylinder sample stays fresh after history replay");
         let mut snapshot = model.snapshot();
         self.prepared_status = self.prepared_status.union(snapshot.cache_exhaustion_status());
         let same_run = self.options.is_some_and(|previous| {
@@ -713,6 +752,7 @@ impl Preview {
             || self.options.is_none_or(|previous| {
                 previous.warnings != options.warnings
                     || previous.values != options.values
+                    || previous.ignition_values != options.ignition_values
                     || options.sample_ms < previous.sample_ms
             })
         {
@@ -1016,9 +1056,12 @@ impl Preview {
     }
 }
 
-/// Returns IDs in portrait `config`/`view` whose current `scene` strings do not fit shared content lanes, reserving
-/// warning space. Nonportrait/missing orientation returns empty; unresolved rectangles/text are skipped. This is
-/// advisory for current strings only.
+/// Returns scalar IDs in portrait `config`/`view` whose current `scene` strings do not fit shared content lanes,
+/// reserving warning space. Nonportrait/missing orientation returns empty; unresolved rectangles/text are skipped.
+/// Cylinder groups use a separate cross layout, not these six scalar lanes: their admitted sixteen-byte strings,
+/// quality labels and two badge rows fit the smallest native geometry using the renderer's measured4x6 fallback.
+/// The shared renderer's minimum-lane tests enforce that bound; metadata lanes must never be measured as text here.
+/// This is advisory for current scalar strings only.
 fn portrait_fit_issues(
     scene: &DashboardScene<'_>,
     config: &ValidatedConfig,
@@ -1036,6 +1079,7 @@ fn portrait_fit_issues(
         .filter(|w| w.view == view)
         .enumerate()
         .filter_map(|(slot, w)| {
+            w.channel.scalar()?;
             let rect = w.placement.rect_in(Geometry::Portrait)?;
             let text = scene.configured_text(slot)?;
             let caps = w.capabilities();

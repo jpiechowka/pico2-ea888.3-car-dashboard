@@ -27,7 +27,8 @@ import test_stack_budget
 from script_values import integer_value
 
 
-def fixture(version: int = 6, radio: bool = False) -> tuple[ImageFixture, bytes, SourceContext]:
+def fixture(version: int = 7, radio: bool = False) -> tuple[ImageFixture, bytes, SourceContext]:
+    """Return a bounded synthetic ELF/EAV/source pair for schema `version`, optionally with radio frames."""
     B = 0x10000000
     data = bytearray(4096)
     data[0x100:0x114] = struct.pack("<5I", 0xFFFFDED3, 0x10210142, 0x000001FF, 0, 0xAB123579)
@@ -134,7 +135,7 @@ class PracticalImage(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<H", shipped, 4)[0], practical.CURRENT_EAV_VERSION)
         elf, eav, _ = fixture()
         self.assertEqual(practical._configuration(elf, eav), eav)
-        for version in (0, 1, 2, 3, 4, 5, 7, 65535):
+        for version in (0, 1, 2, 3, 4, 5, 6, 8, 65535):
             legacy, legacy_raw, _ = fixture(version)
             with (
                 self.subTest(version=version),

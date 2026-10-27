@@ -19,7 +19,7 @@ fn reviewed_default_has_one_overview_and_eight_fixed_channel_cells() {
         (8, Channel::Egt, 3, 1),
     ];
     for (widget, (id, channel, column, row)) in config.widgets.iter().zip(expected) {
-        assert_eq!((widget.id, widget.view, widget.channel), (id, 1, channel));
+        assert_eq!((widget.id, widget.view, widget.channel), (id, 1, channel.into()));
         assert_eq!(
             widget.placement,
             Placement {

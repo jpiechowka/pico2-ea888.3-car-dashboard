@@ -558,7 +558,7 @@ impl Project {
     /// Validate header/reserved fields, five ordered contiguous descriptors, per-section
     /// lengths and hashes, canonical recipe JSON, dashboard/profile versions and splash
     /// geometry before publication. Version 1 migrates its v4 dashboard and v1 startup profile;
-    /// version 2 accepts v5/current dashboards. Trailing bytes and implicit omissions fail.
+    /// version 2 accepts v5/v6/current dashboards. Trailing bytes and implicit omissions fail.
     pub fn decode(bytes: &[u8]) -> Result<Self, ProjectError> {
         if bytes.len() < PREFIX || bytes.len() > MAX_PROJECT_BYTES {
             return Err(ProjectError::Length);
@@ -624,7 +624,7 @@ impl Project {
         let allowed_schema = if version == 1 {
             schema == 4
         } else {
-            schema == 5 || schema == dashboard_config::VERSION
+            matches!(schema, 5 | 6) || schema == dashboard_config::VERSION
         };
         if !allowed_schema || (schema == dashboard_config::VERSION && canonical != sections[0]) {
             return Err(ProjectError::Dashboard);

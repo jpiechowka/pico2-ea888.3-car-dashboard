@@ -24,6 +24,39 @@ separate steady latch/acknowledgment badge with the actual unavailable quality;
 it never supplies a fresh reading or a raw active decision. A valid zero remains distinct.
 Both retained framebuffer caches include the effective quality and source.
 
+## Four-cylinder ignition correction
+
+Ignition has four independent observations outside the eight scalar channels.
+Each carries signed degrees, source, capture/status times, sequence and quality.
+Only explicit Demo input is admitted; Vehicle shows unsupported (`N/A`). There
+is no ECU request, decoder or automatic synthetic fallback. Studio and firmware
+Demo use the same elapsed-time generator.
+
+Finite values in −327.68 through 327.67 are accepted as representation bounds,
+not validated engine limits. A valid observation remains fresh through age
+500 ms and becomes stale after that. Readers check age using their current
+monotonic clock; repainting, statistics reset and a stopped producer cannot
+refresh it. One cylinder's missing/faulted input does not invalidate the others.
+Typed invalid numeric input hides the previous value while preserving its
+last-good timestamp; future, regressed and wrong-source candidates reject.
+Recovery requires a newer admitted observation. Owner clock reversal invalidates
+stored valid observations so advancing back to the old time cannot revive them.
+
+Every widget size shows cylinders 1/2 above 3/4, not firing order or engine
+position. Numeric, OK/RET and simultaneous status/number modes share quality
+gates. Raw negative degrees mean RET even when rounding displays zero; signed
+zero and positive values mean OK. Unavailable quadrants show `NO DATA`, `STALE`,
+`N/A`, `LINK ERR` or `INVALID`, never a stale number or OK.
+
+The optional warning remains DemoOnly. One shared strict-below trigger and
+at-or-above clear threshold govern the group; all four must be fresh and clear
+to finish clearing. Dwell requires new admitted measurements. Latch, snooze and
+completed-page acknowledgment retain their existing rules. Cylinder-line popups
+identify active or remembered members without treating remembered data as fresh.
+See [warning controls](../configurator/advanced-controls.md).
+
+## Scalar source qualification
+
 Lambda is the canonical mixture quantity. No unconditional lean/optimal alarm
 is inferred from a fixed AFR threshold. `ECU V` identifies control-module
 voltage, not a battery-terminal measurement. Default Vehicle alarm coloring remains unavailable until source semantics and

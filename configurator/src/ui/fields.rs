@@ -478,6 +478,7 @@ pub fn TextField(
 /// `repair_invalid_draft` permits repair controls through the ordinary invalid guard.
 /// `dynamic_id` precedes nonempty `id` and inferred label binding; `accessible_label`,
 /// `disabled` and `disabled_values` add presentation/accessibility constraints.
+/// A retained value outside `options` remains visible as a disabled unsupported option for inspection and repair.
 #[component]
 pub fn Choice(
     /// Shared editor and inspection state.
@@ -523,6 +524,7 @@ pub fn Choice(
     };
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
+    let known_values = options.iter().map(|(value, _)| value.clone()).collect::<Vec<_>>();
     view! {
         <label class="field"><span>{label}</span>
             <select id=id title=move ||ui.control_reason(label) aria-label=accessible_label prop:value=move || value.get() disabled=move || ui.inspect_read_only() || disabled.is_some_and(|d| d.get()) || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
@@ -533,6 +535,7 @@ pub fn Choice(
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());
                 }>
                 {options.into_iter().map(|(value,label)| {let check=value.clone();view! { <option value=value disabled=move ||disabled_values.is_some_and(|d|d.get().contains(&check))>{label}</option> }}).collect_view()}
+                {move || { let current=value.get(); (!known_values.contains(&current)).then(||view!{<option value=current.clone() disabled=true>{format!("{current} (unsupported stored value)")}</option>}) }}
             </select>
             <small class="hint">{move ||ui.control_reason(label)}</small>
         </label>

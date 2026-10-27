@@ -54,7 +54,7 @@ fn crc_parts(parts: &[&[u8]]) -> u32 {
 }
 
 /// Decode bounded EAV1 `bytes`, require canonical payload bytes and return admitted configuration.
-/// Without `json`, only current schema is accepted; host `json` builds additionally migrate v1..v5.
+/// Without `json`, only current schema is accepted; host `json` builds additionally migrate v1..v6.
 /// Errors retain no public partial model. This owned route may require full model stack storage;
 /// firmware uses [`crate::ConfigSlot`] for in-place boot admission.
 pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
@@ -63,7 +63,7 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
 }
 
 /// Inspect `bytes`, returning `(schema, borrowed_payload)` after magic/length/CRC checks.
-/// `allow_legacy` admits v1..v5 in addition to current schema. Errors precede payload decoding;
+/// `allow_legacy` admits v1..v6 in addition to current schema. Errors precede payload decoding;
 /// the CRC covers bytes 0..8 and the payload, excluding the stored checksum itself.
 pub(crate) fn inspect_envelope(
     bytes: &[u8],
@@ -76,7 +76,7 @@ pub(crate) fn inspect_envelope(
         return Err(ConfigError::Header);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION && !(allow_legacy && matches!(version, 1..=5)) {
+    if version != VERSION && !(allow_legacy && matches!(version, 1..=6)) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -98,7 +98,16 @@ fn decode_payload(
     payload: &[u8],
 ) -> Result<ValidatedConfig, ConfigError> {
     #[cfg(feature = "json")]
-    if matches!(_version, 1..=5) {
+    if matches!(_version, 1..=6) {
+        if _version == 6 {
+            let (config, rest) = postcard::take_from_bytes::<crate::legacy_v6::LegacyConfigV6>(payload)
+                .map_err(|_| ConfigError::Payload)?;
+            if !rest.is_empty() {
+                return Err(ConfigError::Payload);
+            }
+            compare_canonical(&config, payload)?;
+            return config.upgrade();
+        }
         if _version == 5 {
             let (config, rest) = postcard::take_from_bytes::<crate::legacy_v5::LegacyConfigV5>(payload)
                 .map_err(|_| ConfigError::Payload)?;
@@ -282,7 +291,7 @@ pub fn parse_current_json_candidate(bytes: &[u8]) -> Result<Config, ConfigError>
 }
 
 #[cfg(feature = "json")]
-/// Parse bounded JSON `bytes`, migrate supported v1..v5 shapes and return admitted current configuration.
+/// Parse bounded JSON `bytes`, migrate supported v1..v6 shapes and return admitted current configuration.
 /// Unsupported versions, syntax/shape/capacity errors and semantic failures remain distinct.
 /// Separate non-inlined frames avoid simultaneous historical-model stack temporaries.
 pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
@@ -311,6 +320,7 @@ pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         3 => read_json(bytes, crate::legacy_v3::LegacyConfigV3::upgrade),
         4 => read_json(bytes, crate::legacy_v4::LegacyConfigV4::upgrade),
         5 => read_json(bytes, crate::legacy_v5::LegacyConfigV5::upgrade),
+        6 => read_json(bytes, crate::legacy_v6::LegacyConfigV6::upgrade),
         VERSION => read_json(bytes, |config| validate(config).map_err(ConfigError::Validation)),
         _ => Err(ConfigError::Version),
     }

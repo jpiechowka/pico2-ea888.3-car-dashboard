@@ -51,6 +51,68 @@ fn complete_project_round_trip_and_header_bounds() {
 use std::sync::Arc;
 /// Return a landscape fixture with one red RGB565 frame and a hash-bound synthetic PNG header.
 fn artwork() -> Arc<Artwork> { artwork_in(dashboard_config::Geometry::Landscape) }
+
+/// Return the nondefault startup profile frozen with the schema-six complete project.
+fn schema_six_profile() -> StartupProfile {
+    StartupProfile {
+        theme: StartupTheme::Custom,
+        duration_ms: 7134,
+        status_ms: 913,
+        loop_animation: false,
+        interrupt_on_attention: true,
+        warning_led: false,
+        status_orientation: Some(dashboard_config::Orientation::PortraitInverted),
+        splash_orientation: Some(dashboard_config::Orientation::Landscape),
+        ..StartupProfile::default()
+    }
+}
+
+#[test]
+/// Frozen EAVP2/schema-six imports preserve every dashboard field and exact startup/artwork/original sections.
+fn frozen_schema_six_project_preserves_complete_content() {
+    let bytes = include_bytes!("fixtures/v2-schema6-artwork.eavp");
+    assert_eq!(
+        dashboard_config_tools::sha256_hex(bytes),
+        "5e79ce126ff0a9cd4b9b1cb00ec6b1056ee3a6feb3034ea7d5468c02c9e1fb2e"
+    );
+    assert_eq!(u16::from_le_bytes(bytes[8..10].try_into().unwrap()), 2);
+    let original = sections(bytes);
+    assert_eq!(
+        original[0],
+        include_bytes!("../../dashboard-config/tests/fixtures/v6-mixed.eav")
+    );
+    let config =
+        dashboard_config::from_json_bytes(include_bytes!("../../dashboard-config/tests/fixtures/v6-mixed.json"))
+            .unwrap();
+    let restored = Project::decode(bytes).unwrap();
+    assert_eq!(dashboard_config::decode(restored.dashboard_bytes()).unwrap(), config);
+    assert_eq!(restored.profile(), schema_six_profile());
+    let art = artwork();
+    let retained = restored.artwork().unwrap();
+    assert_eq!(retained.converted(), art.converted());
+    assert_eq!(retained.recipe(), art.recipe());
+    assert_eq!(retained.original(), art.original());
+    let canonical = restored.encode(ExportMode::Complete).unwrap();
+    assert_eq!(sections(&canonical)[1..], original[1..]);
+    assert_eq!(
+        canonical,
+        Project::new(&config, schema_six_profile(), Some(art))
+            .unwrap()
+            .encode(ExportMode::Complete)
+            .unwrap()
+    );
+    assert_eq!(
+        Project::decode(&canonical)
+            .unwrap()
+            .encode(ExportMode::Complete)
+            .unwrap(),
+        canonical
+    );
+    if dashboard_config::VERSION == 6 {
+        assert_eq!(canonical, bytes);
+    }
+}
+
 /// Return one 100 ms red frame for `geometry`; source bytes test identity, not PNG decoding.
 fn artwork_in(geometry: dashboard_config::Geometry) -> Arc<Artwork> {
     use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
@@ -542,4 +604,45 @@ fn eavp2_v5_dashboard_migrates_while_retaining_artwork() {
     // Canonical historical decoder must still reject trailing bytes, even resealed.
     parts[0].push(0);
     assert!(Project::decode(&container(2, &parts)).is_err());
+}
+
+#[test]
+/// Complete group projects retain all modes, startup, converted pixels and originals through current schema seven.
+fn group_modes_roundtrip_without_losing_complete_project_sections() {
+    use dashboard_config::{IgnitionWarningPresentation, Readout, default_ignition_widget};
+    for mode in [
+        Readout::IgnitionNumeric,
+        Readout::IgnitionStatus,
+        Readout::IgnitionStatusAndNumber,
+    ] {
+        for presentation in [
+            IgnitionWarningPresentation::Global,
+            IgnitionWarningPresentation::CylinderLines,
+        ] {
+            let mut config = default_config();
+            config.widgets.truncate(1);
+            let placement = config.widgets[0].placement;
+            config.widgets[0] = default_ignition_widget(1, 1, placement);
+            config.widgets[0].advanced.readout = mode;
+            config.widgets[0].advanced.ignition_warning = presentation;
+            let admitted = validate(config).unwrap();
+            let project = Project::new(&admitted, schema_six_profile(), Some(artwork())).unwrap();
+            let bytes = project.encode(ExportMode::Complete).unwrap();
+            let restored = Project::decode(&bytes).unwrap();
+            assert_eq!(dashboard_config::decode(restored.dashboard_bytes()).unwrap(), admitted);
+            assert_eq!(restored.profile(), project.profile());
+            assert_eq!(
+                restored.artwork().unwrap().identity(),
+                project.artwork().unwrap().identity()
+            );
+            assert_eq!(
+                restored.artwork().unwrap().original(),
+                project.artwork().unwrap().original()
+            );
+            assert_eq!(restored.encode(ExportMode::Complete).unwrap(), bytes);
+            let mut parts = sections(&bytes);
+            parts[0].push(0);
+            assert!(Project::decode(&container(2, &parts)).is_err());
+        }
+    }
 }

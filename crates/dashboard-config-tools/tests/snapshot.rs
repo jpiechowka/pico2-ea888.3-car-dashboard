@@ -184,6 +184,22 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     cli_success(run(&["compile", "editable.json", "runtime.eav"]), "compile JSON");
     for (name, fixture) in [
         (
+            "v6.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v6-default.json").as_slice(),
+        ),
+        (
+            "v6.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v6-default.eav").as_slice(),
+        ),
+        (
+            "v6-mixed.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v6-mixed.json").as_slice(),
+        ),
+        (
+            "v6-mixed.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v6-mixed.eav").as_slice(),
+        ),
+        (
             "v1.json",
             include_bytes!("../../dashboard-config/tests/fixtures/v1-default.json").as_slice(),
         ),
@@ -234,11 +250,19 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
             String::from_utf8_lossy(&output.stderr)
         );
         cli_success(run(&["inspect", "migrated.eav"]), name);
+        let expected = if name.starts_with("v6-mixed") {
+            decode(include_bytes!("../../dashboard-config/tests/fixtures/v6-mixed.eav"))
+                .unwrap()
+                .config()
+                .clone()
+        } else {
+            default_config()
+        };
         assert_eq!(
             decode(&std::fs::read(temp.0.join("migrated.eav")).unwrap())
                 .unwrap()
                 .config(),
-            &default_config()
+            &expected
         );
     }
     let bytes = std::fs::read(temp.0.join("runtime.eav")).unwrap();

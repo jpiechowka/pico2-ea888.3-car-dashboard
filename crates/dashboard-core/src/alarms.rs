@@ -325,9 +325,10 @@ impl Alerts {
 /// Compact dwell/episode substrate shared by legacy and configured policies.
 #[derive(Clone, Copy)]
 struct State {
-    /// Last consumed channel sequence, meaningful when SEEN is set.
+    /// Last consumed scalar sequence or group owner raw sequence, when SEEN is set.
     sequence: u64,
-    /// Last consumed sample timestamp in milliseconds, meaningful when SEEN is set.
+    /// Last scalar capture time or greatest qualified group capture milliseconds,
+    /// meaningful when SEEN is set; distinct group dwell uses supporting captures.
     at: u64,
     /// Last qualified context timestamp, meaningful when CONTEXT is set.
     context_at: u64,
@@ -335,6 +336,10 @@ struct State {
     since: u64,
     /// Validity/dwell/raw and remembered episode flags; no timestamp sentinel required.
     flags: u16,
+    /// Group-only per-cylinder hysteresis bits; scalar rules keep zero.
+    group_hysteresis: u8,
+    /// Group-only members observed during the current remembered episode.
+    group_members: u8,
 }
 impl Default for State {
     /// Returns unseen, invalid and inactive state with no remembered episode.
@@ -367,6 +372,8 @@ impl State {
         context_at: 0,
         since: 0,
         flags: 0,
+        group_hysteresis: 0,
+        group_members: 0,
     };
 
     /// Returns last consumed `(sequence, timestamp_ms)`, or `None` before consumption.

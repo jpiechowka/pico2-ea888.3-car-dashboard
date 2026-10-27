@@ -222,6 +222,8 @@ pub fn draw_view_popup<D: DrawTarget<Color = Rgb565>>(
 /// Draws immutable warning `page` into `display`, clipping all text/status/page
 /// labels to a centered 216x136 outer panel. Uses its palette and captured blink
 /// phase; caller retains episode identity until matching transfer completion.
+/// Dedicated cylinder pages generate at most four 31-byte ASCII lines in 6x10
+/// font from one stored message; drawing does not create live measurement evidence.
 pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     page: crate::view_state::WarningPage,
@@ -256,24 +258,54 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     )
     .draw(&mut display)
     .ok();
-    for (row, line) in page.lines().iter().enumerate() {
+    if page.cylinder_mask() != 0 {
+        let compact = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_6X10, fg);
+        let mut row = 0;
+        for cylinder in crate::ignition::Cylinder::ALL {
+            if page.cylinder_mask() & (1 << cylinder.index()) == 0 {
+                continue;
+            }
+            let mut line: heapless::String<31> = heapless::String::new();
+            write!(line, "Cylinder {} {}", cylinder.index() + 1, page.lines()[0].as_str())
+                .expect("11-byte prefix plus20-byte admitted message");
+            Text::with_text_style(
+                &line,
+                Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 18 + row * 18),
+                compact,
+                CENTERED,
+            )
+            .draw(&mut display)
+            .ok();
+            row += 1;
+        }
         Text::with_text_style(
-            line.as_str(),
-            Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 24 + row as i32 * 28),
-            text,
+            page.status(0),
+            Point::new(CENTER_X + offset.x, CENTER_Y + offset.y + 48),
+            MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, fg),
             CENTERED,
         )
         .draw(&mut display)
         .ok();
-        let small = MonoTextStyle::new(crate::ui::LABEL_FONT, fg);
-        Text::with_text_style(
-            page.status(row),
-            Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 13 + row as i32 * 28),
-            small,
-            CENTERED,
-        )
-        .draw(&mut display)
-        .ok();
+    } else {
+        for (row, line) in page.lines().iter().enumerate() {
+            Text::with_text_style(
+                line.as_str(),
+                Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 24 + row as i32 * 28),
+                text,
+                CENTERED,
+            )
+            .draw(&mut display)
+            .ok();
+            let small = MonoTextStyle::new(crate::ui::LABEL_FONT, fg);
+            Text::with_text_style(
+                page.status(row),
+                Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 13 + row as i32 * 28),
+                small,
+                CENTERED,
+            )
+            .draw(&mut display)
+            .ok();
+        }
     }
     let mut page_text: heapless::String<8> = heapless::String::new();
     write!(page_text, "{}/{}", page.number, page.total).ok();
