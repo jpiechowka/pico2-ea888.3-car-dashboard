@@ -16,7 +16,9 @@ numeric reading and warning thresholds remain independent of that scale.
 
 **IGN RETARD** uses Numeric style with four cross-separated cells. Choose signed
 degrees, OK/RET, or both together; combined mode places status by the cylinder
-heading and degrees below. Each cylinder keeps its own unavailable/stale indication.
+heading and degrees below. Each label/value pair is vertically centered together;
+short cells use tighter gaps and insets without shrinking the existing fitted fonts.
+Each cylinder keeps its own unavailable/stale indication.
 The group has no scalar scale indicator, history, smoothing, bands or markers.
 Widget colours and shared Demo-only warning settings remain editable. See
 [advanced controls](advanced-controls.md) for thresholds and cylinder-line popups.

@@ -1,7 +1,7 @@
 {
   "captured_date": "2026-10-27",
-  "base_commit": "a2faf6c3f04de0328aca93e17bd4704aee9216c0",
-  "source_state": "Ignition widget working tree published with this manifest; code content hashes below",
+  "base_commit": "86d955883769a85f29777826dffeec19e41cae73",
+  "source_state": "Compact layout refinement; source hashes at capture, followed only by the documented rustdoc clarification below",
   "synthetic": true,
   "hardware_validation": false,
   "browser": "Codex in-app browser, isolated loopback origin",
@@ -10,340 +10,340 @@
     712
   ],
   "bundle": {
-    "file": "dashboard-configurator-349236fbb9c761d8_bg.wasm",
-    "sha256": "c377e5cb32547e770b65f8d51e5f68ae7de8aabe3c4869ef5759ecb7d3605370"
+    "file": "dashboard-configurator-936b69285dc7f83d_bg.wasm",
+    "sha256": "3ad495f19d4eb850f9fa0a2eb3eba6056f0dbb1010077497815202ec0ee51cd8"
   },
   "source_file_hashes": {
     "host/examples/widget_gallery.rs": "7399ab2a07b06f2036373dc3bb96dd928b1d5962b7fb4f27cf3505b18ec5a61b",
-    "crates/dashboard-core/src/widgets/ignition.rs": "8eb7aa8470f978e0bfd6b05685fab3493dc0b23fdfd0c47d82db6647a485bf79",
+    "crates/dashboard-core/src/widgets/ignition.rs": "d79b109ae64585bc288e1b527ea4b446ece22061e444507a7ba2f2627e701d8c",
     "configurator/src/preview.rs": "4617f118e4d58b6b78f4ce4744ef4795b4d2b13f5b27e847043521776b5a54b1",
     "crates/dashboard-core/src/ignition.rs": "788f0896b9a41689baf8c0231c235e4d6f94f3e375d9e9f8296eaa8f700b0304"
   },
   "images": {
     "full/ignition-combined-landscape-1x1.png": {
-      "sha256": "53b88e354bc4f822a7cb6230889d33b07dabc9d1d9af99f47287b01cf4b96cd6",
+      "sha256": "3e3a13bfa00836535f21cbf12f09521292bd681f018cd15ca43db6d583c2630e",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-combined-landscape-2x1.png": {
-      "sha256": "1cad348058f26d02aec54f623af33cdf18900a165d3e1a80a53f66f2a73da2aa",
+      "sha256": "9a79f3dc67e967bb5b5cf04b8a76dc42b676617ff311bf037b4b775f845a9914",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-combined-landscape-2x2.png": {
-      "sha256": "2fb06e42a84406e044464f4c77df16eb5a45f083f784b4620f7ad70ee931ef86",
+      "sha256": "2ea6841b87767b3e1903bf453a9f37c30bd3bafe28480995116ba9d489000ea8",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-combined-portrait-1x1.png": {
-      "sha256": "f82f990c52862391fb717de7ca7828c3771285b12c494226aba6d7d22c7c80d4",
+      "sha256": "37606ea4b840b1eca3c0a53f363d7be4b02fc372825e05d44b7e54e8aa278e62",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-combined-portrait-2x1.png": {
-      "sha256": "b13f1ffd25bcd46975d85fb78f0fdd6608d4e58ec0aa380e7ab14637cbf07a31",
+      "sha256": "b3877df959e74f23673df00a4723e6f1902b484c599df98f38f15313c9b78bd5",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-combined-portrait-2x2.png": {
-      "sha256": "e0c49329685960684937d9b7b9fb98f1827709f9f548ef48c769cd37619f7012",
+      "sha256": "61348a8da321b7393952bda609135a29e4bab4412262d18563cdb59d151718a9",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-numeric-landscape-1x1.png": {
-      "sha256": "2329086ceaf7214ac47e9770204e6734f1c0f517fe846f0c5bfccdd03e084f95",
+      "sha256": "12dae3638537387aedc16151960cbc2b708af1ad1c72e70b41ab785d612a4810",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-numeric-landscape-2x1.png": {
-      "sha256": "48f1d8dd8f9e24f4f19c4529b76783d24f31f26dd4e3cfa0cbaf2c3342cc8b05",
+      "sha256": "f0c0ee4a9bb26189fd9dd81a397c420c9daaf29eaa76e711547bb79ac3a8d700",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-numeric-landscape-2x2.png": {
-      "sha256": "108025f627ae9908c2359cecd3b0713cdb0fec21bc2288b807210d56680ff32d",
+      "sha256": "559b73fba0ac890b07bd0b0534b304b37bb0bb5307927f68fbfbbcaf4cd41a6b",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-numeric-portrait-1x1.png": {
-      "sha256": "1ef15cf1442de83907ee90310be89f6ddc29d976e0610bce1861a68afc676949",
+      "sha256": "3b09ad5e721a5b00da27485d7032ec0f0c6670d417031df742a8639ed5d923ff",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-numeric-portrait-2x1.png": {
-      "sha256": "3e5487016dd06c3f3b17f41b33b7d688d14bd270c1921635fbaa75a9bc38e2b0",
+      "sha256": "456599972671063e0292275264439e1d493a882df460769281d9d087b4c17acf",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-numeric-portrait-2x2.png": {
-      "sha256": "93fe1cbf665c99753aa0c8e416d523f6c96c4761feb97a448147670b73244c01",
+      "sha256": "8b53c6c1572fca0a32466f177f0760a2daca29dbf1ad0ab5adc37bd77216ea9d",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-status-landscape-1x1.png": {
-      "sha256": "8df8dfa9c25eb07fd9bd98531b0bbea4217c68383408ffba735b798285b36a8a",
+      "sha256": "5e3aa224051544f54b62828b55c3ea0a3d62f6b074d0d7144e87934046aa517e",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-status-landscape-2x1.png": {
-      "sha256": "ed2ea71ac85476305b360f81ef627b604c6707c30b1e8c59fb9705753e65dfd3",
+      "sha256": "c74fa8a1d8413ffc91e89a7cca7a80616894ffd4b6e67c0f5380a4fd6f0a1bee",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-status-landscape-2x2.png": {
-      "sha256": "7c90e9e8a8d4314c7cd607ddadffb471f6c86935de82837f4ac6692007c0e603",
+      "sha256": "9b4bcf632914557cd27b0509ed445a2937871f61b365935e552d0c9c4fea8dd7",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-status-portrait-1x1.png": {
-      "sha256": "fb75fde2fb58f59ec3ab3470d479ddde934f4675c9c7cad09e4ef840163abba1",
+      "sha256": "1b2d9cdb170ebbf2b9980804d2ddbcf54440651d790f16c776deb0887f1bad6c",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-status-portrait-2x1.png": {
-      "sha256": "cae0633f5e22922fd2398387e839c95aad451eb134b2843b513e4b33303c6fd5",
+      "sha256": "5816fc6f9cabc681ac7eded17703708c5ca4a96f6583ebd6adbea423bf5731d2",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-status-portrait-2x2.png": {
-      "sha256": "78c8488bdb6e5a7878a340ddb92150d7a91c4d445e681362986736c9a440f9a8",
+      "sha256": "0182ce333d9f1737b40e230af0f0ed6ac947d787215bd37eaa170cc2db1172fc",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-warning-cylinders-landscape.png": {
-      "sha256": "c7c474e31fbdf4ed0543c2173ed5f8ca6bda15092ae337e1ff85b384f284e67d",
+      "sha256": "1de6a308a3c31ad58f8f7017f48418f0ca4429e7d2439680084d2482f3f1f471",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-warning-cylinders-portrait.png": {
-      "sha256": "ce78503d263986b36c47c6801be4e6727edea9dbfdfe86fd892b2eede3a94ca7",
+      "sha256": "b205a1dbca647ea6ac21fafbc5573e5a57e0e29c261d373d648b8db83fd62bb8",
       "pixels": [
         240,
         320
       ]
     },
     "full/ignition-warning-global-landscape.png": {
-      "sha256": "c2ce3e9535b7cf3cac8847fe78e7e4b12e5340c9da5920140a198484991f41c1",
+      "sha256": "28a7402709676d69eebe7db7a03dddf8a2629f20783d7c6739f3b4e19f99714b",
       "pixels": [
         320,
         240
       ]
     },
     "full/ignition-warning-global-portrait.png": {
-      "sha256": "4a1b3f0181daf593c9400a688efd84d4b58fb291f1fbd2b20d8ce6d538c3aea6",
+      "sha256": "e663aea97ab422f3cc5896794708f74c037b09af0026434da936739cff82bda1",
       "pixels": [
         240,
         320
       ]
     },
     "ignition-combined-landscape-1x1.png": {
-      "sha256": "49851a1ececea5af3a75e163bee17725f47996d81c3e298bf0cb5228486859e4",
+      "sha256": "80f35375b00880b9b0b51a5acd030a8b0022d093c19a4c1a443f05fe512e7a95",
       "pixels": [
         80,
         107
       ]
     },
     "ignition-combined-landscape-2x1.png": {
-      "sha256": "8c48d911570306ce105d11677d88fb4b387efc0d61bd0b041e5725ed74abdbe1",
+      "sha256": "d272b7b8240bf151652760aa81e0a1f6a60d4b10962df99dd411940a95c6c2cc",
       "pixels": [
         160,
         107
       ]
     },
     "ignition-combined-landscape-2x2.png": {
-      "sha256": "20794c10a8a9dced2862a20e82415c6c9f6b46366481346a9af72bd708897c91",
+      "sha256": "e3f8da6957c2ca26571d350ff4ec5b1f53b321da9f3100c2a049f8d2a3c02677",
       "pixels": [
         160,
         214
       ]
     },
     "ignition-combined-portrait-1x1.png": {
-      "sha256": "e49f5401234016afdd2d7dc677f796157548f4c41fa3d4e5b22bd7e412d32b6b",
+      "sha256": "f8ea417286a6a6244fb5accd6cb698d315a07289eb6c4ece55edda6fe4e2bfa2",
       "pixels": [
         120,
         73
       ]
     },
     "ignition-combined-portrait-2x1.png": {
-      "sha256": "166b7fa59c5ed1276d64b982fb97ed39fe50da87449cf84f125c2766213cad49",
+      "sha256": "52b29b7b6b3572df50d7a4d484142b686718234c91374a766d719621430fbe1b",
       "pixels": [
         240,
         73
       ]
     },
     "ignition-combined-portrait-2x2.png": {
-      "sha256": "a864e9e3d83eb7d11553e3eb2d8802a009cd7939d42ced150c6378a8dcb183a8",
+      "sha256": "2da9fdecad3773534d350ac3eb74a635a92599666893baefc78a50d70473e4f2",
       "pixels": [
         240,
         147
       ]
     },
     "ignition-numeric-landscape-1x1.png": {
-      "sha256": "9882ec1273d64deada9d4a8547168eae43b4557cc2480b8355acd7604ec761ff",
+      "sha256": "ec8b4d5414ff6ffc3032e52abda220247817da08fad23ce89ae63552b4aa85ad",
       "pixels": [
         80,
         107
       ]
     },
     "ignition-numeric-landscape-2x1.png": {
-      "sha256": "078b5b8fd2a1e17c2ee1b1e70b5310ba106523aa26042cc870412f19ef2e90a9",
+      "sha256": "b298ce700578aa241500750a9cd55469f3676529a179a4d3a46052e38401449b",
       "pixels": [
         160,
         107
       ]
     },
     "ignition-numeric-landscape-2x2.png": {
-      "sha256": "f9cfe04cea00463269a51b646474d362f8e194247dc739ac8b0974828d1245e0",
+      "sha256": "7a4f6abfcb55ddda99839e142168181f3447b04245165959fe31ca156fa36977",
       "pixels": [
         160,
         214
       ]
     },
     "ignition-numeric-portrait-1x1.png": {
-      "sha256": "4cd6e1dfc08e80b63cbe98708b5fa6297a43226ca9013c4f9c27af5fceddb1d3",
+      "sha256": "bf0c20e773c2c5fc5bdb155ae3e923289c75f6658b29d836f2927baed0f9ae71",
       "pixels": [
         120,
         73
       ]
     },
     "ignition-numeric-portrait-2x1.png": {
-      "sha256": "ec77dfef3b5a620ad01a76cc3c869e130ca0e13b8de0872bd9da2be84c57b7bc",
+      "sha256": "aec3bbc2d47b3779f25be5dfcdff022b117eb50448d28c900aed47ee0651bcb2",
       "pixels": [
         240,
         73
       ]
     },
     "ignition-numeric-portrait-2x2.png": {
-      "sha256": "145e893d3ebbf99f47eda4a15b22629fba5c52e5e647fb722b53322dd787a07f",
+      "sha256": "adb6b97ad6d7a549091f6076e1d2efadfceb587400d18c65b2684ffc0adcaaf9",
       "pixels": [
         240,
         147
       ]
     },
     "ignition-status-landscape-1x1.png": {
-      "sha256": "503a03227f002fa1b802f6eeca0c85073a65b6e0af98370d50f1a09391faa993",
+      "sha256": "ea1544a66fd460c43aa4ff83f8ab0e779122e7ea6c1c205f58e46f212ba51154",
       "pixels": [
         80,
         107
       ]
     },
     "ignition-status-landscape-2x1.png": {
-      "sha256": "335a5fb4d14341d045edd61d4f92a2ee15a0bfa06b60c7e89e698cbf410e5df1",
+      "sha256": "f2ee41ee1561383aa4d0b588870b558a1654ca7e0aa050edc52236016e61b31e",
       "pixels": [
         160,
         107
       ]
     },
     "ignition-status-landscape-2x2.png": {
-      "sha256": "10cc1f0fd7d0a733e544f085f37cef13612278fc8fcbaea6aee9322c38301627",
+      "sha256": "4aaac33b91e685cea8f86818e8a6d371bb2abfe4fc67005e5896e550685e5d9f",
       "pixels": [
         160,
         214
       ]
     },
     "ignition-status-portrait-1x1.png": {
-      "sha256": "8b1bf89ccd3495513890b2d8a1d39fc30f62cd7373b369525e3e8d9afcfa80a0",
+      "sha256": "d1a8f5fae80ecf76f12bd62784e10ba5697eb268c838825d470a3e44250f5178",
       "pixels": [
         120,
         73
       ]
     },
     "ignition-status-portrait-2x1.png": {
-      "sha256": "da9b4d5bb9ec06dd9ca087f867dad69cdbcd8e12ff79e65c0e12ef592c010ffc",
+      "sha256": "cc36ea895c81c8a2967e9bf0d4b4fffca3bc6df74e27e8fc4e57c9469dc2e04e",
       "pixels": [
         240,
         73
       ]
     },
     "ignition-status-portrait-2x2.png": {
-      "sha256": "aff942a9a1c179281a51d7f1716787c55047e88d7d8a730b4962f37b1648018d",
+      "sha256": "986747c57131b2a2404b2d30167f94cf84d87df94501c4f9d12466fa67678188",
       "pixels": [
         240,
         147
       ]
     },
     "ignition-warning-cylinders-landscape.png": {
-      "sha256": "6ac1615ee8ccdce207ae88a874ec1d15daef11869570f1dab7af0d08a7ccaeea",
+      "sha256": "9dc6e1326791b9e6c2f804610caa9dfa91535394a45930e3cc025302c8983689",
       "pixels": [
         160,
         214
       ]
     },
     "ignition-warning-cylinders-portrait.png": {
-      "sha256": "bd3cfa7eacfa08ae865cffe0a5e5f7b5c6dbd05f997b6078994badb24e6353a9",
+      "sha256": "20620440d4408372d78391326a807e9e68af2b245355ae4af4c8f07977f3d9a3",
       "pixels": [
         240,
         147
       ]
     },
     "ignition-warning-global-landscape.png": {
-      "sha256": "cd5e9b86030da2d552a005971e5b54684dc774bf45ef85c29a89344b4039a7bb",
+      "sha256": "9842be5888efbf8fa7b9625d1239006114a3c6c91e9693348f846166ad61dbfc",
       "pixels": [
         160,
         214
       ]
     },
     "ignition-warning-global-portrait.png": {
-      "sha256": "8318a91e2db124609659b68f8d3fe0f4050d378ebf45d8f57560c737866e347a",
+      "sha256": "1af76751d7175b41b9e83f4fc40f4e4279fb0890b92c80dbd9ee9a7acaa9e115",
       "pixels": [
         240,
         147
       ]
     },
     "studio-combined.jpg": {
-      "sha256": "4b42aeb7926ff38b1e1bae9a8cac3d3097b7b96c7dcdd2cf5ab570aabc5f9493",
+      "sha256": "c6580d9d09619b5273b97cc00796c59a994c6b47c96efa9aa2e56cf605f2c25e",
       "pixels": [
         1265,
-        1354
+        1454
       ]
     },
     "studio-cylinder-warning.jpg": {
-      "sha256": "e055b486dc4251fe5f09716eb48936de5859ce7840d31b288c4576eea4130faf",
+      "sha256": "855043d1b7263e0823a7b667ee123be8593b38491f564dd98f3a45e2d2ac087a",
       "pixels": [
         1265,
         712
       ]
     },
     "studio-global-warning.jpg": {
-      "sha256": "11c4362696f62f4a6e773e749d805d27f048747b4bb3469ed1eea2ca7fe5d4cc",
+      "sha256": "5561f0ca965a633226a06d580199cbc256e71a5f19ffdcb98d5ef5bc1e17d599",
       "pixels": [
         1265,
         712
@@ -364,8 +364,15 @@
     "warning_examples": "Global or CylinderLines, C2/C4, default dwell"
   },
   "browser_images": {
-    "studio-combined.jpg": "Landscape 2x2, combined1 decimal, Animated Demo, full page",
+    "studio-combined.jpg": "Landscape 2x1, combined 1 decimal, paused Animated Demo, full page",
     "studio-global-warning.jpg": "Landscape2x2, Channel minima test, one global popup, viewport",
     "studio-cylinder-warning.jpg": "Portrait2x2, Channel minima test, four default-message cylinder lines, viewport"
-  }
+  },
+  "post_capture_doc_only_changes": {
+    "crates/dashboard-core/src/widgets/ignition.rs": {
+      "current_sha256": "680858e2df0873d3647fc27828ccd5834b7419e0cdc100e11c45ae00179d26da",
+      "change": "Clarify draw rustdoc: rejected outer bounds draw nothing; an unsupported small pair may leave prior title/cross ink; FIT! is conditional on fitting. No executable code change."
+    }
+  },
+  "browser_checks": "All three sizes in landscape and portrait, three readouts, global and four cylinder warning lines; no console warnings/errors or horizontal page overflow (1265px viewport). Software only."
 }

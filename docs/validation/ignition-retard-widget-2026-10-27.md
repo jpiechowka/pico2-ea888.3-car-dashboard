@@ -158,3 +158,64 @@ RP2350 cycles or physical FPS. [Benchmark policy](../performance/benchmark-polic
 
 Physical readability, stack high-water, RF/electrical margins, scanout and exact
 vehicle transport/decoder support remain unqualified. No saved slot was touched.
+
+## Compact spacing follow-up
+
+This later presentation-only refinement starts from `86d9558`. The implementation,
+benchmark and eleven-image tables above describe the original widget delivery;
+they are retained as dated evidence, not rerun claims for this refinement.
+
+Each cylinder's heading and value now form one vertically centered block. The
+heading moves down and the value stays close beneath it. The shared renderer
+uses a 2-pixel line gap below 40-pixel quadrant height, otherwise 4 pixels; outer
+padding is at least 1 pixel below 28 pixels, otherwise 2 pixels. Actual selected
+font heights determine placement. Short portrait cells with both warning badges
+retain their previous 6x10 value font. No configuration, acquisition, warning
+state, retained key, buffer or transport contract changes.
+
+Measurement and drawing share the complete-text/`FIT!` font selection helper.
+Checked outer coordinates bound all quadrant offsets; successful font admission
+bounds the pair-height subtraction. A pair that cannot fit emits neither line,
+although its title/cross may already exist. Target failures propagate after any
+earlier pixels. This was traced against locked embedded-graphics 0.8.2 font,
+baseline and clipping implementations, plus the primary
+[MonoFont metrics](https://docs.rs/embedded-graphics/0.8.2/embedded_graphics/mono_font/struct.MonoFont.html)
+and [clipped-target contract](https://docs.rs/embedded-graphics/0.8.2/embedded_graphics/draw_target/trait.DrawTargetExt.html).
+
+Verification for this follow-up:
+
+- The original layout fails the new actual-ink spacing test. Four new tests
+  cover centered/inset pairs across eight native interior sizes and all three
+  title/badge heights, complete independent glyph masks, smallest badged portrait
+  font preservation, inert tiny pairs and failure after heading pixels.
+- Complete core tests and doctests, strict native/all-target and ARM core Clippy,
+  four host ignition tests in both outline modes, and thirteen Studio ignition
+  tests pass. Existing coverage includes all readouts/precisions/mountings,
+  independent quality, extrema, retained redraw and the 288-case fit matrix.
+- Strict native/Wasm/ARM private rustdoc and formatting pass; source coverage is
+  699 Rust files, 22023 items, zero uncovered. Independent Astra source review
+  found no remaining blocker after correcting an initial short-cell font shrink.
+- Actual optimized Studio checks exercise every size in landscape and portrait,
+  all three readouts and global/four-line warnings. No console warning/error or
+  horizontal page overflow was observed. All 47 ignition gallery images and
+  their capture manifest were refreshed; 26 unrelated scalar crops remain
+  pixel-identical. These are synthetic software previews.
+
+Two new linked Cortex-M33 images pass unchanged practical admission with the
+pinned nightly. Both use simple-outline; neither embeds custom startup artwork.
+
+| Follow-up build | Static RAM B | Headroom B | Flash span B |
+| --- | ---: | ---: | ---: |
+| Stock Demo, eight-widget group fixture | 401640 | 122648 | 577416 |
+| 280/70 BLE, both traces, mixed 64 widgets | 458744 | 65544 | 1174560 |
+
+Conservative named stack bounds and both fixed framebuffers are unchanged from
+the corresponding original simple-outline cases. BLE still has only 8 bytes
+above its existing headroom floor. ELF SHA-256 values are
+`bee3b3ef36e92955214ee11a06b482c60797849dd06e5b3f81e863f8696477be`
+and `70bcba45ee4a4663e6cf016bb9af2b2b21a5f57d00fa8c0e8edd94d36427f9cd`.
+Each frozen source archive has 586 input identities. The only subsequent input
+change is the documented rustdoc clarification of partial title/cross drawing;
+source comparison confirms no executable-code delta. Screenshot identities
+record that distinction too. No device operation, timing claim or new physical
+qualification follows from these checks.

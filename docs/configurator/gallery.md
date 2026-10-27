@@ -220,6 +220,9 @@ status and combined case with full-frame counterparts. The smallest portrait
 example still shows status and number together in each quadrant. Full portrait
 frames are 240×320, landscape 320×240. Captions retain the signed input values;
 one decimal rounds −1.25° to the renderer's visible −1.2°.
+The compact-spacing revision centers each heading/value pair together, moving
+cylinder/status headings down and keeping the number close. All three sizes use
+the same layout rule, including short portrait cells with warning badges.
 
 [![Four-cylinder warning in portrait](../images/gallery/ignition/full/ignition-warning-cylinders-portrait.png)](../images/gallery/ignition/full/ignition-warning-cylinders-portrait.png)
 
@@ -235,7 +238,10 @@ record the Wasm, image and selected source hashes. Actual browser checks include
 export/reimport, reload, all modes/spans/mountings, invalid-edit repair, extreme
 text and independent missing/stale/faulted samples. The false scalar-only
 portrait fit advisory was reproduced and corrected before final browser capture.
-All 26 existing scalar gallery crops remain pixel-identical. See the
+The later compact-spacing refresh repeats real size/mode/orientation checks and
+preserves the existing font sizes; complete-glyph and partial-draw-failure tests
+cover its constrained layouts. All 26 existing scalar gallery crops remain
+pixel-identical. See the
 [validation record](../validation/ignition-retard-widget-2026-10-27.md).
 
 ## Capture record

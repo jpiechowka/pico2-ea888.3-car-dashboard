@@ -235,13 +235,20 @@ above 3/4, independent of firing order. Each cell shows a signed correction in
 degrees, **OK/RET**, or both, such as **RET −2.5°** and **OK 0.0°**. All three
 modes support 1×1, 2×1 and 2×2 in landscape or portrait, including mounting flips.
 Precision is configurable from zero to three decimals. The compact combined
-layout places status beside the cylinder label and the number below it.
+layout places status beside the cylinder label and the number below it. Each
+label/value pair sits together in the center of its quadrant, leaving more space
+below the title and less empty space between the label and reading. Small cells
+use tighter spacing while retaining complete values and quality labels.
 
 | Mode | Landscape 1×1 | Portrait 1×1 | Landscape 2×2 |
 |---|---|---|---|
 | Numbers | [![Synthetic ignition numeric 1x1](docs/images/gallery/ignition/ignition-numeric-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-numeric-landscape-1x1.png) | [![Synthetic portrait ignition numbers](docs/images/gallery/ignition/ignition-numeric-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-numeric-portrait-1x1.png) | [![Synthetic ignition numbers 2x2](docs/images/gallery/ignition/ignition-numeric-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-numeric-landscape-2x2.png) |
 | OK / RET | [![Synthetic ignition status 1x1](docs/images/gallery/ignition/ignition-status-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-status-landscape-1x1.png) | [![Synthetic portrait ignition status](docs/images/gallery/ignition/ignition-status-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-status-portrait-1x1.png) | [![Synthetic ignition status 2x2](docs/images/gallery/ignition/ignition-status-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-status-landscape-2x2.png) |
 | Status + number | [![Synthetic combined ignition 1x1](docs/images/gallery/ignition/ignition-combined-landscape-1x1.png)](docs/images/gallery/ignition/full/ignition-combined-landscape-1x1.png) | [![Synthetic portrait combined ignition](docs/images/gallery/ignition/ignition-combined-portrait-1x1.png)](docs/images/gallery/ignition/full/ignition-combined-portrait-1x1.png) | [![Synthetic combined ignition 2x2](docs/images/gallery/ignition/ignition-combined-landscape-2x2.png)](docs/images/gallery/ignition/full/ignition-combined-landscape-2x2.png) |
+
+The wide **2×1** option keeps all four cylinders in the same compact cross:
+
+[![Synthetic combined ignition 2x1](docs/images/gallery/ignition/ignition-combined-landscape-2x1.png)](docs/images/gallery/ignition/full/ignition-combined-landscape-2x1.png)
 
 **RET means a fresh raw value below zero**, even if rounding displays −0.0°.
 OK means no negative correction in that sample; it is not an engine-health claim.
