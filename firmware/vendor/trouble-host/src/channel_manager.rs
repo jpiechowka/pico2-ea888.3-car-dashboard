@@ -26,9 +26,9 @@ use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
-    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
-    L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
-    LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
+    CommandRejectInvalidCidRes, CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq,
+    DisconnectionRes, L2capHeader, L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes,
+    LeCreditConnResultCode, LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{config, BleHostError, Error, PacketPool};
 
@@ -581,7 +581,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 storage.close();
                 return Poll::Ready(Err(Error::L2capConnectError(result).into()));
             }
-            ChannelState::Disconnected | ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
+            ChannelState::Disconnected | ChannelState::Disconnecting(_) | ChannelState::PeerDisconnecting(_) => {
                 return Poll::Ready(Err(Error::Disconnected.into()));
             }
             ChannelState::Connected => {
@@ -788,7 +788,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 L2capSignalCode::DISCONNECTION_RES => {
                     let res = DisconnectionRes::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                    self.handle_disconnect_response(conn, res.scid, res.dcid)
+                    self.handle_disconnect_response(conn, header.identifier, res.scid, res.dcid)
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
                     if manager.role_by_handle(conn) != Some(LeConnRole::Central) {
@@ -910,7 +910,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
-    /// Matches peer `res` by `conn` and `identifier`; returns success after publishing Connected, or peer/validation errors. Failed replies release reserved packets immediately while retaining the caller's slot reference and refusal code. Unknown identifiers close all Connecting slots on that link; successful replies require legal unique peer CID and MTU/MPS. Wakes the create waiter on every matched/fallback completion.
+    /// Matches peer `res` by `conn` and `identifier`; returns success after publishing Connected, or peer/validation errors. Failed matched replies release reserved packets immediately while retaining the caller's slot reference and refusal code. Unknown identifiers return NotFound without changing pending channels or deadlines; successful replies require legal unique peer CID and MTU/MPS. Wakes the create waiter on matched completion.
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
         let mut channels = self.channels.borrow_mut();
         let duplicate_cid = channels
@@ -923,22 +923,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         });
 
         let Some(storage) = matched else {
-            // No channel matched this identifier. Clean up any Connecting channels
-            // on this connection — the peer has sent a response (with a wrong identifier),
-            // so the connection attempt has effectively failed.
-            for storage in channels.iter_mut() {
-                if let ChannelState::Connecting(_) = storage.state {
-                    if Some(conn) == storage.conn {
-                        debug!(
-                            "[l2cap][handle_connect_response][link = {}] cleaning up channel with mismatched identifier {}",
-                            conn.raw(),
-                            identifier
-                        );
-                        storage.close();
-                    }
-                }
-            }
-            self.state.borrow_mut().create_waker.wake();
+            // Core Vol 3 Part A section 4: invalid response identifiers are
+            // discarded. They cannot terminate or refresh another transaction.
             return Err(Error::NotFound);
         };
 
@@ -1009,7 +995,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
-    /// Handles peer close of local `cid`/`peer_cid` on `conn`; stores `identifier` for the deferred response and wakes the runner. Returns Ok or an outbound rejection error through `manager` if the channel tuple is unknown.
+    /// Handles peer close of local `cid`/`peer_cid` on `conn`; stores `identifier` for the first deferred response and wakes the runner. Repeated valid requests queue a response without replacing that pending identity. A known local endpoint with wrong peer CID is silently ignored. Unknown local endpoints return a reason-2 rejection containing both CIDs through `manager`; outbound errors propagate without changing pending closure.
     fn handle_disconnect_request(
         &self,
         conn: ConnHandle,
@@ -1020,10 +1006,28 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     ) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
             if cid == storage.cid
-                && storage.peer_cid == peer_cid
                 && storage.conn == Some(conn)
-                && matches!(storage.state, ChannelState::Connected | ChannelState::Disconnecting)
+                && matches!(
+                    storage.state,
+                    ChannelState::Connected | ChannelState::Disconnecting(_) | ChannelState::PeerDisconnecting(_)
+                )
             {
+                // Core Vol 3 Part A section 4.6 distinguishes an unknown local
+                // endpoint from an incorrect remote endpoint of a known channel.
+                if storage.peer_cid != peer_cid {
+                    return Ok(());
+                }
+                if matches!(storage.state, ChannelState::PeerDisconnecting(_)) {
+                    return Self::try_send_signal(
+                        conn,
+                        identifier,
+                        &DisconnectionRes {
+                            dcid: cid,
+                            scid: peer_cid,
+                        },
+                        manager,
+                    );
+                }
                 storage.disconnect();
                 storage.state = ChannelState::PeerDisconnecting(identifier);
                 let _ = storage.inbound.close();
@@ -1035,13 +1039,29 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             "[l2cap][conn = {:?}, cid = {}] disconnect request for unknown channel",
             conn, cid
         );
-        Self::try_send_signal(conn, identifier, &CommandRejectRes { reason: 2 }, manager)
+        Self::try_send_signal(
+            conn,
+            identifier,
+            &CommandRejectInvalidCidRes {
+                reason: 2,
+                local_cid: cid,
+                remote_cid: peer_cid,
+            },
+            manager,
+        )
     }
 
-    /// Closes the matching Disconnecting local `cid`/`peer_cid` on `conn` and releases its packets; returns Ok even if no slot matches.
-    fn handle_disconnect_response(&self, conn: ConnHandle, cid: u16, peer_cid: u16) -> Result<(), Error> {
+    /// Closes the local `cid`/`peer_cid` on `conn` only when nonzero `identifier` matches its assigned local disconnect request. Unmatched responses return Ok without mutation.
+    fn handle_disconnect_response(
+        &self,
+        conn: ConnHandle,
+        identifier: u8,
+        cid: u16,
+        peer_cid: u16,
+    ) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
-            if storage.state == ChannelState::Disconnecting
+            if identifier != 0
+                && storage.state == ChannelState::Disconnecting(identifier)
                 && cid == storage.cid
                 && storage.peer_cid == peer_cid
                 && storage.conn == Some(conn)
@@ -1377,7 +1397,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
         for (idx, storage) in self.channels.borrow_mut().iter_mut().enumerate() {
             match storage.state {
-                ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
+                ChannelState::Disconnecting(_) | ChannelState::PeerDisconnecting(_) => {
                     storage.inc_ref();
                     return Poll::Ready(DisconnectRequest {
                         index: ChannelIndex(idx as u8),
@@ -1457,11 +1477,14 @@ impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
         self.handle
     }
 
-    /// Submits the current slot close request/response through originating `host`; returns transport result, or Ok if state no longer needs signaling. Panics if the captured link identity changed. Cancellation leaves the request pending; partial wire effects remain possible.
+    /// Submits the current slot close request/response through originating `host`; returns transport result, or Ok if state no longer needs signaling. Assigns a local request identifier before I/O and retains it on cancellation/retry; assignment does not prove submission. Panics if the captured link identity changed. Cancellation leaves the request pending; partial wire effects remain possible.
     pub async fn send<T: Controller>(&self, host: &BleHost<'_, T, P>) -> Result<(), BleHostError<T::Error>> {
         let (state, conn, our_cid, peer_cid) = {
-            let state = self.channels.borrow();
-            let chan = &state[self.index.0 as usize];
+            let mut channels = self.channels.borrow_mut();
+            let chan = &mut channels[self.index.0 as usize];
+            if chan.state == ChannelState::Disconnecting(0) {
+                chan.state = ChannelState::Disconnecting(self.state.borrow_mut().next_request_id());
+            }
             (chan.state.clone(), chan.conn, chan.cid, chan.peer_cid)
         };
 
@@ -1480,8 +1503,7 @@ impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
                 )
                 .await?;
             }
-            ChannelState::Disconnecting => {
-                let identifier = self.state.borrow_mut().next_request_id();
+            ChannelState::Disconnecting(identifier) => {
                 assert_eq!(Some(self.handle), conn);
                 host.l2cap_signal(
                     self.handle,
@@ -1770,7 +1792,7 @@ impl<P> ChannelStorage<P> {
     /// Transitions Connected to Disconnecting, releases owned packets, wakes send/receive and resets metrics. Other states are unchanged; caller wakes the runner. No peer acknowledgment is implied.
     fn disconnect(&mut self) {
         if self.state == ChannelState::Connected {
-            self.state = ChannelState::Disconnecting;
+            self.state = ChannelState::Disconnecting(0);
             self.credit_waker.wake();
             self.receive_waker.wake();
             self.receive_packet = None;
@@ -1836,7 +1858,10 @@ pub enum ChannelState {
         u8,
     ),
     /// Local close requested; runner must submit disconnect signaling.
-    Disconnecting,
+    Disconnecting(
+        /// Assigned nonzero request identifier retained across send cancellation; zero means not yet assigned.
+        u8,
+    ),
 }
 
 /// Requested receive-credit batching policy. The bounded implementation uses one backed outstanding credit and overrides batching when a waiting receiver exhausts it, including zero thresholds.

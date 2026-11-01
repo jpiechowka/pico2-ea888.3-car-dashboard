@@ -217,6 +217,51 @@ fn connection_error_exports_raw_domain_code_without_inventing_channel_or_reply()
     assert!(text_report(&value).contains("ngm_identity.fault.transport.raw_code_u16: 4660"));
 }
 
+/// A database-invalidated first vendor read survives capture admission and JSON export without transport claims.
+#[test]
+fn database_out_of_sync_retains_failed_vendor_read_in_capture_export() {
+    let mut p = probe();
+    vendor_reads(&mut p);
+    let evidence = p.inspection.identity.as_mut().unwrap();
+    let value = evidence.vendor_values[0].as_mut().unwrap();
+    value.result = ReadResult::Error;
+    value.failure = Some(FailureReason::Att(0x12));
+    value.value = Payload::empty();
+    evidence.vendor_values[1..].fill(None);
+    update(
+        &mut p,
+        Update::Stage {
+            stage: Stage::Closing,
+            at_ms: 25,
+            fault: Some(Fault {
+                stage: Stage::TransportParameters,
+                reason: Reason::Transport(TransportFault {
+                    domain: TransportDomain::Att,
+                    code: Some(0x12),
+                    partial_send: false,
+                }),
+                at_ms: 25,
+            }),
+        },
+    );
+    end(&mut p);
+    let value = decode_json(&encode(&p)).unwrap();
+    let identity = &value["ngm_identity"];
+    assert_eq!(identity["fault"]["transport"]["domain"], "Att");
+    assert_eq!(identity["fault"]["transport"]["raw_code_u16"], 0x12);
+    assert_eq!(identity["vendor_reads"][0]["read"]["result"], "Error");
+    assert_eq!(identity["vendor_reads"][0]["read"]["failure"]["raw_code"], 0x12);
+    assert_eq!(identity["vendor_reads"][0]["read"]["raw_hex"], "");
+    for index in 1..4 {
+        assert!(identity["vendor_reads"][index]["read"].is_null());
+    }
+    assert_eq!(identity["cleanup"], "Clean");
+    assert_eq!(identity["successful"], false);
+    assert_eq!(identity["request"]["submitted"], false);
+    assert!(identity["channel"].is_null());
+    assert!(identity["reply"]["derived_fields"].is_null());
+}
+
 /// Raw partial/malformed replies and protected vendor reads stay inspectable without parsed success.
 #[test]
 fn partial_and_negative_replies_preserve_raw_failures() {

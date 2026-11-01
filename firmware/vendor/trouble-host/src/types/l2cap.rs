@@ -331,11 +331,10 @@ impl L2capSignal for LeCreditFlowInd {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-/// Minimal command-rejection response; optional reason-specific data is not represented.
+/// Command-rejection prefix; outbound reason zero is complete without reason-specific data.
 pub struct CommandRejectRes {
-    /// Command reject reason; zero means unsupported command.
+    /// Received reason or outbound zero; nonzero outbound reasons require their own payload type.
     pub reason: u16,
-    // TODO: Optional fields pub data: u16,
 }
 
 unsafe impl FixedSizeValue for CommandRejectRes {
@@ -347,6 +346,33 @@ unsafe impl FixedSizeValue for CommandRejectRes {
 
 impl L2capSignal for CommandRejectRes {
     /// Returns the signal discriminator paired with this record layout.
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::COMMAND_REJECT_RES
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+/// Invalid-CID rejection including the mandatory endpoints from Core Vol 3 Part A section 4.1.
+pub struct CommandRejectInvalidCidRes {
+    /// Invalid-CID reason, always 0x0002 when sent.
+    pub reason: u16,
+    /// Rejected request's destination CID, local to this response sender.
+    pub local_cid: u16,
+    /// Rejected request's source CID, remote to this response sender.
+    pub remote_cid: u16,
+}
+
+unsafe impl FixedSizeValue for CommandRejectInvalidCidRes {
+    /// Returns true for any `data` bit pattern; the decoder checks this six-byte record's extent.
+    fn is_valid(data: &[u8]) -> bool {
+        true
+    }
+}
+
+impl L2capSignal for CommandRejectInvalidCidRes {
+    /// Returns the command-rejection discriminator for this reason-specific payload.
     fn code() -> L2capSignalCode {
         L2capSignalCode::COMMAND_REJECT_RES
     }

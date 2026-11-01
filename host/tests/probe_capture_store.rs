@@ -443,6 +443,60 @@ fn every_storage_failure_or_torn_mutation_keeps_a_committed_generation() {
     });
 }
 
+/// Every first-save cut leaves only erased, reset-required or fully committed evidence, preserving other slots.
+#[test]
+fn first_save_failure_never_admits_partial_payload_or_silently_repairs_a_torn_copy() {
+    block_on(async {
+        let mut initial = Flash::new();
+        for slot in [0, 2, 3] {
+            save_slot(&mut initial, slot, &[slot + 1; 300]).await.unwrap();
+        }
+        initial.calls = 0;
+        let payload = vec![0x5A; 777];
+        let mut completed = initial.clone();
+        save_slot(&mut completed, 1, &payload).await.unwrap();
+        let mut outcomes = [false; 3];
+        for cut in 0..completed.calls {
+            for tear in [0, 1, 127, 255, 256, 4095, 4096] {
+                let mut flash = initial.clone();
+                flash.fail_at = Some(cut);
+                flash.tear = tear;
+                assert!(
+                    save_slot(&mut flash, 1, &payload).await.is_err(),
+                    "cut {cut}, tear {tear}"
+                );
+                flash.fail_at = None;
+                assert_eq!(&flash.bytes[..SLOT_BYTES], &initial.bytes[..SLOT_BYTES]);
+                assert_eq!(&flash.bytes[2 * SLOT_BYTES..], &initial.bytes[2 * SLOT_BYTES..]);
+                let mut recovered = [0; 1024];
+                match load_slot(&mut flash, 1, &mut recovered).await {
+                    Ok(meta) => {
+                        outcomes[2] = true;
+                        assert_eq!((meta.slot, meta.copy, meta.generation), (1, 0, 1));
+                        assert_eq!(&recovered[..meta.length as usize], &payload);
+                    }
+                    Err(Error::Empty) => {
+                        outcomes[0] = true;
+                        assert_eq!(inspect_slot(&mut flash, 1).await.unwrap().copies, [CopyState::Empty; 2]);
+                    }
+                    Err(Error::Corrupt) => {
+                        outcomes[1] = true;
+                        let before = flash.bytes.clone();
+                        let writes = flash.writes;
+                        assert_eq!(save_slot(&mut flash, 1, &payload).await, Err(Error::Corrupt));
+                        assert_eq!(flash.writes, writes, "ordinary retry must not repair torn first save");
+                        assert_eq!(flash.bytes, before);
+                        reset_slot(&mut flash, 1).await.unwrap();
+                        assert_eq!(save_slot(&mut flash, 1, &payload).await.unwrap().generation, 1);
+                    }
+                    other => panic!("unexpected first-save outcome at cut {cut}, tear {tear}: {other:?}"),
+                }
+            }
+        }
+        assert_eq!(outcomes, [true; 3], "exercise empty, torn and committed outcomes");
+    });
+}
+
 /// Invalid slots/lengths and short destinations issue no writes; the exact maximum payload round-trips.
 #[test]
 fn rejects_invalid_slots_lengths_and_short_destination_without_writes() {

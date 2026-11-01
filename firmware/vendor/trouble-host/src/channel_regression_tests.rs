@@ -132,7 +132,7 @@ fn truncated_first_dynamic_frame_is_rejected_without_panicking() {
                 .unwrap();
             let packet = DefaultPacketPool::allocate().unwrap();
             assert!(host.channels().dispatch(conn, BASE_ID, Pdu::new(packet, len)).is_err());
-            assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
+            assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(0));
         });
     }
 }
@@ -248,12 +248,17 @@ fn foreign_link_data_cannot_consume_credits_or_disconnect_channel() {
         host.channels().received(conn, BASE_ID, 1).unwrap();
         assert_eq!(host.channels().channel(index).flow_control.available(), 1);
         host.channels().disconnect_by_cid(conn, BASE_ID);
+        host.channels().channels.borrow_mut()[index.0 as usize].state = ChannelState::Disconnecting(1);
         host.channels()
-            .handle_disconnect_response(other, BASE_ID, 0x41)
+            .handle_disconnect_response(other, 1, BASE_ID, 0x41)
             .unwrap();
-        host.channels().handle_disconnect_response(conn, BASE_ID, 0x42).unwrap();
-        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
-        host.channels().handle_disconnect_response(conn, BASE_ID, 0x41).unwrap();
+        host.channels()
+            .handle_disconnect_response(conn, 1, BASE_ID, 0x42)
+            .unwrap();
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(1));
+        host.channels()
+            .handle_disconnect_response(conn, 1, BASE_ID, 0x41)
+            .unwrap();
         assert_eq!(host.channels().channel(index).state, ChannelState::Disconnected);
     });
 }
@@ -301,6 +306,405 @@ fn incoming_credit_request_rejects_bad_parameters_without_allocating() {
 }
 
 #[test]
+/// Unknown local disconnect endpoints return reason 2 with both disputed CIDs and the request identifier.
+fn disconnect_unknown_local_cid_returns_complete_rejection() {
+    with_link(|_, host, conn| {
+        // Vol 3 Part A sections 4.1/4.6: DCID is local to the rejection sender.
+        host.channels()
+            .signal(conn, &[6, 7, 4, 0, 0x72, 0, 0x53, 0], host.connections())
+            .unwrap();
+        let Poll::Ready((_, reply)) = pin!(host.connections().outbound())
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("invalid local CID must produce a rejection")
+        };
+        assert_eq!(reply.as_ref(), &[10, 0, 5, 0, 1, 7, 6, 0, 2, 0, 0x72, 0, 0x53, 0]);
+    });
+}
+
+#[test]
+/// A known local endpoint with the wrong remote endpoint neither closes the channel nor sends a rejection.
+fn disconnect_wrong_remote_cid_is_silently_discarded() {
+    for initial in [
+        ChannelState::Connected,
+        ChannelState::Disconnecting(0),
+        ChannelState::Disconnecting(9),
+        ChannelState::PeerDisconnecting(7),
+    ] {
+        with_link(|_, host, conn| {
+            let index = host
+                .channels()
+                .alloc(conn, Some(0x53), |storage| {
+                    storage.state = initial.clone();
+                })
+                .unwrap();
+            host.channels()
+                .signal(conn, &[6, 7, 4, 0, 0x40, 0, 0x54, 0], host.connections())
+                .unwrap();
+            assert_eq!(host.channels().channel(index).state, initial);
+            assert!(pin!(host.connections().outbound())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending());
+        });
+    }
+}
+
+#[test]
+/// A CID allocated on another live ACL link is unknown on the requester's link.
+fn disconnect_foreign_link_cid_returns_rejection_without_mutating_owner() {
+    with_link(|_, host, conn| {
+        let other = ConnHandle::new(2);
+        host.connections()
+            .connect(
+                other,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([1; 6])),
+                LeConnRole::Central,
+                ConnParams::new(),
+            )
+            .unwrap();
+        let Poll::Ready(owner) = host.connections().poll_accept(LeConnRole::Central, &[], None) else {
+            panic!()
+        };
+        let index = host
+            .channels()
+            .alloc(other, Some(0x53), |storage| {
+                storage.state = ChannelState::Connected;
+            })
+            .unwrap();
+        host.channels()
+            .signal(conn, &[6, 9, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+            .unwrap();
+        assert_eq!(host.channels().channel(index).state, ChannelState::Connected);
+        let Poll::Ready((_, reply)) = pin!(host.connections().outbound())
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!()
+        };
+        assert_eq!(reply.as_ref(), &[10, 0, 5, 0, 1, 9, 6, 0, 2, 0, 0x40, 0, 0x53, 0]);
+        host.connections()
+            .disconnected(other, bt_hci::param::Status::SUCCESS)
+            .unwrap();
+        drop(owner);
+    });
+}
+
+#[test]
+/// Matching endpoints admit peer closure from both live and locally-closing states without queuing a rejection.
+fn disconnect_matching_tuple_preserves_peer_close_response() {
+    for initial in [
+        ChannelState::Connected,
+        ChannelState::Disconnecting(0),
+        ChannelState::Disconnecting(9),
+    ] {
+        with_link(|_, host, conn| {
+            let index = host
+                .channels()
+                .alloc(conn, Some(0x53), |storage| {
+                    storage.state = initial.clone();
+                })
+                .unwrap();
+            host.channels()
+                .signal(conn, &[6, 9, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+                .unwrap();
+            assert_eq!(host.channels().channel(index).state, ChannelState::PeerDisconnecting(9));
+            assert!(pin!(host.connections().outbound())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending());
+        });
+    }
+}
+
+#[test]
+/// A repeated valid close receives a close response while the first deferred response retains its identifier.
+fn duplicate_disconnect_preserves_pending_response_and_replies() {
+    for identifier in [7, 8] {
+        with_link(|_, host, conn| {
+            let index = host
+                .channels()
+                .alloc(conn, Some(0x53), |storage| {
+                    storage.state = ChannelState::Connected;
+                })
+                .unwrap();
+            host.channels()
+                .signal(conn, &[6, 7, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+                .unwrap();
+            let Poll::Ready(pending) = host.channels().poll_disconnecting(None) else {
+                panic!()
+            };
+            host.channels()
+                .signal(conn, &[6, identifier, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+                .unwrap();
+            let Poll::Ready((_, reply)) = pin!(host.connections().outbound())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!()
+            };
+            assert_eq!(reply.as_ref(), &[8, 0, 5, 0, 7, identifier, 4, 0, 0x40, 0, 0x53, 0]);
+            assert_eq!(host.channels().channel(index).state, ChannelState::PeerDisconnecting(7));
+            assert_eq!(host.channels().channel(index).refcount, 1);
+            pending.confirm();
+            assert_eq!(host.channels().channel(index).state, ChannelState::Disconnected);
+            assert_eq!(host.channels().channel(index).refcount, 0);
+        });
+    }
+}
+
+#[test]
+/// Unsolicited response identifiers leave all pending creates intact until their own matching response.
+fn unmatched_connect_response_preserves_pending_channels() {
+    with_link(|_, host, conn| {
+        let first = host
+            .channels()
+            .alloc(conn, None, |storage| {
+                storage.state = ChannelState::Connecting(1);
+                storage.receive_packet = Some(DefaultPacketPool::allocate().unwrap());
+            })
+            .unwrap();
+        let second = host
+            .channels()
+            .alloc(conn, None, |storage| {
+                storage.state = ChannelState::Connecting(2);
+            })
+            .unwrap();
+        for identifier in [0, 9] {
+            host.channels()
+                .signal(
+                    conn,
+                    &[0x15, identifier, 10, 0, 0x53, 0, 64, 0, 23, 0, 1, 0, 0, 0],
+                    host.connections(),
+                )
+                .unwrap();
+            assert_eq!(host.channels().channel(first).state, ChannelState::Connecting(1));
+            assert!(host.channels().channel(first).receive_packet.is_some());
+            assert_eq!(host.channels().channel(second).state, ChannelState::Connecting(2));
+        }
+        host.channels()
+            .signal(
+                ConnHandle::new(2),
+                &[0x15, 1, 10, 0, 0x53, 0, 64, 0, 23, 0, 1, 0, 0, 0],
+                host.connections(),
+            )
+            .unwrap();
+        assert_eq!(host.channels().channel(first).state, ChannelState::Connecting(1));
+        host.channels()
+            .signal(
+                conn,
+                &[0x15, 1, 10, 0, 0x53, 0, 64, 0, 23, 0, 1, 0, 0, 0],
+                host.connections(),
+            )
+            .unwrap();
+        assert_eq!(host.channels().channel(first).state, ChannelState::Connected);
+        assert_eq!(host.channels().channel(second).state, ChannelState::Connecting(2));
+    });
+}
+
+#[test]
+/// A response cannot complete a local close before its deferred request has an assigned identifier.
+fn unsolicited_disconnect_response_does_not_complete_unsent_close() {
+    with_link(|_, host, conn| {
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x53), |s| s.state = ChannelState::Connected)
+            .unwrap();
+        host.channels().disconnect(index);
+        let before = host.channels().channel(index).state.clone();
+        host.channels()
+            .signal(conn, &[7, 9, 4, 0, 0x53, 0, 0x40, 0], host.connections())
+            .unwrap();
+        assert_eq!(host.channels().channel(index).state, before);
+        assert!(host.channels().poll_disconnecting(None).is_ready());
+    });
+}
+
+#[test]
+/// Unestablished endpoints cannot be closed by unsolicited disconnect signaling; pending handshakes and their packet reservations survive.
+fn disconnect_signaling_preserves_unestablished_endpoints() {
+    for initial in [ChannelState::Connecting(3), ChannelState::PeerConnecting(3)] {
+        with_link(|_, host, conn| {
+            let index = host
+                .channels()
+                .alloc(conn, Some(0x53), |s| {
+                    s.state = initial.clone();
+                    s.receive_packet = Some(DefaultPacketPool::allocate().unwrap());
+                })
+                .unwrap();
+            host.channels()
+                .signal(conn, &[7, 3, 4, 0, 0x53, 0, 0x40, 0], host.connections())
+                .unwrap();
+            host.channels()
+                .signal(conn, &[6, 7, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+                .unwrap();
+            assert_eq!(host.channels().channel(index).state, initial);
+            assert!(host.channels().channel(index).receive_packet.is_some());
+            let Poll::Ready((_, reply)) = pin!(host.connections().outbound())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!()
+            };
+            assert_eq!(reply.as_ref(), &[10, 0, 5, 0, 1, 7, 6, 0, 2, 0, 0x40, 0, 0x53, 0]);
+        });
+    }
+}
+
+#[test]
+/// Local close responses require the assigned identifier, link and both endpoints; canceled sends retain that identifier and the runner reference.
+fn disconnect_response_matches_assigned_identifier_and_tuple() {
+    with_link(|_, host, conn| {
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x53), |s| s.state = ChannelState::Connected)
+            .unwrap();
+        host.channels().disconnect(index);
+        let Poll::Ready(pending) = host.channels().poll_disconnecting(None) else {
+            panic!()
+        };
+        for _ in 0..2 {
+            let mut send = pin!(pending.send(&host));
+            assert!(send.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+            assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(1));
+            assert_eq!(host.channels().channel(index).refcount, 1);
+        }
+        host.channels().disconnect(index);
+        for (link, id, dcid, scid) in [
+            (conn, 0, 0x53, 0x40),
+            (conn, 9, 0x53, 0x40),
+            (ConnHandle::new(2), 1, 0x53, 0x40),
+            (conn, 1, 0x54, 0x40),
+            (conn, 1, 0x53, 0x41),
+        ] {
+            host.channels()
+                .signal(link, &[7, id, 4, 0, dcid, 0, scid, 0], host.connections())
+                .unwrap();
+            assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(1));
+            assert_eq!(host.channels().channel(index).refcount, 1);
+        }
+        host.channels()
+            .signal(conn, &[7, 1, 4, 0, 0x53, 0, 0x40, 0], host.connections())
+            .unwrap();
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnected);
+        assert_eq!(host.channels().channel(index).refcount, 1);
+        pending.confirm();
+        assert_eq!(host.channels().channel(index).refcount, 0);
+    });
+}
+
+#[test]
+/// Queue exhaustion while replying to a duplicate close preserves the first deferred response and eventual local cleanup.
+fn duplicate_disconnect_full_queue_preserves_pending_close() {
+    /// One extra packet beyond outbound capacity isolates queue exhaustion from pool exhaustion.
+    struct QueuePool;
+    /// Number of live packet owners, used only by this test's pool.
+    static USED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    /// Owned zeroed signal bytes with one allocation count released on drop.
+    struct QueuePacket(
+        /// Fixed initialized signal storage owned until this packet is dropped.
+        [u8; 64],
+    );
+    impl crate::Packet for QueuePacket {}
+    impl AsRef<[u8]> for QueuePacket {
+        /// Returns a shared borrow of this packet's initialized bytes.
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+    impl AsMut<[u8]> for QueuePacket {
+        /// Returns an exclusive borrow of this packet's initialized bytes.
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+    impl Drop for QueuePacket {
+        /// Releases the sole count after byte borrows have ended.
+        fn drop(&mut self) {
+            USED.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    impl PacketPool for QueuePool {
+        /// Affine owned bytes whose drop releases this fixture's allocation count.
+        type Packet = QueuePacket;
+        /// Each packet holds 64 initialized bytes, enough for the tested signaling records.
+        const MTU: usize = 64;
+        /// Returns one more packet than the outbound queue can hold.
+        fn capacity() -> usize {
+            config::L2CAP_TX_QUEUE_SIZE + 1
+        }
+        /// Returns initialized owned bytes, or None at the fixed test capacity.
+        fn allocate() -> Option<Self::Packet> {
+            USED.try_update(
+                core::sync::atomic::Ordering::SeqCst,
+                core::sync::atomic::Ordering::SeqCst,
+                |n| (n < Self::capacity()).then_some(n + 1),
+            )
+            .ok()?;
+            Some(QueuePacket([0; 64]))
+        }
+    }
+    {
+        let mut resources = HostResources::<QueuePool, 2, 2>::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let host = stack.host();
+        let conn = ConnHandle::new(1);
+        host.connections()
+            .connect(conn, Address::random([0; 6]), LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let Poll::Ready(connection) = host.connections().poll_accept(LeConnRole::Central, &[], None) else {
+            panic!()
+        };
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x53), |s| s.state = ChannelState::Connected)
+            .unwrap();
+        host.channels()
+            .signal(conn, &[6, 7, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+            .unwrap();
+        let Poll::Ready(pending) = host.channels().poll_disconnecting(None) else {
+            panic!()
+        };
+        let mut queued = 0;
+        loop {
+            let packet = QueuePool::allocate().expect("outbound queue must fill before pool");
+            if host.connections().try_outbound(conn, Pdu::new(packet, 0)).is_err() {
+                break;
+            }
+            queued += 1;
+        }
+        assert_eq!(queued, config::L2CAP_TX_QUEUE_SIZE);
+        host.channels()
+            .signal(conn, &[6, 8, 4, 0, 0x40, 0, 0x53, 0], host.connections())
+            .unwrap();
+        assert_eq!(host.channels().channel(index).state, ChannelState::PeerDisconnecting(7));
+        assert_eq!(host.channels().channel(index).refcount, 1);
+        for _ in 0..queued {
+            let Poll::Ready((_, pdu)) = pin!(host.connections().outbound())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!()
+            };
+            assert!(pdu.as_ref().is_empty());
+        }
+        assert!(pin!(host.connections().outbound())
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        pending.confirm();
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnected);
+        assert_eq!(host.channels().channel(index).refcount, 0);
+        host.connections()
+            .disconnected(conn, bt_hci::param::Status::SUCCESS)
+            .unwrap();
+        drop(connection);
+    }
+    assert_eq!(USED.load(core::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[test]
 /// A pending incoming token exposes negotiated peer MTU before acceptance.
 fn pending_connection_reports_peer_mtu_before_acceptance() {
     with_link(|_, host, conn| {
@@ -345,7 +749,7 @@ fn first_dynamic_fragment_cannot_exceed_declared_sdu() {
             assert_eq!(result.is_ok(), accepted, "declared={declared}, supplied={supplied}");
             if !accepted {
                 let channel = host.channels().channel(index);
-                assert_eq!(channel.state, ChannelState::Disconnecting);
+                assert_eq!(channel.state, ChannelState::Disconnecting(0));
                 assert!(!channel.reassembly.in_progress());
             }
         });
@@ -593,9 +997,9 @@ fn reserved_credit_rejects_overflow_before_cancellation() {
             ),
             Err(Error::InvalidValue)
         );
-        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(0));
         drop(grant);
-        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting);
+        assert_eq!(host.channels().channel(index).state, ChannelState::Disconnecting(0));
         assert!(host.channels().poll_disconnecting(None).is_ready());
     });
 }

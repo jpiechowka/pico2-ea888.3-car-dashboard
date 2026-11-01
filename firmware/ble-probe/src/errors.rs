@@ -43,11 +43,14 @@ pub fn failure_reason<E>(error: BleHostError<E>) -> FailureReason {
         }
     }
 }
-/// Protected DIS values remain evidence; inspection never escalates security.
-/// Returns Protected for authentication/encryption/key-size/authorization `code`,
-/// otherwise Unavailable. Callers retain the original ATT code separately.
+/// Classifies read `code` without retry or security escalation; callers retain its raw value.
+/// Returns Error for database invalidation so no later cached handle is used,
+/// Protected for authentication/encryption/key-size/authorization, otherwise Unavailable.
+/// Database invalidation follows [GATT 2.5.2](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html).
 pub fn device_info_att_result(code: AttErrorCode) -> ReadResult {
-    if matches!(
+    if code == AttErrorCode::DATABASE_OUT_OF_SYNC {
+        ReadResult::Error
+    } else if matches!(
         code,
         AttErrorCode::INSUFFICIENT_AUTHENTICATION
             | AttErrorCode::INSUFFICIENT_ENCRYPTION

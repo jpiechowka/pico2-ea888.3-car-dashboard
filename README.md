@@ -361,11 +361,15 @@ The standard `ble-probe` image retains its standard-read-only policy. A separate
 [`ngm-identity` image](docs/vehicle/ngm-identity.md) adds an explicit selected-peer
 INFO trial: fresh vendor reads, one configured SPSM 129 channel and only the
 four-byte `1F110000` application request. It has no ECU requests, pairing or
-automatic retry. Both utilities passed offline image admission at stock and
-280/70 clocks on 27 October 2026, including the reserved capture region. The
-dashboard's shared BLE path also passed its practical image gate. See the
-[validation record](docs/validation/ngm-identity-2026-10-24.md); physical NGM
-interoperability has not been validated.
+automatic retry. The [1 November pre-flash audit](docs/validation/ngm-identity-audit-2026-11-01.md)
+traces the complete operation through two senior engineer reviews, checks primary
+specifications and corrects stale-handle handling plus four shared Bluetooth
+signaling defects. It records exact current checks and image admission separately
+from the [earlier implementation receipts](docs/validation/ngm-identity-2026-10-24.md).
+Both utilities passed fresh stock and 280/70 ELF/UF2 checks; the BLE dashboard
+passed its practical ELF gate. Physical NGM interoperability has not been validated.
+SPSM 129 remains a configured
+research candidate, not a value discovered from the adapter.
 
 Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
 lists nearby connectable BLE advertisements and offers **manual GATT inspection

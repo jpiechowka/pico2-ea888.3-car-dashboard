@@ -697,6 +697,40 @@ fn all_protected_att_codes_and_unavailable_reads_continue_without_security_reque
         assert!(complete(&events, InventoryStage::Reads));
     }
 }
+/// Database invalidation retains the failed read and stops before another discovered handle can be used.
+#[test]
+fn database_out_of_sync_stops_inventory_with_original_read_evidence() {
+    let mut fixture = Fixture::default();
+    fixture.service(1, 7, 0x180A);
+    fixture.characteristic(2, 0x2A29, true);
+    fixture.characteristic(5, 0x2A24, true);
+    fixture.values = vec![(3, Err(FailureReason::Att(0x12))), (6, Ok(vec![1, 2, 3]))];
+    let (result, events) = run(&fixture);
+    let failure = result.unwrap_err();
+    assert_eq!(failure.stage, dashboard_core::discovery::FailureStage::DeviceInfo);
+    assert_eq!(failure.reason, FailureReason::Att(0x12));
+    assert_eq!(failure.range, Some((3, 3)));
+    assert!(!fixture.calls.borrow().contains(&Request::Read(6)));
+    assert!(!complete(&events, InventoryStage::Reads));
+    let values: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            match event {
+                Event::Item {
+                    item: InspectionItem::Value(value),
+                    ..
+                } => Some(value),
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0].handle, 3);
+    assert_eq!(values[0].result, dashboard_core::discovery::ReadResult::Error);
+    assert_eq!(values[0].failure, Some(FailureReason::Att(0x12)));
+    assert!(values[0].value.as_slice().is_empty());
+}
+
 /// Hardware failure preserves its code/read handle and prevents the next permitted read and completion marker.
 #[test]
 fn transport_failure_records_failed_read_and_stops_before_next_request() {

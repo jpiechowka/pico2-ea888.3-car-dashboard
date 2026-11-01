@@ -5,10 +5,12 @@ display, controls, diagnostics, four capture slots and USB exporter. It performs
 one explicitly selected adapter identity trial and preserves enough raw evidence
 for later offline analysis. It does not provide dashboard vehicle measurements.
 
-**Status, 2026-10-27:** offline implementation, regressions, source provenance and
-linked ELF/UF2 admission passed for both utilities at stock and 280/70 clocks.
-The dashboard's shared BLE path also passed its practical image gate. Exact
-artifact identities and limits are in the [validation record](../validation/ngm-identity-2026-10-24.md).
+**Status, 2026-11-01:** the [pre-flash audit](../validation/ngm-identity-audit-2026-11-01.md)
+traces startup, both cores, radio, INFO, cleanup, persistence and export through
+an explaining engineer and an independent driver/security reviewer. It corrects
+database-invalidation handling and four shared L2CAP signaling defects. The
+record separates current verification from the older
+[implementation receipts](../validation/ngm-identity-2026-10-24.md).
 There has been no live NGM identity-tool connection, flash, CoC acceptance test or
 physical power-cut validation in this implementation wave. The runbook below is
 for a future separately authorized device session; it is not a record of one.
@@ -53,12 +55,17 @@ four scoped GATT reads are separate transport operations.
    or unavailable ATT outcomes remain evidence; no unlock or security escalation
    follows. A full 64-byte read is conservatively truncated. Such limited reads
    prevent clean success even when a subsequent INFO reply parses. Local read or
-   timeout failures stop work and clean up the connection.
+   timeout failures stop work and clean up the connection. ATT Database Out Of
+   Sync (`0x12`) is terminal: no later discovered handle, CoC open or INFO request
+   is used on that attempt. The original code remains in saved/exported evidence.
 4. Try **one configured SPSM 129** channel. This is a compatibility candidate from
    public source pinned at `78091bb5599c4f5e3002fbd5700b826a625e8b04`, not a discovered
    or measured dynamic SPSM. Vendor values remain opaque. No candidate enumeration
    or fallback occurs. The local offer is MTU 245 bytes, MPS 247 bytes and one
    initial receive credit, backed by the bounded packet pool.
+   Bluetooth's dynamic-SPSM procedure obtains this value through GATT on each
+   reconnect; this source-configured trial does not claim to implement that
+   discovery procedure or decode a vendor value into an SPSM.
 5. Submit the four INFO bytes once as one SDU and receive a bounded reply. The
    decoder requires marker `1F`, INFO response type `91`, a big-endian body length
    and five LF-separated UTF-8 fields: vendor, model, hardware, serial, firmware.
@@ -69,6 +76,14 @@ four scoped GATT reads are separate transport operations.
    attempt. Generation changes cancel work and stale events cannot attach to the
    next peer/inspection. Confirmed normal termination is checked separately from
    application parsing and local submission.
+
+Strict framing applies to bytes delivered to the INFO owner. The live flow stops
+receiving at its first complete frame; same-SDU suffixes are rejected, but the
+tool does not claim to observe every byte a peer transmits during disconnect.
+It does not subscribe to Service Changed (no CCCD writes/bond), and it has no
+consumer that invalidates inventory on an unsolicited Service Changed indication.
+The `0x12` repair therefore does not establish handling of every database-change
+signal. See the audit's [remaining limits](../validation/ngm-identity-audit-2026-11-01.md#remaining-limits).
 
 Whole-stage budgets are connect 8 s, discovery 30 s, parameter/vendor-read phase
 15 s, CoC open 5 s, INFO send 2 s, INFO reply 2 s and cleanup 5 s. Each vendor read
@@ -188,6 +203,12 @@ The existing naming `identity` and binary content hash remain unchanged: INFO
 model or serial never renames the files. Missing/protected/truncated vendor
 values, remote error types, partial frames, raw `u16` transport codes and omitted
 bytes remain inspectable. See the [capture format](ble-probe-captures.md#identity-trial-evidence).
+
+`ngm_identity.successful` describes the validated identity extension; the host
+exports the outer inspection/termination assessment separately. Admission checks
+each record's internal bounds and relationships but does not prove every outer
+and inner cleanup/end-time field mutually consistent in an externally supplied
+capture. Neither field grants live success or authority to reuse saved handles.
 
 Loading and exporting never rewrite old slots. Unknown formats in either physical
 copy still block replacement until explicit Reset; a supported sibling may

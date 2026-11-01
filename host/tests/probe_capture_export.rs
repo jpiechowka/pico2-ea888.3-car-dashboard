@@ -222,6 +222,137 @@ fn deadlines_invalid_requests_and_closed_streams_are_bounded() {
     assert!(exchange(&mut io, Request::List, Duration::from_secs(1)).is_err());
 }
 
+/// Stream returning one delayed byte per read, so positive progress cannot renew the total transaction budget.
+struct SlowProgress {
+    /// Valid response and command recorder, limited to one byte per operation.
+    inner: Fake,
+    /// Number of read calls; the expired transaction must stop before a second one.
+    reads: usize,
+}
+impl Read for SlowProgress {
+    /// Delays 600 milliseconds before returning positive progress from `b`; returns the fixture's I/O result.
+    fn read(
+        &mut self,
+        b: &mut [u8],
+    ) -> io::Result<usize> {
+        self.reads += 1;
+        std::thread::sleep(Duration::from_millis(600));
+        self.inner.read(b)
+    }
+}
+impl Write for SlowProgress {
+    /// Records the accepted prefix of `b` without delay and returns its byte count.
+    fn write(
+        &mut self,
+        b: &[u8],
+    ) -> io::Result<usize> {
+        self.inner.write(b)
+    }
+
+    /// Panics on the prohibited potentially blocking flush; never returns an I/O result.
+    fn flush(&mut self) -> io::Result<()> { panic!("exchange must not flush") }
+}
+
+/// Positive read progress after expiry does not start another blocking call or reset the original deadline.
+#[test]
+fn slow_positive_read_progress_does_not_renew_the_transaction_deadline() {
+    let mut stream = SlowProgress {
+        inner: fake(end()),
+        reads: 0,
+    };
+    let error = exchange(&mut stream, Request::List, Duration::from_millis(500))
+        .err()
+        .unwrap();
+    assert!(error.contains("timed out"), "{error}");
+    assert_eq!(stream.reads, 1, "no additional I/O after the original deadline");
+    assert_eq!(
+        stream.inner.incoming.position(),
+        1,
+        "the read did make positive progress"
+    );
+}
+
+/// Stream with retryable command-write failures before fragmented successful progress, or permanently.
+struct RetryWrites {
+    /// Valid response and exact command bytes actually accepted.
+    inner: Fake,
+    /// Number of attempts, including failures; failed writes accept no bytes.
+    attempts: usize,
+    /// Permanent failure mode; false injects the first three retryable error categories once.
+    permanent: bool,
+}
+impl Read for RetryWrites {
+    /// Returns the next bounded fixture response prefix into `b` without accessing a device.
+    fn read(
+        &mut self,
+        b: &mut [u8],
+    ) -> io::Result<usize> {
+        self.inner.read(b)
+    }
+}
+impl Write for RetryWrites {
+    /// Returns retryable errors without accepting `b`, then records fragmented progress unless permanent.
+    fn write(
+        &mut self,
+        b: &[u8],
+    ) -> io::Result<usize> {
+        let attempt = self.attempts;
+        self.attempts += 1;
+        if self.permanent || attempt < 3 {
+            let kind = [
+                io::ErrorKind::TimedOut,
+                io::ErrorKind::WouldBlock,
+                io::ErrorKind::Interrupted,
+            ][attempt % 3];
+            Err(kind.into())
+        } else {
+            self.inner.write(b)
+        }
+    }
+
+    /// Panics on a potentially unbounded serial flush; never returns an I/O result.
+    fn flush(&mut self) -> io::Result<()> { panic!("exchange must not flush") }
+}
+
+/// Retryable writes retain the unsent suffix exactly; permanent failures stop under the original deadline.
+#[test]
+fn retryable_command_writes_preserve_bytes_and_remain_deadline_bounded() {
+    let mut incoming = Vec::new();
+    for slot in 0..4 {
+        incoming.extend(frame(FrameKind::ListEntry, FrameStatus::Empty, Some(slot), 0, &[]));
+    }
+    incoming.extend(end());
+    let mut stream = RetryWrites {
+        inner: fake(incoming),
+        attempts: 0,
+        permanent: false,
+    };
+    assert_eq!(
+        exchange(&mut stream, Request::List, Duration::from_secs(1))
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(stream.inner.sent, b"BLECAP LIST\n");
+    assert_eq!(stream.attempts, 3 + stream.inner.sent.len());
+
+    let mut stream = RetryWrites {
+        inner: fake(Vec::new()),
+        attempts: 0,
+        permanent: true,
+    };
+    let error = exchange(&mut stream, Request::List, Duration::from_millis(2))
+        .err()
+        .unwrap();
+    assert!(error.contains("command timed out"), "{error}");
+    assert!(stream.inner.sent.is_empty());
+    assert_eq!(
+        stream.inner.incoming.position(),
+        0,
+        "no response read before command completion"
+    );
+}
+
 /// Returns candidate `name` with probe VID/PID and optional `product`; serial/manufacturer metadata is absent.
 fn port(
     name: &str,

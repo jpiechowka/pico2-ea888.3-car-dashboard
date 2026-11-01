@@ -406,8 +406,9 @@ impl Session {
     /// Returns framing progress or rejection, recording admitted input errors as the first fault.
     /// A reply racing successful send completion is retained, but cannot complete
     /// the operation before InfoSent. Valid INFO enters Closing; any later suffix
-    /// before cleanup revokes success. Empty SDU, malformed input or unexpected
-    /// phase faults immediately. Failed/stale input never mutates the decoder.
+    /// supplied to this API before cleanup revokes success. This does not require
+    /// a transport owner to keep receiving after Complete. Empty SDU, malformed input or unexpected
+    /// phase faults immediately. Already-faulted or stale calls do not mutate the decoder.
     pub fn receive(
         &mut self,
         epoch: Epoch,

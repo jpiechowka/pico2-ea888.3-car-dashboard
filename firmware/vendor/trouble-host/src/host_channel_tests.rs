@@ -443,7 +443,36 @@ fn with_credit_channel_config(
 }
 
 #[test]
-/// Refused or mismatched creates release their backed packet immediately, retain the error until polled, and permit retry under full pool pressure.
+/// A canceled local close keeps one wire identifier; runner confirmation completes locally without waiting for a response.
+fn disconnect_send_retry_keeps_wire_identifier_and_local_completion() {
+    with_credit_channel(247, 1, |stack, channel| {
+        let host = stack.host();
+        drop(channel);
+        let Poll::Ready(pending) = host.channels().poll_disconnecting(None) else {
+            panic!()
+        };
+        stack.controller.acl_limit.set(Some(0));
+        {
+            let mut send = pin!(pending.send(&host));
+            assert!(send.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+        }
+        stack.controller.acl_limit.set(None);
+        block_on(pending.send(&host)).unwrap();
+        block_on(pending.send(&host)).unwrap();
+        assert_eq!(
+            stack.controller.acl.borrow().as_slice(),
+            &[
+                std::vec![8, 0, 5, 0, 6, 2, 4, 0, 0x41, 0, 0x40, 0],
+                std::vec![8, 0, 5, 0, 6, 2, 4, 0, 0x41, 0, 0x40, 0],
+            ]
+        );
+        pending.confirm();
+        assert!(host.channels().poll_disconnecting(None).is_pending());
+    });
+}
+
+#[test]
+/// Matched refusals release backed storage immediately; an earlier unrelated identifier preserves the pending reservation and cannot complete create.
 fn coc_failed_create_releases_reserved_packet_before_poll_or_cancel() {
     for wrong_identifier in [false, true] {
         for cancel in [false, true] {
@@ -461,7 +490,7 @@ fn coc_failed_create_releases_reserved_packet_before_poll_or_cancel() {
                     let mut create = pin!(host.channels().create(conn, 0x80, &config, host));
                     assert!(create.as_mut().poll(&mut cx).is_pending());
                     assert!(DefaultPacketPool::allocate().is_none());
-                    let response = [
+                    let mut response = [
                         0x15,
                         if wrong_identifier { 0x7f } else { 2 },
                         10,
@@ -478,6 +507,15 @@ fn coc_failed_create_releases_reserved_packet_before_poll_or_cancel() {
                         0,
                     ];
                     host.channels().signal(conn, &response, host.connections()).unwrap();
+                    if wrong_identifier {
+                        assert!(
+                            DefaultPacketPool::allocate().is_none(),
+                            "unrelated reply cannot release backing storage"
+                        );
+                        assert!(create.as_mut().poll(&mut cx).is_pending());
+                        response[1] = 2;
+                        host.channels().signal(conn, &response, host.connections()).unwrap();
+                    }
                     let freed = DefaultPacketPool::allocate()
                         .expect("failed response must immediately release its reservation");
                     assert!(DefaultPacketPool::allocate().is_none());
@@ -491,19 +529,12 @@ fn coc_failed_create_releases_reserved_packet_before_poll_or_cancel() {
                     }
                     if !cancel {
                         let result = create.as_mut().poll(&mut cx);
-                        if wrong_identifier {
-                            assert!(matches!(
-                                result,
-                                Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
-                            ));
-                        } else {
-                            assert!(matches!(
-                                result,
-                                Poll::Ready(Err(BleHostError::BleHost(Error::L2capConnectError(
-                                    crate::types::l2cap::LeCreditConnResultCode::NoResources
-                                ))))
-                            ));
-                        }
+                        assert!(matches!(
+                            result,
+                            Poll::Ready(Err(BleHostError::BleHost(Error::L2capConnectError(
+                                crate::types::l2cap::LeCreditConnResultCode::NoResources
+                            ))))
+                        ));
                     }
                 }
                 {
@@ -1144,7 +1175,7 @@ fn invalid_channel_success_returns_error_when_actual_create_is_polled() {
 }
 
 #[test]
-/// Malformed, rejected, mismatched and disconnected handshakes retain their slot until the owning future completes or drops, then permit another link.
+/// Terminal handshakes retain their slot until the owner completes or drops; unrelated replies retain a pending owner until cancellation or a matching refusal.
 fn failed_channel_create_reserves_slot_until_poll_or_cancel_then_allows_reuse() {
     // Malformed success, explicit rejection, wrong identifier and link loss.
     for failure in 0..4 {
@@ -1193,6 +1224,10 @@ fn failed_channel_create_reserves_slot_until_poll_or_cancel_then_allows_reuse() 
                     );
                 }
                 if !cancel {
+                    if failure == 2 {
+                        assert!(create.as_mut().poll(&mut cx).is_pending());
+                        channel_response(host, handle, 1, false, true);
+                    }
                     assert!(matches!(create.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
                 }
             }

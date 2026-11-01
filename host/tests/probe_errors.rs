@@ -23,13 +23,13 @@ fn all_att_bytes_preserve_the_remote_code() {
     }
 }
 
-/// Only the four ATT security-related codes classify standard values as protected, without initiating security
-/// escalation.
+/// Security errors remain protected, database invalidation is terminal, and other denials remain unavailable.
 #[test]
 fn only_authentication_authorization_and_encryption_errors_mark_values_protected() {
     for code in u8::MIN..=u8::MAX {
         let expected = match code {
             0x05 | 0x08 | 0x0C | 0x0F => ReadResult::Protected,
+            0x12 => ReadResult::Error,
             _ => ReadResult::Unavailable,
         };
         assert_eq!(

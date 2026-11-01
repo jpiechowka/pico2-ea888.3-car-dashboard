@@ -114,6 +114,13 @@ dashboard configuration and brightness preferences.
 
 ## RGB status and recovery
 
+ATT Database Out Of Sync (`0x12`) now stops both utilities' allowed-read sequence
+and retains the original failed-read evidence. It cannot be treated as an
+optional unavailable value followed by more reads through invalidated handles.
+No automatic rediscovery, pairing or retry was added. The dashboard already
+propagates these ATT failures into disconnect; all three images also share the
+[2026-11-01 L2CAP signaling corrections](../validation/ngm-identity-audit-2026-11-01.md#confirmed-corrections).
+
 The probe uses the PIM715 RGB LED independently of the dashboard's configurable
 warning LED. States below are in priority order; an error overrides activity.
 

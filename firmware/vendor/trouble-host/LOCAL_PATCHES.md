@@ -410,7 +410,9 @@ retains admitted partial bytes. Close wakes credit, transport, ACL-lock and rece
 waiters and releases reserved/partial/queued packets. Credit and disconnect tokens
 retain their original channel slot. Refused/wrong-identifier creates release
 reservations immediately while retaining the old attempt's reference/error, so
-full-pool retry cannot strand a packet or redirect a late completion.
+full-pool retry cannot strand a packet or redirect a late completion. The
+wrong-identifier behavior recorded here is superseded by the 2026-11-01 repair
+below: an unrelated reply must leave the pending create and reservation intact.
 
 Actual host/manager regressions cover a245-byte SDU over11 legal23-byte K-frames,
 one-credit TX, large peer MPS, zero credits, empty SDUs, every exercised cancellation
@@ -500,3 +502,34 @@ without publication. Existing early subscription, lag and host-ingress tests pas
 Full native suites pass 233/280/292 in the same no-security/security/optimized
 contexts above; both strict Clippy contexts and strict private rustdoc pass.
 Linked stack/image effects require separate target measurement.
+
+## Disconnect signaling and response correlation (2026-11-01)
+
+Four shared host corrections follow the NGM pre-flash two-engineer audit:
+
+- Unknown local disconnect CIDs return the complete six-byte reason-2 body:
+  reason, local destination CID, remote source CID. Known local endpoints with
+  the wrong remote CID are silently discarded. Link identity remains mandatory.
+- A repeated valid request while PeerDisconnecting receives a correctly echoed
+  response without replacing the first deferred response, reference or state.
+  Pool/queue exhaustion preserves that original pending closure.
+- An unmatched connection-response identifier leaves all pending creates and
+  their reserved packets untouched. A matching refusal, cancellation or existing
+  deadline still terminates its own attempt. Unrelated traffic refreshes no timer.
+- Local Disconnecting retains an assigned nonzero request identifier; zero means
+  not assigned. Assignment happens once before I/O and survives cancellation.
+  Responses require that ID, ACL link and both CIDs. Assignment is not proof of
+  transmission. Existing local completion after submission does not gain a new
+  peer-acknowledgment wait; NGM still requires terminal full-link cleanup.
+
+The state enum already contained payload variants and remains four bytes in the
+native compiler layout. No packet count, capacity, allocation or admission gate
+was increased. Wire/state regressions failed on the baseline and pass after the
+repairs; exact utility and security feature contexts passed 244 and 296 tests
+respectively, with serial execution for the shared static test packet pool.
+See the [integrated audit](../../../docs/validation/ngm-identity-audit-2026-11-01.md)
+for exact image evidence and remaining physical limitations.
+
+Reference: Bluetooth Core6.2 Vol3 PartA sections4 (identifier/duplicate rules),
+4.1 (reason-specific rejection) and4.6/4.7 (disconnect endpoints),
+[L2CAP specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).

@@ -314,6 +314,14 @@ sent. Existing `identity` naming/hash fields keep their original meaning: INFO
 model/serial text never changes filenames. `connection_handoff.enabled` stays
 false. Saving/exporting this evidence adds no BLE traffic.
 
+The identity extension's `successful` flag and the outer inspection's termination
+assessment have separate scopes. Both records are validated, but every inner/outer
+end-time and cleanup combination is not cross-correlated. Externally supplied
+captures can therefore contain contradictory observations without creating live
+success or reusable handles. The [pre-flash audit](../validation/ngm-identity-audit-2026-11-01.md)
+records this boundary and additional first-save interruption, slow-read and
+retryable-write regressions. These are host tests, not physical power-cut results.
+
 ## Storage, source identity and verification
 
 New captures use **payload schema v5**. Both utilities and the exporter also read

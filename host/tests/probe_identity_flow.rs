@@ -424,6 +424,77 @@ fn failed_vendor_read_prevents_channel_open() {
     }
 }
 
+/// Database invalidation stops vendor reads and CoC work; clean cleanup cannot erase the original ATT fault.
+#[test]
+fn database_out_of_sync_stops_identity_before_other_handles_or_info() {
+    let mut session = admitted();
+    let clock = Time::default();
+    let vendor = Vendor {
+        error: Some(FailureReason::Att(0x12)),
+        ..Default::default()
+    };
+    let mut link = Link::default();
+    link.received.push_back(info());
+    let mut publication = Publication::default();
+    let updates = RefCell::new(Vec::new());
+    let emit = async |update| {
+        updates.borrow_mut().push(update);
+    };
+    let result = ready(identity_flow::run_connected(
+        &mut session,
+        &clock,
+        &vendor,
+        &mut link,
+        (10, [12, 14, 16, 18]),
+        &mut publication,
+        &emit,
+    ));
+    assert_eq!(result, Err(FailureReason::Att(0x12)));
+    assert_eq!(*vendor.reads.borrow(), [12]);
+    assert_eq!(link.opens, 0);
+    assert!(link.sent.is_empty());
+    assert_eq!(session.stage(), Stage::Closing);
+    let first_fault = session.fault().unwrap();
+    assert_eq!(first_fault.stage, Stage::TransportParameters);
+    assert_eq!(
+        first_fault.reason,
+        Reason::Transport(TransportFault {
+            domain: TransportDomain::Att,
+            code: Some(0x12),
+            partial_send: false,
+        })
+    );
+    session
+        .event(EPOCH, 1, SessionEvent::CleanupComplete(CleanupResult::Clean))
+        .unwrap();
+    clock.0.set(1);
+    ready(identity_flow::publish_progress(
+        &mut publication,
+        &session,
+        &clock,
+        &emit,
+    ));
+    let mut evidence = Evidence::new(0);
+    for update in updates.into_inner() {
+        assert!(evidence.apply(update));
+    }
+    assert!(evidence.apply(Update::End {
+        at_ms: 1,
+        cleanup: session.cleanup()
+    }));
+    assert_eq!(session.outcome(), Some(Outcome::Failed(first_fault)));
+    assert_eq!(evidence.fault, Some(first_fault));
+    let value = evidence.vendor_values[0].unwrap();
+    assert_eq!(value.handle, 12);
+    assert_eq!(value.result, ReadResult::Error);
+    assert_eq!(value.failure, Some(FailureReason::Att(0x12)));
+    assert_eq!(value.value, dashboard_core::discovery::Payload::empty());
+    assert!(evidence.vendor_values[1..].iter().all(Option::is_none));
+    assert!(evidence.channel.is_none());
+    assert!(evidence.request_submitted_at_ms.is_none());
+    assert!(!evidence.successful());
+}
+
 /// Only successfully copied prefixes may escape; failed or oversized reads discard partial bytes.
 #[test]
 fn vendor_publication_bounds_and_clears_unacknowledged_bytes() {
