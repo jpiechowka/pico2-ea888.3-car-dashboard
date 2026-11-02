@@ -7,7 +7,7 @@ use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
-use crate::connection::ConnectionEvent;
+use crate::connection::QueuedConnectionEvent as ConnectionEvent;
 use crate::security_manager::pairing::util::{
     choose_legacy_pairing_method, make_central_identification_packet, make_encryption_information_packet,
     make_identity_address_information_packet, make_identity_information_packet, make_pairing_random, prepare_packet,

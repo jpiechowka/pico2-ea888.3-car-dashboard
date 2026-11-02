@@ -61,6 +61,8 @@ mod cursor;
 #[cfg(feature = "iso")]
 /// Optional ISO/CIS command and data adapter.
 pub mod iso;
+/// Executor-local permanent failure and retained-link command guards.
+mod lifetime;
 #[cfg(feature = "default-packet-pool")]
 /// Static affine packet allocation and per-slot backing.
 mod packet_pool;
@@ -96,6 +98,10 @@ pub mod scan;
 #[cfg(test)]
 /// Native fake controller with deliberate unsupported-operation panics.
 pub(crate) mod mock_controller;
+
+#[cfg(all(test, feature = "security"))]
+/// Native address-kind, IRK and bond-selection regressions without controller I/O.
+mod identity_tests;
 
 /// Host runner, HCI dispatch and cancellation machinery.
 pub(crate) mod host;
@@ -281,46 +287,34 @@ impl From<Address> for Identity {
 impl Identity {
     /// Check whether the address matches the identity.
     ///
-    /// Matches if the address is an exact match (kind + addr) or if the IRK can resolve it.
-    /// Returns true for normalized address equality with `address`, or successful IRK resolution of its raw bytes when security is enabled; explicit kind is not separately checked on the resolution branch.
+    /// Returns true for normalized address equality with `address`, or successful IRK
+    /// resolution of a RANDOM-kind address when security is enabled. Resolution is not
+    /// authentication. Public and already-resolved identity kinds are not RPA inputs
+    /// (Core Vol 6 Part B 1.3.2 and Vol 4 Part E 7.7.65.10).
     pub fn match_address(&self, address: &Address) -> bool {
-        #[cfg(feature = "security")]
         if self.addr == *address {
             return true;
         }
         #[cfg(feature = "security")]
         if let Some(irk) = self.irk {
-            return irk.resolve_address(&address.addr);
+            return address.kind == AddrKind::RANDOM && irk.resolve_address(&address.addr);
         }
-        self.addr == *address
+        false
     }
 
     /// Check whether the given identity matches current identity
-    /// Returns true when `identity` matches normalized address, either IRK resolves the opposite raw address, or both IRKs match. This matching relation is broader than structural Eq.
+    /// Returns true when `identity` matches a normalized address, either IRK resolves the
+    /// opposite RANDOM-kind address, or both available IRKs match. This relation is broader
+    /// than structural Eq and does not authenticate the peer.
     pub fn match_identity(&self, identity: &Identity) -> bool {
-        #[cfg(feature = "security")]
-        if self.addr == identity.addr {
+        if self.match_address(&identity.addr) || identity.match_address(&self.addr) {
             return true;
         }
         #[cfg(feature = "security")]
-        {
-            if let Some(irk) = self.irk {
-                if irk.resolve_address(&identity.addr.addr) {
-                    return true;
-                }
-            }
-            if let Some(irk) = identity.irk {
-                if let Some(current_irk) = self.irk {
-                    if irk == current_irk {
-                        return true;
-                    }
-                }
-                if irk.resolve_address(&self.addr.addr) {
-                    return true;
-                }
-            }
+        if let (Some(current), Some(other)) = (self.irk, identity.irk) {
+            return current == other;
         }
-        self.addr == identity.addr
+        false
     }
 }
 

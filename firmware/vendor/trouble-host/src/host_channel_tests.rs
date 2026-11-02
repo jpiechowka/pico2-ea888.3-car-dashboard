@@ -2,6 +2,7 @@
 
 extern crate std;
 use super::*;
+use crate::connection::ConnectionEvent;
 use crate::l2cap::{L2capChannel, L2capChannelConfig};
 use crate::mock_controller::MockController;
 use crate::prelude::DefaultPacketPool;
@@ -306,7 +307,13 @@ fn link_layer_parameter_reply_does_not_start_an_unrelated_connection_update() {
         .connect(ConnHandle::new(1), peer, LeConnRole::Peripheral, ConnParams::new())
         .unwrap();
     let conn = block_on(host.connections().accept(LeConnRole::Peripheral, &[peer]));
-    let request = ConnectionParamsRequest::new_link_layer(RequestedConnParams::default(), conn.handle());
+    let pending = crate::connection::PendingConnectionParams::new_link_layer(RequestedConnParams::default());
+    host.connections()
+        .post_handle_event(conn.handle(), ConnectionEvent::RequestConnectionParams(pending))
+        .unwrap();
+    let ConnectionEvent::RequestConnectionParams(request) = block_on(conn.next()) else {
+        panic!("request missing")
+    };
     block_on(request.accept(None, &stack)).unwrap();
     // LE Remote Connection Parameter Request Reply, OCF0x20/OGF0x08.
     assert_eq!(&*stack.controller.commands.borrow(), &[0x2020]);
@@ -687,7 +694,7 @@ fn coc_receive_credit_submission_cancellation_is_terminal() {
     });
 }
 
-/// Each await boundary in sending wakes on channel-local close, peer close and whole-link loss; no later bytes escape.
+/// Peer-credit, ACL-lock and transport waits before/after a first packet wake on each close source; no later bytes escape.
 #[test]
 fn coc_send_close_wakes_all_await_boundaries() {
     for phase in 0..4 {

@@ -463,16 +463,15 @@ def radio_frames(functions: FunctionTable, sizes: FrameSizes) -> int | None:
     emitted CYW Runner::init future counted separately below.
     Aliases are deduplicated across each path; missing boundaries fail closed.
 
-    LLVM23/nightly2026-10-16 disassembly: the deepest observed direct chain is
-    radio poll/body -> host select -> RX -> security channel -> Pairing input
-    -> peripheral transition -> dh_key -> P256 mul -> double -> fe_mul.
-    Peripheral transition remains emitted in this central-only host build.
-    The initiation branch conservatively retains the same pairing/crypto tree.
+    LLVM23: retain frozen P2560.13 Double/fe_mul captures; nightly2026-10-18
+    supplies the reviewed 0.14 capture. Its shape counts multiplication, SEC1 decoding
+    and safegcd inversion alternatives. Its double is inlined into Mul.
+    Peripheral transition remains emitted in this central-only host build;
+    initiation conservatively retains the same pairing/crypto tree.
 
-    4096 B covers other reviewed children: crypto sibling paths (CMAC/AES,
-    decompression and RNG), bounded ATT/GATT/ELM and bus helpers, logging,
-    memory builtins, executor/entry and panic formatting. Largest alternative
-    crypto chain was below 2048 B; ordinary ELM/bus frames below 1024 B.
+    4096 B covers other reviewed children: CMAC/AES/RNG, bounded ATT/GATT/ELM
+    and bus helpers, logging, memory builtins, executor/entry and panic
+    formatting. New SEC1 decoding is counted explicitly, not hidden here.
     IRQ/preemption remains within the separate unchanged 8192 B reserve.
     Dependency/source changes still require child-allowance review. This does
     not establish indirect-call closure, recursion absence or device high-water.
@@ -507,12 +506,65 @@ def radio_frames(functions: FunctionTable, sizes: FrameSizes) -> int | None:
         select("embassy_futures", "4Join", "radio_task_task", "Future4poll")
         host = set()
     connected = select("embassy_futures", "3ble17connection_events", "Future4poll")
-    crypto = (
-        select("trouble_host", "9SecretKey6dh_key")
-        | select("primeorder", "ProjectivePoint", "3Mul", "3mul")
-        | select("primeorder", "ProjectivePoint", "6Double6double")
-        | select("p256", "6fe_mul")
-    )
+    modern_crypto = any("field_impl17montgomery_reduce" in n or "safegcd" in n for n in functions)
+    legacy_crypto = any("6Double6double" in n or "6fe_mul" in n for n in functions)
+    require(not (modern_crypto and legacy_crypto), "mixed legacy/current radio crypto shape")
+    dh_key = select("trouble_host", "9SecretKey6dh_key")
+    multiply = select("primeorder", "ProjectivePoint", "3Mul", "3mul")
+    if modern_crypto:
+        # Exact source/LLVM review: cpubits promotes this M33's v7 feature to
+        # four64-bit limbs. Product and reduction are sequential, not nested.
+        public_key = select("trouble_host", "9SecretKey10public_key")
+        field_add = select("p256", "field_impl3add")
+        field_sub = select("p256", "field_impl3sub")
+        wide = select("crypto_bigint", "18widening_mul_fixed", "p256")
+        reduce = select("p256", "field_impl17montgomery_reduce")
+        subtle = select("subtle", "9black_box", "crypto_bigint")
+        field = branch(set(), field_add, field_sub, wide, reduce, subtle)
+        add = select("primeorder", "EquationAIsMinusThree", "10add_assign")
+        lookup = select("primeorder", "LookupTable", "6select")
+        scalar = branch(multiply, add | field, branch(lookup, field_sub, subtle))
+        from_repr = select("p256", "FieldElement", "9from_repr") | subtle
+        montgomery = select("crypto_bigint", "19mul_montgomery_form", "p256")
+        decompress = branch(
+            select("primeorder", "AffinePoint", "10decompress"),
+            field,
+            from_repr,
+            montgomery,
+        )
+        sec1 = branch(
+            select("elliptic_curve", "PublicKey", "15from_sec1_point"),
+            decompress,
+            field,
+            from_repr,
+        )
+        inversion = branch(
+            select("p256", "FieldElement", "5Field6invert"),
+            branch(
+                select("crypto_bigint", "11lincomb_int"),
+                select("crypto_bigint", "28lincomb_int_reduce_shift_mod"),
+                select("crypto_bigint", "24lincomb_int_reduce_shift"),
+            ),
+            subtle,
+        )
+        crypto = branch(
+            set(),
+            branch(dh_key, scalar, sec1, inversion, field),
+            branch(public_key, scalar, inversion, field),
+        )
+        # The caller-owned pinned guards inline into host/task polling. Require
+        # the reviewed emitted worker bodies, rather than accepting absent old names.
+        rx = select("trouble_host", "8RxRunner", "9run_inner")
+        control = select("trouble_host", "13ControlRunner", "9run_inner0")
+    else:
+        crypto = (
+            dh_key
+            | multiply
+            | select("primeorder", "ProjectivePoint", "6Double6double")
+            | select("p256", "6fe_mul")
+        )
+        rx = select("trouble_host", "8RxRunner", "16run_with_handler")
+        control = select("trouble_host", "13ControlRunner", "3run0")
     pairing = (
         select("trouble_host", "7Pairing12handle_input")
         | select("trouble_host", "10peripheral", "7Pairing10transition")
@@ -520,8 +572,8 @@ def radio_frames(functions: FunctionTable, sizes: FrameSizes) -> int | None:
     )
     security = branch(
         select("trouble_host", "23handle_security_channel") | pairing,
-        select("trouble_host", "8RxRunner", "16run_with_handler"),
-        select("trouble_host", "13ControlRunner", "3run0"),
+        rx,
+        control,
     )
     serial = branch(
         select("pico25tasks3ble", "6Serial7receive"),

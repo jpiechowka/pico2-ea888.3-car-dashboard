@@ -6,7 +6,7 @@ use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
-use crate::connection::{ConnectionEvent, SecurityLevel};
+use crate::connection::{QueuedConnectionEvent as ConnectionEvent, SecurityLevel};
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, PublicKeyX, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,

@@ -8,22 +8,23 @@ pub enum ScanErrorKind {
     InvalidValue,
 }
 
-/// Bounded context for one rejected controller batch record; never a reconstructed packet.
+/// Bounded context for rejected controller batch framing; never a reconstructed packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScanFailure {
     /// Framing versus value failure classification.
     pub kind: ScanErrorKind,
     /// Scan request generation producing this error.
     pub revision: u32,
-    /// Zero-based position in the controller's batch, not a catalogue index.
+    /// Zero-based record position; zero for invalid count, count for surplus bytes.
+    /// This is a batch boundary cursor, not a catalogue index.
     pub index: u8,
     /// Report count declared by the controller batch header.
     pub total_reports: u8,
     /// Concatenated HCI report bytes, excluding the subevent and report count.
     pub report_bytes: u16,
-    /// Bytes from the failing record's start through the batch end.
+    /// Bytes from the failure cursor through batch end; all bytes for invalid count.
     pub remaining_bytes: u16,
-    /// Failed record's Data_Length byte, absent if its header is truncated.
+    /// Failed record's Data_Length byte; absent for truncated header or batch-level failure.
     pub declared_data_len: Option<u8>,
     /// Boot-relative receipt time in milliseconds.
     pub at_ms: u64,

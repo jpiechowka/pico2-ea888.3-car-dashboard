@@ -258,30 +258,78 @@ fn maximum_legal_event_batch_preserves_all_records_and_no_failure() {
     }
 }
 
-/// Count exhaustion, trailing bytes, missing records and oversized payloads match the locked iterator.
+/// A missing declared record fails once at its cursor after preserving earlier reports.
 #[test]
-fn count_and_trailing_byte_behavior_matches_the_exact_dependency_iterator() {
-    for bytes in [
-        vec![0],
-        [vec![0], record(0, 1)].concat(),
-        [vec![1], record(0, 1), vec![0xFF]].concat(),
-        [vec![2], record(0, 1)].concat(),
-        [vec![2], record(0, 1), vec![0]].concat(),
-        [vec![1], record(32, 1)].concat(),
-    ] {
-        let parsed = LeAdvReports::from_hci_bytes_complete(&bytes).unwrap();
-        let expected: Vec<_> = parsed.iter().collect();
+fn missing_declared_reports_retain_prefix_and_failure_cursor() {
+    for suffix in [Vec::new(), vec![0]] {
+        let bytes = [vec![2], record(0, 1), suffix.clone()].concat();
         let (events, diagnostics) = decode(&bytes, Some(1));
-        assert_eq!(events.len(), expected.iter().filter(|r| r.is_ok()).count());
-        assert_eq!(
-            diagnostics.total as usize,
-            expected.iter().filter(|r| r.is_err()).count()
-        );
-        if let Some(failure) = diagnostics.last {
-            assert_eq!(failure.report_bytes, (bytes.len() - 1) as u16);
-            assert_eq!(failure.remaining_bytes, (bytes.len() - 11) as u16);
+        assert_eq!(events.len(), 1);
+        assert_eq!(diagnostics.total, 1);
+        let failure = diagnostics.last.unwrap();
+        assert_eq!(failure.kind, ScanErrorKind::InvalidSize);
+        assert_eq!((failure.index, failure.total_reports), (1, 2));
+        assert_eq!(failure.remaining_bytes, suffix.len() as u16);
+        assert_eq!(failure.declared_data_len, None);
+    }
+}
+
+/// The maximum legal count fits within the event envelope with empty payloads.
+#[test]
+fn twenty_five_empty_reports_are_admitted() {
+    let mut bytes = vec![25];
+    for identity in 0..25 {
+        bytes.extend(record(0, identity));
+    }
+    let (events, diagnostics) = decode(&bytes, Some(1));
+    assert_eq!(events.len(), 25);
+    assert_eq!(diagnostics.total, 0);
+}
+
+/// Reserved report counts never admit records or silently look like an empty healthy batch.
+#[test]
+fn reserved_report_counts_are_counted_as_invalid_batches() {
+    for count in [0, 26, u8::MAX] {
+        for suffix in [Vec::new(), record(0, 1)] {
+            let bytes = [vec![count], suffix].concat();
+            let (events, diagnostics) = decode(&bytes, Some(7));
+            assert!(events.is_empty());
+            assert_eq!(diagnostics.total, 1, "reserved count {count}");
+            assert_eq!(diagnostics.invalid_value, 1);
+            let failure = diagnostics.last.unwrap();
+            assert_eq!((failure.index, failure.total_reports), (0, count));
             assert_eq!(failure.declared_data_len, None);
         }
+    }
+}
+
+/// Extra bytes after the declared reports are not transport padding; retain the valid prefix.
+#[test]
+fn trailing_report_bytes_are_counted_without_inventing_another_report() {
+    for suffix in [vec![0], vec![0xFF], record(0, 2)] {
+        let bytes = [vec![1], record(0, 1), suffix.clone()].concat();
+        let (events, diagnostics) = decode(&bytes, Some(7));
+        assert_eq!(events.len(), 1);
+        assert_eq!(diagnostics.total, 1, "trailing {suffix:?}");
+        assert_eq!(diagnostics.invalid_size, 1);
+        let failure = diagnostics.last.unwrap();
+        assert_eq!(failure.remaining_bytes, suffix.len() as u16);
+        assert_eq!((failure.index, failure.total_reports), (1, 1));
+        assert_eq!(failure.declared_data_len, None);
+    }
+}
+
+/// Reserved legacy payload lengths fail before publication while valid earlier reports survive.
+#[test]
+fn oversized_legacy_data_length_is_rejected_after_the_valid_prefix() {
+    for length in [32, 64, 255] {
+        let bytes = [vec![2], record(0, 1), record(length, 2)].concat();
+        let (events, diagnostics) = decode(&bytes, Some(7));
+        assert_eq!(events.len(), 1);
+        assert_eq!(diagnostics.invalid_value, 1);
+        let failure = diagnostics.last.unwrap();
+        assert_eq!((failure.index, failure.total_reports), (1, 2));
+        assert_eq!(failure.declared_data_len, Some(length as u8));
     }
 }
 

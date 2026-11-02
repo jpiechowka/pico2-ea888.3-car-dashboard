@@ -41,3 +41,6 @@ harness = false
 [[bench]]
 name = "ble_protocol"
 harness = false
+
+[patch.crates-io]
+bt-hci = { path = "../firmware/vendor/bt-hci" }

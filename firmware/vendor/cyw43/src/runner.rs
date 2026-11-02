@@ -14,7 +14,7 @@ use crate::events::{Event, Events, Status};
 use crate::fmt::Bytes;
 use crate::ioctl::{IoctlState, IoctlType, PendingIoctl};
 use crate::structs::*;
-use crate::util::{aligned_mut, aligned_ref, slice8_mut, slice16_mut, try_until};
+use crate::util::{aligned_mut, aligned_range, aligned_range_mut, slice8_mut, slice16_mut, try_until};
 use crate::{CHIP, Core, MTU, events};
 
 /// Checked chip-RAM placement for Wi-Fi at the RAM base and NVRAM below its final length word.
@@ -65,6 +65,7 @@ struct LogState {
 #[cfg(all(test, feature = "bluetooth"))]
 /// Credit-window wrap regressions using the production runner and inert transport.
 mod tests {
+    extern crate std;
     use super::*;
     use crate::regression_tests::MockBus;
 
@@ -146,6 +147,100 @@ mod tests {
             assert_eq!(runner.sdpcm_seq_max, expected);
         }
     }
+    /// Real IOCTL framing fills the payload view while preserving the reserved prefix and maximum size.
+    #[test]
+    fn ioctl_framing_retains_full_payload_capacity() {
+        use embassy_futures::block_on;
+        for len in [0, 1, 3, 2020] {
+            let mut state = crate::State::new();
+            let (ch, _) = ch::new(&mut state.net.ch, ch::driver::HardwareAddress::Ethernet([0; 6]));
+            let bus = MockBus::default();
+            let packets = bus.wlan_packets.clone();
+            let mut runner = Runner::new(
+                ch,
+                bus,
+                &state.ioctl_state,
+                &state.net.events,
+                &state.net.secure_network,
+                None,
+            );
+            let mut scratch = WlanBuffer::new();
+            scratch.words[0] = 0xDEADBEEF;
+            let data = std::vec![0xA5; len];
+            block_on(runner.send_ioctl(IoctlType::Set, Ioctl::GetVar, 3, &data, &mut scratch));
+            let total = (28 + len) as u16;
+            let mut expected = std::vec::Vec::new();
+            expected.extend_from_slice(&total.to_le_bytes());
+            expected.extend_from_slice(&(!total).to_le_bytes());
+            expected.extend_from_slice(&[0, 0, 0, 12, 0, 0, 0, 0]);
+            expected.extend_from_slice(&262_u32.to_le_bytes());
+            expected.extend_from_slice(&(len as u32).to_le_bytes());
+            expected.extend_from_slice(&0x3002_u16.to_le_bytes());
+            expected.extend_from_slice(&1_u16.to_le_bytes());
+            expected.extend_from_slice(&[0; 4]);
+            expected.extend_from_slice(&data);
+            expected.resize(expected.len().next_multiple_of(4), 0);
+            assert_eq!(&*packets.borrow(), &[expected]);
+            assert_eq!(scratch.words[0], 0xDEADBEEF);
+            assert_eq!(runner.sdpcm_seq, 1);
+            assert_eq!(runner.ioctl_id, 1);
+            let bus = &mut runner.bus;
+            bus.f2_continuous = true;
+            bus.f2_len = Some(65);
+            scratch.payload_mut().fill(0xA5A5A5A5);
+            block_on(runner.check_status(scratch.payload_mut()));
+            assert_eq!(scratch.words[0], 0xDEADBEEF, "RX must not overwrite prefix");
+            let bytes = slice8_mut(scratch.payload_mut());
+            assert!(bytes[..65].iter().all(|byte| *byte == 0));
+            assert!(bytes[65..].iter().all(|byte| *byte == 0xA5));
+        }
+    }
+
+    /// Actual queued Ethernet transmission excludes the transport prefix and retains both firmware headers.
+    #[test]
+    fn wifi_runner_transmits_payload_without_reserved_prefix() {
+        use ch::driver::{Driver, TxToken};
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+        for len in [1, 3, MTU] {
+            let mut state = crate::State::new();
+            let (ch, mut device) = ch::new(&mut state.net.ch, ch::driver::HardwareAddress::Ethernet([0; 6]));
+            let bus = MockBus::default();
+            let packets = bus.wlan_packets.clone();
+            let runner = Runner::new(
+                ch,
+                bus,
+                &state.ioctl_state,
+                &state.net.events,
+                &state.net.secure_network,
+                None,
+            );
+            let mut cx = Context::from_waker(Waker::noop());
+            device.transmit(&mut cx).unwrap().consume(len, |bytes| bytes.fill(0xA5));
+            {
+                let mut run = pin!(runner.run_with_boundary(async || {
+                    if !packets.borrow().is_empty() {
+                        core::future::pending::<()>().await;
+                    }
+                }));
+                for _ in 0..8 {
+                    assert!(run.as_mut().poll(&mut cx).is_pending());
+                    if !packets.borrow().is_empty() {
+                        break;
+                    }
+                }
+            }
+            let total = (18 + len) as u16;
+            let mut expected = std::vec::Vec::new();
+            expected.extend_from_slice(&total.to_le_bytes());
+            expected.extend_from_slice(&(!total).to_le_bytes());
+            expected.extend_from_slice(&[0, 2, 0, 14, 0, 0, 0, 0, 0, 0, 0x20, 0, 0, 0]);
+            expected.extend_from_slice(&std::vec![0xA5; len]);
+            expected.resize(expected.len().next_multiple_of(4), 0);
+            assert_eq!(&*packets.borrow(), &[expected]);
+        }
+    }
 }
 
 #[cfg(feature = "firmware-logs")]
@@ -169,6 +264,28 @@ pub(crate) enum BusType {
     Sdio,
 }
 
+/// One initialized WLAN payload with a reserved SPI command word; shared with receive scratch.
+pub(crate) struct WlanBuffer {
+    /// Word 0 is transport prefix; words 1..513 retain all 2048 payload bytes, including padding.
+    pub(crate) words: [u32; 513],
+}
+impl WlanBuffer {
+    /// Returns zero-initialized prefix and full-capacity payload scratch.
+    pub(crate) fn new() -> Self {
+        Self { words: [0; 513] }
+    }
+    /// Returns the exclusive 512-word payload, excluding the reserved prefix.
+    pub(crate) fn payload_mut(&mut self) -> &mut [u32; 512] {
+        (&mut self.words[1..]).try_into().unwrap()
+    }
+    /// Returns exactly `len` payload bytes, excluding prefix and rounding padding.
+    /// Panics for internal programming errors outside 1..=2048 before transport I/O.
+    pub(crate) fn payload(&self, len: usize) -> &Aligned<A4, [u8]> {
+        assert!((1..=2048).contains(&len));
+        aligned_range(crate::util::aligned_ref(&self.words[1..]), 0..len)
+    }
+}
+
 /// Private common bus operations; implementations define transport failures and cancellation effects.
 /// Byte buffers must retain backing storage until awaited transfers complete. No method reports a transport Result.
 pub(crate) trait SealedBus {
@@ -179,8 +296,10 @@ pub(crate) trait SealedBus {
     async fn init(&mut self, bluetooth_enabled: bool);
     /// Fills logical WLAN `buf` bytes; backing storage must include any SPI word rounding.
     async fn wlan_read(&mut self, buf: &mut Aligned<A4, [u8]>);
-    /// Sends logical WLAN `buf` bytes; SPI requires initialized backing through the last rounded word.
-    async fn wlan_write(&mut self, buf: &Aligned<A4, [u8]>);
+    /// Sends `len` logical bytes from `buf` payload; SPI may overwrite its reserved prefix.
+    /// Requires 1..=2048 bytes or panics before mutation/I/O; initialized trailing words permit SPI rounding.
+    /// The exclusive borrow retains all backing storage until completion or cancellation ends.
+    async fn wlan_write(&mut self, buf: &mut WlanBuffer, len: usize);
     #[allow(unused)]
     /// Reads `data` from aligned backplane `addr`; partial writes and window state can remain on failure/cancel.
     async fn bp_read(&mut self, addr: u32, data: &mut [u8]);
@@ -630,11 +749,11 @@ where
     }
 
     /// Never returns: calls `boundary` before each service turn after prior bus operations complete.
-    /// The hook may park this sole owner. The loop retains a 2048-byte scratch buffer and bounds each F2 drain to four frames.
+    /// The hook may park this sole owner. The loop retains a 2048-byte payload plus one reserved command word and bounds each F2 drain to four frames.
     /// Bluetooth uses a 1 ms polling fallback and receives after every selected branch; bus waits are not time-bounded.
     /// Cancellation is not safe maintenance: it can leave DMA, IOCTL state or radio ring transactions unfinished.
     pub async fn run_with_boundary<F: AsyncFnMut()>(mut self, mut boundary: F) -> ! {
-        let mut buf = [0; 512];
+        let mut buf = WlanBuffer::new();
         loop {
             boundary().await;
             embassy_futures::yield_now().await;
@@ -669,12 +788,12 @@ where
                         iface,
                     }) => {
                         self.send_ioctl(kind, cmd, iface, unsafe { &*iobuf }, &mut buf).await;
-                        self.check_status(&mut buf).await;
+                        self.check_status(buf.payload_mut()).await;
                     }
                     Either4::Second(packet) => {
                         trace!("Ethernet TX: {} bytes", packet.len());
 
-                        let buf8 = slice8_mut(&mut buf);
+                        let buf8 = slice8_mut(buf.payload_mut());
 
                         // There MUST be 2 bytes of padding between the SDPCM and BDC headers.
                         // And ONLY for data packets!
@@ -722,16 +841,16 @@ where
 
                         trace!("SDPCM TX: {} transport bytes", total_len);
 
-                        self.bus.wlan_write(&aligned_ref(&buf)[..total_len]).await;
+                        self.bus.wlan_write(&mut buf, total_len).await;
                         self.ch.tx_done();
-                        self.check_status(&mut buf).await;
+                        self.check_status(buf.payload_mut()).await;
                     }
                     Either4::Third(_) => {
                         #[cfg(feature = "bluetooth")]
                         self.bt.as_mut().unwrap().hci_write(&mut self.bus).await;
                     }
                     Either4::Fourth(()) => {
-                        self.handle_irq(&mut buf).await;
+                        self.handle_irq(buf.payload_mut()).await;
 
                         // If we do busy-polling, make sure to yield.
                         // `handle_irq` will only do a 32bit read if there's no work to do, which is really fast.
@@ -756,7 +875,7 @@ where
                 Timer::after_millis(1).await;
                 #[cfg(not(feature = "bluetooth"))]
                 self.bus.wait_for_event().await;
-                self.handle_irq(&mut buf).await;
+                self.handle_irq(buf.payload_mut()).await;
             }
             // Service RX after every selected branch, including continuously
             // ready TX/ioctl. No branch can keep resetting the idle timer.
@@ -836,7 +955,9 @@ where
                         if len as usize > core::mem::size_of_val(buf) {
                             break;
                         }
-                        self.bus.wlan_read(&mut aligned_mut(buf)[..len as usize]).await;
+                        self.bus
+                            .wlan_read(aligned_range_mut(aligned_mut(buf), 0..len as usize))
+                            .await;
                         trace!("SDPCM RX: {} bytes", len);
                         self.rx(&mut slice8_mut(buf)[..len as usize]);
                     } else {
@@ -863,7 +984,10 @@ where
                     }
                     if len > INITIAL_READ as usize {
                         self.bus
-                            .wlan_read(&mut aligned_mut(&mut buf[1..])[..len - INITIAL_READ as usize])
+                            .wlan_read(aligned_range_mut(
+                                aligned_mut(&mut buf[1..]),
+                                0..len - INITIAL_READ as usize,
+                            ))
                             .await;
                     } else {
                         // TODO: investigate this condition
@@ -1124,8 +1248,8 @@ where
     /// Frames `kind`/`cmd` for `iface` with `data` in initialized `buf`, increments wrapping identities, and transmits.
     /// Data must fit 2020 bytes after headers; larger inputs panic while copying. Interface is truncated to u16 before shifting.
     /// Cancel/failure can consume identities and partially deliver; this method does not await a firmware response.
-    async fn send_ioctl(&mut self, kind: IoctlType, cmd: Ioctl, iface: u32, data: &[u8], buf: &mut [u32; 512]) {
-        let buf8 = slice8_mut(buf);
+    async fn send_ioctl(&mut self, kind: IoctlType, cmd: Ioctl, iface: u32, data: &[u8], buf: &mut WlanBuffer) {
+        let buf8 = slice8_mut(buf.payload_mut());
 
         let total_len = SdpcmHeader::SIZE + CdcHeader::SIZE + data.len();
 
@@ -1162,7 +1286,7 @@ where
         let total_len = (total_len + 3) & !3; // round up to 4byte,
         trace!("SDPCM control TX: {} transport bytes", total_len);
 
-        self.bus.wlan_write(&aligned_ref(buf)[..total_len]).await;
+        self.bus.wlan_write(buf, total_len).await;
     }
 
     /// Asserts reset for firmware `core`, skipping already-reset cores; blocks locally for 1 ms before asserting reset.

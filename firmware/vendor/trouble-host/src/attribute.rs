@@ -1214,7 +1214,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             .flatten()
     }
 
-    /// Returns the attribute handle for the characteristic's client characteristic configuration descriptor (if available)
+    /// Returns the typed two-byte client configuration descriptor handle, or None when absent.
+    /// Its u16 value uses bit 0 for notifications and bit 1 for indications, not characteristic property bits.
     pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
         self.cccd_handle.map(CharacteristicPropertiesHandle)
     }
@@ -1292,15 +1293,16 @@ pub(crate) async fn send_unsolicited<P: PacketPool>(
     }
 }
 
-/// Attribute handle for a characteristic's properties
+/// Typed handle for a per-client configuration descriptor (CCCD).
+/// The historical type name is retained; the value is a two-byte subscription mask.
 pub struct CharacteristicPropertiesHandle(
     /// One-based CCCD handle; constructors do not check the descriptor type.
     u16,
 );
 
 impl AttributeHandle for CharacteristicPropertiesHandle {
-    /// Single-octet characteristic property bitmask exposed by this typed handle.
-    type Value = CharacteristicProps;
+    /// Two-byte CCCD mask: bit 0 enables notification, bit 1 indication; other bits are reserved.
+    type Value = u16;
 
     /// Returns the stored one-based descriptor handle.
     fn handle(&self) -> u16 {

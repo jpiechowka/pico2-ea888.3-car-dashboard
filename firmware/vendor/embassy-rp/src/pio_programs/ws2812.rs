@@ -1,5 +1,6 @@
 //! PIO/DMA RGB and RGBW streams at nominal 800 kbit/s with a 300 microsecond reset wait.
-//! Instruction timing follows the [Raspberry Pi PIO example](https://github.com/raspberrypi/pico-examples/blob/master/pio/ws2812/ws2812.pio); verify timing against the actual LED revision.
+//! Uses the [Raspberry Pi PIO example](https://github.com/raspberrypi/pico-examples/blob/master/pio/ws2812/ws2812.pio)
+//! instruction pattern with retained 2/5/3-cycle timings; verify pulses against the actual LED revision.
 
 use embassy_time::Timer;
 use smart_leds::{RGB8, RGBW};

@@ -40,8 +40,10 @@ impl<'stack, C: Controller, P: PacketPool> Iso<'stack, C, P> {
     }
 
     /// Sends raw ISO `packet` and returns the controller transport result.
-    /// Does not establish a stream or prove over-air delivery.
-    pub async fn send(&self, packet: &IsoPacket<'_>) -> Result<(), C::Error> {
+    /// Returns InvalidState after permanent host failure. Does not establish or retain a stream,
+    /// validate its connection lifetime, or prove over-air delivery; raw ISO ownership remains
+    /// with the caller, and cancellation cannot retract submitted bytes.
+    pub async fn send(&self, packet: &IsoPacket<'_>) -> Result<(), BleHostError<C::Error>> {
         self.host.write_iso_data(packet).await
     }
 }

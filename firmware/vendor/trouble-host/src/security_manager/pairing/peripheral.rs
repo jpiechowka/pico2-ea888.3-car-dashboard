@@ -7,7 +7,7 @@ use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
-use crate::prelude::ConnectionEvent;
+use crate::connection::QueuedConnectionEvent as ConnectionEvent;
 use crate::security_manager::crypto::{Confirm, DHKey, Nonce, PublicKey, PublicKeyX};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
@@ -374,7 +374,7 @@ impl Pairing {
 
         match pairing_data.pairing_method {
             PairingMethod::OutOfBand => {
-                ops.try_send_connection_event(crate::prelude::ConnectionEvent::OobRequest)?;
+                ops.try_send_connection_event(crate::connection::ConnectionEvent::OobRequest)?;
                 Ok(Self::WaitingOobData(phase_data))
             }
             PairingMethod::PassKeyEntry { peripheral, .. } => {
@@ -923,7 +923,8 @@ mod tests {
     use rand_core::SeedableRng;
 
     use super::Pairing;
-    use crate::prelude::{ConnectionEvent, SecurityLevel};
+    use crate::connection::QueuedConnectionEvent as ConnectionEvent;
+    use crate::prelude::SecurityLevel;
     use crate::security_manager::crypto::SecretKey;
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
     use crate::security_manager::pairing::util::make_public_key_packet;

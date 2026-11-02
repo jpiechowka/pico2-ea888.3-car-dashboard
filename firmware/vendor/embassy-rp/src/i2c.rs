@@ -82,7 +82,7 @@ pub enum ConfigError {
 #[non_exhaustive]
 #[derive(Copy, Clone)]
 pub struct Config {
-    /// Requested bus frequency in Hz, 1..=1_000_000, subject to peripheral-clock divisor bounds.
+    /// Requested bus frequency in Hz, 1..=1_000_000, subject to system-clock divisor bounds.
     pub frequency: u32,
     /// Enable internal pullup on SDA.
     ///
@@ -330,7 +330,7 @@ impl<'d, T: Instance> I2c<'d, T, Async> {
     ///
     /// Also handles an abort which arises while processing the tx fifo.
     /// Returns `had_abort` combined with any later abort, awaiting STOP when `do_stop` or an earlier abort requires it.
-    /// Clears STOP status on completion; has no timeout.
+    /// Clears STOP status on completion; a newly observed abort can return before STOP is seen. No timeout.
     async fn wait_stop_det(
         &mut self,
         had_abort: Result<(), Error>,
@@ -490,7 +490,7 @@ impl<'d, T: Instance + 'd, M: Mode> I2c<'d, T, M> {
         // There are some subtleties to I2C timing which we are completely
         // ignoring here See:
         // https://github.com/raspberrypi/pico-sdk/blob/bfcbefafc5d2a210551a4d9d80b4303d4ae0adf7/src/rp2_common/hardware_i2c/i2c.c#L69
-        let clk_base = crate::clocks::clk_peri_freq();
+        let clk_base = timing_clock_hz();
 
         let period = (clk_base + config.frequency / 2) / config.frequency;
         let lcnt = period * 3 / 5; // spend 3/5 (60%) of the period low
@@ -1167,3 +1167,10 @@ mod admission_tests {
         assert_eq!(bytes.next(), None);
     }
 }
+
+/// Returns cached SYS hertz for the synchronous I2C divider/hold calculations.
+/// Zero means unavailable metadata; the caller's divisor checks reject it.
+/// I2C uses SYS independently of UART/SPI PERI: see the
+/// [SDK I2C setup](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/hardware_i2c/i2c.c#L64).
+#[inline]
+pub(crate) fn timing_clock_hz() -> u32 { crate::clocks::clk_sys_freq() }

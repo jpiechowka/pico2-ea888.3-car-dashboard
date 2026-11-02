@@ -193,10 +193,9 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
     let mut runner = stack.runner();
     let active_inspection = Cell::new(None);
     let outcome = {
-        let hci = pin!(crate::session::latch_completion(
-            runner.run_with_handler(&reports),
-            latch_fault
-        ));
+        // Keep one runner owner across the latch and race; cleanup follows this scope.
+        let runner = pin!(runner.run_with_handler(&reports));
+        let hci = pin!(crate::session::latch_completion(runner, latch_fault));
         let work = pin!(operations(&stack, &reports, &active_inspection));
         select(hci, work).await
     };
@@ -559,8 +558,9 @@ pub(crate) fn elapsed_ms(started: Instant) -> u32 {
         .min(u64::from(u32::MAX)) as u32
 }
 /// Awaits `future` for three seconds and returns its value or mapped failure
-/// carrying `stage` and elapsed milliseconds. Timeout drops the ATT future;
-/// enclosing inspection must clean up this bearer rather than issuing another request.
+/// carrying `stage` and elapsed milliseconds. Timeout drops the supplied future;
+/// a pinned borrow leaves its owner for the caller's enclosing scope to release.
+/// The inspection must drop that owner and clean up the bearer before another request.
 pub(crate) async fn att<T, E>(
     stage: FailureStage,
     future: impl Future<Output = Result<T, BleHostError<E>>>,
@@ -659,7 +659,7 @@ pub(crate) async fn connection_events(
                 );
             }
             ConnectionEvent::RequestConnectionParams(request) => {
-                if let Err(error) = att(FailureStage::ConnectionEvents, request.reject(stack)).await {
+                if let Err(error) = att(FailureStage::ConnectionEvents, pin!(request.reject(stack))).await {
                     return error;
                 }
             }

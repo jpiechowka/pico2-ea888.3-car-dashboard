@@ -21,7 +21,7 @@ flashing command is invoked. The internal `tree --root PATH` command accepts an
 `original`/`modified` JSON map on stdin for existing checker/test callers.
 
 The HAL release, URL, archive hash and exact patch inventory are pinned. Radio
-release identities, firmware revision and binary/license inventory are pinned.
+cyw43, trouble-host and bt-hci release identities, firmware revision and binary/license inventory are pinned.
 Manifest paths/hashes are validated before overlays are combined; duplicate keys,
 unknown schema fields, absolute/noncanonical paths and non-lowercase SHA256 reject.
 Every regular file is hashed, with missing/extra/changed bytes rejected. Only a

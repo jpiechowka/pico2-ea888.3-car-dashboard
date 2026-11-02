@@ -390,3 +390,41 @@ fn zero_file_data_cannot_substitute_for_tar_end_blocks() {
         );
     }
 }
+
+#[test]
+/// Radio admission includes the patched HCI source and pins its release identity, not just its manifest's hashes.
+fn hci_radio_identity_and_tree_are_mandatory() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/vendor");
+    let fixture = Fixture::new();
+    for name in ["cyw43", "trouble-host", "bt-hci", "cyw43-firmware"] {
+        let manifest_name = format!("{name}-provenance.json");
+        let bytes = fs::read(source.join(&manifest_name)).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        fixture.write(&manifest_name, &bytes);
+        let original = if name == "cyw43-firmware" { "files" } else { "original" };
+        for map in [original, "modified"] {
+            for path in manifest[map].as_object().unwrap().keys() {
+                fixture.write(
+                    &format!("{name}/{path}"),
+                    &fs::read(source.join(name).join(path)).unwrap(),
+                );
+            }
+        }
+    }
+    dashboard_provenance::check_radio(&fixture.0).unwrap();
+    let path = fixture.0.join("bt-hci-provenance.json");
+    let original = fs::read(&path).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    manifest["version"] = "0.11.0".into();
+    fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(
+        dashboard_provenance::check_radio(&fixture.0).is_err(),
+        "unreviewed HCI release was ignored"
+    );
+    fs::write(&path, original).unwrap();
+    fs::write(fixture.0.join("bt-hci/src/controller.rs"), b"changed controller").unwrap();
+    assert!(
+        dashboard_provenance::check_radio(&fixture.0).is_err(),
+        "changed HCI source was ignored"
+    );
+}

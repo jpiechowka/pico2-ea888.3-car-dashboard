@@ -19,7 +19,7 @@ use embassy_time::TimeoutError;
 
 #[cfg(feature = "subrating")]
 use crate::connection::SubratingParams;
-use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
+use crate::connection::{ConnParams, Connection, QueuedConnectionEvent as ConnectionEvent, SecurityLevel};
 use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
@@ -166,6 +166,9 @@ struct State {
     peripheral_waker: WakerRegistration,
     /// Runner waiter for newly requested local closes.
     disconnect_waker: WakerRegistration,
+    #[cfg(feature = "security")]
+    /// Last admitted lifetime; u32::MAX permanently rejects further connection admission.
+    security_generation: u32,
     /// Controller ACL packet budget copied into newly established slots.
     default_link_credits: usize,
 }
@@ -190,10 +193,24 @@ enum AttTransaction {
     Received,
 }
 
+#[cfg(feature = "security")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One manager-local connection lifetime; generations never wrap or repeat within this host.
+pub(crate) struct SecurityLink {
+    /// Controller handle captured at establishment.
+    pub(crate) handle: ConnHandle,
+    /// Nonzero manager-wide establishment sequence, independent of reusable table slots.
+    generation: u32,
+}
+
 /// Borrowed fixed link table, shared outbound queue and optional shared security manager; handles retain table slots.
 pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     /// Role waiters and default ACL budget under runtime borrow checking.
     state: RefCell<State>,
+    /// Permanent driver failure, shared by public commands and all workers.
+    pub(crate) fault: crate::lifetime::HostFault,
+    /// Independent intrusive waiters for any link leaving its live phase.
+    pub(crate) changed: futures_intrusive::sync::LocalManualResetEvent,
     /// Host-owned fixed slots; refcounts retain identities across terminal close.
     connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
     /// Shared queue of retained slot indices and owned packets. Each entry owns one transferred I/O count; dequeue restores its RAII lease and manager drop drains leftovers.
@@ -215,8 +232,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
+                #[cfg(feature = "security")]
+                security_generation: 0,
             }),
             connections,
+            fault: crate::lifetime::HostFault::new(),
+            changed: futures_intrusive::sync::LocalManualResetEvent::new(false),
             outbound: Channel::new(),
             #[cfg(feature = "security")]
             security_manager: SecurityManager::new(bond_storage),
@@ -261,6 +282,43 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             None
         })
         .ok()
+    }
+
+    #[cfg(feature = "security")]
+    /// Captures the live lifetime for `handle`; absent or closing links return None.
+    pub(crate) fn security_link(&self, handle: ConnHandle) -> Option<SecurityLink> {
+        self.connection_by_handle(handle).map(|storage| storage.security_link())
+    }
+
+    #[cfg(feature = "security")]
+    /// Polls `command` only while `link` is current. Stale queued work returns None without polling.
+    /// A lifetime lost after any poll returns InvalidState: HCI submission may already have occurred,
+    /// so the ControlRunner must terminate rather than reuse controller command/completion state.
+    /// The sole ControlRunner owns the shared disconnect waiter. The caller pins command in the
+    /// immediate await scope; its drop cannot undo HCI. This guard borrows rather than copies it.
+    async fn security_command<T, E>(
+        &self,
+        link: SecurityLink,
+        mut command: core::pin::Pin<&mut impl Future<Output = Result<T, crate::BleHostError<E>>>>,
+    ) -> Result<Option<T>, crate::BleHostError<E>> {
+        let mut polled = false;
+        poll_fn(|cx| {
+            self.state.borrow_mut().disconnect_waker.register(cx.waker());
+            if self.security_link(link.handle) != Some(link) {
+                return Poll::Ready(if polled {
+                    Err(Error::InvalidState.into())
+                } else {
+                    Ok(None)
+                });
+            }
+            polled = true;
+            let result = command.as_mut().poll(cx);
+            if self.security_link(link.handle) != Some(link) {
+                return Poll::Ready(Err(Error::InvalidState.into()));
+            }
+            result.map(|result| result.map(Some))
+        })
+        .await
     }
 
     /// Returns establishment role for retained local `index`; invalid index/borrow conflict panics.
@@ -591,6 +649,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     /// Requests close with `reason` for local Connecting/Connected `index`, waking runner, active ACL sender and GATT client waiters; other phases are unchanged.
     pub(crate) fn request_disconnect(&self, index: u8, reason: DisconnectReason) {
+        let _notify = crate::host::OnDrop::new(|| {
+            self.changed.set();
+            self.changed.reset();
+        });
         let entry = &mut self.connection_mut(index);
         if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) {
             entry.state = ConnectionState::DisconnectRequest(reason);
@@ -612,6 +674,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     /// Requests live `handle` close with `reason`, waking runner/client/ACL sender; absent or already-closing handles are ignored.
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
+        let _notify = crate::host::OnDrop::new(|| {
+            self.changed.set();
+            self.changed.reset();
+        });
         if let Some(mut entry) = self.connection_by_handle_mut(handle) {
             if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) && handle == entry.handle
             {
@@ -626,6 +692,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     /// Quarantines all controller-established but unaccepted central links and wakes runner/ACL sender; returns whether any were found. Prevents a later address-matched attempt adopting a canceled result.
     pub(crate) fn cancel_unaccepted_central(&self) -> bool {
+        let _notify = crate::host::OnDrop::new(|| {
+            self.changed.set();
+            self.changed.reset();
+        });
         let mut found = false;
         for entry in self.connections.borrow_mut().iter_mut() {
             if entry.role == LeConnRole::Central && entry.state == ConnectionState::Connecting {
@@ -642,11 +712,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         found
     }
 
-    /// Returns first pending local close request, or Pending; optional `cx` registers the runner waiter. Caller must issue/confirm before polling again; confirmation is not terminal controller disconnection.
+    /// Returns a retained pending close request, NoPermits at I/O-count exhaustion, or Pending; optional `cx` registers the runner waiter. Admission failure preserves the request. Caller must send/confirm before polling again; confirmation is not terminal controller disconnection.
     pub(crate) fn poll_disconnecting<'m>(
         &'m self,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<DisconnectRequest<'m, P::Packet>> {
+    ) -> Poll<Result<DisconnectRequest<'m, P>, Error>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
@@ -654,12 +724,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         core::mem::drop(state);
         for (idx, storage) in self.connections.borrow().iter().enumerate() {
             if let ConnectionState::DisconnectRequest(reason) = storage.state {
-                return Poll::Ready(DisconnectRequest {
-                    index: idx,
-                    handle: storage.handle,
+                if let Err(error) = storage.retain_io() {
+                    return Poll::Ready(Err(error));
+                }
+                return Poll::Ready(Ok(DisconnectRequest {
+                    lease: IoLease {
+                        index: idx,
+                        connections: self.connections,
+                    },
                     reason,
-                    connections: self.connections,
-                });
+                }));
             }
         }
         Poll::Pending
@@ -738,6 +812,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     /// Applies terminal `reason` to nonterminal `h`; returns NotFound if absent/already terminal. Clears reassembly/ATT queues/locks, wakes blocked operations, retains terminal reason despite full event queue, and resets security/metrics. References and identity remain until reuse.
     pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
+        let _notify = crate::host::OnDrop::new(|| {
+            self.changed.set();
+            self.changed.reset();
+        });
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if h == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
@@ -773,6 +851,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "att-queued-writes")]
                 storage.prepare_write.clear();
                 storage.l2cap_listening = false;
+                #[cfg(feature = "security")]
+                self.state.borrow_mut().disconnect_waker.wake();
                 return Ok(());
             }
         }
@@ -798,7 +878,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         )
     }
 
-    /// Records `handle`, `peer_addr`, `role`, `params` and optional security `resolvable_addrs` in the first Disconnected zero-reference slot. Returns NotFound when full. Resolves stored identity/bond, resets pending work and wakes role acceptance; published phase is Connecting.
+    /// Records `handle`, `peer_addr`, `role`, `params` and optional security `resolvable_addrs` in the first Disconnected zero-reference slot. Returns NotFound when full or InvalidState on exhausted security generations without mutation. Resolves stored identity/bond, resets pending work and wakes role acceptance; published phase is Connecting.
     pub(crate) fn connect_with_rpas(
         &self,
         handle: ConnHandle,
@@ -807,12 +887,19 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         params: ConnParams,
         #[cfg(feature = "security")] resolvable_addrs: ResolvablePrivateAddrs,
     ) -> Result<(), Error> {
+        self.fault.check()?;
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
         let default_att_mtu = self.default_att_mtu();
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 && storage.io_refcount.get() == 0
             {
+                #[cfg(feature = "security")]
+                {
+                    let generation = state.security_generation.checked_add(1).ok_or(Error::InvalidState)?;
+                    state.security_generation = generation;
+                    storage.security_generation = generation;
+                }
                 storage.events.clear();
                 storage.reassembly.clear();
                 storage.state = ConnectionState::Connecting;
@@ -932,6 +1019,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     /// Releases local `index`; last accepted-link owner requests close and wakes runner. Reference underflow or invalid index/borrow panics.
     pub(crate) fn dec_ref(&self, index: u8) {
+        let _notify = crate::host::OnDrop::new(|| {
+            self.changed.set();
+            self.changed.reset();
+        });
         self.connection_mut(index)
             .dec_ref(&mut self.state.borrow_mut().disconnect_waker);
     }
@@ -1009,7 +1100,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     /// Returns a lease for live local `index`, Disconnected after close begins, or NoPermits at I/O-count exhaustion; invalid indices panic.
-    fn retain_io(&self, index: usize) -> Result<IoLease<'_, P>, Error> {
+    pub(crate) fn retain_io(&self, index: usize) -> Result<IoLease<'_, P>, Error> {
+        self.fault.check()?;
         let mut connections = self.connections.borrow_mut();
         let storage = &mut connections[index];
         if !matches!(storage.state, ConnectionState::Connecting | ConnectionState::Connected) {
@@ -1376,7 +1468,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     #[cfg(feature = "security")]
-    /// Executes `_event` security work through `host`: key reply, central encryption, timeout latch or resolving-list/identity update. Returns controller/transport errors; missing identities are logged/ignored, missing keys request authentication-failure close. Cancellation can leave a submitted command or partial state update.
+    /// Executes `_event` security work through `host`: key reply, central encryption, timeout latch or resolving-list/identity update. Returns controller/transport errors; missing identities are logged/ignored, missing keys request authentication-failure close. Stale queued lifetimes are ignored; losing a lifetime after polling an HCI command returns InvalidState and terminates the ControlRunner because submission cannot be undone. Global privacy updates require a currently stored exact identity/IRK.
     pub(crate) async fn handle_security_event<'h, C>(
         &self,
         host: &crate::host::BleHost<'h, C, P>,
@@ -1391,8 +1483,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         use bt_hci::cmd::le::LeLongTermKeyRequestReply;
 
         match _event {
-            crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
-                let identity = self.connection_by_handle(handle).map(|x| x.peer_identity);
+            crate::security_manager::SecurityEventData::SendLongTermKey(link, ediv, rand) => {
+                let handle = link.handle;
+                let identity = self
+                    .connection_by_handle(handle)
+                    .filter(|x| x.security_link() == link)
+                    .map(|x| x.peer_identity);
                 if let Some(identity) = identity {
                     // Match EDIV/Rand against stored bonds to find the correct LTK.
                     // During active legacy pairing (STK phase), the STK is stored with EDIV=0, Rand=0.
@@ -1408,8 +1504,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         }
                     });
                     if let Some(ltk) = ltk {
-                        let _ = host
-                            .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
+                        let _ = self
+                            .security_command(
+                                link,
+                                core::pin::pin!(host.command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))),
+                            )
                             .await?;
                     } else {
                         warn!("[host] Long term key request reply failed, no long term key");
@@ -1420,8 +1519,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     warn!("[host] Long term key request reply failed, unknown peer")
                 }
             }
-            crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
-                let role = self.connection_by_handle(handle).map(|x| x.role);
+            crate::security_manager::SecurityEventData::EnableEncryption(link, bond_info) => {
+                let handle = link.handle;
+                let role = self
+                    .connection_by_handle(handle)
+                    .filter(|x| x.security_link() == link)
+                    .map(|x| x.role);
                 if let Some(role) = role {
                     #[cfg(feature = "central")]
                     if LeConnRole::Central == role {
@@ -1429,8 +1532,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         let (ediv, rand) = (bond_info.ediv, bond_info.rand);
                         #[cfg(not(feature = "legacy-pairing"))]
                         let (ediv, rand) = (0, [0; 8]);
-                        host.async_command(LeEnableEncryption::new(handle, rand, ediv, bond_info.ltk.to_le_bytes()))
-                            .await?;
+                        self.security_command(
+                            link,
+                            core::pin::pin!(host.async_command(LeEnableEncryption::new(
+                                handle,
+                                rand,
+                                ediv,
+                                bond_info.ltk.to_le_bytes(),
+                            ))),
+                        )
+                        .await?;
                     }
                 } else {
                     warn!("[host] Enable encryption failed, unknown peer")
@@ -1452,14 +1563,26 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
             #[cfg(feature = "security")]
-            crate::security_manager::SecurityEventData::BondAdded(handle, identity) => {
+            crate::security_manager::SecurityEventData::BondAdded(link, identity) => {
+                // A delayed event must not resurrect a removed bond or an obsolete IRK.
+                if !self
+                    .security_manager
+                    .get_bond_information()
+                    .iter()
+                    .any(|bond| bond.identity == identity)
+                {
+                    return Ok(());
+                }
                 host.resolving_list_state()
                     .borrow_mut()
                     .push(crate::host::ResolvingListUpdate::Add(identity));
                 // Update the connection's stored peer identity to reflect the identity
                 // address distributed during key exchange, which may differ from the
                 // address seen at connection time (e.g. a temporary RPA).
-                if let Some(mut connection) = self.connection_by_handle_mut(handle) {
+                if let Some(mut connection) = self
+                    .connection_by_handle_mut(link.handle)
+                    .filter(|x| x.security_link() == link)
+                {
                     connection.peer_identity = identity;
                 }
             }
@@ -1552,22 +1675,18 @@ impl<'d, P: PacketPool> Iterator for ConnectedIter<'d, P> {
     }
 }
 
-/// Borrowed runner work item for a local disconnect request; confirmation only advances to in-flight close.
-pub struct DisconnectRequest<'a, P> {
-    /// Local table slot whose requested close was observed.
-    index: usize,
-    /// Controller handle captured for command submission.
-    handle: ConnHandle,
+/// Exact-slot retained local close request; confirmation only advances to in-flight close.
+pub struct DisconnectRequest<'a, P: PacketPool> {
+    /// Retains the originating slot through command admission, completion and confirmation.
+    lease: IoLease<'a, P>,
     /// Local reason to submit and retain in the in-flight state.
     reason: DisconnectReason,
-    /// Borrowed table used by confirmation; does not itself retain a slot owner.
-    connections: &'a RefCell<[ConnectionStorage<P>]>,
 }
 
-impl<P> DisconnectRequest<'_, P> {
-    /// Returns the controller link handle captured when this work item was polled.
+impl<P: PacketPool> DisconnectRequest<'_, P> {
+    /// Returns the original controller handle; the retained slot cannot be reused.
     pub fn handle(&self) -> ConnHandle {
-        self.handle
+        self.lease.handle()
     }
 
     /// Returns the locally requested HCI disconnect reason.
@@ -1575,19 +1694,41 @@ impl<P> DisconnectRequest<'_, P> {
         self.reason
     }
 
-    /// Advances a still-pending request to Disconnecting; preserves terminal state if controller completion raced ahead. Does not itself issue HCI commands.
-    pub fn confirm(self) {
-        let mut connections = self.connections.borrow_mut();
-        let storage = &mut connections[self.index];
-        // Only transition if still in DisconnectRequest. The HCI
-        // disconnect_complete handler (`disconnected()`) may race ahead and
-        // set state = Disconnected; in that case we must NOT overwrite it
-        // back to Disconnecting, or the slot becomes unreusable
-        // (terminal state and both reference counts zero permit reuse).
-        if !matches!(storage.state, ConnectionState::DisconnectRequest(_)) {
-            return;
+    /// Sends this exact slot's close through originating `host`. Returns Disconnected without I/O
+    /// if already terminal before first poll, InvalidValue for a different host, or HCI/transport errors.
+    /// Cancellation or terminal loss after any command poll permanently faults the host because
+    /// submission cannot be distinguished from a pending credit/transport wait.
+    pub async fn send<C>(&self, host: &crate::host::BleHost<'_, C, P>) -> Result<(), crate::BleHostError<C::Error>>
+    where
+        C: bt_hci::controller::Controller + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
+    {
+        let manager = host.connections();
+        if !core::ptr::eq(self.lease.connections, manager.connections) {
+            return Err(Error::InvalidValue.into());
         }
-        storage.state = ConnectionState::Disconnecting(self.reason);
+        manager
+            .fault
+            .link(
+                &manager.changed,
+                || {
+                    matches!(
+                        self.lease.connections.borrow()[self.lease.index].state,
+                        ConnectionState::DisconnectRequest(_)
+                    )
+                },
+                core::pin::pin!(host.command(bt_hci::cmd::link_control::Disconnect::new(self.handle(), self.reason()))),
+            )
+            .await
+    }
+
+    /// Advances only the retained pending request to Disconnecting; terminal state stays terminal.
+    /// Consuming self releases its I/O lease and cannot mutate a replacement slot.
+    pub fn confirm(self) {
+        let mut connections = self.lease.connections.borrow_mut();
+        let storage = &mut connections[self.lease.index];
+        if matches!(storage.state, ConnectionState::DisconnectRequest(_)) {
+            storage.state = ConnectionState::Disconnecting(self.reason);
+        }
     }
 }
 /// Reusable link slot retaining identity/diagnostics until zero-reference terminal cleanup permits reallocation.
@@ -1596,6 +1737,9 @@ pub struct ConnectionStorage<P> {
     pub state: ConnectionState,
     /// Controller-assigned numeric handle; retained after close and reusable by another slot.
     pub handle: ConnHandle,
+    #[cfg(feature = "security")]
+    /// Manager-wide lifetime sequence; zero denotes never admitted.
+    security_generation: u32,
     /// Central/peripheral role from establishment.
     pub role: LeConnRole,
     /// Resolved/stored peer identity, updated when pairing distributes an identity address.
@@ -1755,11 +1899,22 @@ impl defmt::Format for Metrics {
 }
 
 impl<P> ConnectionStorage<P> {
+    #[cfg(feature = "security")]
+    /// Returns this storage lifetime without borrowing its already-borrowed manager table.
+    pub(crate) fn security_link(&self) -> SecurityLink {
+        SecurityLink {
+            handle: self.handle,
+            generation: self.security_generation,
+        }
+    }
+
     /// Returns an unowned terminal slot with empty queues, zero/default identity and no negotiated/security state.
     pub(crate) const fn new() -> ConnectionStorage<P> {
         ConnectionStorage {
             state: ConnectionState::Disconnected,
             handle: ConnHandle(0),
+            #[cfg(feature = "security")]
+            security_generation: 0,
             role: LeConnRole::Central,
             peer_identity: Identity {
                 addr: Address {
@@ -2113,6 +2268,7 @@ impl<P: PacketPool> Drop for PacketGrant<'_, P> {
 /// Native link lifecycle, handle-reuse, queued GATT and disconnect acknowledgment regressions.
 pub(crate) mod tests {
     use super::*;
+    use crate::connection::ConnectionEvent;
     extern crate std;
 
     use std::boxed::Box;
@@ -2126,6 +2282,113 @@ pub(crate) mod tests {
     pub const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
     /// Second distinct six-byte little-endian peer fixture address for filtering and reuse tests.
     pub const ADDR_2: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+
+    #[cfg(feature = "security")]
+    #[test]
+    /// The last generation is admitted once; exhaustion preserves every slot and the global counter.
+    fn security_lifetime_exhaustion_is_transactional() {
+        let mgr = setup();
+        let handle = ConnHandle::new(7);
+        let peer = Address::random(ADDR_1);
+        mgr.state.borrow_mut().security_generation = u32::MAX - 1;
+        mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        assert_eq!(mgr.security_link(handle).unwrap().generation, u32::MAX);
+        mgr.disconnected(handle, Status::SUCCESS).unwrap();
+        assert_eq!(
+            mgr.connect(
+                handle,
+                Address::random(ADDR_2),
+                LeConnRole::Peripheral,
+                ConnParams::new()
+            ),
+            Err(Error::InvalidState)
+        );
+        assert_eq!(mgr.state.borrow().security_generation, u32::MAX);
+        let slots = mgr.connections.borrow();
+        assert_eq!(slots[0].state, ConnectionState::Disconnected);
+        assert_eq!(slots[0].peer_identity.addr, peer);
+        assert_eq!(slots[0].security_generation, u32::MAX);
+        assert_eq!(slots[1].security_generation, 0);
+        assert_eq!(slots[1].state, ConnectionState::Disconnected);
+    }
+
+    #[cfg(feature = "security")]
+    #[test]
+    /// Stale lifetimes never poll commands; post-poll close wakes and fails without another command poll.
+    fn security_command_checks_every_poll_and_completion() {
+        use core::convert::Infallible;
+        use core::task::Waker;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        /// Counts actual wake delivery when a terminal HCI event invalidates a pending command.
+        struct WakeCount(
+            /// Number of delivered wake notifications.
+            AtomicUsize,
+        );
+        impl std::task::Wake for WakeCount {
+            /// Counts the consumed notification.
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let mgr = setup();
+        let handle = ConnHandle::new(7);
+        let peer = Address::random(ADDR_1);
+        mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let old = mgr.security_link(handle).unwrap();
+        mgr.disconnected(handle, Status::SUCCESS).unwrap();
+        mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let stale_polls = Cell::new(0);
+        let never = async {
+            stale_polls.set(stale_polls.get() + 1);
+            Ok::<(), crate::BleHostError<Infallible>>(())
+        };
+        assert!(block_on(mgr.security_command(old, core::pin::pin!(never)))
+            .unwrap()
+            .is_none());
+        assert_eq!(stale_polls.get(), 0);
+        let current = mgr.security_link(handle).unwrap();
+        let polls = Cell::new(0);
+        let command = poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            Poll::<Result<(), crate::BleHostError<Infallible>>>::Pending
+        });
+        let command = core::pin::pin!(command);
+        let mut guarded = core::pin::pin!(mgr.security_command(current, command));
+        let count = Arc::new(WakeCount(AtomicUsize::new(0)));
+        let waker = Waker::from(count.clone());
+        let mut cx = Context::from_waker(&waker);
+        assert!(guarded.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(polls.get(), 1);
+        mgr.disconnected(handle, Status::SUCCESS).unwrap();
+        assert_eq!(count.0.load(Ordering::SeqCst), 1);
+        mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        assert!(matches!(
+            guarded.as_mut().poll(&mut cx),
+            Poll::Ready(Err(crate::BleHostError::BleHost(Error::InvalidState)))
+        ));
+        assert_eq!(polls.get(), 1);
+        let current = mgr.security_link(handle).unwrap();
+        let ready = async { Ok::<_, crate::BleHostError<Infallible>>(42) };
+        assert_eq!(
+            block_on(mgr.security_command(current, core::pin::pin!(ready))).unwrap(),
+            Some(42)
+        );
+        let closes_on_poll = async {
+            mgr.disconnected(handle, Status::SUCCESS).unwrap();
+            Ok::<_, crate::BleHostError<Infallible>>(42)
+        };
+        assert!(matches!(
+            block_on(mgr.security_command(current, core::pin::pin!(closes_on_poll))),
+            Err(crate::BleHostError::BleHost(Error::InvalidState))
+        ));
+    }
 
     #[test]
     #[cfg(feature = "gatt")]
@@ -2252,12 +2515,12 @@ pub(crate) mod tests {
         peripheral.disconnect();
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(Ok(req)) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 
         // If nothing happens, polling should behave the same way
-        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(Ok(req)) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 
@@ -2305,7 +2568,7 @@ pub(crate) mod tests {
         peripheral.disconnect();
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(Ok(req)) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 
@@ -2460,7 +2723,7 @@ pub(crate) mod tests {
         drop(handle);
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(Ok(req)) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 

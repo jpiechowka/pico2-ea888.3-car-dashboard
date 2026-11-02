@@ -222,3 +222,19 @@ The EXTEXCLALL helper comment now describes external exclusive transactions,
 without claiming that it changes every memory region's shareability. No register
 operation or startup instruction changed. See the [source review](../../docs/hardware/actlr-startup-review.md)
 for the distinct core0/core1 paths and the limit of the barrier finding.
+
+
+## HCI controller and pairing dependencies (2 November 2026)
+
+The complete published bt-hci 0.10.1 tree is now retained locally alongside cyw43
+and trouble-host. Firmware, host and standalone vendor test workspaces select the
+same reviewed controller patch. The radio gate pins its release, archive digest,
+complete original inventory and current overlay. See
+[HCI patches](bt-hci/LOCAL_PATCHES.md) for cancellation quarantine, multiple
+waiters, response bounds, Reset behavior and recovery limits. Native tests and
+private rustdoc run separately in CI; physical controller behavior remains untested.
+
+Trouble's normal P-256 backend uses the scoped stable dependency migration recorded
+in [the security review](../../docs/dependencies/p256-security-2026-11-02.md).
+The public rand_core 0.6 boundary and peer validation rules remain intact. Linked
+ARM memory/stack checks are required independently of native regression success.

@@ -23,6 +23,8 @@ pub(crate) struct MockBus {
     pub reads: usize,
     /// Count of WLAN, bulk backplane and 32-bit backplane writes.
     pub writes: usize,
+    /// Exact WLAN payload bytes, shared so a canceled runner remains inspectable.
+    pub wlan_packets: std::rc::Rc<core::cell::RefCell<std::vec::Vec<std::vec::Vec<u8>>>>,
     /// Number of bus initialization calls, used to check pre-I/O admission.
     pub init_calls: usize,
     /// Address and owned bytes for every bulk backplane write.
@@ -31,6 +33,8 @@ pub(crate) struct MockBus {
     pub f2_reads: usize,
     /// Advertise repeated F2 packets until 100 reads, bounding broken-loop failures.
     pub f2_continuous: bool,
+    /// Logical packet length for continuous RX; None retains the 12-byte fixture default.
+    pub f2_len: Option<u16>,
     /// Optional 4096-byte RX ring; unread padding is deliberately nonzero.
     pub ring: Option<std::boxed::Box<[u8; 4096]>>,
     /// Backplane base used for the emulated Bluetooth register/ring addresses.
@@ -80,8 +84,9 @@ impl SealedBus for MockBus {
         buf.fill(0);
     }
 
-    /// Counts a WLAN write without interpreting the supplied bytes.
-    async fn wlan_write(&mut self, _: &Aligned<A4, [u8]>) {
+    /// Records `len` payload bytes from `buf` without its reserved prefix and counts one write.
+    async fn wlan_write(&mut self, buf: &mut crate::runner::WlanBuffer, len: usize) {
+        self.wlan_packets.borrow_mut().push(buf.payload(len).to_vec());
         self.writes += 1;
     }
 
@@ -156,11 +161,11 @@ impl SealedBus for MockBus {
     /// Ignores function/address halfword writes.
     async fn write16(&mut self, _: u32, _: u32, _: u16) {}
 
-    /// Returns a 12-byte F2 packet status while continuous traffic is enabled and fewer than 100 reads occurred.
+    /// Returns the configured/default F2 length while continuous traffic is enabled and fewer than 100 reads occurred.
     async fn read32(&mut self, _: u32, _: u32) -> u32 {
         // Stop eventually so a broken unbounded drain fails instead of hanging.
         if self.f2_continuous && self.f2_reads < 100 {
-            STATUS_F2_PKT_AVAILABLE | (12 << STATUS_F2_PKT_LEN_SHIFT)
+            STATUS_F2_PKT_AVAILABLE | (u32::from(self.f2_len.unwrap_or(12)) << STATUS_F2_PKT_LEN_SHIFT)
         } else {
             0
         }

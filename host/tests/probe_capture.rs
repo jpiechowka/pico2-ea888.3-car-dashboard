@@ -239,12 +239,21 @@ fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     }
     let meta = u16::from_le_bytes([output[14], output[15]]) as usize;
     let start = 24 + meta;
+    assert_eq!(&output[start + 3..start + 5], &[1, 0]);
     for offset in [3, 4] {
         let mut bytes = output[..size].to_vec();
         bytes[start + offset] = 0;
         fix_crc(&mut bytes);
         if offset == 3 {
             assert!(decode(&bytes).is_err());
+        } else {
+            // A zero high byte preserves the valid little-endian start handle.
+            let view = decode(&bytes).unwrap();
+            assert_eq!(view.counts(), [1; 4]);
+            let Some(Record::Service(service)) = view.records().next() else {
+                panic!()
+            };
+            assert_eq!(service.start, 1);
         }
     }
     let mut bytes = output[..size].to_vec();

@@ -74,6 +74,33 @@ pub(crate) const fn aligned_ref(x: &[u32]) -> &Aligned<A4, [u8]> {
     unsafe { core::mem::transmute(slice::from_raw_parts(x.as_ptr() as *const u8, len)) }
 }
 
+/// Returns the logical byte `range` of `buf`, retaining its complete aligned object provenance.
+/// Panics unless start <= end <= buf.len() and start is four-byte aligned. Empty views are allowed.
+/// This forms no byte reference to padding and does not promise that padding is initialized.
+pub(crate) fn aligned_range(buf: &Aligned<A4, [u8]>, range: core::ops::Range<usize>) -> &Aligned<A4, [u8]> {
+    assert!(range.start <= range.end && range.end <= buf.len() && range.start.is_multiple_of(4));
+    // SAFETY: Aligned is repr(C), with its byte field at offset zero. Derive from the whole
+    // parent, not Deref's narrower byte slice. Aligned start plus bounded end keeps the
+    // child's rounded extent within the parent's rounded extent; shared lifetime is retained.
+    unsafe {
+        let base = (buf as *const Aligned<A4, [u8]> as *const u8).add(range.start);
+        &*(core::ptr::slice_from_raw_parts(base, range.end - range.start) as *const Aligned<A4, [u8]>)
+    }
+}
+
+/// Returns the exclusive logical byte `range` of `buf`, retaining complete aligned provenance.
+/// Panics unless start <= end <= buf.len() and start is four-byte aligned. Empty views are allowed.
+/// The parent remains exclusively borrowed; this neither reads nor initializes alignment padding.
+pub(crate) fn aligned_range_mut(buf: &mut Aligned<A4, [u8]>, range: core::ops::Range<usize>) -> &mut Aligned<A4, [u8]> {
+    assert!(range.start <= range.end && range.end <= buf.len() && range.start.is_multiple_of(4));
+    // SAFETY: Same repr(C)/rounded-extent argument as aligned_range. The raw base comes
+    // from the full exclusive parent, and the returned view cannot outlive that borrow.
+    unsafe {
+        let base = (buf as *mut Aligned<A4, [u8]> as *mut u8).add(range.start);
+        &mut *(core::ptr::slice_from_raw_parts_mut(base, range.end - range.start) as *mut Aligned<A4, [u8]>)
+    }
+}
+
 /// Returns an exclusive word view of A4-aligned `x`, including its rounded-up trailing storage.
 /// Internal callers must supply whole initialized backing words even when the logical byte prefix
 /// is shorter; alignment alone does not initialize padding or authorize touching another object.

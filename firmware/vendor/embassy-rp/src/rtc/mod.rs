@@ -21,6 +21,12 @@ static WAKER: AtomicWaker = AtomicWaker::new();
 /// Latched alarm occurrence; scheduling/disabling does not itself clear this flag.
 static ALARM_OCCURRED: AtomicBool = AtomicBool::new(false);
 
+/// Returns whether enabled alarm activation is still pending in one register `snapshot`.
+/// An IRQ-cleared enable retires the request even if foreground missed the ACTIVE interval.
+fn alarm_activation_pending(snapshot: crate::pac::rtc::regs::IrqSetup0) -> bool {
+    snapshot.match_ena() && !snapshot.match_active()
+}
+
 /// A reference to the real time clock of the system
 pub struct Rtc<'d, T: Instance> {
     /// Exclusive RTC peripheral ownership.
@@ -161,7 +167,7 @@ impl<'d, T: Instance> Rtc<'d, T> {
         }
     }
 
-    /// Replaces the comparator with `filter`, enables RTC interrupts and waits for match activation.
+    /// Replaces the comparator with `filter`, enables RTC interrupts and waits for activation or IRQ retirement.
     /// Field ranges are not validated; absent fields match any value. The IRQ disables the comparator,
     /// so recurring alarms must be rearmed. An older software occurrence latch is not cleared here.
     ///
@@ -189,9 +195,9 @@ impl<'d, T: Instance> Rtc<'d, T> {
 
         self.inner.regs().inte().modify(|w| w.set_rtc(true));
 
-        // Set the enable bit and check if it is set
+        // A matching alarm may already have been retired by the IRQ before ACTIVE is observed.
         self.inner.regs().irq_setup_0().modify(|w| w.set_match_ena(true));
-        while !self.inner.regs().irq_setup_0().read().match_active() {
+        while alarm_activation_pending(self.inner.regs().irq_setup_0().read()) {
             core::hint::spin_loop();
         }
     }
@@ -334,3 +340,44 @@ impl SealedInstance for crate::peripherals::RTC {
     fn regs(&self) -> crate::pac::rtc::Rtc { crate::pac::RTC }
 }
 impl Instance for crate::peripherals::RTC {}
+
+#[cfg(test)]
+/// Register-snapshot interleavings without RTC MMIO or physical timing claims.
+mod tests {
+    use super::*;
+
+    #[test]
+    /// An IRQ can retire the comparator before foreground observes activation; no future acknowledgment is owed.
+    fn alarm_activation_wait_finishes_after_irq_retirement() {
+        let mut pending = crate::pac::rtc::regs::IrqSetup0::default();
+        pending.set_match_ena(true);
+        let mut active = pending;
+        active.set_match_active(true);
+        // The actual IRQ clears MATCH_ENA; hardware later clears its ACTIVE acknowledgment.
+        let mut retired = active;
+        retired.set_match_ena(false);
+        retired.set_match_active(false);
+        // Foreground missed the active interval while the IRQ ran. Bound the simulation instead of hanging.
+        let observations = [pending, retired, retired];
+        assert_eq!(
+            observations
+                .iter()
+                .position(|snapshot| !alarm_activation_pending(*snapshot)),
+            Some(1)
+        );
+    }
+
+    #[test]
+    /// Ordinary activation still waits while enabled and inactive, then finishes at ACTIVE or an IRQ-cleared enable.
+    fn alarm_activation_wait_preserves_ordinary_acknowledgment() {
+        let mut pending = crate::pac::rtc::regs::IrqSetup0::default();
+        pending.set_match_ena(true);
+        assert!(alarm_activation_pending(pending));
+        let mut active = pending;
+        active.set_match_active(true);
+        assert!(!alarm_activation_pending(active));
+        // Early IRQ retirement may leave ACTIVE briefly high; it also needs no further activation wait.
+        active.set_match_ena(false);
+        assert!(!alarm_activation_pending(active));
+    }
+}

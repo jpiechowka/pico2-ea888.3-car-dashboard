@@ -25,26 +25,27 @@
     "src/util.rs": "51d10a1f43045bd88cc473a2aa1a29eeff26900130bd6de85d7cd08e0452fe53"
   },
   "modified": {
-    "Cargo.lock": "1b55b62d3c015a674bf22f731bc235c6d0426ce67fe72b40890c59b11a12e9c4",
-    "Cargo.toml": "366d176d39b32689f57260a452b23c20968439b8096ca9b6ab09059ae2c40b37",
+    "Cargo.lock": "ab679f5343ba53066a5eecfafbbf11d4c53a2f2e267184a45ff224384920c013",
+    "Cargo.toml": "af8cf919e889bd0c0c7e9e06e4372952fd07207237e810617cf3f77d6aa22643",
     "Cargo.toml.orig": "895d9ab82dcfa5ad9b243faa58a3c3634bcffc6c10a14c50af47ee6bb33e78be",
-    "LOCAL_PATCHES.md": "26c6b6fce5e29a93ffea062b35b0cd843d188f6e39937a41afa6beeebe2ef56c",
+    "LOCAL_PATCHES.md": "c8d3cd3697945e239837a5c771ad4ec5cc96692420b792e67bddba7394ada3d5",
     "rustfmt.toml": "b204ff86e8e4d95ce01281f2bba275d2013cbc7fe172bbc35138e1fa10f80ed4",
+    "src/bluetooth.rs": "286e165acf9c5a44f6a5abb9289e4b67e63d336c21a569f15f3bee68f33652cd",
     "src/bluetooth_firmware.rs": "133acd4b08486b27f7990ee54f9ba49ab12f309be1e236091619e24f7ebfadcb",
     "src/bluetooth_ring_tests.rs": "710bc20ce55c754c429edbf8991d666565e887fbb6ba4cd522f2dfb0e71367cb",
-    "src/bluetooth.rs": "286e165acf9c5a44f6a5abb9289e4b67e63d336c21a569f15f3bee68f33652cd",
     "src/consts.rs": "270ffd2d468a85765670e33fe79853cf944a6b7c448f83f544e42d7cee13c93c",
-    "src/control.rs": "aa978796562713fb779c82257dde0c20eea03f9185dd3d086d4896f5f82e0861",
+    "src/control.rs": "75ea462d8312fb9e8bcd1f0d7f255c19968b498e4c42507dba98e4f098a7f6fc",
     "src/countries.rs": "ff141c4e14f5c8b664625c65b510078dc2d9a87b95f499bad561c34f3a1f249d",
     "src/events.rs": "38cf3be63fc561a5733d3876bdadbf7c365677acd446b2646429854ab89341d7",
     "src/fmt.rs": "e0f35dccf8606ede3dc427a48e2b3ef6e4d894e97e3e961ce7f845d83b68d075",
     "src/ioctl.rs": "5a96303ad89d279e64352c92aa185761ac75141b1de937e25a69f87392773df2",
-    "src/lib.rs": "e394567b3fd6a9f86611d3d09c751b97366827a2e1565d0f9fbc5ff08f544b29",
-    "src/regression_tests.rs": "1fee0ed4dbe3468e331ccae36471325676d33297e21111be114f49c3b25df207",
-    "src/runner.rs": "9a7a49905e48d0995e7faba68b4b8f0608ec93907aa8672c44568c9bdc292504",
-    "src/sdio.rs": "4fb0083b48db351c24edabe47169c171acecf512c3d8a74fe336f58390f64eb9",
-    "src/spi.rs": "ef71ede85d3ccfbff1f4e79f079379abac787dd92ca334f512900de34559de5f",
+    "src/lib.rs": "6a47a90b25ebb21430d8a72ca63113c74a47300b18b8e2493b27b082dfe7ee2e",
+    "src/regression_tests.rs": "6c833d6630857721cd2c729fa7519efec7755db044d977f8abdc90464da1eacc",
+    "src/runner.rs": "bde5811fc554b6f11ecaa9bd2c1609140ea4738f6c01cbe0659e0f0803f4999d",
+    "src/sdio.rs": "f3f73cb45d46f9f641cae3025a332818be6c85707db6ea2a6a4ae1ba9dba53e8",
+    "src/spi.rs": "53b31bc4532e0a1f6573cd1c1b2694aa5dd795075ed0780602ca8ccd3fae63de",
     "src/structs.rs": "dcfdf619a8dfa7cf3579fd2606af3611269a4048db14cf10de2a3c9e023ad955",
-    "src/util.rs": "2aed7771bbbaaf45efe3d8036bba33b185555a08f56c3a4e01b0f234ebdefe95"
+    "src/util.rs": "71a7a31c8da9aa2d44743ab29d651fccbb7c741ae8c1ea3da66fe55589c5310c",
+    "src/wlan_tests.rs": "076939902f4c7d5d126ac4865f4cfbbf6ea2b9b219f18a8a5ffb9e0e2e177e00"
   }
 }

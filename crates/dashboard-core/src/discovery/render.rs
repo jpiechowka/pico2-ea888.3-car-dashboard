@@ -704,14 +704,39 @@ fn scan_details(
             }
             None => emit.formatted(format_args!("Last {:?} / at {} ms", last.kind, last.at_ms)),
         }
-        emit.formatted(format_args!(
-            "Scan revision {} / entry {}/{}",
-            last.revision,
-            u16::from(last.index) + 1,
-            last.total_reports
-        ));
+        let invalid_count = !(1..=25).contains(&last.total_reports)
+            && last.index == 0
+            && last.kind == ScanErrorKind::InvalidValue
+            && last.declared_data_len.is_none();
+        let trailing = (1..=25).contains(&last.total_reports)
+            && last.index == last.total_reports
+            && last.kind == ScanErrorKind::InvalidSize
+            && last.declared_data_len.is_none()
+            && last.remaining_bytes != 0;
+        if invalid_count || trailing {
+            emit.formatted(format_args!("Scan revision {}", last.revision));
+            if invalid_count {
+                emit.formatted(format_args!("Invalid batch report count: {}", last.total_reports));
+            } else {
+                emit.formatted(format_args!(
+                    "Trailing bytes after {} declared reports",
+                    last.total_reports
+                ));
+            }
+        } else {
+            emit.formatted(format_args!(
+                "Scan revision {} / entry {}/{}",
+                last.revision,
+                u16::from(last.index) + 1,
+                last.total_reports
+            ));
+        }
         if now.is_some() {
-            emit.text("Parsing stops at the first bad entry in a batch");
+            emit.text(if invalid_count || trailing {
+                "Parsing stops at the first batch failure"
+            } else {
+                "Parsing stops at the first bad entry in a batch"
+            });
         }
         emit.formatted(format_args!(
             "Report bytes {} / remaining {}",
@@ -719,6 +744,7 @@ fn scan_details(
         ));
         match last.declared_data_len {
             Some(length) => emit.formatted(format_args!("Declared data length: {length}")),
+            None if invalid_count || trailing => emit.text("Data length: not a record failure"),
             None => emit.text("Declared data length: missing header byte"),
         }
         emit.text("One record needs 10 + data length bytes");
@@ -2233,6 +2259,53 @@ mod tests {
                 .iter()
                 .any(|s| s == "Declared data length: missing header byte")
         );
+    }
+
+    /// Batch-level scan failures describe boundaries without inventing a record or a missing header byte.
+    #[test]
+    fn scan_batch_failures_have_explicit_live_and_saved_boundary_labels() {
+        for (count, index, remaining, kind, expected) in [
+            (0, 0, 0, ScanErrorKind::InvalidValue, "Invalid batch report count: 0"),
+            (26, 0, 10, ScanErrorKind::InvalidValue, "Invalid batch report count: 26"),
+            (
+                1,
+                1,
+                1,
+                ScanErrorKind::InvalidSize,
+                "Trailing bytes after 1 declared reports",
+            ),
+        ] {
+            let scan = ScanDiagnostics {
+                total: 1,
+                invalid_size: u32::from(kind == ScanErrorKind::InvalidSize),
+                invalid_value: u32::from(kind == ScanErrorKind::InvalidValue),
+                last: Some(ScanFailure {
+                    kind,
+                    revision: 7,
+                    index,
+                    total_reports: count,
+                    report_bytes: 10 + remaining,
+                    remaining_bytes: remaining,
+                    declared_data_len: None,
+                    at_ms: 1,
+                }),
+            };
+            for now in [Some(2), None] {
+                let mut rows = std::vec::Vec::<std::string::String>::new();
+                scan_details(
+                    &scan,
+                    now,
+                    &mut EvidenceLines::new(Some(&mut |line| rows.push(line.into()))),
+                );
+                assert!(rows.iter().any(|line| line == expected), "{rows:?}");
+                assert!(
+                    rows.iter()
+                        .all(|line| !line.contains("entry") && !line.contains("missing header"))
+                );
+                assert!(rows.iter().any(|line| line == "Data length: not a record failure"));
+                assert!(rows.iter().all(|line| line.len() * 6 <= 300));
+            }
+        }
     }
 
     /// Future observations report unavailable age while equal/later snapshots show zero/elapsed seconds.

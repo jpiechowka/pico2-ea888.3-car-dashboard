@@ -13,7 +13,7 @@ const HAL_HASH: &str = "5d98f472894c1ecffac5596c657af5305c57282d29e8746d7fec0339
 /// Embassy source revision associated with the pinned HAL and original radio firmware inventory.
 const COMMIT: &str = "84444a19eb57d978e3c09fcdc8e60cdd7278eb03";
 /// Exact reviewed HAL replacement/addition paths; update coherently with overlay provenance.
-const HAL_PATCHES: [&str; 74] = [
+const HAL_PATCHES: [&str; 75] = [
     "Cargo.lock",
     "Cargo.toml",
     "Cargo.toml.orig",
@@ -51,6 +51,7 @@ const HAL_PATCHES: [&str; 74] = [
     "src/multicore.rs",
     "src/multicore_stack.rs",
     "src/otp.rs",
+    "src/otp_tests.rs",
     "src/pio/batch.rs",
     "src/pio/instr.rs",
     "src/pio/mod.rs",
@@ -128,7 +129,7 @@ struct Hal {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Radio {
-    /// cyw43 or trouble-host according to the current check iteration; JSON key is crate.
+    /// cyw43, trouble-host or bt-hci according to the current check iteration; JSON key is crate.
     #[serde(rename = "crate")]
     name: String,
     /// Exact version compiled into check_radio.
@@ -293,7 +294,7 @@ pub fn check_hal(
         if archive.is_some() { "checked" } else { "not supplied" }
     ))
 }
-/// Verify pinned cyw43/trouble-host and firmware/NVRAM/license trees under vendor `root`.
+/// Verify pinned cyw43/trouble-host/bt-hci and firmware/NVRAM/license trees under vendor `root`.
 /// Return a combined success summary only after all checks pass; errors discard partial summaries.
 /// Archive digests are manifest trust anchors, not downloads; tree hashes prove current bytes only.
 pub fn check_radio(root: &Path) -> Result<String> {
@@ -308,6 +309,11 @@ pub fn check_radio(root: &Path) -> Result<String> {
             "trouble-host",
             "0.8.0",
             "19a566cc37ceaff5cc2a6ff8cc02debd1ee6b95d59ced8830d005da8b080cbe9",
+        ),
+        (
+            "bt-hci",
+            "0.10.1",
+            "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f",
         ),
     ] {
         let manifest: Radio = parse(&read_manifest(&root.join(format!("{name}-provenance.json")))?)?;

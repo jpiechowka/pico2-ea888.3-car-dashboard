@@ -7,8 +7,8 @@ use embedded_hal_1::digital::OutputPin;
 use futures::FutureExt;
 
 use crate::consts::*;
-use crate::runner::{BusType, SealedBus};
-use crate::util::{slice8_mut, slice32_mut, slice32_ref};
+use crate::runner::{BusType, SealedBus, WlanBuffer};
+use crate::util::{slice8_mut, slice32_mut};
 
 /// Custom Spi Trait that _only_ supports the bus operation of the cyw43
 /// Implementors are expected to hold the CS pin low during an operation.
@@ -276,17 +276,14 @@ where
         self.status = self.spi.cmd_read(cmd, &mut buf[..len_in_u32]).await;
     }
 
-    /// Sends WLAN `buf` rounded to whole words, copying into a 513-word command buffer; caches status.
-    /// Internal callers supply initialized trailing bytes and at most 2048 payload bytes; larger input panics.
-    async fn wlan_write(&mut self, buf: &Aligned<A4, [u8]>) {
-        let buf = slice32_ref(buf);
-        let cmd = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, buf.len() as u32 * 4);
-        //TODO try to remove copy?
-        let mut cmd_buf = [0_u32; 513];
-        cmd_buf[0] = cmd;
-        cmd_buf[1..][..buf.len()].copy_from_slice(buf);
-
-        self.status = self.spi.cmd_write(&cmd_buf[..buf.len() + 1]).await;
+    /// Sends `len` payload bytes from initialized `buf`, rounded to whole words, and caches status.
+    /// Requires 1..=2048 bytes or panics before mutation/I/O. Writes only the reserved prefix;
+    /// the same contiguous words stay borrowed through the existing transport transaction.
+    async fn wlan_write(&mut self, buf: &mut WlanBuffer, len: usize) {
+        assert!((1..=2048).contains(&len));
+        let words = len.div_ceil(4);
+        buf.words[0] = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, words as u32 * 4);
+        self.status = self.spi.cmd_write(&buf.words[..words + 1]).await;
     }
 
     /// Copies backplane `addr` into `data` in at most 64-byte window-safe chunks, skipping response delay.
@@ -382,8 +379,6 @@ where
         self.backplane_writen(addr, val as u32, 2).await
     }
 
-    /// Copies backplane `addr` into `data` in at most 64-byte window-safe chunks, skipping response delay.
-    /// Panics for unaligned addr; cancellation preserves a completed prefix. No status-error propagation.
     #[allow(unused)]
     /// Returns the low 32 bits from backplane register `addr`, retaining its selected window.
     async fn bp_read32(&mut self, addr: u32) -> u32 {

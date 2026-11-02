@@ -8,8 +8,8 @@ use aligned::{A4, Aligned};
 use embassy_time::{Duration, Timer};
 
 use crate::consts::*;
-use crate::runner::{BusType, SealedBus};
-use crate::util::{aligned_mut, aligned_ref, try_until};
+use crate::runner::{BusType, SealedBus, WlanBuffer};
+use crate::util::{aligned_mut, aligned_range, aligned_range_mut, aligned_ref, try_until};
 
 // macro_rules! ALIGN_UINT {
 //     ($val:expr, $align:expr) => {
@@ -251,7 +251,7 @@ where
         let block_part = buf.len() - byte_part;
 
         if block_part > 0 {
-            let buf = &buf[..block_part];
+            let buf = aligned_range(buf, 0..block_part);
 
             if self
                 .sdio
@@ -268,7 +268,7 @@ where
         }
 
         if byte_part > 0 {
-            let buf = &buf[block_part..];
+            let buf = aligned_range(buf, block_part..buf.len());
 
             if self
                 .sdio
@@ -288,7 +288,7 @@ where
         let block_part = buf.len() - byte_part;
 
         if block_part > 0 {
-            let buf = &mut buf[..block_part];
+            let buf = aligned_range_mut(buf, 0..block_part);
 
             if self
                 .sdio
@@ -305,7 +305,8 @@ where
         }
 
         if byte_part > 0 {
-            let buf = &mut buf[block_part..];
+            let len = buf.len();
+            let buf = aligned_range_mut(buf, block_part..len);
 
             if self
                 .sdio
@@ -417,9 +418,10 @@ where
         self.cmd53_read(FUNC_WLAN, 0, buf).await;
     }
 
-    /// Sends logical `buf` bytes to WLAN function address zero; transport failures are logged only.
-    async fn wlan_write(&mut self, buf: &Aligned<A4, [u8]>) {
-        self.cmd53_write(FUNC_WLAN, 0, buf).await;
+    /// Sends exactly `len` payload bytes from `buf`, skipping its reserved prefix without rounding.
+    /// Panics outside 1..=2048 before I/O; transport failures remain logged only.
+    async fn wlan_write(&mut self, buf: &mut WlanBuffer, len: usize) {
+        self.cmd53_write(FUNC_WLAN, 0, buf.payload(len)).await;
     }
 
     /// Reads `data` from four-byte-aligned backplane `addr` in bounded window-safe chunks.
@@ -446,8 +448,8 @@ where
             let window_remaining = BACKPLANE_WINDOW_SIZE - window_offs as usize;
 
             let len = data.len().min(BLOCK_BUFFER_SIZE).min(window_remaining);
-            scratch[..len].copy_from_slice(&data[..len]);
-            let buf = &mut scratch[..len];
+            scratch.as_mut()[..len].copy_from_slice(&data[..len]);
+            let buf = aligned_range_mut(scratch, 0..len);
 
             self.backplane_set_window(addr).await;
 
@@ -485,8 +487,8 @@ where
             let window_remaining = BACKPLANE_WINDOW_SIZE - window_offs as usize;
 
             let len = data.len().min(BLOCK_BUFFER_SIZE).min(window_remaining);
-            scratch[..len].copy_from_slice(&data[..len]);
-            let buf = &scratch[..len];
+            scratch.as_mut()[..len].copy_from_slice(&data[..len]);
+            let buf = aligned_range(scratch, 0..len);
 
             self.backplane_set_window(addr).await;
 
@@ -664,7 +666,7 @@ mod tests {
             let backing = Aligned::<A4, _>([0xa5; 1028]);
             let backing: &Aligned<A4, [u8]> = &backing;
             let mut bus = SdioBus::new(MockSdio::default());
-            block_on(bus.cmd53_write(FUNC_BACKPLANE, 0, &backing[..len]));
+            block_on(bus.cmd53_write(FUNC_BACKPLANE, 0, aligned_range(backing, 0..len)));
             assert_eq!(bus.sdio.writes.len(), len);
             for (arg, payload) in &bus.sdio.commands {
                 let count = (arg & 0x1ff) as usize;

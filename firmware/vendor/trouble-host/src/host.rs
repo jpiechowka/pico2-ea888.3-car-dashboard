@@ -2,6 +2,8 @@
 //! RX, control and TX must all progress; callbacks borrow receive bytes only during dispatch.
 //! Runner failure/cancellation does not reset the controller or reconstruct already-published host state.
 //! Controller buffer credits are completion accounting, not application delivery acknowledgments.
+//! A worker error/cancellation or uncertain public link-command cancellation permanently stops
+//! every worker and transport entrypoint. Rebuilding only a Runner does not clear this fault.
 #[cfg(all(test, feature = "peripheral", feature = "default-packet-pool"))]
 #[path = "host_advertise_tests.rs"]
 /// Advertising serialization, admission and control-loop cleanup fixtures.
@@ -10,6 +12,10 @@ mod advertise_tests;
 #[path = "host_channel_tests.rs"]
 /// Dynamic-channel and parameter-request state/transport regressions.
 mod channel_tests;
+#[cfg(all(test, feature = "central", feature = "default-packet-pool"))]
+#[path = "host_lifetime_tests.rs"]
+/// Public lifetime, token ownership and split-worker failure regressions.
+mod lifetime_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_mtu_tests.rs"]
 /// ATT MTU/correlation and retained terminal-diagnostic regressions.
@@ -22,6 +28,10 @@ mod no_gatt_tests;
 #[path = "host_regression_tests.rs"]
 /// Ingress resource failure and canceled establishment regressions.
 mod regression_tests;
+#[cfg(all(test, feature = "scan", feature = "default-packet-pool"))]
+#[path = "scan_tests.rs"]
+/// Scanner admission, timeout and canceled-cleanup regressions without radio I/O.
+mod scan_tests;
 #[cfg(all(test, feature = "central", feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_wire_tests.rs"]
 /// Raw HCI parsing through actual receive dispatch.
@@ -33,12 +43,14 @@ use core::future::{poll_fn, Future};
 use core::mem::MaybeUninit;
 use core::task::{Context, Poll};
 
+#[cfg(test)]
+use bt_hci::cmd;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
     SetEventMaskPage2,
 };
 use bt_hci::cmd::info::ReadBdAddr;
-#[cfg(feature = "subrating")]
+#[cfg(any(feature = "subrating", feature = "iso"))]
 use bt_hci::cmd::le::LeSetHostFeature;
 #[cfg(feature = "shorter-connection-intervals")]
 use bt_hci::cmd::le::LeSetHostFeatureV2;
@@ -52,7 +64,7 @@ use bt_hci::cmd::le::{
     LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
-use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 #[cfg(feature = "iso")]
 use bt_hci::data::IsoPacket;
@@ -97,19 +109,21 @@ use futures::pin_mut;
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
-use crate::connection::{ConnParams, ConnectionEvent};
+#[cfg(feature = "connection-params-update")]
+use crate::connection::PendingConnectionParams;
+use crate::connection::{ConnParams, QueuedConnectionEvent as ConnectionEvent};
 #[cfg(feature = "security")]
 use crate::connection_manager::ResolvablePrivateAddrs;
 use crate::connection_manager::{AclSendLock, ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
 #[cfg(feature = "connection-params-update")]
-use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
+use crate::prelude::RequestedConnParams;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    ConnParamUpdateReq, ConnParamUpdateRes, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT,
-    L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
+    ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
+    L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool};
 
@@ -569,7 +583,7 @@ where
         let Some(rpa) = self.state.connections.security_manager.generate_local_rpa()? else {
             return Ok(());
         };
-        LeSetRandomAddr::new(rpa).exec(self.controller).await?;
+        self.command_uninitialized(LeSetRandomAddr::new(rpa)).await?;
         self.state
             .rpa_expires_at
             .set(Instant::now() + self.state.rpa_timeout.get());
@@ -601,7 +615,8 @@ where
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
         // Disable address resolution while modifying the list
-        LeSetAddrResolutionEnable::new(false).exec(self.controller).await?;
+        self.command_uninitialized(LeSetAddrResolutionEnable::new(false))
+            .await?;
 
         let res = match update {
             ResolvingListUpdate::FullSync => self.full_resolving_list_sync(local_irk).await,
@@ -613,26 +628,29 @@ where
                     debug!("[host] incremental resolving list add");
 
                     // Remove first in case this is an update (device already in list)
-                    let _ = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
-                        .exec(self.controller)
+                    let _ = self
+                        .command_uninitialized(LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr))
                         .await;
 
-                    if let Err(e) = LeAddDeviceToResolvingList::new(
-                        peer_addr_kind,
-                        identity.addr.addr,
-                        peer_irk_bytes,
-                        local_irk_bytes,
-                    )
-                    .exec(self.controller)
-                    .await
+                    if let Err(e) = self
+                        .command_uninitialized(LeAddDeviceToResolvingList::new(
+                            peer_addr_kind,
+                            identity.addr.addr,
+                            peer_irk_bytes,
+                            local_irk_bytes,
+                        ))
+                        .await
                     {
                         warn!("[host] failed to add device to resolving list: {:?}", e);
                     }
 
-                    if let Err(e) =
-                        LeSetPrivacyMode::new(peer_addr_kind, identity.addr.addr, bt_hci::param::PrivacyMode::Device)
-                            .exec(self.controller)
-                            .await
+                    if let Err(e) = self
+                        .command_uninitialized(LeSetPrivacyMode::new(
+                            peer_addr_kind,
+                            identity.addr.addr,
+                            bt_hci::param::PrivacyMode::Device,
+                        ))
+                        .await
                     {
                         warn!("[host] failed to set privacy mode: {:?}", e);
                     }
@@ -644,8 +662,8 @@ where
 
                 debug!("[host] incremental resolving list remove");
 
-                if let Err(e) = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
-                    .exec(self.controller)
+                if let Err(e) = self
+                    .command_uninitialized(LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr))
                     .await
                 {
                     warn!("[host] failed to remove device from resolving list: {:?}", e);
@@ -655,9 +673,9 @@ where
         };
 
         // The normal completion path attempts to re-enable address resolution; cancellation does not.
-        if let Err(e) = LeSetAddrResolutionEnable::new(true).exec(self.controller).await {
+        if let Err(e) = self.command_uninitialized(LeSetAddrResolutionEnable::new(true)).await {
             warn!("[host] failed to re-enable address resolution: {:?}", e);
-            return res.and(Err(e.into()));
+            return res.and(Err(e));
         }
 
         res
@@ -679,17 +697,21 @@ where
         debug!("[host] full resolving list sync");
 
         // Clear resolving list
-        LeClearResolvingList::new().exec(self.controller).await?;
+        self.command_uninitialized(LeClearResolvingList::new()).await?;
 
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
         // Add a default entry with just the local IRK so the controller can generate RPAs
         // even when no peers are bonded yet. Only needed when we have our own IRK.
         if local_irk.is_some() {
-            if let Err(e) =
-                LeAddDeviceToResolvingList::new(AddrKind::PUBLIC, BdAddr::default(), [0u8; 16], local_irk_bytes)
-                    .exec(self.controller)
-                    .await
+            if let Err(e) = self
+                .command_uninitialized(LeAddDeviceToResolvingList::new(
+                    AddrKind::PUBLIC,
+                    BdAddr::default(),
+                    [0u8; 16],
+                    local_irk_bytes,
+                ))
+                .await
             {
                 warn!("[host] failed to add default resolving list entry: {:?}", e);
             }
@@ -702,26 +724,26 @@ where
             if let Some(peer_irk) = bond.identity.irk {
                 let peer_addr_kind = bond.identity.addr.kind;
                 let peer_irk_bytes = peer_irk.to_le_bytes();
-                if let Err(e) = LeAddDeviceToResolvingList::new(
-                    peer_addr_kind,
-                    bond.identity.addr.addr,
-                    peer_irk_bytes,
-                    local_irk_bytes,
-                )
-                .exec(self.controller)
-                .await
+                if let Err(e) = self
+                    .command_uninitialized(LeAddDeviceToResolvingList::new(
+                        peer_addr_kind,
+                        bond.identity.addr.addr,
+                        peer_irk_bytes,
+                        local_irk_bytes,
+                    ))
+                    .await
                 {
                     warn!("[host] failed to add device to resolving list: {:?}", e);
                     break;
                 }
                 // Set device privacy mode so we can receive both RPAs and identity addresses
-                if let Err(e) = LeSetPrivacyMode::new(
-                    peer_addr_kind,
-                    bond.identity.addr.addr,
-                    bt_hci::param::PrivacyMode::Device,
-                )
-                .exec(self.controller)
-                .await
+                if let Err(e) = self
+                    .command_uninitialized(LeSetPrivacyMode::new(
+                        peer_addr_kind,
+                        bond.identity.addr.addr,
+                        bt_hci::param::PrivacyMode::Device,
+                    ))
+                    .await
                 {
                     warn!("[host] failed to set privacy mode: {:?}", e);
                 }
@@ -742,37 +764,83 @@ where
         let _ = self.state.initialized.get().await;
     }
 
+    /// Returns synchronous `cmd` completion while healthy, without waiting for initialization.
+    /// Checks before and after every command poll so a Ready callback cannot issue later commands
+    /// after latching failure. Optional-command callers may ignore ordinary HCI refusals only.
+    async fn command_uninitialized<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
+    where
+        C: SyncCmd,
+        T: ControllerCmdSync<C>,
+    {
+        self.state
+            .connections
+            .fault
+            .run(core::pin::pin!(async {
+                cmd.exec(self.controller).await.map_err(Into::into)
+            }))
+            .await
+    }
+
     /// Run a HCI command and return the response.
-    /// Waits for initialization, executes `cmd` and returns its synchronous response or controller/HCI error. Cancellation semantics after submission are transport-specific.
+    /// Waits for initialization, executes `cmd` and returns its response or controller/HCI error.
+    /// A latched host failure returns InvalidState before further driver polling. Generic command
+    /// cancellation remains transport-specific; retained-link callers add the fail-stop guard.
     pub(crate) async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
-        let _ = self.state.initialized.get().await;
-        let ret = cmd.exec(self.controller).await?;
-        Ok(ret)
+        self.state
+            .connections
+            .fault
+            .run(core::pin::pin!(async {
+                let _ = self.state.initialized.get().await;
+                let ret = self.command_uninitialized(cmd).await?;
+                Ok(ret)
+            }))
+            .await
     }
 
     /// Run an async HCI command where the response will generate an event later.
-    /// Waits for initialization, submits `cmd` and returns command-status success/error; the later procedure-completion event remains separate. Cancellation after submission does not undo the procedure.
+    /// Waits for initialization and submits `cmd` while healthy, returning command-status success/error.
+    /// The later procedure event remains separate. Host failure returns InvalidState before another
+    /// driver poll; generic cancellation does not undo the procedure.
     pub(crate) async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
     where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
-        let _ = self.state.initialized.get().await;
-        cmd.exec(self.controller).await?;
-        Ok(())
+        self.state
+            .connections
+            .fault
+            .run(core::pin::pin!(async {
+                let _ = self.state.initialized.get().await;
+                cmd.exec(self.controller).await?;
+                Ok(())
+            }))
+            .await
     }
 
     #[cfg(feature = "iso")]
-    /// Submits borrowed ISO `packet` directly without initialization wait; returns the controller transport result with its cancellation semantics.
-    pub(crate) async fn write_iso_data(&self, packet: &bt_hci::data::IsoPacket<'_>) -> Result<(), T::Error> {
-        self.controller.write_iso_data(packet).await
+    /// Submits borrowed ISO `packet` without initialization wait; returns transport error or
+    /// InvalidState after host failure. Stream identity/lifetime remains the caller's responsibility.
+    pub(crate) async fn write_iso_data(
+        &self,
+        packet: &bt_hci::data::IsoPacket<'_>,
+    ) -> Result<(), BleHostError<T::Error>> {
+        self.state
+            .connections
+            .fault
+            .run(core::pin::pin!(async {
+                self.controller
+                    .write_iso_data(packet)
+                    .await
+                    .map_err(BleHostError::Controller)
+            }))
+            .await
     }
 
-    /// Consumes `status`, `handle`, `peer_addr`, `role`, `params` and optional `resolvable_addrs`; returns false only when a successful link cannot get a slot. Canceled central successes are quarantined for disconnect; other successes increment wrapping connect metrics.
+    /// Consumes `status`, `handle`, `peer_addr`, `role`, `params` and optional `resolvable_addrs`; returns false only when a successful link cannot be admitted (slot or security lifetime exhausted). Canceled central successes are quarantined for disconnect; other successes increment wrapping connect metrics.
     fn handle_connection(
         &self,
         status: Status,
@@ -1232,6 +1300,18 @@ where
         signal: &D,
         p_buf: &mut [u8],
     ) -> Result<(), BleHostError<T::Error>> {
+        let lease = self.state.connections.retain_handle(conn)?;
+        self.l2cap_signal_for_lease(&lease, identifier, signal, p_buf).await
+    }
+    /// Encodes `signal`/`identifier` in `p_buf` and sends only under exact retained `lease`.
+    /// Returns encoding, closed-link or transport errors; submission can have partial effects.
+    pub(crate) async fn l2cap_signal_for_lease<D: L2capSignal>(
+        &self,
+        lease: &crate::connection_manager::IoLease<'d, P>,
+        identifier: u8,
+        signal: &D,
+        p_buf: &mut [u8],
+    ) -> Result<(), BleHostError<T::Error>> {
         // trace!(
         //    "[l2cap] sending control signal (req = {}) signal: {:?}",
         //    identifier,
@@ -1252,7 +1332,7 @@ where
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        let mut sender = self.l2cap_pdu(conn).await?;
+        let mut sender = self.l2cap_pdu_for_lease(lease).await?;
         sender.send(w.finish()).await?;
 
         Ok(())
@@ -1283,6 +1363,7 @@ where
         let handle = lease.handle();
         Ok(L2capSender {
             controller: self.controller,
+            fault: &self.state.connections.fault,
             handle,
             acl_send_lock,
             fragment_size: acl_max,
@@ -1337,6 +1418,7 @@ where
 
         Ok(L2capSender {
             controller: self.controller,
+            fault: &self.state.connections.fault,
             handle,
             acl_send_lock,
             fragment_size: acl_max as u16,
@@ -1353,19 +1435,6 @@ where
         self.state
             .channels
             .send_conn_param_update_req(handle, self, param)
-            .await
-    }
-
-    /// Sends `param` under peer `identifier` for live `handle`; returns admission/encoding/controller errors with ordinary partial-send cancellation semantics.
-    pub(crate) async fn send_conn_param_update_res(
-        &self,
-        handle: ConnHandle,
-        identifier: u8,
-        param: &ConnParamUpdateRes,
-    ) -> Result<(), BleHostError<T::Error>> {
-        self.state
-            .channels
-            .send_conn_param_update_res(handle, identifier, self, param)
             .await
     }
 
@@ -1470,7 +1539,9 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
     }
 
     /// Split the runner into separate independent async tasks
-    /// Returns independently pollable RX/control/TX workers. All must progress on the same executor; splitting does not add synchronization.
+    /// Returns independently pollable RX/control/TX workers. All must progress on the same executor;
+    /// splitting adds no synchronization. Error or cancellation of a started worker permanently
+    /// fails their shared host and wakes all siblings; constructing another runner cannot reset it.
     pub fn split(self) -> (RxRunner<'d, C, P>, ControlRunner<'d, C, P>, TxRunner<'d, C, P>) {
         (self.rx, self.control, self.tx)
     }
@@ -1558,7 +1629,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
 
 impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     /// Run the receive loop that polls the controller for events.
-    /// Runs receive dispatch with discarded optional events; returns transport/allocation/envelope/hardware/security errors. ACL processing errors normally count and request close while the loop continues. Cancellation stops receiving without resetting links.
+    /// Runs receive dispatch with discarded optional events; returns transport/allocation/envelope/hardware/security errors. ACL processing errors normally count and request close while the loop continues. Error or cancellation of a started worker permanently stops the host without resetting links.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
@@ -1567,8 +1638,17 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         self.run_with_handler(&dummy).await
     }
 
-    /// Dispatches borrowed receive bytes to `event_handler`; returns terminal transport/decode/hardware/security errors, while ACL errors request close and increment metrics. Unknown events are ignored. Callback blocking/panic affects this loop; cancellation performs no controller cleanup.
+    /// Dispatches borrowed receive bytes to `event_handler`; returns terminal transport/decode/hardware/security errors, while ACL errors request close and increment metrics. Unknown events are ignored. Callback blocking/panic affects this loop; error or started-worker cancellation permanently stops the host without controller cleanup.
     pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<Disconnect>,
+    {
+        let fault = &self.host.state.connections.fault;
+        fault.worker(core::pin::pin!(self.run_inner(event_handler))).await
+    }
+
+    /// Dispatches to `event_handler` inside the fault boundary; returns its terminal receive error.
+    async fn run_inner<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
     {
@@ -1576,14 +1656,17 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
+            host.state.connections.fault.check()?;
             // Task handling receiving data from the controller.
             let mut rx = host.controller.alloc_buf().map_err(BleHostError::Controller)?;
+            host.state.connections.fault.check()?;
             // let now = Instant::now();
             // let elapsed = (now - last).as_millis();
             // if elapsed >= 1 {
             //     trace!("[host] time since last poll was {} us", elapsed);
             // }
             let result = host.controller.read(&mut rx).await;
+            host.state.connections.fault.check()?;
             // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
@@ -1646,7 +1729,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         ResolvablePrivateAddrs::none(),
                                     ) {
                                         // RX cannot await an HCI command whose response it
-                                        // must itself read. No slot to quarantine this handle:
+                                        // must itself read. Cannot admit this handle for quarantine:
                                         // fail the host so the owner resets the controller.
                                         return Err(Error::OutOfMemory.into());
                                     }
@@ -1677,7 +1760,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         },
                                     ) {
                                         // RX cannot await an HCI command whose response it
-                                        // must itself read. No slot to quarantine this handle:
+                                        // must itself read. Cannot admit this handle for quarantine:
                                         // fail the host so the owner resets the controller.
                                         return Err(Error::OutOfMemory.into());
                                     }
@@ -1824,20 +1907,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     #[cfg(not(feature = "connection-params-update"))]
                                     let _ = event;
                                     #[cfg(feature = "connection-params-update")]
-                                    let req = ConnectionParamsRequest::new_link_layer(
-                                        RequestedConnParams {
-                                            min_connection_interval: Duration::from_micros(
-                                                event.interval_min.as_micros(),
-                                            ),
-                                            max_connection_interval: Duration::from_micros(
-                                                event.interval_max.as_micros(),
-                                            ),
-                                            max_latency: event.max_latency,
-                                            supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
-                                            ..Default::default()
-                                        },
-                                        event.handle,
-                                    );
+                                    let req = PendingConnectionParams::new_link_layer(RequestedConnParams {
+                                        min_connection_interval: Duration::from_micros(event.interval_min.as_micros()),
+                                        max_connection_interval: Duration::from_micros(event.interval_max.as_micros()),
+                                        max_latency: event.max_latency,
+                                        supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
+                                        ..Default::default()
+                                    });
                                     #[cfg(feature = "connection-params-update")]
                                     if let Err(error) = host
                                         .state
@@ -1954,7 +2030,7 @@ enum CancelledCommandState {
 
 impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
     /// Run the control loop for the host
-    /// Resets/configures the controller, publishes ACL capacity, then services close/cancel/privacy/security work. Returns unhandled controller/host errors; optional unsupported capabilities are logged. RX must progress for command replies. Cancellation may leave partially applied controller state; rerunning does not reset the once-published host tables.
+    /// Resets/configures the controller, publishes ACL capacity, then services close/cancel/privacy/security work. Returns unhandled controller/host errors; optional unsupported capabilities are logged. RX must progress for command replies. Cancellation may leave partially applied controller state. Once polled, cancellation or an error permanently rejects rerunning this host; recovery requires a new host/controller session.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -1981,14 +2057,45 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + crate::ShortConnIntervalCmds,
         C::Error: crate::fmt::Format,
     {
+        let fault = &self.host.state.connections.fault;
+        fault.worker(core::pin::pin!(self.run_inner())).await
+    }
+
+    /// Drives this worker's existing loop inside the permanent-fault boundary; returns its terminal error.
+    async fn run_inner(&mut self) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<Disconnect>
+            + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<SetEventMaskPage2>
+            + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetRandomAddr>
+            + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
+            + ControllerCmdSync<Reset>
+            + ControllerCmdSync<LeCreateConnCancel>
+            + ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+            + ControllerCmdSync<LeReadBufferSize>
+            + ControllerCmdSync<ReadBdAddr>
+            + crate::SecurityCmds
+            + crate::IsoStreamCmds
+            + crate::SubratingCmds
+            + crate::ShortConnIntervalCmds,
+        C::Error: crate::fmt::Format,
+    {
         let host = &self.host;
-        Reset::new().exec(host.controller).await?;
+        host.command_uninitialized(Reset::new()).await?;
 
         #[cfg(feature = "security")]
         {
             let mut seed = [0u8; 32];
             for chunk in seed.chunks_mut(8) {
-                let bytes: [u8; 8] = LeRand::new().exec(host.controller).await?;
+                let bytes: [u8; 8] = host.command_uninitialized(LeRand::new()).await?;
                 chunk.copy_from_slice(&bytes);
             }
             host.state.connections.security_manager.set_random_generator_seed(seed);
@@ -2001,7 +2108,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             let addr = host.state.connections.security_manager.generate_local_rpa()?.or(addr);
 
             if let Some(addr) = addr {
-                LeSetRandomAddr::new(addr).exec(host.controller).await?;
+                host.command_uninitialized(LeSetRandomAddr::new(addr)).await?;
 
                 #[cfg(all(feature = "security", feature = "central"))]
                 if host.is_privacy_enabled() {
@@ -2012,7 +2119,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             }
         }
 
-        SetEventMask::new(
+        host.command_uninitialized(SetEventMask::new(
             EventMask::new()
                 .enable_le_meta(true)
                 .enable_conn_request(true)
@@ -2021,16 +2128,19 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_disconnection_complete(true)
                 .enable_encryption_change_v1(true)
                 .enable_encryption_key_refresh_complete(true),
-        )
-        .exec(host.controller)
+        ))
         .await?;
 
-        if let Err(e) = SetEventMaskPage2::new(EventMaskPage2::new().enable_encryption_change_v2(true))
-            .exec(host.controller)
+        if let Err(e) = host
+            .command_uninitialized(SetEventMaskPage2::new(
+                EventMaskPage2::new().enable_encryption_change_v2(true),
+            ))
             .await
         {
             match e {
-                cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD) => warn!("set event mask page 2 is not supported"),
+                BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CMD)) => {
+                    warn!("set event mask page 2 is not supported")
+                }
                 e => Err(e)?,
             }
         }
@@ -2059,7 +2169,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         #[cfg(feature = "shorter-connection-intervals")]
         let mask = mask.enable_le_connection_rate_change(true);
 
-        LeSetEventMask::new(mask).exec(host.controller).await?;
+        host.command_uninitialized(LeSetEventMask::new(mask)).await?;
 
         // Without the Connection Isochronous Stream (Host Support) bit set, a peer central is not allowed to
         // create or accept a CIS.
@@ -2067,12 +2177,14 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         {
             /// Host feature bit32 advertising connected isochronous stream support.
             const LE_FEATURE_CIS_HOST: u8 = 32;
-            if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CIS_HOST, 1)
-                .exec(host.controller)
+            if let Err(e) = host
+                .command_uninitialized(LeSetHostFeature::new(LE_FEATURE_CIS_HOST, 1))
                 .await
             {
                 match e {
-                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                    BleHostError::BleHost(Error::Hci(
+                        bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD,
+                    )) => {
                         warn!("[host] connection isochronous streams are not supported")
                     }
                     e => Err(e)?,
@@ -2086,12 +2198,14 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         {
             /// Host feature bit38 permitting connection subrating procedures.
             const LE_FEATURE_CONN_SUBRATING_HOST: u8 = 38;
-            if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CONN_SUBRATING_HOST, 1)
-                .exec(host.controller)
+            if let Err(e) = host
+                .command_uninitialized(LeSetHostFeature::new(LE_FEATURE_CONN_SUBRATING_HOST, 1))
                 .await
             {
                 match e {
-                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                    BleHostError::BleHost(Error::Hci(
+                        bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD,
+                    )) => {
                         warn!("[host] connection subrating is not supported")
                     }
                     e => Err(e)?,
@@ -2105,12 +2219,14 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         {
             /// Host feature bit73 permitting shorter connection intervals.
             const LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST: u16 = 73;
-            if let Err(e) = LeSetHostFeatureV2::new(LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST, 1)
-                .exec(host.controller)
+            if let Err(e) = host
+                .command_uninitialized(LeSetHostFeatureV2::new(LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST, 1))
                 .await
             {
                 match e {
-                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                    BleHostError::BleHost(Error::Hci(
+                        bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD,
+                    )) => {
                         warn!("[host] shorter connection intervals are not supported")
                     }
                     e => Err(e)?,
@@ -2124,10 +2240,10 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             P::capacity(),
         );
 
-        let ret = LeReadFilterAcceptListSize::new().exec(host.controller).await?;
+        let ret = host.command_uninitialized(LeReadFilterAcceptListSize::new()).await?;
         info!("[host] filter accept list size: {}", ret);
 
-        let ret = LeReadBufferSize::new().exec(host.controller).await?;
+        let ret = host.command_uninitialized(LeReadBufferSize::new()).await?;
         info!(
             "[host] setting txq to {}, fragmenting at {}",
             ret.total_num_le_acl_data_packets as usize, ret.le_acl_data_packet_length as usize
@@ -2145,7 +2261,10 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 "[host] configuring host buffers ({} packets of size {})",
                 ACL_N, ACL_LEN,
             );
-            if let Err(_e) = HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(host.controller).await {
+            if let Err(_e) = host
+                .command_uninitialized(HostBufferSize::new(ACL_LEN, 0, ACL_N, 0))
+                .await
+            {
                 warn!("[host] error configuring host buffers (continuing)");
             }
         }
@@ -2181,9 +2300,10 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         #[cfg(feature = "security")]
         {
             let timeout_secs = host.state.rpa_timeout.get().as_secs();
-            LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(timeout_secs as u32))
-                .exec(host.controller)
-                .await?;
+            host.command_uninitialized(LeSetResolvablePrivateAddrTimeout::new(
+                bt_hci::param::Duration::from_secs(timeout_secs as u32),
+            ))
+            .await?;
             info!("[host] RPA timeout set to {}s", timeout_secs);
         }
 
@@ -2221,7 +2341,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             {
                 Either5::First(request) => {
                     trace!("[host] poll disconnecting links");
-                    match host.command(Disconnect::new(request.handle(), request.reason())).await {
+                    let request = request?;
+                    match request.send(host).await {
                         Ok(_) => {}
                         Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
                         Err(BleHostError::BleHost(Error::NotFound)) => {}
@@ -2324,9 +2445,15 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 }
 
 impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
-    /// Run the transmit loop for the host.
-    /// Waits for initialization, drains retained outbound PDUs and sends them under exact-slot ACL locks. Closed-link packets are discarded; returns other errors to terminate. Cancellation drops the current PDU/leases but cannot retract submitted fragments.
+    /// Runs the transmit loop until a host/controller error is returned; normal progress never returns.
+    /// Waits for initialization, drains retained outbound PDUs and sends them under exact-slot ACL locks. Closed-link packets are discarded; other errors or started-worker cancellation permanently stop the host. Cancellation drops the current PDU/leases but cannot retract submitted fragments.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
+        let fault = &self.host.state.connections.fault;
+        fault.worker(core::pin::pin!(self.run_inner())).await
+    }
+
+    /// Drives this worker's existing loop inside the permanent-fault boundary; returns its terminal error.
+    async fn run_inner(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = &self.host;
         host.state.initialized.get().await;
         loop {
@@ -2361,6 +2488,8 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
 pub struct L2capSender<'a, T: Controller, P: PacketPool> {
     /// Shared HCI transport used for outgoing ACL fragments.
     pub(crate) controller: &'a T,
+    /// Permanent host failure observed before every transport poll.
+    fault: &'a crate::lifetime::HostFault,
     /// Controller handle captured for the retained local connection.
     pub(crate) handle: ConnHandle,
     /// Affine serialization/identity lease spanning every fragment of this send.
@@ -2377,6 +2506,7 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
     where
         T: blocking::Controller,
     {
+        self.fault.check()?;
         let n_acl = pdu.chunks(self.fragment_size as usize).len();
         if n_acl > self.max_fragments {
             return Err(Error::NoPermits.into());
@@ -2394,7 +2524,10 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
         //);
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
-            match self.controller.try_write_acl_data(&acl) {
+            self.fault.check()?;
+            let result = self.controller.try_write_acl_data(&acl);
+            self.fault.check()?;
+            match result {
                 Ok(_result) => {
                     grant.confirm(1);
                     trace!("[host] sent acl packet len = {}", chunk.len());
@@ -2410,28 +2543,37 @@ impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
         Ok(())
     }
 
+    /// Returns InvalidState without further transport polling after permanent host failure.
     /// Fragments borrowed `pdu`, waiting for one credit per fragment, and returns after transport acceptance or link/transport failure. Checks retained-link liveness before every transport poll and wakes on close; cancellation refunds only unconfirmed credits. Generic transports may already have partial effects when Pending; accepted/queued bytes cannot be retracted and peer delivery is not guaranteed. Selected CYW transport publishes nothing before its capacity wait completes. Empty input sends nothing.
     pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
-        // info!(
-        //    "[host] fragmenting PDU of size {} into {} sized fragments",
-        //    pdu.len(),
-        //    self.fragment_size
-        //);
-        let mut pbf = AclPacketBoundary::FirstNonFlushable;
-        for chunk in pdu.chunks(self.fragment_size as usize) {
-            let mut grant = poll_fn(|cx| self.acl_send_lock.poll_request_to_send(1, Some(cx))).await?;
-            let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
-            let mut write = core::pin::pin!(self.controller.write_acl_data(&acl));
-            poll_fn(|cx| {
-                self.acl_send_lock.check_live(cx)?;
-                write.as_mut().poll(cx).map_err(BleHostError::Controller)
-            })
-            .await?;
-            grant.confirm(1);
-            pbf = AclPacketBoundary::Continuing;
-            trace!("[host] sent acl packet len = {}", chunk.len());
-        }
-        Ok(())
+        self.fault
+            .run(core::pin::pin!(async {
+                // info!(
+                //    "[host] fragmenting PDU of size {} into {} sized fragments",
+                //    pdu.len(),
+                //    self.fragment_size
+                //);
+                let mut pbf = AclPacketBoundary::FirstNonFlushable;
+                for chunk in pdu.chunks(self.fragment_size as usize) {
+                    let mut grant = poll_fn(|cx| self.acl_send_lock.poll_request_to_send(1, Some(cx))).await?;
+                    let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
+                    let mut write = core::pin::pin!(self.controller.write_acl_data(&acl));
+                    poll_fn(|cx| {
+                        self.fault.check()?;
+                        self.acl_send_lock.check_live(cx)?;
+                        let result = write.as_mut().poll(cx).map_err(BleHostError::Controller);
+                        self.fault.check()?;
+                        self.acl_send_lock.check_live(cx)?;
+                        result
+                    })
+                    .await?;
+                    grant.confirm(1);
+                    pbf = AclPacketBoundary::Continuing;
+                    trace!("[host] sent acl packet len = {}", chunk.len());
+                }
+                Ok(())
+            }))
+            .await
     }
 }
 

@@ -39,6 +39,7 @@ fn stopped_host_latches_before_operation_drop_and_blocked_terminal_publication()
         drop((lease, guard));
     };
     let mut host = pin!(async {
+        let hci = pin!(hci);
         embassy_futures::select::select(session::latch_completion(hci, bridge::latch_radio_fault), work).await;
         bridge::emit_event(terminal).await;
     });

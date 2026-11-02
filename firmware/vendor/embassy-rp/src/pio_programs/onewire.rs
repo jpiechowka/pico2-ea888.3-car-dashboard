@@ -72,7 +72,7 @@ impl<'a, PIO: Instance> PioOneWireProgram<'a, PIO> {
                         ; Fallthrough
 
                     ; Check for presence of one or more devices.
-                    ; This samples 32 times with an interval of 12us after a 18us delay.
+                    ; This samples 32 times with an interval of 12us after a 24us delay.
                     ; If any bit is zero in the end value, there is a detection
                     ; This whole function takes 480us
                         set x, 31               side 0 [(24 / CLK) - 1]     ; Loop 32 times -> 32*12us = 384us

@@ -8,7 +8,7 @@ use embassy_time::Instant;
 use rand_core::{CryptoRng, RngCore};
 
 use self::util::PairingMethod;
-use crate::connection::{ConnectionEvent, SecurityLevel};
+use crate::connection::{QueuedConnectionEvent as ConnectionEvent, SecurityLevel};
 use crate::security_manager::types::{BondingFlag, Command, PairingFeatures};
 use crate::security_manager::TxPacket;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
@@ -1857,6 +1857,10 @@ pub(super) mod tests {
             result,
             Err(Error::Security(crate::security_manager::Reason::ConfirmValueFailed))
         ));
+        assert!(central_ops.encryptions.is_empty());
+        assert!(peripheral_ops.encryptions.is_empty());
+        assert_eq!(central_pairing.security_level(), SecurityLevel::NoEncryption);
+        assert_eq!(peripheral_pairing.security_level(), SecurityLevel::NoEncryption);
     }
 
     /// Returns each role's admission result when both advertised peer OOB but receive no peer material.

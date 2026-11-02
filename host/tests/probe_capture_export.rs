@@ -140,6 +140,61 @@ fn json_contains_raw_selected_peer_packet_and_truthful_boot_relative_identity() 
     assert!(value.get("utc").is_none());
 }
 
+/// Current capture binary, JSON and text retain batch-boundary cursors without inventing a data length.
+#[test]
+fn batch_framing_diagnostics_survive_capture_and_export() {
+    for (kind, count, index, remaining) in [
+        (ScanErrorKind::InvalidValue, 0, 0, 0),
+        (ScanErrorKind::InvalidValue, 26, 0, 10),
+        (ScanErrorKind::InvalidSize, 1, 1, 1),
+    ] {
+        let mut probe = Probe::new();
+        probe.catalog.observe(Advertisement::new(
+            Peer {
+                address: [1; 6],
+                random: false,
+            },
+            ReportKind::Connectable,
+            -44,
+            &[],
+            1,
+        ));
+        probe.scan_diagnostics.record(ScanFailure {
+            kind,
+            revision: 7,
+            index,
+            total_reports: count,
+            report_bytes: 10 + remaining,
+            remaining_bytes: remaining,
+            declared_data_len: None,
+            at_ms: 1,
+        });
+        let mut bytes = [0; 8192];
+        let length = encode(
+            &probe,
+            BuildIdentity {
+                source_digest: [1; 32],
+                cpu_hz: 150_000_000,
+                spi_hz: 37_500_000,
+                profile: BuildProfile::Stock,
+                source_identity_available: true,
+            },
+            2,
+            &mut bytes,
+        )
+        .unwrap();
+        let json = decode_json(&bytes[..length]).unwrap();
+        let error = &json["global_scan"]["last_error"];
+        assert_eq!(error["index"], index);
+        assert_eq!(error["total_reports"], count);
+        assert_eq!(error["remaining_bytes"], remaining);
+        assert!(error["declared_data_len"].is_null());
+        let text = text_report(&json);
+        assert!(text.contains(&format!("global_scan.last_error.index: {index}")));
+        assert!(text.contains("global_scan.last_error.declared_data_len: null"));
+    }
+}
+
 /// Duplicate/missing response records, unsupported capture schemas, payload corruption and terminal status errors are
 /// rejected.
 #[test]

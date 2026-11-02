@@ -2,9 +2,10 @@
 resolver = "2"
 members = ["pico2", "ble-probe"]
 default-members = ["pico2"]
-exclude = ["vendor/embassy-rp", "vendor/cyw43", "vendor/trouble-host"]
+exclude = ["vendor/embassy-rp", "vendor/cyw43", "vendor/trouble-host", "vendor/bt-hci"]
 
 [patch.crates-io]
+bt-hci = { path = "vendor/bt-hci" }
 # Published 0.10.0 plus reviewed UART, multicore and flash corrections.
 # See vendor/README.md and the source/ELF integrity gates.
 embassy-rp = { path = "vendor/embassy-rp" }

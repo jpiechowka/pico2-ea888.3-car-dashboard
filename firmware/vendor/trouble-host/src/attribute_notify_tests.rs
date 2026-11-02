@@ -1,5 +1,6 @@
 //! In-memory subscription, indication ownership and queued-write failure regressions.
 
+use super::sealed::DynamicAttributeServer;
 use super::*;
 use crate::attribute::{Characteristic, CharacteristicProp, PermissionLevel, Service};
 use crate::connection::ConnParams;
@@ -31,6 +32,74 @@ fn server() -> (
         )
         .build();
     (AttributeServer::new(table), characteristic)
+}
+
+/// A valid per-client two-byte CCCD must be readable through its public typed handle.
+#[test]
+fn typed_cccd_handle_reads_valid_subscription() {
+    let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+    let stack = crate::new(MockController::new(), &mut resources).build();
+    let manager = stack.host().connections();
+    manager
+        .connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+            LeConnRole::Central,
+            ConnParams::new(),
+        )
+        .unwrap();
+    let Poll::Ready(conn) = manager.poll_accept(LeConnRole::Central, &[], None) else {
+        panic!()
+    };
+    let (server, characteristic) = server();
+    let connection = conn.with_attribute_server(&server).unwrap();
+    let handle = characteristic.cccd_handle().unwrap();
+    let result = connection
+        .get(&handle)
+        .expect("typed CCCD handle rejected a valid two-byte value");
+    assert_eq!(result, 0u16);
+}
+
+/// Public typed subscription writes must fit the descriptor and preserve notification flag meaning.
+#[test]
+fn typed_cccd_handle_writes_subscription() {
+    let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+    let stack = crate::new(MockController::new(), &mut resources).build();
+    let manager = stack.host().connections();
+    manager
+        .connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+            LeConnRole::Central,
+            ConnParams::new(),
+        )
+        .unwrap();
+    let Poll::Ready(conn) = manager.poll_accept(LeConnRole::Central, &[], None) else {
+        panic!()
+    };
+    let (server, characteristic) = server();
+    let connection = conn.with_attribute_server(&server).unwrap();
+    let handle = characteristic.cccd_handle().unwrap();
+    for (value, bytes, notify, indicate) in [
+        (1u16, [1, 0], true, false),
+        (2, [2, 0], false, true),
+        (3, [3, 0], true, true),
+        (0, [0, 0], false, false),
+    ] {
+        connection.set(&handle, &value).unwrap();
+        assert_eq!(connection.get(&handle).unwrap(), value);
+        let mut raw = [0x55; 2];
+        assert_eq!(
+            server
+                .get(connection.raw(), characteristic.cccd_handle.unwrap(), &mut raw)
+                .unwrap(),
+            2
+        );
+        assert_eq!(raw, bytes);
+        assert_eq!(characteristic.should_notify(&connection), notify);
+        assert_eq!(characteristic.should_indicate(&connection), indicate);
+        assert_eq!(connection.get(&characteristic).unwrap(), 7);
+    }
 }
 
 /// Connects `conn` to `server`, writes little-endian subscription `bits` to `cccd`, and asserts ATT success.

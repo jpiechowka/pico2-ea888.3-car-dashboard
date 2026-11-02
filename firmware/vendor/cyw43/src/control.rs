@@ -38,6 +38,26 @@ pub enum AddMulticastAddressError {
     NotMulticast,
     /// No free address slots.
     NoFreeSlots,
+    /// Firmware reply lacks its count or complete entries, or declares more than ten slots.
+    MalformedResponse,
+}
+
+/// Returns the admitted count from actual firmware `response` bytes (little-endian u32 plus MACs).
+/// Rejects missing headers, counts above ten and truncated entries before callers index or publish.
+/// Extra buffer bytes are allowed: firmware can return the whole fixed-capacity list storage.
+fn multicast_count(response: &[u8]) -> Result<usize, AddMulticastAddressError> {
+    let [a, b, c, d, ..] = response else {
+        return Err(AddMulticastAddressError::MalformedResponse);
+    };
+    let count = u32::from_le_bytes([*a, *b, *c, *d]);
+    if count > 10 {
+        return Err(AddMulticastAddressError::MalformedResponse);
+    }
+    let count = count as usize;
+    if response.len() < 4 + count * 6 {
+        return Err(AddMulticastAddressError::MalformedResponse);
+    }
+    Ok(count)
 }
 
 /// Exclusive Wi-Fi control handle; the paired Runner must remain polled to complete IOCTLs.
@@ -558,7 +578,8 @@ impl<'a> Control<'a> {
     }
 
     /// Adds multicast `address` (I/G bit set), returning the occupied slot count; duplicates return the existing count.
-    /// Returns NotMulticast or NoFreeSlots at ten entries. Trusts firmware count/response layout; malformed counts can panic.
+    /// Returns NotMulticast, NoFreeSlots at ten entries, or MalformedResponse before an update is sent.
+    /// Cancellation does not undo a submitted update; firmware IOCTL failure handling is unchanged.
     pub async fn add_multicast_address(&mut self, address: [u8; 6]) -> Result<usize, AddMulticastAddressError> {
         // The firmware seems to ignore non-multicast addresses, so let's
         // prevent the user from adding them and wasting space.
@@ -567,9 +588,8 @@ impl<'a> Control<'a> {
         }
 
         let mut buf = [0; 64];
-        self.get_iovar("mcast_list", &mut buf).await;
-
-        let n = u32::from_le_bytes(buf[..4].try_into().unwrap()) as usize;
+        let received = self.get_iovar("mcast_list", &mut buf).await;
+        let n = multicast_count(&buf[..received])?;
         let (used, free) = buf[4..].split_at_mut(n * 6);
 
         if used.chunks(6).any(|a| a == address) {
@@ -588,20 +608,23 @@ impl<'a> Control<'a> {
         Ok(n)
     }
 
-    /// Copies configured addresses into the prefix of `result`, returning the reported count and leaving its tail unchanged.
-    /// Trusts firmware count at most ten; malformed/truncated replies are not explicitly validated and can panic.
-    pub async fn list_multicast_addresses(&mut self, result: &mut [[u8; 6]; 10]) -> usize {
+    /// Copies admitted configured addresses into the prefix of `result`, returning their count (0..=10).
+    /// MalformedResponse leaves all output unchanged; success leaves the unused tail unchanged.
+    /// Cancellation while awaiting the IOCTL changes no output and sends no firmware cancellation.
+    pub async fn list_multicast_addresses(
+        &mut self,
+        result: &mut [[u8; 6]; 10],
+    ) -> Result<usize, AddMulticastAddressError> {
         let mut buf = [0; 64];
-        self.get_iovar("mcast_list", &mut buf).await;
-
-        let n = u32::from_le_bytes(buf[..4].try_into().unwrap()) as usize;
+        let received = self.get_iovar("mcast_list", &mut buf).await;
+        let n = multicast_count(&buf[..received])?;
         let used = &buf[4..][..n * 6];
 
         for (addr, output) in zip(used.chunks(6), result.iter_mut()) {
             output.copy_from_slice(addr)
         }
 
-        n
+        Ok(n)
     }
 
     /// Returns firmware RSSI in dBm as a signed native-endian i32; panics unless the reply is exactly four bytes.
@@ -1000,6 +1023,187 @@ mod tests {
                 panic!("terminal join event was not consumed")
             };
             assert_eq!(result.is_ok(), succeeds, "event={event_type:?}, status={status}");
+        }
+    }
+
+    /// Runs the real list future with one IOCTL `response`, returning count and output bytes.
+    /// Panics if the expected request/completion poll states are not reached.
+    fn list_fixture(response: &[u8]) -> (Result<usize, AddMulticastAddressError>, [[u8; 6]; 10]) {
+        let mut state = crate::State::new();
+        let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+        let mut control = Control::new(
+            runner.state_runner(),
+            &state.net.events,
+            &state.ioctl_state,
+            &state.net.secure_network,
+        );
+        let mut output = [[0xCC; 6]; 10];
+        let count;
+        {
+            let mut list = pin!(control.list_multicast_addresses(&mut output));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(list.as_mut().poll(&mut cx).is_pending());
+            let request = block_on(state.ioctl_state.wait_pending());
+            assert_eq!(request.kind as u8, IoctlType::Get as u8);
+            state.ioctl_state.ioctl_done(response);
+            let Poll::Ready(result) = list.as_mut().poll(&mut cx) else {
+                panic!("list must finish");
+            };
+            count = result;
+        }
+        (count, output)
+    }
+
+    #[test]
+    /// An in-capacity reply declaring eleven entries must not panic in the list API.
+    fn multicast_list_rejects_oversized_count_without_panicking() {
+        let result = std::panic::catch_unwind(|| list_fixture(&[11, 0, 0, 0]));
+        let (result, output) = result.expect("malformed count must not panic");
+        assert!(matches!(result, Err(AddMulticastAddressError::MalformedResponse)));
+        assert_eq!(output, [[0xCC; 6]; 10]);
+    }
+
+    #[test]
+    /// A short one-entry reply cannot publish zero-filled storage as a returned address.
+    fn multicast_list_rejects_short_body_without_fabricating_addresses() {
+        let (result, output) = list_fixture(&[1, 0, 0, 0]);
+        assert!(matches!(result, Err(AddMulticastAddressError::MalformedResponse)));
+        assert_eq!(output, [[0xCC; 6]; 10], "malformed reply changed output");
+    }
+
+    #[test]
+    /// Add must validate the existing list before indexing or starting its update IOCTL.
+    fn multicast_add_rejects_oversized_count_without_panicking() {
+        let result = std::panic::catch_unwind(|| {
+            let mut state = crate::State::new();
+            let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+            let mut control = Control::new(
+                runner.state_runner(),
+                &state.net.events,
+                &state.ioctl_state,
+                &state.net.secure_network,
+            );
+            let mut add = pin!(control.add_multicast_address([1, 2, 3, 4, 5, 6]));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(add.as_mut().poll(&mut cx).is_pending());
+            let _request = block_on(state.ioctl_state.wait_pending());
+            state.ioctl_state.ioctl_done(&[11, 0, 0, 0]);
+            assert!(matches!(
+                add.as_mut().poll(&mut cx),
+                Poll::Ready(Err(AddMulticastAddressError::MalformedResponse))
+            ));
+            assert!(
+                pin!(state.ioctl_state.wait_pending())
+                    .as_mut()
+                    .poll(&mut cx)
+                    .is_pending()
+            );
+        });
+        assert!(result.is_ok(), "malformed count must be an error, not a panic");
+    }
+
+    #[test]
+    /// Real list admission rejects every short boundary and preserves output beyond admitted entries.
+    fn multicast_list_bounds_and_tail_preservation() {
+        for response in [
+            &[][..],
+            &[0],
+            &[0, 0],
+            &[0, 0, 0],
+            &[1, 0, 0, 0],
+            &[1, 0, 0, 0, 1, 2, 3, 4, 5],
+            &[255, 255, 255, 255],
+        ] {
+            let (result, output) = list_fixture(response);
+            assert!(matches!(result, Err(AddMulticastAddressError::MalformedResponse)));
+            assert_eq!(output, [[0xCC; 6]; 10]);
+        }
+        for response in [&[0, 0, 0, 0][..], &[0; 64]] {
+            let (result, output) = list_fixture(response);
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(output, [[0xCC; 6]; 10]);
+        }
+        let one = [1, 0, 0, 0, 1, 2, 3, 4, 5, 6];
+        let (result, output) = list_fixture(&one);
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(output[0], [1, 2, 3, 4, 5, 6]);
+        assert_eq!(&output[1..], &[[0xCC; 6]; 9]);
+        let mut full = [0; 64];
+        full[0] = 10;
+        for (i, entry) in full[4..].as_chunks_mut::<6>().0.iter_mut().enumerate() {
+            entry.copy_from_slice(&[1, 2, 3, 4, 5, i as u8]);
+        }
+        let (result, output) = list_fixture(&full);
+        assert_eq!(result.unwrap(), 10);
+        for (i, entry) in output.iter().enumerate() {
+            assert_eq!(*entry, [1, 2, 3, 4, 5, i as u8]);
+        }
+        let (result, output) = list_fixture(&full[..63]);
+        assert!(matches!(result, Err(AddMulticastAddressError::MalformedResponse)));
+        assert_eq!(output, [[0xCC; 6]; 10]);
+    }
+
+    #[test]
+    /// Add preserves duplicates, rejects full/malformed lists, and appends exactly one complete address.
+    fn multicast_add_preserves_duplicates_and_admits_only_complete_lists() {
+        for (count, duplicate) in [(0, false), (1, false), (1, true), (10, true), (10, false), (11, false)] {
+            let mut state = crate::State::new();
+            let (runner, _) = ch::new(&mut state.net.ch, HardwareAddress::Ethernet([0; 6]));
+            let mut control = Control::new(
+                runner.state_runner(),
+                &state.net.events,
+                &state.ioctl_state,
+                &state.net.secure_network,
+            );
+            let mut reply = [0; 64];
+            reply[0] = count;
+            for i in 0..usize::from(count.min(10)) {
+                reply[4 + i * 6..10 + i * 6].copy_from_slice(&[1, 2, 3, 4, 5, i as u8]);
+            }
+            let address = if duplicate {
+                [1, 2, 3, 4, 5, 0]
+            } else {
+                [3, 4, 5, 6, 7, 8]
+            };
+            let mut add = pin!(control.add_multicast_address(address));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(add.as_mut().poll(&mut cx).is_pending());
+            let _query = block_on(state.ioctl_state.wait_pending());
+            state.ioctl_state.ioctl_done(&reply);
+            let result = add.as_mut().poll(&mut cx);
+            if count > 10 {
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(AddMulticastAddressError::MalformedResponse))
+                ));
+            } else if duplicate {
+                assert!(matches!(result, Poll::Ready(Ok(n)) if n == usize::from(count)));
+            } else if count == 10 {
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(AddMulticastAddressError::NoFreeSlots))
+                ));
+            } else {
+                assert!(result.is_pending());
+                let update = block_on(state.ioctl_state.wait_pending());
+                assert_eq!(update.kind as u8, IoctlType::Set as u8);
+                // The pinned Control future still owns this published request buffer; no poll mutates it here.
+                let wire = unsafe { &*update.buf };
+                assert_eq!(&wire[..11], b"mcast_list\0");
+                assert_eq!(&wire[11..15], &[count + 1, 0, 0, 0]);
+                let existing = usize::from(count) * 6;
+                assert_eq!(&wire[15..15 + existing], &reply[4..4 + existing]);
+                assert_eq!(&wire[15 + existing..21 + existing], &address);
+                assert!(wire[21 + existing..].iter().all(|byte| *byte == 0));
+                state.ioctl_state.ioctl_done(&[]);
+                assert!(matches!(add.as_mut().poll(&mut cx), Poll::Ready(Ok(n)) if n == usize::from(count) + 1));
+            }
+            assert!(
+                pin!(state.ioctl_state.wait_pending())
+                    .as_mut()
+                    .poll(&mut cx)
+                    .is_pending()
+            );
         }
     }
 }

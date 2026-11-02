@@ -48,10 +48,11 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
         let host = self.central.host;
+        host.request_operation(host.scan_command_state(), true).await;
+        // Only an admitted scanner owns cancellation of the controller operation.
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state().cancel(true);
         });
-        host.request_operation(host.scan_command_state(), true).await;
         self.central.set_accept_filter(config.filter_accept_list).await?;
 
         let scanning = ScanningPhy {
@@ -105,10 +106,11 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
         let host = self.central.host;
+        host.request_operation(host.scan_command_state(), false).await;
+        // A dropped admission waiter must not stop the scan owned by another lease.
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state().cancel(false);
         });
-        host.request_operation(host.scan_command_state(), false).await;
 
         if !config.filter_accept_list.is_empty() {
             self.central.set_accept_filter(config.filter_accept_list).await?;

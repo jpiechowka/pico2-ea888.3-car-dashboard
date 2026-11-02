@@ -287,7 +287,7 @@ impl<'d> Channel<'d> {
 
 /// Already-started DMA operation retaining the channel borrow. Polling observes BUSY; drop aborts.
 /// Completion describes DMA, not a downstream peripheral FIFO or physical wire becoming idle.
-#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[must_use = "DMA has already started; await completion or drop to abort"]
 pub struct Transfer<'a> {
     /// Exclusive channel borrow held until completion or synchronous abort on drop.
     channel: Channel<'a>,

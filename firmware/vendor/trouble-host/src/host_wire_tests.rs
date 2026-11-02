@@ -2,6 +2,7 @@
 
 extern crate std;
 
+use crate::connection::ConnectionEvent;
 use core::cell::Cell;
 use core::convert::Infallible;
 use core::future::Future;
@@ -407,4 +408,184 @@ fn failed_connection_complete_preserves_status_for_legacy_and_extended_callers()
             }
         }
     }
+}
+
+/// Runs `check` with a terminal retained owner and live same-handle replacement; `same_peer`
+/// selects identical peer address evidence instead of a different peer.
+fn with_reused_handle_links(
+    same_peer: bool,
+    check: impl FnOnce(
+        &crate::Stack<'_, WireController<'_>, DefaultPacketPool>,
+        crate::connection::Connection<'_, DefaultPacketPool>,
+        crate::connection::Connection<'_, DefaultPacketPool>,
+        crate::connection::ConnectionParamsRequest<'_, DefaultPacketPool>,
+    ),
+) {
+    let controller = WireController {
+        packets: &[],
+        next: Cell::new(0),
+    };
+    let mut resources = HostResources::<DefaultPacketPool, 2, 1>::new();
+    let stack = crate::new(controller, &mut resources).build();
+    stack
+        .host_state
+        .initialized
+        .init(InitialState {
+            acl_max: 251,
+            acl_total: 1,
+        })
+        .ok()
+        .unwrap();
+    let manager = &stack.host_state.connections;
+    let handle = ConnHandle::new(0);
+    manager
+        .connect(
+            handle,
+            Address::new(AddrKind::RANDOM, bt_hci::param::BdAddr::new([1; 6])),
+            LeConnRole::Central,
+            ConnParams::new(),
+        )
+        .unwrap();
+    let Poll::Ready(old) = manager.poll_accept(LeConnRole::Central, &[], None) else {
+        panic!("old link")
+    };
+    let token = crate::connection::PendingConnectionParams::new(Default::default(), 7);
+    manager
+        .post_handle_event(handle, ConnectionEvent::RequestConnectionParams(token))
+        .unwrap();
+    let ConnectionEvent::RequestConnectionParams(token) = embassy_futures::block_on(old.next()) else {
+        panic!("parameter request event")
+    };
+    manager.disconnected(handle, Status::SUCCESS).unwrap();
+    manager
+        .connect(
+            handle,
+            Address::new(
+                AddrKind::RANDOM,
+                bt_hci::param::BdAddr::new([if same_peer { 1 } else { 2 }; 6]),
+            ),
+            LeConnRole::Central,
+            ConnParams::new(),
+        )
+        .unwrap();
+    let Poll::Ready(new) = manager.poll_accept(LeConnRole::Central, &[], None) else {
+        panic!("new link")
+    };
+    assert_ne!(old.index(), new.index());
+    assert_eq!(old.handle(), new.handle());
+    assert!(old.is_disconnected());
+    assert!(new.is_connected());
+    check(&stack, old, new, token);
+}
+
+#[test]
+/// A terminal retained Connection must not submit a PHY change to a newer link reusing its numeric handle.
+fn stale_public_connection_command_cannot_target_reused_handle() {
+    with_reused_handle_links(false, |stack, old, new, token| {
+        drop(token);
+        let result = embassy_futures::block_on(old.set_phy(stack, bt_hci::param::PhyKind::Le2M));
+        assert!(
+            matches!(result, Err(BleHostError::BleHost(Error::Disconnected))),
+            "stale command reached accepting HCI boundary: {result:?}"
+        );
+        assert!(new.is_connected());
+    });
+}
+
+#[test]
+/// A delayed parameter token must not begin sending its reply on a replacement link with the same controller handle.
+fn stale_parameter_reply_cannot_target_reused_handle() {
+    with_reused_handle_links(false, |stack, _old, new, token| {
+        let mut reply = pin!(token.reject(stack));
+        let result = reply.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        let mut outbound = pin!(stack.host_state.connections.outbound());
+        let queued = outbound.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        assert!(
+            matches!(result, Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))),
+            "stale reply admitted on replacement link: {result:?}, queued={}",
+            queued.is_ready()
+        );
+        assert!(queued.is_pending());
+        assert!(new.is_connected());
+    });
+}
+
+#[test]
+/// Every public link-command route rejects a retained terminal slot even on same-peer reconnect.
+fn all_public_link_commands_reject_same_peer_handle_reuse() {
+    with_reused_handle_links(true, |stack, old, _new, token| {
+        drop(token);
+        /// Requires the supplied public future to reject its terminal owner.
+        macro_rules! disconnected {
+            ($work:expr) => {
+                assert!(matches!(
+                    embassy_futures::block_on($work),
+                    Err(BleHostError::BleHost(Error::Disconnected))
+                ));
+            };
+        }
+        disconnected!(old.rssi(stack));
+        disconnected!(old.set_phy(stack, bt_hci::param::PhyKind::Le2M));
+        disconnected!(old.read_phy(stack));
+        disconnected!(old.update_data_length(stack, 27, 328));
+        disconnected!(old.update_connection_params(stack, &Default::default()));
+        disconnected!(old.update_frame_space(
+            stack,
+            Duration::from_micros(150),
+            Duration::from_micros(150),
+            bt_hci::param::PhyMask::new(),
+            bt_hci::param::SpacingTypes::new()
+        ));
+        let params = crate::connection::ConnectRateParams {
+            min_connection_interval: Duration::from_millis(80),
+            max_connection_interval: Duration::from_millis(80),
+            subrate_min: 1,
+            subrate_max: 1,
+            max_latency: 0,
+            continuation_number: 0,
+            supervision_timeout: Duration::from_secs(8),
+            min_ce_length: Duration::from_secs(0),
+            max_ce_length: Duration::from_secs(0),
+        };
+        disconnected!(old.request_connection_rate(stack, &params));
+        assert!(stack.host_state.connections.fault.check().is_ok());
+    });
+}
+
+#[test]
+/// A synchronous event callback can fail the host; the receive loop must not read another packet.
+fn callback_failure_stops_receive_before_the_next_driver_read() {
+    /// Shared permanent latch observed by this event callback.
+    struct FailOnVendor<'a>(
+        /// The originating host's permanent failure latch.
+        &'a crate::lifetime::HostFault,
+    );
+    impl EventHandler for FailOnVendor<'_> {
+        /// Fails the host on the first vendor event without retaining its borrowed bytes.
+        fn on_vendor(&self, _: &Vendor<'_>) {
+            self.0.fail();
+        }
+    }
+    let packets = [&[4, 0xff, 1, 1][..], &[4, 0xff, 1, 2][..]];
+    let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+    let stack = crate::new(
+        WireController {
+            packets: &packets,
+            next: Cell::new(0),
+        },
+        &mut resources,
+    )
+    .build();
+    let handler = FailOnVendor(&stack.host_state.connections.fault);
+    let mut rx = RxRunner { host: stack.host() };
+    let mut run = pin!(rx.run_with_handler(&handler));
+    assert!(matches!(
+        run.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Err(BleHostError::BleHost(Error::InvalidState)))
+    ));
+    assert_eq!(
+        stack.controller.next.get(),
+        1,
+        "receive continued after a callback latched host failure"
+    );
 }

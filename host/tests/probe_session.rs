@@ -91,7 +91,8 @@ fn large_client_is_borrowed_until_work_drop_then_released_once() {
 fn host_completion_latch_runs_only_after_runner_result() {
     let latched = Cell::new(0);
     {
-        let mut runner = pin!(session::latch_completion(pending::<()>(), || {
+        let pending_runner = pin!(pending::<()>());
+        let mut runner = pin!(session::latch_completion(pending_runner, || {
             latched.set(latched.get() + 1)
         }));
         assert!(
@@ -102,7 +103,8 @@ fn host_completion_latch_runs_only_after_runner_result() {
         );
     }
     assert_eq!(latched.get(), 0);
-    let mut runner = pin!(session::latch_completion(ready(Err::<(), _>(42)), || {
+    let ready_runner = pin!(ready(Err::<(), _>(42)));
+    let mut runner = pin!(session::latch_completion(ready_runner, || {
         latched.set(latched.get() + 1)
     }));
     assert_eq!(
@@ -388,5 +390,49 @@ fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
             matches!(events.last(), Some(Event::InspectionEnd { revision: 77, at_ms: 1234, cleanup_complete, disconnect_reason })
             if *cleanup_complete == cleanup_ok && *disconnect_reason == reason)
         );
+    }
+}
+
+/// Terminal-latch metadata must borrow a large suspended runner without embedding its payload.
+#[test]
+fn terminal_latch_does_not_duplicate_runner_storage() {
+    let runner = async {
+        let payload = [0xA5_u8; 4096];
+        pending::<()>().await;
+        core::hint::black_box(payload);
+    };
+    assert!(core::mem::size_of_val(&runner) >= 4096);
+    let runner = pin!(runner);
+    let latch = session::latch_completion(runner, || {});
+    assert!(core::mem::size_of_val(&latch) < 256, "latch duplicates runner storage");
+}
+
+/// The caller releases its runner once on Ready or cancellation; only actual Ready runs the latch.
+#[test]
+fn borrowed_latch_keeps_runner_owner_until_race_scope_ends() {
+    for complete in [false, true] {
+        for poll in [false, true] {
+            let dropped = Cell::new(false);
+            let latched = Cell::new(0);
+            {
+                let owner = DropFlag(&dropped);
+                let runner = pin!(async move {
+                    let _owner = owner;
+                    if !complete {
+                        pending::<()>().await;
+                    }
+                });
+                let mut latch = pin!(session::latch_completion(runner, || latched.set(latched.get() + 1)));
+                if poll {
+                    assert_eq!(
+                        latch.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_ready(),
+                        complete
+                    );
+                }
+                assert_eq!(latched.get(), usize::from(poll && complete));
+            }
+            assert!(dropped.get(), "runner owner must be gone before outer cleanup");
+            assert_eq!(latched.get(), usize::from(poll && complete));
+        }
     }
 }

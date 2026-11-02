@@ -421,3 +421,6 @@ macro_rules! aligned_bytes {
         }
     }};
 }
+
+#[cfg(test)]
+mod wlan_tests;

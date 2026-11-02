@@ -1,4 +1,4 @@
-//! Legacy report decoding shared with native tests of the exact HCI dependency.
+//! Legacy report framing admission shared with native tests of the locked HCI decoder.
 use bt_hci::param::{AddrKind, LeAdvEventKind, LeAdvReport, LeAdvReports};
 use bt_hci::{FromHciBytes, FromHciBytesError};
 use dashboard_core::discovery::{Advertisement, Event, Peer, ReportKind, ScanErrorKind, ScanFailure};
@@ -7,8 +7,10 @@ use dashboard_core::discovery::{Advertisement, Event, Peer, ReportKind, ScanErro
 /// boot-relative `at_ms`. None ignores the batch. Calls `on_report` for admitted
 /// public/random connectable/directed/scan-response records, converting address
 /// byte order and copying bounded raw payload evidence. Calls `on_error` once at
-/// the first malformed record, preserving the valid prefix and numeric cursor
-/// evidence; it never guesses past a corrupt record or retains borrowed bytes.
+/// the first malformed batch header, record or trailing bytes, preserving the
+/// valid prefix and numeric cursor evidence. Legacy counts must be 1..=25 and
+/// payload lengths 0..=31. RSSI remains raw evidence, including reserved encodings.
+/// It never guesses past corrupt framing or retains borrowed bytes.
 pub fn parse_reports(
     revision: Option<u32>,
     reports: LeAdvReports<'_>,
@@ -17,33 +19,49 @@ pub fn parse_reports(
     mut on_error: impl FnMut(ScanFailure),
 ) {
     let Some(revision) = revision else { return };
-    // Use the iterator's exact record decoder/count/stop semantics while retaining
-    // the borrowed cursor for numeric diagnostics. No payload bytes are retained.
+    // Core Vol 4 Part E §§5.4.4, 7.7.65.2 define exact event parameters and legacy
+    // bounds. The locked decoder is lazy and does not enforce these batch bounds.
     let total_reports = reports.num_reports;
     let mut remaining = reports.bytes.as_ref();
     // HCI event parameters cap this at 253 bytes; saturate synthetic oversized input.
     let report_bytes = u16::try_from(remaining.len()).unwrap_or(u16::MAX);
+    let mut fail = |kind, index, remaining: &[u8], declared_data_len| {
+        on_error(ScanFailure {
+            kind,
+            revision,
+            index,
+            total_reports,
+            report_bytes,
+            remaining_bytes: u16::try_from(remaining.len()).unwrap_or(u16::MAX),
+            declared_data_len,
+            at_ms,
+        });
+    };
+    if !(1..=25).contains(&total_reports) {
+        fail(ScanErrorKind::InvalidValue, 0, remaining, None);
+        return;
+    }
     for index in 0..total_reports {
+        if remaining.get(8).is_some_and(|&length| length > 31) {
+            fail(ScanErrorKind::InvalidValue, index, remaining, remaining.get(8).copied());
+            return;
+        }
         let report = match LeAdvReport::from_hci_bytes(remaining) {
             Ok((report, rest)) => {
                 remaining = rest;
                 report
             }
             Err(error) => {
-                on_error(ScanFailure {
-                    kind: match error {
+                fail(
+                    match error {
                         FromHciBytesError::InvalidSize => ScanErrorKind::InvalidSize,
                         FromHciBytesError::InvalidValue => ScanErrorKind::InvalidValue,
                     },
-                    revision,
                     index,
-                    total_reports,
-                    report_bytes,
-                    remaining_bytes: u16::try_from(remaining.len()).unwrap_or(u16::MAX),
-                    declared_data_len: remaining.get(8).copied(),
-                    at_ms,
-                });
-                break;
+                    remaining,
+                    remaining.get(8).copied(),
+                );
+                return;
             }
         };
         if report.addr_kind != AddrKind::PUBLIC && report.addr_kind != AddrKind::RANDOM {
@@ -66,6 +84,9 @@ pub fn parse_reports(
             revision,
             report: Advertisement::new(peer, kind, report.rssi, report.data, at_ms),
         });
+    }
+    if !remaining.is_empty() {
+        fail(ScanErrorKind::InvalidSize, total_reports, remaining, None);
     }
 }
 

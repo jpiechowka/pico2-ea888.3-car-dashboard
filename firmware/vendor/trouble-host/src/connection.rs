@@ -3,6 +3,8 @@
 //! Handles keep table slots from reuse; last drop schedules asynchronous disconnection.
 //! The host runner must remain active for commands/events. Command cancellation cannot undo
 //! controller-side effects; APIs taking a stack require the originating stack.
+//! Link commands reject closed owners before I/O. Disconnect or cancellation after a command
+//! is polled permanently stops the host; the controller/host must be rebuilt for recovery.
 //! HCI time conversions truncate to command units and panic when their integer width is exceeded.
 
 use bt_hci::cmd::le::{
@@ -204,10 +206,11 @@ pub struct ConnectRateParams {
     pub max_ce_length: Duration,
 }
 
-/// A connection event.
+/// A connection event with request payload `R`. Public dequeue binds `R` to an exact-link
+/// [`ConnectionParamsRequest`]; internal queues contain inert data without an owner cycle.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ConnectionEvent {
+pub enum ConnectionEvent<R> {
     /// Connection disconnected.
     Disconnected {
         /// The reason (status code) for the disconnect.
@@ -281,7 +284,7 @@ pub enum ConnectionEvent {
     /// Acceptance requires `central` or `connection-params-update`; rejection is always available.
     RequestConnectionParams(
         /// Owned request token; application must accept/reject it or the peer can time out.
-        ConnectionParamsRequest,
+        R,
     ),
     #[cfg(feature = "security")]
     /// Request to display a pass key
@@ -330,49 +333,155 @@ pub enum ConnectionEvent {
     OobRequest,
 }
 
-/// A connection parameters update request
+/// Inert queue representation: request data holds no link owner and cannot create an owner cycle.
+pub(crate) type QueuedConnectionEvent = ConnectionEvent<PendingConnectionParams>;
+
+impl<R> ConnectionEvent<R> {
+    /// Returns the event with only its parameter request converted through `map`; preserves other values.
+    fn map_request<S>(self, map: impl FnOnce(R) -> S) -> ConnectionEvent<S> {
+        match self {
+            ConnectionEvent::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEvent::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            } => ConnectionEvent::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            },
+            ConnectionEvent::SubratingParamsUpdated {
+                subrate_factor,
+                peripheral_latency,
+                continuation_number,
+                supervision_timeout,
+            } => ConnectionEvent::SubratingParamsUpdated {
+                subrate_factor,
+                peripheral_latency,
+                continuation_number,
+                supervision_timeout,
+            },
+            ConnectionEvent::RequestConnectionParams(req) => ConnectionEvent::RequestConnectionParams(map(req)),
+            ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
+            ConnectionEvent::DataLengthUpdated {
+                max_tx_octets,
+                max_tx_time,
+                max_rx_octets,
+                max_rx_time,
+            } => ConnectionEvent::DataLengthUpdated {
+                max_tx_octets,
+                max_tx_time,
+                max_rx_octets,
+                max_rx_time,
+            },
+            ConnectionEvent::FrameSpaceUpdated {
+                frame_space,
+                initiator,
+                phys,
+                spacing_types,
+            } => ConnectionEvent::FrameSpaceUpdated {
+                frame_space,
+                initiator,
+                phys,
+                spacing_types,
+            },
+            ConnectionEvent::ConnectionRateChanged {
+                conn_interval,
+                subrate_factor,
+                peripheral_latency,
+                continuation_number,
+                supervision_timeout,
+            } => ConnectionEvent::ConnectionRateChanged {
+                conn_interval,
+                subrate_factor,
+                peripheral_latency,
+                continuation_number,
+                supervision_timeout,
+            },
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::PassKeyDisplay(key) => ConnectionEvent::PassKeyDisplay(key),
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::PassKeyConfirm(key) => ConnectionEvent::PassKeyConfirm(key),
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::PassKeyInput => ConnectionEvent::PassKeyInput,
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::PairingComplete { security_level, bond } => {
+                ConnectionEvent::PairingComplete { security_level, bond }
+            }
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::PairingFailed(err) => ConnectionEvent::PairingFailed(err),
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::BondLost => ConnectionEvent::BondLost,
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::Encrypted { security_level, bond } => ConnectionEvent::Encrypted { security_level, bond },
+
+            #[cfg(feature = "security")]
+            ConnectionEvent::OobRequest => ConnectionEvent::OobRequest,
+        }
+    }
+}
+
+/// Inert peer proposal; only dequeue through an exact retained Connection creates a reply token.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectionParamsRequest {
+pub(crate) struct PendingConnectionParams {
+    /// Peer proposal in shared duration units.
+    params: RequestedConnParams,
+    /// L2CAP identifier, or None for a Link Layer request.
+    l2cap_identifier: Option<u8>,
+}
+
+impl PendingConnectionParams {
+    /// Returns inert `params` and L2CAP `l2cap_identifier`; queue selection supplies link identity.
+    pub(crate) fn new(params: RequestedConnParams, l2cap_identifier: u8) -> Self {
+        Self {
+            params,
+            l2cap_identifier: Some(l2cap_identifier),
+        }
+    }
+
+    #[cfg(feature = "connection-params-update")]
+    /// Returns inert Link Layer `params`; queue selection supplies link identity.
+    pub(crate) fn new_link_layer(params: RequestedConnParams) -> Self {
+        Self {
+            params,
+            l2cap_identifier: None,
+        }
+    }
+}
+
+/// A reply token retaining the exact originating stack and link slot.
+/// Dropping it sends no reply and releases its owner; queued requests retain no owner.
+/// Accept/reject requires the originating stack. A closed token returns Disconnected before
+/// I/O; cancellation or closure after polling a response permanently fails the host.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ConnectionParamsRequest<'stack, P: PacketPool> {
     /// Peer proposal, retained so acceptance can omit an override.
     params: RequestedConnParams,
-    /// Link handle on the originating stack; not an independently retained Connection owner.
-    handle: ConnHandle,
+    /// Exact retained owner; its slot cannot be reused while this token exists.
+    connection: Connection<'stack, P>,
     /// True once an accept/reject future starts, not proof that its reply completed.
     responded: bool,
     /// Some carries the L2CAP request identifier to echo; None selects an HCI Link Layer response.
     l2cap_identifier: Option<u8>,
 }
 
-impl ConnectionParamsRequest {
-    /// Returns an unanswered L2CAP request carrying `params`, link `handle` and response `l2cap_identifier`; identifier validation occurs on response submission.
-    pub(crate) fn new(params: RequestedConnParams, handle: ConnHandle, l2cap_identifier: u8) -> Self {
-        Self {
-            params,
-            handle,
-            responded: false,
-            l2cap_identifier: Some(l2cap_identifier),
-        }
-    }
-
-    #[cfg(feature = "connection-params-update")]
-    /// Returns an unanswered HCI Link Layer request carrying `params` and link `handle`; no L2CAP identifier is used.
-    pub(crate) fn new_link_layer(params: RequestedConnParams, handle: ConnHandle) -> Self {
-        Self {
-            params,
-            handle,
-            responded: false,
-            l2cap_identifier: None,
-        }
-    }
-
+impl<'stack, P: PacketPool> ConnectionParamsRequest<'stack, P> {
     /// Returns the peer-requested parameters retained by this response token.
     pub fn params(&self) -> &RequestedConnParams {
         &self.params
     }
     #[cfg(any(feature = "central", feature = "connection-params-update"))]
     /// Accepts using override `params` or the peer proposal through originating `stack`. Returns controller-update then success-signal result; invalid parameters are rejected instead. Marks responded before awaiting; cancellation can omit the reply. Unknown link maps to Disconnected; other update errors attempt rejection before propagating the original error.
-    async fn accept_l2cap<C, P: PacketPool>(
+    async fn accept_l2cap<C>(
         mut self,
         params: Option<&RequestedConnParams>,
         stack: &Stack<'_, C, P>,
@@ -388,17 +497,14 @@ impl ConnectionParamsRequest {
             return self.reject_l2cap(stack).await;
         }
 
-        match stack
-            .host()
-            .async_command(into_le_conn_update(self.handle, params))
+        match self
+            .connection
+            .async_command(stack, into_le_conn_update(self.connection.handle(), params))
             .await
         {
             Ok(()) => {
                 let param = ConnParamUpdateRes { result: 0 };
-                stack
-                    .host()
-                    .send_conn_param_update_res(self.handle, identifier, &param)
-                    .await
+                self.connection.parameter_response(stack, identifier, &param).await
             }
             Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                 Err(crate::Error::Disconnected.into())
@@ -414,26 +520,23 @@ impl ConnectionParamsRequest {
     }
 
     /// Rejects through originating `stack`, returning signal submission result or InvalidState for a non-L2CAP token. Marks responded before I/O; cancellation does not automatically retry the reply.
-    async fn reject_l2cap<C, P: PacketPool>(mut self, stack: &Stack<'_, C, P>) -> Result<(), BleHostError<C::Error>>
+    async fn reject_l2cap<C>(mut self, stack: &Stack<'_, C, P>) -> Result<(), BleHostError<C::Error>>
     where
         C: crate::Controller,
     {
         self.responded = true;
         let identifier = self.l2cap_identifier.ok_or(Error::InvalidState)?;
         let param = ConnParamUpdateRes { result: 1 };
-        stack
-            .host()
-            .send_conn_param_update_res(self.handle, identifier, &param)
-            .await
+        self.connection.parameter_response(stack, identifier, &param).await
     }
 }
 
 #[cfg(not(feature = "connection-params-update"))]
-impl ConnectionParamsRequest {
+impl<'stack, P: PacketPool> ConnectionParamsRequest<'stack, P> {
     /// Accept an L2CAP request using the supplied or peer-requested parameters.
     #[cfg(feature = "central")]
     /// Accepts through originating `stack`, using optional override `params` (None keeps the proposal). Returns controller/signal errors; invalid proposals send rejection. Cancellation after first poll may leave an unanswered peer request or completed controller update.
-    pub async fn accept<C: crate::Controller, P: PacketPool>(
+    pub async fn accept<C: crate::Controller>(
         self,
         params: Option<&RequestedConnParams>,
         stack: &Stack<'_, C, P>,
@@ -442,18 +545,15 @@ impl ConnectionParamsRequest {
     }
 
     /// Rejects through originating `stack`, returning L2CAP submission result; cancellation after first poll may leave the peer unanswered.
-    pub async fn reject<C: crate::Controller, P: PacketPool>(
-        self,
-        stack: &Stack<'_, C, P>,
-    ) -> Result<(), BleHostError<C::Error>> {
+    pub async fn reject<C: crate::Controller>(self, stack: &Stack<'_, C, P>) -> Result<(), BleHostError<C::Error>> {
         self.reject_l2cap(stack).await
     }
 }
 
 #[cfg(feature = "connection-params-update")]
-impl ConnectionParamsRequest {
+impl<'stack, P: PacketPool> ConnectionParamsRequest<'stack, P> {
     /// Accepts through originating `stack`, using optional override `params` (None keeps the proposal). Returns HCI reply or L2CAP update/reply result according to request origin; invalid parameters send rejection. Unknown handle maps to Disconnected. Quantization/width rules apply, and cancellation does not undo controller effects or guarantee a peer reply.
-    pub async fn accept<C, P: PacketPool>(
+    pub async fn accept<C>(
         mut self,
         params: Option<&RequestedConnParams>,
         stack: &Stack<'_, C, P>,
@@ -476,17 +576,19 @@ impl ConnectionParamsRequest {
         let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
         let interval_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
         let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
-        stack
-            .host()
-            .async_command(LeRemoteConnectionParameterRequestReply::new(
-                self.handle,
-                interval_min,
-                interval_max,
-                params.max_latency,
-                timeout,
-                bt_hci_duration(params.min_event_length),
-                bt_hci_duration(params.max_event_length),
-            ))
+        self.connection
+            .async_command(
+                stack,
+                LeRemoteConnectionParameterRequestReply::new(
+                    self.connection.handle(),
+                    interval_min,
+                    interval_max,
+                    params.max_latency,
+                    timeout,
+                    bt_hci_duration(params.min_event_length),
+                    bt_hci_duration(params.max_event_length),
+                ),
+            )
             .await
             .map_err(|error| match error {
                 BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER)) => {
@@ -497,7 +599,7 @@ impl ConnectionParamsRequest {
     }
 
     /// Rejects through originating `stack` using HCI UnacceptableConnParameters or L2CAP result1. Returns transport/controller result; cancellation after first poll does not retry the response.
-    pub async fn reject<C, P: PacketPool>(mut self, stack: &Stack<'_, C, P>) -> Result<(), BleHostError<C::Error>>
+    pub async fn reject<C>(mut self, stack: &Stack<'_, C, P>) -> Result<(), BleHostError<C::Error>>
     where
         C: crate::Controller + ControllerCmdAsync<LeRemoteConnectionParameterRequestNegativeReply>,
     {
@@ -505,18 +607,20 @@ impl ConnectionParamsRequest {
         if self.l2cap_identifier.is_some() {
             self.reject_l2cap(stack).await
         } else {
-            stack
-                .host()
-                .async_command(LeRemoteConnectionParameterRequestNegativeReply::new(
-                    self.handle,
-                    RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
-                ))
+            self.connection
+                .async_command(
+                    stack,
+                    LeRemoteConnectionParameterRequestNegativeReply::new(
+                        self.connection.handle(),
+                        RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
+                    ),
+                )
                 .await
         }
     }
 }
 
-impl Drop for ConnectionParamsRequest {
+impl<P: PacketPool> Drop for ConnectionParamsRequest<'_, P> {
     /// Logs an unanswered-token diagnostic; does not send a default rejection or retry an interrupted response.
     fn drop(&mut self) {
         if !self.responded {
@@ -619,6 +723,70 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         }
     }
 
+    /// Runs `work` only for this retained live link on `stack`. An admitted cancellation or
+    /// terminal transition permanently fails the host; a stale first poll performs no I/O.
+    /// Returns the work result or InvalidValue/Disconnected/InvalidState at the ownership boundary.
+    async fn guard<T, R>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        work: core::pin::Pin<&mut impl core::future::Future<Output = Result<R, BleHostError<T::Error>>>>,
+    ) -> Result<R, BleHostError<T::Error>>
+    where
+        T: bt_hci::controller::Controller,
+    {
+        self.check_stack(stack)?;
+        self.manager
+            .fault
+            .link(&self.manager.changed, || self.is_connected(), work)
+            .await
+    }
+
+    /// Returns synchronous-response `cmd` result through originating `stack`, guarded by this exact link.
+    async fn command<T, C>(&self, stack: &Stack<'_, T, P>, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
+    where
+        C: bt_hci::cmd::SyncCmd,
+        T: ControllerCmdSync<C>,
+    {
+        self.guard(stack, core::pin::pin!(stack.host().command(cmd))).await
+    }
+
+    /// Returns command-status `cmd` result through originating `stack`, guarded by this exact link.
+    async fn async_command<T, C>(&self, stack: &Stack<'_, T, P>, cmd: C) -> Result<(), BleHostError<T::Error>>
+    where
+        C: bt_hci::cmd::AsyncCmd,
+        T: ControllerCmdAsync<C>,
+    {
+        self.guard(stack, core::pin::pin!(stack.host().async_command(cmd)))
+            .await
+    }
+
+    /// Returns submission result for `param`/nonzero `identifier` through originating `stack`,
+    /// capturing this exact slot before any await.
+    /// Zero identifiers return InvalidValue without controller I/O.
+    async fn parameter_response<T: crate::Controller>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        identifier: u8,
+        param: &ConnParamUpdateRes,
+    ) -> Result<(), BleHostError<T::Error>> {
+        self.check_stack(stack)?;
+        if identifier == 0 {
+            return Err(Error::InvalidValue.into());
+        }
+        self.guard(
+            stack,
+            core::pin::pin!(async {
+                let lease = self.manager.retain_io(usize::from(self.index))?;
+                let mut scratch = [0; 10];
+                stack
+                    .host()
+                    .l2cap_signal_for_lease(&lease, identifier, param, &mut scratch)
+                    .await
+            }),
+        )
+        .await
+    }
+
     /// Returns this manager-local retained slot index, not the controller connection handle.
     pub(crate) fn index(&self) -> u8 {
         self.index
@@ -655,13 +823,24 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// Queues owned `event`, waiting for this link event queue capacity. Cancellation before enqueue drops it; internal readiness-to-insertion invariant violations panic.
-    pub(crate) async fn post_event(&self, event: ConnectionEvent) {
+    pub(crate) async fn post_event(&self, event: QueuedConnectionEvent) {
         self.manager.post_event(self.index, event).await
     }
 
-    /// Returns the next queued link event, waiting without a deadline. Cancellation while empty consumes nothing; one receiver waker is supported. Queue exhaustion after disconnect can wait forever; use retained terminal status for cleanup decisions.
-    pub async fn next(&self) -> ConnectionEvent {
-        self.manager.next(self.index).await
+    /// Returns the next queued link event, waiting without a deadline. A request clones this exact
+    /// owner after dequeue (reference saturation panics); it never looks up a reusable HCI handle.
+    /// Cancellation while empty consumes nothing; one receiver waker is supported. Queue exhaustion
+    /// after disconnect can wait forever; use retained terminal status for cleanup decisions.
+    pub async fn next(&self) -> ConnectionEvent<ConnectionParamsRequest<'stack, P>> {
+        self.manager
+            .next(self.index)
+            .await
+            .map_request(|pending| ConnectionParamsRequest {
+                params: pending.params,
+                connection: self.clone(),
+                responded: false,
+                l2cap_identifier: pending.l2cap_identifier,
+            })
     }
 
     #[cfg(feature = "gatt")]
@@ -871,20 +1050,22 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.clear_prepare_write(self.index)
     }
 
-    /// Reads link RSSI through originating `stack`; returns signed dBm or raw 127 unavailable sentinel, with controller/transport errors propagated. Cancellation may leave an issued command pending in the host.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Reads link RSSI through originating `stack`; returns signed dBm or raw 127 unavailable sentinel, with controller/transport errors propagated. Cancellation after polling the command permanently fails the host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn rssi<T>(&self, stack: &Stack<'_, T, P>) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
         self.check_stack(stack)?;
         let handle = self.handle();
-        let ret = stack.host().command(ReadRssi::new(handle)).await?;
+        let ret = self.command(stack, ReadRssi::new(handle)).await?;
         Ok(ret.rssi)
     }
 
-    /// Requests `phy` for both directions through originating `stack`; coded variants select S8/S2 preference. Returns controller/transport result; negotiated PHY arrives in an event and may differ. Cancellation does not undo an issued request.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Requests `phy` for both directions through originating `stack`; coded variants select S8/S2 preference. Returns controller/transport result; negotiated PHY arrives in an event and may differ. Cancellation after polling permanently fails the host; issued effects cannot be undone.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn set_phy<T>(&self, stack: &Stack<'_, T, P>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeSetPhy>,
@@ -914,26 +1095,26 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 options = PhyOptions::S2CodingPreferred;
             }
         }
-        stack
-            .host()
-            .async_command(LeSetPhy::new(self.handle(), all_phys, mask, mask, options))
+        self.async_command(stack, LeSetPhy::new(self.handle(), all_phys, mask, mask, options))
             .await?;
         Ok(())
     }
 
     /// Reads through originating `stack`, returning (TX PHY, RX PHY) or controller/transport error; this is a controller observation, not requested preference.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn read_phy<T>(&self, stack: &Stack<'_, T, P>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeReadPhy>,
     {
         self.check_stack(stack)?;
-        let res = stack.host().command(LeReadPhy::new(self.handle())).await?;
+        let res = self.command(stack, LeReadPhy::new(self.handle())).await?;
         Ok((res.tx_phy, res.rx_phy))
     }
 
     /// Requests TX payload `length` octets and `time_us` microseconds through originating `stack`. Returns InvalidValue when length>27 lacks local extension support; other ranges are controller-validated. Unknown handle maps to Disconnected; success is command acceptance, with negotiated values reported asynchronously.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn update_data_length<T>(
         &self,
         stack: &Stack<'_, T, P>,
@@ -946,13 +1127,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.check_stack(stack)?;
         let handle = self.handle();
         // First, check the local supported features to ensure that the connection update is supported.
-        let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
+        let features = self.command(stack, LeReadLocalSupportedFeatures::new()).await?;
         if length <= 27 || features.supports_le_data_packet_length_extension() {
-            match stack
-                .host()
-                .command(LeSetDataLength::new(handle, length, time_us))
-                .await
-            {
+            match self.command(stack, LeSetDataLength::new(handle, length, time_us)).await {
                 Ok(_) => Ok(()),
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                     Err(crate::Error::Disconnected.into())
@@ -965,7 +1142,8 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// Requests `params` through originating `stack`, selecting HCI update or peripheral L2CAP fallback from role/features. Returns controller/signaling errors and maps unknown handle to Disconnected; does not call params.is_valid. Duration conversions truncate/panic on width overflow. Success may only mean signaling submission; cancellation may leave the request active.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn update_connection_params<T>(
         &self,
         stack: &Stack<'_, T, P>,
@@ -979,9 +1157,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         #[cfg(any(feature = "central", feature = "connection-params-update"))]
         {
             // First, check the local supported features to ensure that the connection update is supported.
-            let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
+            let features = self.command(stack, LeReadLocalSupportedFeatures::new()).await?;
             if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
-                match stack.host().async_command(into_le_conn_update(handle, params)).await {
+                match self.async_command(stack, into_le_conn_update(handle, params)).await {
                     Ok(_) => return Ok(()),
                     Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                         return Err(crate::Error::Disconnected.into());
@@ -1012,13 +1190,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 latency: params.max_latency,
                 timeout: timeout.as_u16(),
             };
-            stack.host().send_conn_param_update_req(handle, &param).await?;
+            self.guard(
+                stack,
+                core::pin::pin!(stack.host().send_conn_param_update_req(handle, &param)),
+            )
+            .await?;
         }
         Ok(())
     }
 
     /// Requests spacing bounds `frame_space_min`/`frame_space_max` for `phys` and `spacing_types` through originating `stack`. Returns command result, mapping unknown handle to Disconnected. Values are quantized to HCI units; width overflow panics and controller validates ranges. Actual negotiation is reported asynchronously.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn update_frame_space<T>(
         &self,
         stack: &Stack<'_, T, P>,
@@ -1034,15 +1217,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         let handle = self.handle();
         let frame_space_min_dur = bt_hci_duration(frame_space_min);
         let frame_space_max_dur = bt_hci_duration(frame_space_max);
-        match stack
-            .host()
-            .command(LeFrameSpaceUpdate::new(
-                handle,
-                frame_space_min_dur,
-                frame_space_max_dur,
-                phys,
-                spacing_types,
-            ))
+        match self
+            .command(
+                stack,
+                LeFrameSpaceUpdate::new(handle, frame_space_min_dur, frame_space_max_dur, phys, spacing_types),
+            )
             .await
         {
             Ok(_) => Ok(()),
@@ -1054,7 +1233,8 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// Requests `conn_rate_params` through originating `stack`, returning command result and mapping unknown handle to Disconnected. Duration conversion quantizes and may panic on width overflow; controller validates ranges. Success precedes the resulting connection-rate event.
-    /// Returns InvalidValue before I/O if stack belongs to a different host.
+    /// Returns InvalidValue for another stack, Disconnected before polling a closed owner, or
+    /// InvalidState after host failure. Cancellation/closure after command polling fails the host.
     pub async fn request_connection_rate<T>(
         &self,
         stack: &Stack<'_, T, P>,
@@ -1070,20 +1250,22 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         let timeout = bt_hci_duration(conn_rate_params.supervision_timeout);
         let min_ce = bt_hci_duration(conn_rate_params.min_ce_length);
         let max_ce = bt_hci_duration(conn_rate_params.max_ce_length);
-        match stack
-            .host()
-            .command(LeConnectionRateRequest::new(
-                handle,
-                min_interval,
-                max_interval,
-                conn_rate_params.subrate_min,
-                conn_rate_params.subrate_max,
-                conn_rate_params.max_latency,
-                conn_rate_params.continuation_number,
-                timeout,
-                min_ce,
-                max_ce,
-            ))
+        match self
+            .command(
+                stack,
+                LeConnectionRateRequest::new(
+                    handle,
+                    min_interval,
+                    max_interval,
+                    conn_rate_params.subrate_min,
+                    conn_rate_params.subrate_max,
+                    conn_rate_params.max_latency,
+                    conn_rate_params.continuation_number,
+                    timeout,
+                    min_ce,
+                    max_ce,
+                ),
+            )
             .await
         {
             Ok(_) => Ok(()),

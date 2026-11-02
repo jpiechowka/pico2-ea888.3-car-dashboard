@@ -533,3 +533,183 @@ for exact image evidence and remaining physical limitations.
 Reference: Bluetooth Core6.2 Vol3 PartA sections4 (identifier/duplicate rules),
 4.1 (reason-specific rejection) and4.6/4.7 (disconnect endpoints),
 [L2CAP specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
+
+## Scanner cancellation ownership (2026-11-02)
+
+Legacy and extended scan setup now install their cancellation guard only after
+operation admission. Dropping a queued scanner before it owns the operation no
+longer cancels the active session or selects a different disable-command kind.
+The selected probe uses a sequential scanner; this correction protects retained
+concurrent caller APIs without changing radio traffic, capacities or deadlines.
+
+An actual scanner-future regression failed before the correction. Four native
+regressions cover all legacy/extended owner/waiter combinations, admitted setup
+refusal and cancellation, natural extended timeout, canceled explicit stop, and
+admission remaining closed until cleanup acknowledgment. The timeout signal alone
+does not release session ownership; stop/drop still requests controller disable.
+These are software state tests with an inert HCI boundary, not physical radio
+qualification or proof that a disable command reached an adapter.
+
+## Security error reply ownership (2026-11-02)
+
+Malformed SMP and failed pairing transitions report PairingFailed using the
+already-borrowed connection storage. The previous handle-based queue wrapper
+reborrowed the connection table mutably while the dispatcher held a shared or
+exclusive borrow, panicking instead of returning the original error. The existing
+storage-aware queue helper retains the exact slot and rolls back its I/O reference
+when bounded queue admission fails. Timeout and successful results remain silent;
+reporting failure does not replace the original security error.
+
+Three native regressions failed on the original nested borrow. They cover short
+and unknown SMP messages for both roles before and after application acceptance,
+exclusive-storage error reporting, full-queue rollback, packet-pool return, and
+retained terminal slots until queued work is released. The security-enabled
+dashboard can reach this boundary; discovery-no-security utilities do not compile
+this manager. Native tests do not prove pairing interoperability or RF behavior.
+
+## Deferred security connection lifetimes (2026-11-02)
+
+SendLongTermKey, EnableEncryption and BondAdded capture the exact established
+connection lifetime, not only the reusable HCI handle. A manager-wide checked
+u32 sequence never wraps; exhaustion rejects connection admission before mutation.
+Queued stale work is discarded even for same-peer/same-handle reconnection or a
+replacement in another slot while the old slot is retained. BondAdded also
+requires the exact identity and IRK still to exist in the current bond store;
+valid global bond synchronization can outlive its original link.
+
+Both security HCI command branches check lifetime before every future poll and
+again after polling. A stale first poll submits nothing. Once any poll has occurred,
+lifetime loss returns InvalidState through the ControlRunner and ends the host:
+the original bt-hci command cancellation freed its completion slot without retracting
+an already queued controller write. The local HCI patch now quarantines canceled
+opcodes, but still cannot retract a write or prove its connection lifetime. The existing runner disconnect waiter is shared
+by these mutually exclusive ControlRunner branches and terminal disconnection now
+wakes it. Dashboard recovery may reset even on an ordinary pairing disconnect in
+this race. Reusing the failed host/controller state is not supported recovery.
+
+The original queued BondAdded regression corrupted a replacement peer's identity.
+Additional native tests cover all deferred variants, full queue rejection,
+same-peer reuse, retained old slots, checked-generation exhaustion, no first poll
+for stale work, pending/ready command invalidation, terminal wake delivery, both
+real dispatcher command branches, and removed/rekeyed/current privacy records.
+Mutation controls demonstrate missing guards fail the focused regressions.
+No security queues retain packet leases or prevent terminal slot reuse. These
+changes are security-feature-only and do not qualify physical pairing or RF.
+
+
+## Reviewed controller and P-256 dependencies (2026-11-02)
+
+The standalone crate manifest patches bt-hci to the same reviewed local 0.10.1
+source used by firmware and host checks; the lockfile records that source.
+See ../bt-hci/LOCAL_PATCHES.md for response bounds and command-lifetime handling.
+
+The normal P-256 backend moves from p256 0.13.2 to 0.14.0 and the compatible
+elliptic-curve 0.14.3 / crypto-bigint 0.7.10 closure. A small rejection sampler keeps
+the existing rand_core 0.6 input contract, rejects zero/out-of-range scalars and
+clears its candidate bytes. Existing point validation, equal-X rejection and
+Bluetooth test vectors remain intact. This does not claim whole-scalar or stack
+zeroization, fixed entropy failure time, RP2350 timing safety or physical pairing
+qualification. The alternate Cortex-M4 backend remains unchanged. Baseline and
+migrated scalar/point regressions and focused security contexts pass; see
+../../../docs/dependencies/p256-security-2026-11-02.md for sources and limits.
+
+
+## Public connection command and reply lifetimes (2026-11-02)
+
+Public Connection commands use their retained table slot and originating stack,
+not a fresh lookup of the reusable HCI handle. The same guard checks before each
+command poll and after its result. A terminal first poll returns Disconnected
+without I/O; terminal transition or cancellation after any command poll latches
+InvalidState permanently. This deliberately treats waiting for initialization or
+command capacity as ambiguous: the generic controller API exposes no reliable
+write-admission boundary. A completed normal HCI rejection remains an ordinary
+command error. Host failure is checked by every split RX/control/TX worker,
+public HCI/ISO operation and ACL sender; a worker error or started-worker
+cancellation also closes the latch. Intrusive independent waiters avoid sharing
+the sole disconnect-runner waker. Checks, registration and driver polls run on the
+same executor with no intervening yield. A new Runner cannot reset the latch.
+
+ConnectionEvent now has a request-payload type parameter. Internal queued
+requests are inert PendingConnectionParams data: they hold no Connection and
+cannot form a queue/owner cycle. Connection::next binds a public
+ConnectionParamsRequest<'stack, P> to a cloned exact owner after dequeue. That
+owner prevents slot reuse until the external token drops, including after a
+terminal event; no raw handle is resolved after dequeue. Replies reject another
+stack and use an exact retained ACL lease. Queue overflow owns nothing; dropping
+an external unanswered token logs but sends no implicit reply. Reference-count
+saturation retains the existing clone-before-mutation panic policy.
+
+Iso::send now returns BleHostError so permanent host failure is observable.
+ISO remains a raw caller-owned stream facade, not an audited connection-token
+protocol. The iso-alone LeSetHostFeature import is enabled independently of
+subrating; this repairs a retained feature compilation error without changing
+controller configuration.
+
+The dashboard selects parameter handling against service/park work; both
+utilities select parameter rejection against inventory/client/revision/deadline
+work. Cancellation of a pending reply in these ordinary races can now stop the
+host and invoke the existing fatal/watchdog recovery. This is intentional and is
+not evidence that a normal disconnect was a hardware fault. No in-place restart
+or successful cleanup is inferred from dropping work. Native regressions cover
+live/stale/same-peer reuse, wrong stack, pre/post-poll cancellation, multiple
+waiters, Ready-time invalidation, full/inert queues, retained tokens and split/
+combined worker/ACL/ISO failure boundaries. Linked memory gates and physical
+radio behavior remain separate validation.
+
+## Internal disconnect lifetimes and typed subscriptions (2026-11-02)
+
+The ControlRunner's own HCI Disconnect work now retains an exact-slot I/O lease,
+just like public connection commands. Previously it held only a reusable raw
+handle and index while awaiting command admission. A terminal old link followed
+by same-handle reuse could resume the old Disconnect against the replacement.
+The shared per-poll lifetime guard now treats terminal-before-first-poll work as
+an inert Disconnected result, while loss or cancellation after polling permanently
+fails the host. Confirmation can only advance its retained pending slot. Count
+exhaustion returns NoPermits before mutation; dropping or confirming releases the
+lease. The token is local runner work, not stored in a connection-owned queue.
+
+An actual ControlRunner regression failed with a second old-command poll after
+same-peer handle reuse. Seven tests cover both retained/dropped application owners,
+terminal wake, stale first poll, count exhaustion/release, wrong host, cancellation,
+normal close and token-only retention. The channel-disconnect sibling already
+retains its channel and captures an exact link lease synchronously before awaiting;
+its state/confirm behavior is unchanged.
+
+Characteristic::cccd_handle retains its historical CharacteristicPropertiesHandle
+name, but its AttributeHandle value is now u16: two bytes with subscription bits
+0 (notification) and 1 (indication). The former one-byte CharacteristicProps type
+made local GattConnection::get/set fail valid CCCDs and used unrelated property
+bits. Two baseline-failing public local-server regressions now verify exact bytes,
+all four subscription masks and unchanged characteristic values. Remote GattClient
+raw-buffer methods are not changed.
+
+The earlier 21 October untyped-parameter-token limitation is superseded by the
+lifetime-bound request design above. Controller-global ACL capacity and malformed
+completed-packet accounting limits remain as documented; this repair does not
+claim to qualify those separate retained APIs.
+
+## Address-kind-preserving identity resolution (2026-11-02)
+
+IRK resolution now accepts observed raw random-device addresses (HCI kind1), not
+the same resolving bytes tagged public, already-resolved identity or anonymous.
+Both directions of Identity::match_identity reuse match_address, preserving exact
+normalized address equality and equal-IRK matching. Four baseline failures covered
+public identity APIs and actual bond lookup; five final tests retain valid RPA,
+normalization and wrong-key controls. This prevents wrong local identity/bond
+selection; it is not an encryption impersonation claim or universal invalid-kind
+rejection for exact address equality. No key storage or pairing policy changed.
+
+
+## Single-owner pinned guard storage (2026-11-02)
+
+Image admission exposed duplicated child-future storage in the new async guards:
+by-value arguments remained beside pinned locals and nested worker copies.
+Private host/link/worker/security guards now borrow pinned child futures; each
+caller pins its owner once in the immediate await scope. They retain identical
+before/after-poll checks, independent notifications and cancellation fault policy.
+The owning caller drops the child before continuing after success, error or
+cancellation; the guard itself only releases a borrow. No unsafe projection or
+additional dependency is needed. A suspended4096-byte child regression rejects
+payload duplication, and affine-drop controls cover all three common guards.
+Image limits, stack reserves and feature behavior remain unchanged; actual linked
+image admission is still required after this resource-layout repair.

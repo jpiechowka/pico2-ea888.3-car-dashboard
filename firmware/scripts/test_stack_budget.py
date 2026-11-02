@@ -300,6 +300,118 @@ class StackBudget(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "radio.*8 KiB"):
             budgets(0, 0, 0, 0, 65536, radio=65536 - 8192 + 1)
 
+    def test_radio_p256_014_actual_capture_is_admitted(self) -> None:
+        # The reviewed 0.14 image inlines Double and splits field multiplication.
+        # Requiring the old emitted Double/fe_mul incorrectly rejects this image.
+        functions, sizes = self.ble_fixture("p256-014")
+        # Hand-checked resident maximum: task4272 + connected4088 +
+        # request1376 + input1560 + transition1440 + crypto4192 + allowance4096.
+        self.assertEqual(self.radio_bound(functions, sizes), 21024)
+
+    def test_radio_p256_014_boundaries_fail_closed_and_count_growth(self) -> None:
+        functions, sizes = self.ble_fixture("p256-014")
+        baseline = self.radio_bound(functions, sizes)
+        boundaries = (
+            ("trouble_host", "9SecretKey6dh_key"),
+            ("trouble_host", "9SecretKey10public_key"),
+            ("primeorder", "ProjectivePoint", "3Mul", "3mul"),
+            ("primeorder", "EquationAIsMinusThree", "10add_assign"),
+            ("primeorder", "LookupTable", "6select"),
+            ("p256", "field_impl3add"),
+            ("p256", "field_impl3sub"),
+            ("p256", "field_impl17montgomery_reduce"),
+            ("crypto_bigint", "18widening_mul_fixed"),
+            ("elliptic_curve", "PublicKey", "15from_sec1_point"),
+            ("primeorder", "AffinePoint", "10decompress"),
+            ("p256", "FieldElement", "9from_repr"),
+            ("subtle", "9black_box", "crypto_bigint"),
+            ("crypto_bigint", "19mul_montgomery_form"),
+            ("p256", "FieldElement", "5Field6invert"),
+            ("crypto_bigint", "28lincomb_int_reduce_shift_mod"),
+            ("crypto_bigint", "24lincomb_int_reduce_shift"),
+            ("crypto_bigint", "11lincomb_int"),
+            ("trouble_host", "8RxRunner", "9run_inner"),
+            ("trouble_host", "13ControlRunner", "9run_inner0"),
+            ("trouble_host", "23handle_security_channel"),
+            ("trouble_host", "7Pairing12handle_input"),
+            ("trouble_host", "10peripheral", "7Pairing10transition"),
+            ("trouble_host", "16request_security"),
+            ("embassy_futures", "3ble17connection_events", "Future4poll"),
+            ("pico25tasks3ble", "6Serial7receive"),
+            ("pico25tasks3ble", "6Serial8transact"),
+            ("pico25tasks3ble", "6Serial3gap"),
+            ("5cyw43", "6Runner", "2rx"),
+            ("5cyw43", "6Runner", "4init0"),
+        )
+        for tokens in boundaries:
+            name = next(
+                n for n in functions if "drop_glue" not in n and all(token in n for token in tokens)
+            )
+            address, length, section = functions[name]
+            for fault in ("missing", "metadata", "ambiguous", "growth", "alias"):
+                changed, metadata = dict(functions), dict(sizes)
+                if fault == "missing":
+                    del changed[name]
+                elif fault == "metadata":
+                    del metadata[address & ~1]
+                elif fault == "ambiguous":
+                    changed[name + ".extra"] = (0x30000001, length, section)
+                    metadata[0x30000000] = 4
+                elif fault == "growth":
+                    metadata[address & ~1] += 30000
+                else:
+                    changed[name + ".alias"] = functions[name]
+                with self.subTest(tokens=tokens, fault=fault):
+                    if fault == "growth":
+                        self.assertGreater(self.radio_bound(changed, metadata), baseline + 10000)
+                    elif fault == "alias":
+                        self.assertEqual(self.radio_bound(changed, metadata), baseline)
+                    else:
+                        with self.assertRaises(AssertionError):
+                            radio_frames(changed, metadata)
+
+    def test_radio_p256_014_crypto_siblings_take_maximum_not_sum(self) -> None:
+        functions, original = self.ble_fixture("p256-014")
+        # Child frames below are literal values from the independent emitted review.
+        # Equalize alternative resident paths, then make the second path larger.
+        for first, second, adjustment in (
+            ("9SecretKey6dh_key", "9SecretKey10public_key", 0),
+            ("10add_assign", "6select", 72),  # add+wide160 vs lookup+sub88
+            ("19mul_montgomery_form", "9from_repr", -12),  # from_repr calls subtle12
+            ("28lincomb_int_reduce_shift_mod", "24lincomb_int_reduce_shift", 0),
+        ):
+            sizes = dict(original)
+            a = next(a & ~1 for n, (a, _, _) in functions.items() if first in n)
+            b = next(
+                a & ~1
+                for n, (a, _, _) in functions.items()
+                if second in n and (second != "6select" or "LookupTable" in n)
+            )
+            sizes[a] = 20000
+            bound = self.radio_bound(functions, sizes)
+            sizes[b] = 20000 + adjustment
+            with self.subTest(first=first, second=second):
+                self.assertEqual(self.radio_bound(functions, sizes), bound)
+                sizes[b] += 256
+                self.assertEqual(self.radio_bound(functions, sizes), bound + 256)
+
+    def test_radio_crypto_shapes_cannot_be_mixed(self) -> None:
+        modern, modern_sizes = self.ble_fixture("p256-014")
+        legacy, legacy_sizes = self.ble_fixture()
+        for source, metadata, destination, destination_sizes, tokens in (
+            (legacy, legacy_sizes, modern, modern_sizes, ("6Double6double",)),
+            (legacy, legacy_sizes, modern, modern_sizes, ("6fe_mul",)),
+            (modern, modern_sizes, legacy, legacy_sizes, ("field_impl17montgomery_reduce",)),
+            (modern, modern_sizes, legacy, legacy_sizes, ("28lincomb_int_reduce_shift_mod",)),
+        ):
+            name = next(n for n in source if all(token in n for token in tokens))
+            changed, sizes = dict(destination), dict(destination_sizes)
+            address = source[name][0] & ~1
+            changed[name] = source[name]
+            sizes[address] = metadata[address]
+            with self.subTest(tokens=tokens), self.assertRaisesRegex(AssertionError, "mixed"):
+                radio_frames(changed, sizes)
+
     def slot_fixture(self) -> StackFixture:
         rows = [line.split(maxsplit=2) for line in SLOT_CAPTURE.splitlines() if line]
         return (

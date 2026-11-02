@@ -48,7 +48,8 @@ pub struct Config {
     pub max_select_us: u32,
     /// Minimum CS deassert time in nanoseconds (must be >= 18 ns)
     pub min_deselect_ns: u32,
-    /// Cooldown period between operations (in SCLK cycles)
+    /// CS-asserted idle extension in 64-clk_sys-cycle units (0..=3), plus half an SCLK period.
+    /// Zero disables the extension; MAX_SELECT/page boundaries can end it earlier.
     pub cooldown: u8,
     /// Page break size for memory operations
     pub page_break: PageBreak,
@@ -131,7 +132,7 @@ impl Config {
             max_mem_freq: 133_000_000,    // APS6404L max frequency
             max_select_us: 8,             // 8 microseconds max CS assert
             min_deselect_ns: 18,          // 18 nanoseconds min CS deassert
-            cooldown: 1,                  // 1 SCLK cycle cooldown
+            cooldown: 1,                  // 64 clk_sys cycles plus half an SCLK period
             page_break: PageBreak::_1024, // 1024-byte page boundaries
             init_clkdiv: 10,              // Medium clock for initialization
             enter_quad_cmd: Some(0x35),   // Enter Quad Mode
@@ -164,7 +165,7 @@ impl Config {
 
     /// Returns an unchecked configuration: `clock_hz` is actual clk_sys Hz;
     /// `max_mem_freq` caps SCLK Hz; `max_select_us`/`min_deselect_ns` bound CS timing;
-    /// `cooldown` is SCLK cycles and `page_break` controls automatic burst splitting.
+    /// `cooldown` is 64-clk_sys-cycle units (plus half SCLK), and `page_break` controls burst splitting.
     /// `init_clkdiv` controls direct-command SCLK (`0` encodes 256).
     /// `enter_quad_cmd` optionally enters quad mode; `quad_read_cmd` and
     /// `quad_write_cmd` set mapping prefixes. `dummy_cycles` counts dummy bits,
@@ -659,7 +660,7 @@ fn write_mapping(
 struct Timing {
     /// System-clock cycles per SCLK period, 1..255.
     divisor: u8,
-    /// Read sample delay in system-clock cycles, at most 7.
+    /// Read sample delay in half-system-clock cycles, at most 7.
     rxdelay: u8,
     /// CS assertion budget in 64-system-clock units, 1..63; final burst reserved separately.
     max_select: u8,
@@ -746,6 +747,7 @@ fn timing(config: &Config) -> Result<Timing, Error> {
             .map_or(0, |format| transfer_clocks(format, 0)),
     );
     // Reserve a final transfer plus sample/hold margin before the device's limit.
+    // Counting each RXDELAY half-cycle as a full cycle conservatively over-reserves.
     let budget = u64::from(config.max_select_us) * clock / 1_000_000;
     let max_select = budget
         .checked_sub(burst * divisor + rxdelay + 8)

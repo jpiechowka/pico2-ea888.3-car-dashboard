@@ -17,6 +17,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::with_timeout;
 
+use crate::connection::{PendingConnectionParams, QueuedConnectionEvent as ConnectionEvent};
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::{BleHost, OnDrop};
@@ -24,7 +25,7 @@ use crate::host::{BleHost, OnDrop};
 use crate::l2cap::sar::PacketReassembly;
 use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
-use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
+use crate::prelude::L2capChannelConfig;
 use crate::types::l2cap::{
     CommandRejectInvalidCidRes, CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq,
     DisconnectionRes, L2capHeader, L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes,
@@ -824,7 +825,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         );
                         Self::try_send_signal(conn, header.identifier, &ConnParamUpdateRes { result: 1 }, manager)?;
                     } else {
-                        let req = ConnectionParamsRequest::new(params, conn, header.identifier);
+                        let req = PendingConnectionParams::new(params, header.identifier);
 
                         if manager
                             .post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req))
@@ -1283,21 +1284,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         param: &ConnParamUpdateReq,
     ) -> Result<(), BleHostError<T::Error>> {
         let identifier = self.next_request_id();
-        let mut tx = [0; 16];
-        host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
-    }
-
-    /// Sends `param` response for `handle` and nonzero request `identifier` through `host`. Returns InvalidValue for zero or transport/encoding result; cancellation may leave a transmitted prefix.
-    pub(crate) async fn send_conn_param_update_res<T: Controller>(
-        &self,
-        handle: ConnHandle,
-        identifier: u8,
-        host: &BleHost<'_, T, P>,
-        param: &ConnParamUpdateRes,
-    ) -> Result<(), BleHostError<T::Error>> {
-        if identifier == 0 {
-            return Err(Error::InvalidValue.into());
-        }
         let mut tx = [0; 16];
         host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
     }

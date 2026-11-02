@@ -97,7 +97,7 @@ impl NorFlashError for Error {
 
 /// Already-started streaming read retaining flash/channel/output borrows.
 /// Drop stops the XIP stream, orders outstanding reads, then synchronously aborts DMA.
-#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[must_use = "the flash stream and DMA have started; await completion or drop to stop them"]
 pub struct BackgroundRead<'a, 'd, T: Instance, const FLASH_SIZE: usize> {
     /// Exclusive flash ownership through stream shutdown.
     flash: PhantomData<&'a mut Flash<'d, T, Async, FLASH_SIZE>>,

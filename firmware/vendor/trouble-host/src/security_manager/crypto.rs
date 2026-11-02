@@ -500,12 +500,23 @@ impl SecretKey {
 
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 impl SecretKey {
-    /// Returns a valid random P-256 scalar drawn from `rng`; backend rejection sampling may retry.
-    /// Infallible RNG methods may panic on entropy-source failure.
+    /// Returns a uniformly rejection-sampled scalar in 1..n from the existing rand_core 0.6 `rng`.
+    /// Rejected draws must be unrelated to later outputs; a broken RNG can loop forever or panic.
+    /// Clears this function's candidate buffer, not every compiler/backend temporary copy.
     #[allow(clippy::new_without_default)]
     #[inline(never)]
     pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
-        Self(p256::NonZeroScalar::random(rng))
+        use p256::elliptic_curve::zeroize::Zeroize;
+        // Keep the host's RNG contract while p256 uses a newer rand_core API.
+        loop {
+            let mut bytes = p256::FieldBytes::default();
+            rng.fill_bytes(&mut bytes);
+            let candidate = p256::NonZeroScalar::from_repr(bytes);
+            bytes.zeroize();
+            if let Some(scalar) = Option::<p256::NonZeroScalar>::from(candidate) {
+                return Self(scalar);
+            }
+        }
     }
 
     /// Returns this scalar's affine public point with both coordinates in big-endian order.
@@ -513,8 +524,8 @@ impl SecretKey {
     #[inline(never)]
     pub fn public_key(&self) -> PublicKey {
         use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        let p = p256::PublicKey::from_secret_scalar(&self.0).to_sec1_point(false);
         match p.coordinates() {
             Uncompressed { x, y } => PublicKey {
                 x: PublicKeyX(Coord(*x.as_ref())),
@@ -532,19 +543,19 @@ impl SecretKey {
     #[must_use]
     #[inline(never)]
     pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
-        use p256::elliptic_curve::sec1::FromEncodedPoint;
+        use p256::elliptic_curve::sec1::FromSec1Point;
         if pk.is_debug() || pk.x == local_pk.x {
             return None; // TODO: Compile-time option for debug-only mode
         }
 
         let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
-        let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
+        let rep = p256::Sec1Point::from_affine_coordinates(x, y, false);
         let (lx, ly) = (&local_pk.x.0 .0.into(), &local_pk.y.0.into());
-        let lrep = p256::EncodedPoint::from_affine_coordinates(lx, ly, false);
-        let lpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&lrep));
+        let lrep = p256::Sec1Point::from_affine_coordinates(lx, ly, false);
+        let lpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_sec1_point(&lrep));
         // Constant-time ops not required:
         // https://github.com/RustCrypto/traits/issues/1227
-        let rpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&rep));
+        let rpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_sec1_point(&rep));
         match (rpk, lpk) {
             (Some(rpk), Some(lpk)) if rpk != lpk => Some(DHKey(ecdh::diffie_hellman(self.0, rpk.as_affine()))),
             _ => None,
@@ -841,7 +852,7 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[cfg(test)]
 /// Bluetooth sample vectors, key admission and bounded RPA generation failure contracts.
 mod tests {
-    use p256::elliptic_curve::rand_core::OsRng;
+    use rand_core::OsRng;
 
     use super::*;
     extern crate std;
@@ -854,6 +865,108 @@ mod tests {
         assert_eq!(core::mem::size_of::<PublicKey>(), 64);
         assert_eq!(core::mem::size_of::<SecretKey>(), 32);
         assert_eq!(core::mem::size_of::<DHKey>(), 32);
+    }
+
+    /// Scripted 32-byte candidate source; deliberately predictable and confined to tests.
+    struct ScalarCandidates<const N: usize> {
+        /// Complete big-endian candidate scalars, consumed in order.
+        bytes: [[u8; 32]; N],
+        /// Number of candidates requested by the real key generator.
+        consumed: usize,
+    }
+
+    impl<const N: usize> RngCore for ScalarCandidates<N> {
+        /// Never returns a scalar fragment; always panics because this fixture requires full draws.
+        fn next_u32(&mut self) -> u32 {
+            panic!("expected a full scalar draw")
+        }
+
+        /// Never returns a scalar fragment; always panics because this fixture requires full draws.
+        fn next_u64(&mut self) -> u64 {
+            panic!("expected a full scalar draw")
+        }
+
+        /// Copies one candidate to the exact 32-byte `dest`; unexpected/redundant draws panic.
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            assert_eq!(dest.len(), 32);
+            dest.copy_from_slice(&self.bytes[self.consumed]);
+            self.consumed += 1;
+        }
+
+        /// Copies the next 32-byte candidate into `dest` and returns `Ok(())`.
+        /// Panics on a wrong-sized destination or exhausted candidates; no entropy failure is simulated.
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
+    }
+
+    // Implements the production bound only to drive deterministic admission tests, not a real RNG.
+    impl<const N: usize> CryptoRng for ScalarCandidates<N> {}
+
+    #[test]
+    /// Zero, subgroup order and oversized candidates cannot become a key or be reduced modulo n.
+    fn scalar_generation_rejects_invalid_candidates_before_generator() {
+        let mut rng = ScalarCandidates {
+            bytes: [
+                [0; 32],
+                u256(
+                    0xffffffff_00000000_ffffffff_ffffffff,
+                    0xbce6faad_a7179e84_f3b9cac2_fc632551,
+                ),
+                [0xff; 32],
+                u256(0, 1),
+            ],
+            consumed: 0,
+        };
+        let key = SecretKey::new(&mut rng);
+        // SEC 2 section 2.4.2 / NIST P-256 generator: scalar one must reproduce these coordinates.
+        assert_eq!(
+            key.public_key(),
+            PublicKey {
+                x: PublicKeyX(Coord(u256(
+                    0x6b17d1f2_e12c4247_f8bce6e5_63a440f2,
+                    0x77037d81_2deb33a0_f4a13945_d898c296
+                ))),
+                y: Coord(u256(
+                    0x4fe342e2_fe1a7f9b_8ee7eb4a_7c0f9e16,
+                    0x2bce3357_6b315ece_cbb64068_37bf51f5
+                )),
+            }
+        );
+        assert_eq!(rng.consumed, 4);
+    }
+
+    #[test]
+    /// The largest valid scalar is retained exactly and consumes no extra random candidates.
+    fn scalar_generation_accepts_order_minus_one() {
+        let expected = u256(
+            0xffffffff_00000000_ffffffff_ffffffff,
+            0xbce6faad_a7179e84_f3b9cac2_fc632550,
+        );
+        let mut rng = ScalarCandidates {
+            bytes: [expected],
+            consumed: 0,
+        };
+        let key = SecretKey::new(&mut rng);
+        let actual: p256::FieldBytes = key.0.into();
+        assert_eq!(actual.as_slice(), &expected);
+        assert_eq!(rng.consumed, 1);
+    }
+
+    #[test]
+    /// Invalid peer/local affine points cannot produce an agreement even with a valid secret scalar.
+    fn dh_key_rejects_invalid_points_on_both_sides() {
+        let local = secret_key(0, 1);
+        let local_pk = local.public_key();
+        let remote = secret_key(0, 2).public_key();
+        let invalid = PublicKey {
+            x: PublicKeyX(Coord([0; 32])),
+            y: Coord([0; 32]),
+        };
+        assert!(local.dh_key(invalid, &local_pk).is_none());
+        assert!(local.dh_key(remote, &invalid).is_none());
+        assert!(local.dh_key(remote, &local_pk).is_some());
     }
 
     /// Debug mode key ([Vol 3] Part H, Section 2.3.5.6.1).

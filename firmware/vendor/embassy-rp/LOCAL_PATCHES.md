@@ -100,3 +100,80 @@ References: [Arm run-time ABI, conversion functions](https://github.com/ARM-soft
 [embedded-hal PWM contract](https://docs.rs/embedded-hal/1.0.0/embedded_hal/pwm/trait.SetDutyCycle.html),
 [TinyUSB endpoint abort and bus reset](https://github.com/hathach/tinyusb/blob/master/src/portable/raspberrypi/rp2040/dcd_rp2040.c),
 and [Pico SDK GPIOBASE mapping](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pio/include/hardware/pio.h).
+
+## DMA ownership diagnostic (2026-11-02)
+
+The Transfer must-use diagnostic now states that construction already starts DMA,
+matching the constructor and Drop implementations. Await observes completion;
+discarding the lease invokes synchronous abort. No instructions or API changed.
+
+The sibling BackgroundRead diagnostic now reflects its started stream/DMA, and
+the private InputFuture diagnostic reflects constructor-time GPIO arming. Public
+GPIO async wrappers still defer that construction until polling. PIO FIFO/IRQ
+futures remain lazy and retain their existing diagnostic.
+
+
+## I2C source-clock correction (2026-11-02)
+
+I2C divider and SDA hold calculations now use clk_sys, as the synchronous hardware
+requires, independently of the UART/SPI clk_peri source. The existing arithmetic
+and timing limits are unchanged. Current dashboard and utility clock profiles
+already set peri=Sys, so their programmed timing is unchanged. Retained alternate
+PERI sources or disabled PERI no longer misclock/reject an otherwise running I2C.
+
+The actual production-used clock selector failed native regressions with
+SYS150MHz/PERI48MHz and SYS150MHz/PERI0 before correction; equal-clock control
+passed. A drop guard restores test metadata even on failure, and native HAL tests
+run serially. No test accesses I2C or clock registers. Async error documentation
+also distinguishes a newly observed abort from successful STOP observation.
+Primary sources: [SDK I2C baud setup](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/hardware_i2c/i2c.c#L64)
+and [RP2350 clock destinations](https://www.raspberrypi.com/documentation/pico-sdk/hardware.html#hardware_clocks)
+(SYS_I2C0/1 versus PERI_UART/SPI). Physical bus timing remains unmeasured.
+
+
+### B8: Bound automatic PIO instruction allocation
+
+A wrapped instruction conflict can be below the attempted origin. The old search
+used conflict+1 as its next origin and could revisit origin1 forever when slot0
+was reserved and a32-word program was requested. Automatic placement now tries
+each origin0..31 once, preserving first-success and modular placement. Fixed
+origins still return their exact AddressInUse error. Each candidate performs at
+most32 writes/33 conflict checks, including oversized self-conflicting programs.
+No reservation mask is published until the whole candidate succeeds; failed
+candidates retain the existing documented partial writes to unreserved words.
+
+The production search seam first retained the old loop; its bounded regression
+failed on the repeated origin. Controls cover exhausted/full memory, a hole,
+placement across31-to0, empty/full32 programs, and first success. An actual
+public-loader test covers fixed-origin conflict and full-memory rejection before
+MMIO. The selected radio's first allocation on an empty block does not trigger
+the reproduced hang. No physical timing claim follows.
+
+Primary reference: [Pico SDK PIO allocation](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/hardware_pio/pio.c),
+whose separate allocator also uses a finite search of the32-word memory. Its
+nonwrapping placement policy is not substituted for the HAL's retained wrapping
+policy. Native HAL98 tests passed, then the added actual-loader regression and
+all10 PIO tests passed; strict private rustdoc and Cortex-M33 ARM check passed.
+
+## Reset, RTC and OTP boundaries (2026-11-02)
+
+Reset ALL_PERIPHERALS now selects the actual RP235x 29-bit mask while retaining
+the RP2040 25-bit mask. Clock initialization's explicit exclusions and sequencing
+are unchanged. The RP2040-only RTC activation wait checks MATCH_ENA and
+MATCH_ACTIVE in the same register snapshot, allowing IRQ-retired activation to
+finish when foreground missed the active interval. Production-constant/predicate
+regressions fail on the original code; no physical reset/alarm timing was measured.
+See ../../../docs/dependencies/reset-multicast-2026-11-02.md.
+
+Safe OTP access now acquires the nonblocking ROM OTP boot lock for reads and
+writes, returning Busy when another caller owns it. ECC permission and data reads
+share that lease; raw MMIO reads are volatile. Typed little-endian u32/u16 backing
+provides the ROM's required four-/two-byte alignment, replacing byte-array pointers
+without guaranteed alignment. Lock release and exact aligned byte layouts have
+native public-route regressions; no irreversible OTP operation was performed.
+
+Optional PSRAM comments now qualify the vendor maximum by voltage/part conditions
+and state divider units accurately; no timing arithmetic changed. OneWire's
+presence comment states its actual 24us release delay. The WS2812 header separates
+the shared instruction pattern from its retained 2/5/3-cycle pulse constants;
+neither helper's instructions changed.

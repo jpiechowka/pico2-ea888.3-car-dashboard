@@ -2,6 +2,7 @@
 
 extern crate std;
 use super::*;
+use crate::connection::ConnectionEvent;
 use crate::mock_controller::MockController;
 use crate::prelude::DefaultPacketPool;
 use crate::HostResources;

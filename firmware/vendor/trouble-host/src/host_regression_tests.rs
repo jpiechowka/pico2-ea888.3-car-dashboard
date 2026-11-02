@@ -186,7 +186,7 @@ fn disconnect_status_requires_controller_event() {
     assert!(!conn.is_disconnected());
     conn.disconnect();
     assert!(!conn.is_disconnected());
-    let Poll::Ready(request) = mgr.poll_disconnecting(None) else {
+    let Poll::Ready(Ok(request)) = mgr.poll_disconnecting(None) else {
         panic!()
     };
     request.confirm();
@@ -234,5 +234,56 @@ fn stack_drop_releases_borrowed_inbound_packet_storage() {
             assert_eq!(available(), before - 3);
         }
         assert_eq!(available(), before);
+    }
+}
+
+#[cfg(feature = "security")]
+#[test]
+/// Removed/rekeyed bonds cannot be resurrected by delayed BondAdded; a current bond still synchronizes after close.
+fn delayed_security_identity_requires_current_bond() {
+    use crate::{BondInformation, Identity, IdentityResolvingKey, LongTermKey};
+    for replacement in [false, true] {
+        let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let host = stack.host();
+        let manager = host.connections();
+        let handle = ConnHandle::new(7);
+        let peer = Address::random([0x21, 2, 3, 4, 5, 0xc6]);
+        manager
+            .connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let link = manager.security_link(handle).unwrap();
+        let mut identity = Identity::from(Address::random([0x23, 2, 3, 4, 5, 0xc6]));
+        identity.irk = IdentityResolvingKey::new(1);
+        let bond = BondInformation::new(
+            identity,
+            LongTermKey::new(7),
+            crate::connection::SecurityLevel::Encrypted,
+            true,
+        );
+        manager.security_manager.add_bond_information(bond.clone()).unwrap();
+        let event = SecurityEventData::BondAdded(link, identity);
+        manager.security_manager.remove_bond_information(identity).unwrap();
+        if replacement {
+            let mut replacement_bond = bond.clone();
+            replacement_bond.identity.irk = IdentityResolvingKey::new(2);
+            manager.security_manager.add_bond_information(replacement_bond).unwrap();
+        }
+        block_on(manager.handle_security_event(&host, event)).unwrap();
+        assert_eq!(manager.connection(0).peer_identity.addr, peer);
+        let mut cx = Context::from_waker(core::task::Waker::noop());
+        assert!(host
+            .resolving_list_state()
+            .borrow_mut()
+            .poll_changed(&mut cx)
+            .is_pending());
+        // A currently stored identity is allowed to outlive its original connection.
+        manager.security_manager.add_bond_information(bond).unwrap();
+        manager.disconnected(handle, Status::SUCCESS).unwrap();
+        block_on(manager.handle_security_event(&host, SecurityEventData::BondAdded(link, identity))).unwrap();
+        assert!(
+            matches!(host.resolving_list_state().borrow_mut().poll_changed(&mut cx), Poll::Ready(ResolvingListUpdate::Add(got)) if got == identity)
+        );
+        assert_eq!(manager.connection(0).peer_identity.addr, peer);
     }
 }

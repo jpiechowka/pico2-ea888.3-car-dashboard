@@ -245,7 +245,7 @@ version = "0.4.16"
 optional = true
 
 [dependencies.p256]
-version = "0.13.2"
+version = "0.14.0"
 features = [
     "ecdh",
     "arithmetic",
@@ -340,3 +340,10 @@ default-features = false
 
 [dev-dependencies.tokio-serial]
 version = "5.4"
+
+[patch.crates-io]
+bt-hci = { path = "../bt-hci" }
+
+[dependencies.futures-intrusive]
+version = "0.5.0"
+default-features = false

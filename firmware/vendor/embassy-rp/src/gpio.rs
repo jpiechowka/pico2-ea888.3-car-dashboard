@@ -298,7 +298,7 @@ fn IO_IRQ_BANK0() { irq_handler(pac::IO_BANK0, &BANK0_WAKERS); }
 fn IO_IRQ_QSPI() { irq_handler(pac::IO_QSPI, &QSPI_WAKERS); }
 
 /// Armed GPIO wait tied to the CPU interrupt bank that created it; drop disarms.
-#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[must_use = "the GPIO interrupt wait is armed; await completion or drop to disarm"]
 struct InputFuture<'d> {
     /// Exclusive erased pin token retained for this driver or wait.
     pin: Peri<'d, AnyPin>,

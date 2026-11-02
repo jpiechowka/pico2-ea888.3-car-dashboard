@@ -1272,6 +1272,18 @@ pub enum LoadError {
     ),
 }
 
+/// Tries each origin 0..31 once using `load`, returning its first reservation or InsufficientSpace.
+/// `load` may write unreserved words before reporting a conflicting address in 0..32.
+fn try_load_any_origin<T>(mut load: impl FnMut(u8) -> Result<T, usize>) -> Result<T, LoadError> {
+    // A wrapped conflict may be below the candidate origin; it cannot choose the next origin.
+    for origin in 0..32 {
+        if let Ok(result) = load(origin) {
+            return Ok(result);
+        }
+    }
+    Err(LoadError::InsufficientSpace)
+}
+
 impl<'d, PIO: Instance> Common<'d, PIO> {
     /// Loads/relocates `prog` and returns its instruction reservation, wrap and side-set metadata.
     /// Panics on incompatible RP2040 instruction version or allocation failure; does not start a machine.
@@ -1287,7 +1299,8 @@ impl<'d, PIO: Instance> Common<'d, PIO> {
     }
 
     /// Loads/relocates `prog` and returns its reservation, or AddressInUse/InsufficientSpace.
-    /// A failed candidate can overwrite unreserved instruction slots; existing reservations are preserved.
+    /// Tries at most 32 automatic origins. A failed candidate can overwrite unreserved instruction slots;
+    /// existing reservations are preserved and a reservation is published only on full success.
     /// RP2040 rejects non-V0 programs by panic; dropping the returned token does not free its reservation.
     pub fn try_load_program<const SIZE: usize>(
         &mut self,
@@ -1295,19 +1308,7 @@ impl<'d, PIO: Instance> Common<'d, PIO> {
     ) -> Result<LoadedProgram<'d, PIO>, LoadError> {
         match prog.origin {
             Some(origin) => self.try_load_program_at(prog, origin).map_err(LoadError::AddressInUse),
-            None => {
-                // naively search for free space, allowing wraparound since
-                // PIO does support that. with only 32 instruction slots it
-                // doesn't make much sense to do anything more fancy.
-                let mut origin = 0;
-                while origin < 32 {
-                    match self.try_load_program_at(prog, origin as _) {
-                        Ok(r) => return Ok(r),
-                        Err(a) => origin = a + 1,
-                    }
-                }
-                Err(LoadError::InsufficientSpace)
-            }
+            None => try_load_any_origin(|origin| self.try_load_program_at(prog, origin)),
         }
     }
 
@@ -1807,6 +1808,75 @@ mod instance_tests {
             assert!(!core::ptr::eq(peripherals::PIO1::state(), peripherals::PIO2::state()));
         }
     }
+    /// Automatic placement cannot revisit an origin after a conflict wraps to a lower address.
+    #[test]
+    fn allocation_search_is_bounded_and_preserves_wrapped_placements() {
+        for (occupied, length, expected) in [
+            (1u32, 32usize, None),
+            (u32::MAX, 1, None),
+            (!(0b1111 << 8), 4, Some(8)),
+            (0x7FFF_FFFE, 2, Some(31)),
+            (0, 32, Some(0)),
+            (u32::MAX, 0, Some(0)),
+        ] {
+            let mut attempts = 0;
+            let mut visited = 0u32;
+            let mut reservation = occupied;
+            let result = try_load_any_origin(|origin| {
+                attempts += 1;
+                assert!(attempts <= 32, "allocation search exceeded all legal origins");
+                let origin_bit = 1u32 << origin;
+                assert_eq!(visited & origin_bit, 0, "allocation search revisited an origin");
+                visited |= origin_bit;
+                // Independent reservation model allows instruction placement to wrap at address31.
+                let mut candidate = 0;
+                for index in 0..length {
+                    let address = (usize::from(origin) + index) % 32;
+                    let bit = 1u32 << address;
+                    if (occupied | candidate) & bit != 0 {
+                        return Err(address);
+                    }
+                    candidate |= bit;
+                }
+                reservation |= candidate;
+                Ok(origin)
+            });
+            assert_eq!(result, expected.ok_or(LoadError::InsufficientSpace));
+            assert_eq!(reservation & occupied, occupied);
+            if expected.is_none() {
+                assert_eq!(reservation, occupied);
+            }
+            if expected == Some(0) {
+                assert_eq!(attempts, 1);
+            }
+        }
+    }
+
+    /// The public loader preserves fixed-origin conflicts without searching or touching MMIO.
+    #[test]
+    fn explicit_origin_conflict_retains_its_address_and_reservation() {
+        // No Pio was initialized: suppress Common's hardware-owning destructor in this pure conflict test.
+        let mut common = core::mem::ManuallyDrop::new(Common::<peripherals::PIO0> {
+            instructions_used: 1 << 7,
+            pio: PhantomData,
+        });
+        let mut program = pio::pio_asm!("nop").program;
+        program.origin = Some(7);
+        assert!(matches!(
+            common.try_load_program(&program),
+            Err(LoadError::AddressInUse(7))
+        ));
+        assert_eq!(common.instructions_used, 1 << 7);
+        // Fully occupied automatic placement rejects every candidate before the first register write.
+        common.instructions_used = u32::MAX;
+        program.origin = None;
+        assert!(matches!(
+            common.try_load_program(&program),
+            Err(LoadError::InsufficientSpace)
+        ));
+        assert_eq!(common.instructions_used, u32::MAX);
+    }
+
     /// High physical pins map to relative bypass bits; out-of-window pins are rejected.
     #[test]
     fn bypass_uses_current_gpio_window() {

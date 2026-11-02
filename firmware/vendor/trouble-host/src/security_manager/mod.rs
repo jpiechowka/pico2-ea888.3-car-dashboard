@@ -33,10 +33,10 @@ use rand_core::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
+use crate::connection::QueuedConnectionEvent as ConnectionEvent;
 use crate::connection::SecurityLevel;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, SecurityLink};
 use crate::pdu::Pdu;
-use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::{Pairing, PairingOps};
 #[cfg(feature = "legacy-pairing")]
 use crate::security_manager::types::AuthReq;
@@ -48,8 +48,8 @@ use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
 pub(crate) enum SecurityEventData {
     /// A long term key request has been issued (handle, ediv, rand)
     SendLongTermKey(
-        /// Controller connection requesting the key.
-        ConnHandle,
+        /// Exact connection lifetime requesting the key.
+        SecurityLink,
         /// Legacy encrypted diversifier; zero for Secure Connections.
         u16,
         /// Eight wire-order legacy random bytes; zero for Secure Connections.
@@ -57,8 +57,8 @@ pub(crate) enum SecurityEventData {
     ),
     /// Enable encryption on channel
     EnableEncryption(
-        /// Controller connection to encrypt.
-        ConnHandle,
+        /// Exact connection lifetime to encrypt.
+        SecurityLink,
         /// Key, identity and intended security properties to submit to HCI.
         BondInformation,
     ),
@@ -68,8 +68,8 @@ pub(crate) enum SecurityEventData {
     TimerChange,
     /// A new bond was stored during pairing
     BondAdded(
-        /// Connection whose bond gained identity resolution data.
-        ConnHandle,
+        /// Exact connection lifetime whose bond gained identity resolution data.
+        SecurityLink,
         /// Identity/IRK to synchronize with controller privacy state.
         crate::Identity,
     ),
@@ -995,7 +995,9 @@ impl<'d> SecurityManager<'d> {
 
     /// Reports an error in `result` as SMP PairingFailed for `storage` through `connections`.
     /// Ok/Timeout produce no packet; nonsecurity failures map to UnspecifiedReason.
-    /// Returns packet allocation/queue errors only, without changing the original pairing result.
+    /// Queues through already-borrowed `storage`, retaining its exact slot without reborrowing the table.
+    /// Returns packet allocation/queue errors only; rejected queue admission releases packet and slot retention.
+    /// Does not change the original pairing result.
     fn handle_security_error<P: PacketPool>(
         &self,
         connections: &ConnectionManager<P>,
@@ -1013,12 +1015,11 @@ impl<'d> SecurityManager<'d> {
 
             // Cease sending security manager messages on timeout
             if *error != Error::Timeout {
-                let handle = storage.handle;
                 let mut packet = self.prepare_packet(Command::PairingFailed, connections)?;
                 let payload = packet.payload_mut();
                 payload[0] = u8::from(reason);
 
-                match self.try_send_packet(packet, connections, handle) {
+                match connections.try_outbound_storage(storage, packet.into_pdu()) {
                     Ok(()) => (),
                     Err(error) => {
                         error!("[security manager] Failed to send pairing failed {:?}", error);
@@ -1080,7 +1081,7 @@ impl<'d> SecurityManager<'d> {
     }
 
     /// Decodes an LE LTK-request `event` and queues key lookup; other LE events are ignored.
-    /// `connections` supplies the packet-pool type but is otherwise unused. Returns HCI decode or
+    /// `connections` captures the current live lifetime, returning NotFound for stale handles. Returns HCI decode or
     /// OutOfMemory queue errors; no controller command is issued synchronously.
     pub(crate) fn handle_hci_le_event<P: PacketPool>(
         &self,
@@ -1092,7 +1093,7 @@ impl<'d> SecurityManager<'d> {
             LeEventKind::LeLongTermKeyRequest => {
                 let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
                 self.try_send_event(SecurityEventData::SendLongTermKey(
-                    event_data.handle,
+                    connections.security_link(event_data.handle).ok_or(Error::NotFound)?,
                     event_data.encrypted_diversifier,
                     event_data.random_number,
                 ))?;
@@ -1253,19 +1254,6 @@ impl<'d> SecurityManager<'d> {
         TxPacket::new(packet, command)
     }
 
-    /// Consumes `packet` into `connections`' outbound queue for `handle`; Returns its admission error.
-    /// Success is queue acceptance, not controller/wire completion.
-    fn try_send_packet<P: PacketPool>(
-        &self,
-        packet: TxPacket<P>,
-        connections: &ConnectionManager<P>,
-        handle: ConnHandle,
-    ) -> Result<(), Error> {
-        let len = packet.total_size();
-        trace!("[security manager] Send {} {}", packet.command, len);
-        connections.try_outbound(handle, packet.into_pdu())
-    }
-
     /// Queues deferred `event`; Returns OutOfMemory if the three-entry queue is full.
     fn try_send_event(&self, event: SecurityEventData) -> Result<(), Error> {
         self.events.try_send(event).map_err(|_| Error::OutOfMemory)
@@ -1328,9 +1316,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
         add_bond(self.bonds, bond.clone())?;
         if bond.identity.irk.is_some() {
-            let _ = self
-                .events
-                .try_send(SecurityEventData::BondAdded(self.conn_handle, bond.identity));
+            let _ = self.events.try_send(SecurityEventData::BondAdded(
+                self.storage.security_link(),
+                bond.identity,
+            ));
         }
         Ok(())
     }
@@ -1371,7 +1360,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         };
         self.try_update_bond_information(&bond_info)?;
         self.events
-            .try_send(SecurityEventData::EnableEncryption(self.conn_handle, bond_info.clone()))
+            .try_send(SecurityEventData::EnableEncryption(
+                self.storage.security_link(),
+                bond_info.clone(),
+            ))
             .map_err(|_| Error::OutOfMemory)?;
         Ok(bond_info)
     }
@@ -1384,7 +1376,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         }
         if let Some(bond) = self.find_bond() {
             self.events
-                .try_send(SecurityEventData::EnableEncryption(self.conn_handle, bond.clone()))
+                .try_send(SecurityEventData::EnableEncryption(
+                    self.storage.security_link(),
+                    bond.clone(),
+                ))
                 .map_err(|_| Error::OutOfMemory)?;
             Ok(Some(bond))
         } else {
@@ -1502,6 +1497,316 @@ mod tests {
             #[cfg(feature = "legacy-pairing")]
             secure_connections_only: false,
         }
+    }
+
+    /// Deferred identity distribution belongs to the old link, even when a later peer receives its controller handle.
+    #[test]
+    fn delayed_bond_event_cannot_replace_a_reused_handles_peer_identity() {
+        let mut resources = crate::HostResources::<DefaultPacketPool, 2, 1>::new();
+        let stack = crate::new(crate::mock_controller::MockController::new(), &mut resources).build();
+        let host = stack.host();
+        let manager = host.connections();
+        let handle = ConnHandle::new(7);
+        let old_peer = Address::random([0x21, 2, 3, 4, 5, 0xc6]);
+        let new_peer = Address::random([0x22, 2, 3, 4, 5, 0xc6]);
+        manager
+            .connect(handle, old_peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let old_owner = embassy_futures::block_on(manager.accept(LeConnRole::Central, &[old_peer]));
+        let mut identity = Identity::from(Address::random([0x23, 2, 3, 4, 5, 0xc6]));
+        identity.irk = IdentityResolvingKey::new(1);
+        manager
+            .security_manager
+            .add_bond_information(BondInformation::new(
+                identity,
+                LongTermKey::new(7),
+                SecurityLevel::Encrypted,
+                true,
+            ))
+            .unwrap();
+        manager
+            .security_manager
+            .try_send_event(SecurityEventData::BondAdded(
+                manager.security_link(handle).unwrap(),
+                identity,
+            ))
+            .unwrap();
+        manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+        manager
+            .connect(handle, new_peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        let new_owner = embassy_futures::block_on(manager.accept(LeConnRole::Central, &[new_peer]));
+        let event = embassy_futures::block_on(manager.poll_security_events()).unwrap();
+        embassy_futures::block_on(manager.handle_security_event(&host, event)).unwrap();
+        assert_eq!(new_owner.peer_address(), new_peer);
+        drop(old_owner);
+        manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+        drop(new_owner);
+    }
+
+    #[cfg(feature = "central")]
+    #[test]
+    /// All deferred work retains its lifetime through queue saturation and same-peer handle reuse.
+    fn queued_security_commands_reject_reused_handles() {
+        for same_peer in [false, true] {
+            let mut resources = crate::HostResources::<DefaultPacketPool, 2, 1>::new();
+            let stack = crate::new(crate::mock_controller::MockController::new(), &mut resources).build();
+            let host = stack.host();
+            let manager = host.connections();
+            let handle = ConnHandle::new(7);
+            let old_peer = Address::random([0x21, 2, 3, 4, 5, 0xc6]);
+            let new_peer = if same_peer {
+                old_peer
+            } else {
+                Address::random([0x22, 2, 3, 4, 5, 0xc6])
+            };
+            manager
+                .connect(handle, old_peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            let old_owner = embassy_futures::block_on(manager.accept(LeConnRole::Central, &[old_peer]));
+            let link = manager.security_link(handle).unwrap();
+            let bond = BondInformation::new(old_peer.into(), LongTermKey::new(7), SecurityLevel::Encrypted, true);
+            manager.security_manager.add_bond_information(bond.clone()).unwrap();
+            manager
+                .security_manager
+                .try_send_event(SecurityEventData::SendLongTermKey(link, 0, [0; 8]))
+                .unwrap();
+            manager
+                .security_manager
+                .try_send_event(SecurityEventData::EnableEncryption(link, bond.clone()))
+                .unwrap();
+            manager
+                .security_manager
+                .try_send_event(SecurityEventData::BondAdded(link, bond.identity))
+                .unwrap();
+            assert_eq!(
+                manager
+                    .security_manager
+                    .try_send_event(SecurityEventData::EnableEncryption(link, bond)),
+                Err(Error::OutOfMemory)
+            );
+            manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+            manager
+                .connect(handle, new_peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            let new_owner = embassy_futures::block_on(manager.accept(LeConnRole::Central, &[new_peer]));
+            let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+            for _ in 0..3 {
+                let event = embassy_futures::block_on(manager.poll_security_events()).unwrap();
+                let mut dispatch = core::pin::pin!(manager.handle_security_event(&host, event));
+                assert!(matches!(dispatch.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+            }
+            assert_eq!(new_owner.peer_address(), new_peer);
+            assert_eq!(new_owner.security_level(), Ok(SecurityLevel::NoEncryption));
+            drop(old_owner);
+            manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+            drop(new_owner);
+            // Queued/failed events own no slot or packet leases after their lifecycle ends.
+            manager
+                .connect(handle, new_peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+        }
+    }
+
+    #[cfg(feature = "central")]
+    #[test]
+    /// Both real dispatcher command branches fail-stop if their lifetime ends during initialization await.
+    fn security_dispatch_disconnect_during_command_await_is_fatal() {
+        for key_reply in [false, true] {
+            let mut resources = crate::HostResources::<DefaultPacketPool, 2, 1>::new();
+            let stack = crate::new(crate::mock_controller::MockController::new(), &mut resources).build();
+            let host = stack.host();
+            let manager = host.connections();
+            let handle = ConnHandle::new(7);
+            let peer = Address::random([0x21, 2, 3, 4, 5, 0xc6]);
+            manager
+                .connect(handle, peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            let link = manager.security_link(handle).unwrap();
+            let bond = BondInformation::new(peer.into(), LongTermKey::new(7), SecurityLevel::Encrypted, true);
+            manager.security_manager.add_bond_information(bond.clone()).unwrap();
+            let event = if key_reply {
+                SecurityEventData::SendLongTermKey(link, 0, [0; 8])
+            } else {
+                SecurityEventData::EnableEncryption(link, bond)
+            };
+            let mut dispatch = core::pin::pin!(manager.handle_security_event(&host, event));
+            let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(dispatch.as_mut().poll(&mut cx).is_pending());
+            manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+            manager
+                .connect(handle, peer, LeConnRole::Central, ConnParams::new())
+                .unwrap();
+            assert!(matches!(
+                dispatch.as_mut().poll(&mut cx),
+                Poll::Ready(Err(crate::BleHostError::BleHost(Error::InvalidState)))
+            ));
+        }
+    }
+
+    /// Counts currently available shared pool packets without retaining them after return; tests run serially.
+    fn available_packets() -> usize {
+        let mut packets = std::vec::Vec::new();
+        while let Some(packet) = DefaultPacketPool::allocate() {
+            packets.push(packet);
+        }
+        packets.len()
+    }
+
+    /// Malformed peer SMP returns its original error and queues PairingFailed without reborrowing the live slot table.
+    #[test]
+    fn malformed_smp_reports_failure_without_reborrowing_connection_storage() {
+        /// The security dispatcher currently does not emit application callbacks through this handler.
+        struct Handler;
+        impl crate::host::EventHandler for Handler {}
+
+        for role in [LeConnRole::Central, LeConnRole::Peripheral] {
+            for accepted in [false, true] {
+                for (bytes, reason, wire_reason) in [
+                    (&[0x01][..], Reason::InvalidParameters, 0x0a),
+                    (&[0xff, 0][..], Reason::CommandNotSupported, 0x07),
+                ] {
+                    let before = available_packets();
+                    let manager = setup_manager();
+                    let handle = ConnHandle::new(7);
+                    let peer = Address::random([0x21, 2, 3, 4, 5, 6]);
+                    manager.connect(handle, peer, role, ConnParams::new()).unwrap();
+                    let owner = accepted.then(|| embassy_futures::block_on(manager.accept(role, &[peer])));
+                    let mut packet = DefaultPacketPool::allocate().unwrap();
+                    packet.as_mut()[..bytes.len()].copy_from_slice(bytes);
+                    assert_eq!(
+                        manager.handle_security_channel(handle, Pdu::new(packet, bytes.len()), &Handler),
+                        Err(Error::Security(reason))
+                    );
+                    let (lease, response) = embassy_futures::block_on(manager.outbound());
+                    assert_eq!(response.as_ref(), &[2, 0, 6, 0, 5, wire_reason]);
+                    assert_eq!(lease.handle(), handle);
+                    drop(response);
+                    drop(lease);
+                    manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+                    drop(owner);
+                    assert_eq!(available_packets(), before);
+                }
+            }
+        }
+    }
+
+    /// HCI transitions hold exclusive connection storage; error reporting still queues exact bytes and timeout/Ok remain silent.
+    #[test]
+    fn security_failure_reply_preserves_exclusive_storage_borrow() {
+        let before = available_packets();
+        let manager = setup_manager();
+        let handle = ConnHandle::new(7);
+        manager
+            .connect(
+                handle,
+                Address::random([0x21, 2, 3, 4, 5, 6]),
+                LeConnRole::Central,
+                ConnParams::new(),
+            )
+            .unwrap();
+        manager
+            .with_connected_handle(handle, |storage| {
+                manager
+                    .security_manager
+                    .handle_security_error(manager, storage, &Ok(()))?;
+                manager
+                    .security_manager
+                    .handle_security_error(manager, storage, &Err(Error::Timeout))?;
+                manager
+                    .security_manager
+                    .handle_security_error(manager, storage, &Err(Error::InvalidState))
+            })
+            .unwrap();
+        let (lease, response) = embassy_futures::block_on(manager.outbound());
+        assert_eq!(response.as_ref(), &[2, 0, 6, 0, 5, 0x08]);
+        drop(response);
+        drop(lease);
+        {
+            let mut empty = core::pin::pin!(manager.outbound());
+            assert!(empty
+                .as_mut()
+                .poll(&mut core::task::Context::from_waker(core::task::Waker::noop()))
+                .is_pending());
+        }
+        manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+        assert_eq!(available_packets(), before);
+    }
+
+    /// A full outbound queue rolls back failed security-reply retention; successful queued leases still protect the old slot after terminal handle reuse.
+    #[test]
+    fn security_failure_queue_full_rolls_back_without_retargeting_queued_packets() {
+        let before = available_packets();
+        let manager = setup_manager();
+        let handle = ConnHandle::new(7);
+        let peer = Address::random([0x21, 2, 3, 4, 5, 6]);
+        manager
+            .connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        manager
+            .connect(
+                ConnHandle::new(8),
+                Address::random([0x22, 2, 3, 4, 5, 6]),
+                LeConnRole::Central,
+                ConnParams::new(),
+            )
+            .unwrap();
+        for _ in 0..crate::config::L2CAP_TX_QUEUE_SIZE {
+            let mut packet = DefaultPacketPool::allocate().unwrap();
+            packet.as_mut()[0] = 0xa5;
+            manager.try_outbound(handle, Pdu::new(packet, 1)).unwrap();
+        }
+        let occupied = available_packets();
+        for exclusive in [false, true] {
+            let fail = |storage: &ConnectionStorage<_>| {
+                assert_eq!(
+                    manager
+                        .security_manager
+                        .handle_security_error(manager, storage, &Err(Error::InvalidState)),
+                    Err(Error::OutOfMemory)
+                );
+            };
+            if exclusive {
+                manager
+                    .with_connected_handle(handle, |storage| {
+                        fail(storage);
+                        Ok(())
+                    })
+                    .unwrap();
+            } else {
+                fail(&manager.connection(0));
+            }
+            assert_eq!(available_packets(), occupied);
+        }
+        manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+        assert_eq!(
+            manager.connect(handle, peer, LeConnRole::Central, ConnParams::new()),
+            Err(Error::NotFound)
+        );
+        for index in 0..crate::config::L2CAP_TX_QUEUE_SIZE {
+            let (lease, response) = embassy_futures::block_on(manager.outbound());
+            assert_eq!(response.as_ref(), &[0xa5]);
+            assert!(matches!(
+                lease.poll_acquire(None),
+                core::task::Poll::Ready(Err(Error::Disconnected))
+            ));
+            if index + 1 == crate::config::L2CAP_TX_QUEUE_SIZE {
+                assert_eq!(
+                    manager.connect(handle, peer, LeConnRole::Central, ConnParams::new()),
+                    Err(Error::NotFound)
+                );
+            }
+            drop(response);
+            drop(lease);
+        }
+        manager
+            .connect(handle, peer, LeConnRole::Central, ConnParams::new())
+            .unwrap();
+        manager.disconnected(handle, bt_hci::param::Status::SUCCESS).unwrap();
+        manager
+            .disconnected(ConnHandle::new(8), bt_hci::param::Status::SUCCESS)
+            .unwrap();
+        assert_eq!(available_packets(), before);
     }
 
     #[test]

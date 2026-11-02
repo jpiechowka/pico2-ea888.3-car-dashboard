@@ -6,8 +6,10 @@ use embassy_futures::select::{Either, select};
 /// Awaits `runner`, then invokes synchronous `latch` before returning its output.
 /// Wrapping the HCI side of select closes admission before select can drop the
 /// operation future and its connection lease. No terminal publication is awaited.
+/// The caller pins the runner once and retains its owner through the surrounding
+/// select scope; this wrapper borrows it and does not release that owner itself.
 pub async fn latch_completion<T>(
-    runner: impl Future<Output = T>,
+    runner: core::pin::Pin<&mut impl Future<Output = T>>,
     latch: impl FnOnce(),
 ) -> T {
     let result = runner.await;

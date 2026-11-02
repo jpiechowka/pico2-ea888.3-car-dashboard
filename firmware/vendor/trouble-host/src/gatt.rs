@@ -82,7 +82,8 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// Respond through [`ConnectionParamsRequest`]; dropping the token sends no reply.
     /// Acceptance requires `central` or `connection-params-update`; rejection is always available.
     RequestConnectionParams(
-        #[doc = "Pending controller parameter request; caller responds through its token."] ConnectionParamsRequest,
+        #[doc = "Pending controller parameter request; caller responds through its token."]
+        ConnectionParamsRequest<'stack, P>,
     ),
     /// The data length was changed for this connection.
     DataLengthUpdated {

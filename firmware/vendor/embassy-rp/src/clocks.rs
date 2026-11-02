@@ -1990,6 +1990,38 @@ fn divided_clock_frequency(
 #[cfg(test)]
 /// Pure clock arithmetic/policy regressions; no oscillator or voltage measurements.
 mod tests {
+    /// Restore cached rates even if an assertion unwinds. Native HAL tests run serially;
+    /// no other native test writes these fields or initializes MMIO clock hardware.
+    struct RestoreI2cClocks {
+        /// Original cached system hertz.
+        sys: u32,
+        /// Original cached UART/SPI peripheral hertz.
+        peri: u32,
+    }
+
+    impl Drop for RestoreI2cClocks {
+        /// Restores both metadata fields without touching hardware.
+        fn drop(&mut self) {
+            CLOCKS.sys.store(self.sys, Ordering::Relaxed);
+            CLOCKS.peri.store(self.peri, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    /// Actual I2C timing input remains SYS for equal, independently sourced or disabled PERI.
+    fn i2c_timing_uses_system_clock_independently_of_peripheral_clock() {
+        let _restore = RestoreI2cClocks {
+            sys: clk_sys_freq(),
+            peri: clk_peri_freq(),
+        };
+        CLOCKS.sys.store(150_000_000, Ordering::Relaxed);
+        // Equal clocks cover every current dashboard/probe profile; distinct rates expose the bug.
+        for peri in [150_000_000, 0, 48_000_000] {
+            CLOCKS.peri.store(peri, Ordering::Relaxed);
+            assert_eq!(crate::i2c::timing_clock_hz(), 150_000_000, "PERI={peri}");
+        }
+    }
+
     extern crate std;
 
     use super::*;
