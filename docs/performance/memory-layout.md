@@ -44,11 +44,19 @@ unchanged. Final images require their own exact source/options-bound admission.
 The host CLI/build script's 2 MiB worker is a separate host allocation and
 cannot justify any change to those target limits.
 
-The [27 October widget image matrix](../validation/ignition-retard-widget-2026-10-27.md#linked-images-and-memory)
-checks seven dashboard and four standalone utility images. BLE/target-bench
-allocates 458,744 bytes and leaves 65,544 bytes, only eight bytes above the
+The historical [27 October widget image matrix](../validation/ignition-retard-widget-2026-10-27.md#linked-images-and-memory)
+checked seven dashboard and four standalone utility images. BLE/target-bench
+allocated 458,744 bytes and left 65,544 bytes, only eight bytes above the
 unchanged 65,536-byte floor. That difference is static admission margin, not
-measured spare runtime stack. Probe/NGM allocations remain 410,120/410,880 bytes.
+measured spare runtime stack. Probe/NGM allocations were 410,120/410,880 bytes.
+
+The [2 November final images](../validation/full-firmware-audit-2026-11-02.md#final-linked-images)
+include the reviewed host-lifetime, pinned-future and radio-buffer repairs.
+Traced BLE/target-bench uses 457,600 static bytes and leaves 66,688 bytes of
+core-0 headroom, 1,152 above the same floor. Probe/NGM uses 407,928/408,688 static
+bytes. The NGM emitted-frame aggregate is 20,232 of 20,480 bytes and its nonradio
+sum is 12,064 of 12,288 bytes. Those remaining 248/224-byte margins require
+particular attention during later changes; neither sum is physical stack use.
 
 ## Original linked-boundary repair
 
@@ -193,6 +201,38 @@ The historical trace plus 300 MHz diagnostic build used 373264 bytes of static R
 left 151024 bytes before the core 0 stack top. These numbers vary with features
 and source changes. They are allocation evidence, not measured worst-case
 stack use. The ELF check and linker assertions are the continuing gates.
+
+### Reviewed P256 0.14 stack shape (2026-11-02)
+
+The scoped security dependency update changes the emitted arithmetic path.
+`p256 0.14.0` uses [the `cpubits 0.1.1` ARM `v7` selection rule](https://docs.rs/cpubits/0.1.1/src/cpubits/lib.rs.html), which selects
+four 64-bit limbs on the pinned Cortex-M33 target. This differs from the old
+pointer-width selection. It is not a change to the firmware CPU target.
+The selected source uses an eight-point table and signed radix-16 scalar
+multiplication; point doubling now inlines into the emitted `Mul` function.
+Field multiplication and Montgomery reduction are sequential children, and
+affine inversion uses the locked `crypto-bigint 0.7.10` safegcd implementation.
+See the [versioned multiplication source](https://docs.rs/primeorder/0.14.0/src/primeorder/projective.rs.html).
+
+The checker retains frozen P256 0.13 fixtures and separately recognizes the
+reviewed 0.14 shape. It rejects mixed shapes, missing or ambiguous named
+boundaries, and missing frame metadata. Each resident path deduplicates symbol
+aliases; alternative branches take their maximum. The 0.14 paths explicitly
+include scalar multiplication, SEC1 decoding/decompression and inversion,
+plus both public-key and DH-key callers. The reviewed worker boundaries are
+`RxRunner::run_inner` and `ControlRunner::run_inner`; their pinned guard wrappers
+inline into the already-counted host/task polling frames.
+
+The literal `ble-stack-p256-014.json` fixture records one intermediate linked
+image and its SHA-256. Its arithmetic branches are 4192 bytes for DH-key scalar
+multiplication, 3496 for SEC1 decoding and 1712 for inversion. Its conservative
+radio total is 21024 bytes, including the unchanged 4096-byte child allowance.
+CMAC/AES/RNG and memory helper descendants were reviewed separately against
+that allowance. The separate 8192-byte core-0 reserve is unchanged. The fixture
+is not an admission receipt: its intermediate image still failed the independent
+65536-byte static headroom floor. Final image results must come from fresh,
+source-bound checks; these arithmetic figures do not establish physical stack
+high-water or complete indirect-call closure.
 
 ### Historical audit images (2026-10-20)
 

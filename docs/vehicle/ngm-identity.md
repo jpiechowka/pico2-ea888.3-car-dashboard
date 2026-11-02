@@ -5,7 +5,10 @@ display, controls, diagnostics, four capture slots and USB exporter. It performs
 one explicitly selected adapter identity trial and preserves enough raw evidence
 for later offline analysis. It does not provide dashboard vehicle measurements.
 
-**Status, 2026-11-01:** the [pre-flash audit](../validation/ngm-identity-audit-2026-11-01.md)
+**Status, 2026-11-02:** the [full firmware/tooling audit](../validation/full-firmware-audit-2026-11-02.md)
+rechecks both utilities, dashboard siblings, vendor drivers and host tools. Its
+verification record separates software checks from future device validation.
+The [1 November pre-flash audit](../validation/ngm-identity-audit-2026-11-01.md)
 traces startup, both cores, radio, INFO, cleanup, persistence and export through
 an explaining engineer and an independent driver/security reviewer. It corrects
 database-invalidation handling and four shared L2CAP signaling defects. The

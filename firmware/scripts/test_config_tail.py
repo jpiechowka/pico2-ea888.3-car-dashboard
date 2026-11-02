@@ -954,11 +954,13 @@ class TailOutputAggregates(unittest.TestCase):
                 self.assertEqual(absent.get("physical_child_bytes"), frame.extent)
                 self.assertEqual(absent["ordinary_return"]["return_SP"], frame.start + frame.extent)
 
-    def test_LED_unwritten_padding_guard_survives_containing_output_envelope(self) -> None:
+    def test_LED_missing_output_preserves_padding_but_positive_output_checks_all_writes(
+        self,
+    ) -> None:
         from config_tail_effects import led_pattern_interface
         from config_regions import Storage
 
-        args = self.fixture("LedPattern")
+        args = self.fixture("LedPattern", count=0)
         output = args[4]
         frame = args[5]
         original = args[6]
@@ -967,12 +969,40 @@ class TailOutputAggregates(unittest.TestCase):
         )
         args = (*args[:6], original + (pad,), *args[7:])
         result = led_pattern_interface(*args)
-        self.assertIsNotNone(result["normal"])
+        self.assertIsNotNone(result["none"])
         self.assertIn(pad, result["protected"])
+        args = self.fixture("LedPattern")
         for offset in (0, 2, 5, 9):
             args = (*args[:6], original + (replace(pad, start=output.start + offset),), *args[7:])
             with self.subTest(offset=offset), self.assertRaises(AssertionError):
                 led_pattern_interface(*args)
+
+    def test_LED_error_byte_cannot_overlap_protected_normal_padding(self) -> None:
+        from config_tail_effects import led_pattern_interface
+
+        for extent in (1, 64):
+            with self.subTest(extent=extent):
+                args = self.fixture("LedPattern", extent=extent)
+                baseline = led_pattern_interface(*args)
+                self.assertTrue(baseline["errors"])
+                if extent == 1:
+                    self.assertIsNone(baseline["normal"])
+                else:
+                    self.assertIsNotNone(baseline["normal"])
+                output, frame = args[4], args[5]
+                guard = Storage(
+                    frame.space, "retained caller byte", output.start + 10, 1, 1, frame.phase, False
+                )
+                self.assertTrue(
+                    led_pattern_interface(*args[:6], args[6] + (guard,), *args[7:])["errors"]
+                )
+                for space in (frame.space, "address"):
+                    error_byte = replace(guard, space=space, start=output.start + 1)
+                    with (
+                        self.subTest(space=space),
+                        self.assertRaisesRegex(AssertionError, "protected live storage"),
+                    ):
+                        led_pattern_interface(*args[:6], args[6] + (error_byte,), *args[7:])
 
 
 class TailParentBodies(unittest.TestCase):

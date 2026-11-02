@@ -14,6 +14,11 @@ does not change the ordinary probe's standard-read allowlist or send INFO. Both
 share controls, capture storage/export and diagnostics; default firmware builds
 still select the dashboard.
 
+The [2 November full audit](../validation/full-firmware-audit-2026-11-02.md)
+records the shared scan/connection/HCI fixes, memory checks and offline validation.
+It does not qualify physical radio behavior or resolve the observed watchdog
+indication after reboot.
+
 ## Use it in the car
 
 1. Power the Pico through USB. The display starts at full brightness and scans.
@@ -337,7 +342,10 @@ See [adapter research and remaining evidence](adapter-research.md).
 
 `lost` counts dropped host report-queue entries; `full` counts reports for new
 identities when the catalogue is full, not unique omitted devices. `HCIbad` counts
-scan report batches rejected by the HCI iterator, once at its first bad entry.
+scan report batches rejected by framing admission, once at the first failure.
+Legacy report counts must be 1–25, data lengths at most 31 bytes, and the
+declared reports must consume the complete batch. Reserved counts/lengths and
+surplus bytes (including zero) are failures; valid earlier records remain.
 Malformed AD fields are separately identified on their detail pages.
 Limits and malformed discovery are never labelled complete.
 If the underlying client's 24-service capacity is exceeded, it returns a capacity
@@ -390,8 +398,8 @@ refusal completes the default-MTU fallback. Other errors retain their actual cod
 
 `HCIbad` and the **GLOBAL HCI SCAN ERRORS / since boot** pages describe all scanned
 devices. They retain invalid-size/value counts and the latest failed batch's scan
-revision, entry position and age. The actual HCI decoder stops at its first bad
-entry: later entries in that batch are not individually counted. Valid preceding
+revision, entry position and age. Admission stops at its first bad header,
+record or trailing bytes: later entries are not individually counted. Valid preceding
 entries remain available. These counters do not diagnose RF quality and cannot
 be attributed to the selected TV/adapter. Raw AD-field decoding and rejected GATT
 records are separate checks. With no accepted peer, X opens **SCAN DIAGNOSTICS**;
@@ -404,12 +412,18 @@ Saved evidence displays the original boot-relative time; capture admission rejec
 an observation after its capture timestamp.
 
 The final global lines show report bytes after the count field, bytes remaining
-from the failed record's start, and its declared Data_Length (or a missing header
-byte). One legacy record requires `10 + Data_Length` bytes, including RSSI.
+from the failure cursor, and its declared Data_Length when a record header is
+available. Invalid batch counts use position zero; surplus bytes use position
+equal to the declared count. Both batch-level failures have no Data_Length.
+One legacy record requires `10 + Data_Length` bytes, including RSSI.
 This separates short fixed headers, missing data and missing RSSI on the next
 capture. For a multi-report batch, remaining bytes also include subsequent
 records. These are numeric shape diagnostics, not raw packet capture or proof of
-where bytes became inconsistent. Existing decoder admission rules are unchanged.
+where bytes became inconsistent. These bounds follow Bluetooth Core Vol 4 Part E
+[§§5.4.4 and 7.7.65.2](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+Physical GSPI alignment bytes are removed below this boundary; they are not
+optional report padding. RSSI bytes remain raw evidence, including reserved
+encodings, and do not establish measurement validity.
 
 `InvalidPeer` after reading paused evidence usually means the advertisement is
 over 30 seconds old. Y returns to scanning; wait for a new report before clicking.
@@ -683,7 +697,8 @@ the locked HCI decoder, including all 256 RSSI byte patterns, mixed valid/bad
 batches and both parse-error kinds. Vendor wire tests exercise valid multi-page
 discovery, normal end-of-list responses, malformed tuples and response matching.
 Report tests cover every legal data length, payload/RSSI truncations, maximum
-event-size batches, valid prefixes and missing length versus declared zero.
+event-size batches, the 25-report boundary, reserved counts/lengths, surplus
+bytes, valid prefixes and missing length versus declared zero.
 MTU tests cover both directions, crossed/early exchanges, all ATT error codes,
 unsolicited values, one indication confirmation, local resource errors and remote
 termination. Decoded HCI completion tests cover every status/reason byte; queue
@@ -740,3 +755,15 @@ References checked against actual locked sources:
 [Trouble local corrections](../../firmware/vendor/trouble-host/LOCAL_PATCHES.md),
 [utility ownership](../../firmware/ble-probe/src/tasks.rs),
 [radio lifecycle](../../firmware/ble-probe/src/radio.rs).
+
+
+### Interrupted connection parameter replies
+
+The standard probe and NGM utility may cancel a parameter reply when service work ends, a deadline expires
+or an operation is canceled. If the reply has already been polled, the reviewed
+BLE host stops permanently because it cannot prove that no controller write
+was submitted. The existing fatal/watchdog path then recovers the device; this
+can occur during an ordinary disconnect race. A stale reply rejected before its
+first command poll causes no I/O. Recreating a runner does not clear the failure,
+and neither cancellation nor reset is reported as clean live completion. See
+[the vendor lifetime contract](../../firmware/vendor/trouble-host/LOCAL_PATCHES.md#public-connection-command-and-reply-lifetimes-2026-11-02).

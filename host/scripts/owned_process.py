@@ -158,7 +158,7 @@ class OwnedProcess:
         stdin: FileDescriptor | None = None,
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         self.command = list(command)
         self.returncode: int | None = None
         self._closed = False

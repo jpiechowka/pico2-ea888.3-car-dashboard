@@ -115,16 +115,27 @@ render APIs but do not execute embedded examples on hardware. Keep executable
 examples bounded and free of automatic device writes, network traffic or destructive
 filesystem actions.
 
-The packet-pool ownership regressions also run under [Miri](https://github.com/rust-lang/miri)
+The packet, command, retained-connection and aligned-buffer regressions also run under
+[Miri](https://github.com/rust-lang/miri)
 with the same nightly pin and its `miri`/`rust-src` components:
 
 ```powershell
 cargo miri test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib packet_pool::tests -- --test-threads=1
+cargo miri test --locked --manifest-path firmware/vendor/bt-hci/Cargo.toml --target x86_64-unknown-linux-gnu --lib controller::regression_tests::tests -- --test-threads=1
+cargo miri test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --features iso --lib host::lifetime_tests -- --test-threads=1
+cargo miri test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib -- --test-threads=1
+cargo miri test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --features bluetooth,log --lib runner::tests::ioctl_framing_retains_full_payload_capacity -- --exact --test-threads=1
 ```
 
 The explicit Linux target supports interpretation from Windows. These tests keep
-live packet slices across other allocations and releases; Miri checks its current
-experimental aliasing model. This is neither a complete soundness proof nor a
+live packet slices across other allocations and releases, intrusive waiters across
+cancellation, retained connection/future owners across terminal transitions, and
+aligned partial-buffer views across radio framing. The complete default CYW suite
+and the selected Bluetooth runner test terminate cleanly. The complete Bluetooth
+suite leaves the locked Embassy standard clock driver's background thread running;
+Miri rejects its shutdown even when its test bodies pass. No leak-check suppression
+is used, and that result is not reported as a complete-suite pass.
+Miri checks its current experimental aliasing model. This is neither a complete soundness proof nor a
 radio, DMA or cross-core timing test.
 
 CI also links the retained RP2040 integer-intrinsic fixture against the actual

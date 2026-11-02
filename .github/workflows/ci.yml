@@ -34,12 +34,15 @@ jobs:
       - name: Strict types for all Python sources
         run: python host/scripts/check_python.py mypy
       - name: Python inventory coverage
+        # Bash fails on every native command, including on Windows runners.
+        shell: bash
         run: |
           python host/scripts/test_python_inventory.py
           python -O host/scripts/test_python_inventory.py
       - name: ELF and UF2 admission regressions
         run: python firmware/scripts/test_program_image.py
       - name: BLE utility admission regressions
+        shell: bash
         run: |
           python firmware/scripts/test_ble_probe_image.py
           python -O firmware/scripts/test_ble_probe_image.py
@@ -50,6 +53,7 @@ jobs:
       - name: Shared process ownership and stream bounds
         run: python -m unittest discover -s host/scripts -p test_owned_process.py
       - name: Typed tools and export regressions
+        shell: bash
         run: |
           python firmware/scripts/test_cargo_diagnostics.py
           python firmware/scripts/test_image_fixture.py
@@ -171,6 +175,8 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Strict native helper documentation
+        # PowerShell's final LASTEXITCODE can hide an earlier native failure.
+        shell: bash
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
@@ -183,6 +189,7 @@ jobs:
         shell: pwsh
         run: |
           cargo fetch --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./firmware/scripts/Test-BuildDashboard.ps1
           ./configurator/Test-SetupTools.ps1
       - name: Windows capture paths and native artifact contracts
@@ -284,6 +291,14 @@ jobs:
           target/release/dashboard-provenance radio --vendor-root firmware/vendor
           python3 firmware/scripts/test_radio_vendor.py
           python3 -O firmware/scripts/test_radio_vendor.py
+      - name: HCI controller boundary regressions
+        run: cargo test --locked --manifest-path firmware/vendor/bt-hci/Cargo.toml --target x86_64-unknown-linux-gnu --lib
+      - name: Strict HCI controller lint
+        run: cargo clippy --locked --manifest-path firmware/vendor/bt-hci/Cargo.toml --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+      - name: Strict HCI controller documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path firmware/vendor/bt-hci/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-deps --document-private-items
       - name: Radio transport and security regressions
         run: |
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only,firmware-logs
@@ -409,7 +424,7 @@ jobs:
           "$tools/llvm-objdump" -d "$out/probe.elf" > "$out/probe.disassembly"
 
   ble-packet-ownership:
-    name: BLE packet ownership (Miri)
+    name: BLE packet and command ownership (Miri)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -424,6 +439,15 @@ jobs:
       - name: Live packet leases across allocation and release
         # Interpreter checks Rust aliasing; it does not emulate radio or DMA.
         run: cargo miri test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib packet_pool::tests -- --test-threads=1
+      - name: Command waiters and canceled response storage
+        run: cargo miri test --locked --manifest-path firmware/vendor/bt-hci/Cargo.toml --target x86_64-unknown-linux-gnu --lib controller::regression_tests::tests -- --test-threads=1
+      - name: Retained connection and pinned future lifetimes
+        run: cargo miri test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --features iso --lib host::lifetime_tests -- --test-threads=1
+      - name: Radio buffers and aligned partial transfers
+        run: cargo miri test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib -- --test-threads=1
+      - name: Bluetooth runner IOCTL and partial receive buffers
+        # Full Bluetooth timer tests retain the std clock driver's background thread.
+        run: cargo miri test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --features bluetooth,log --lib runner::tests::ioctl_framing_retains_full_payload_capacity -- --exact --test-threads=1
 
   clippy-pico2:
     name: Clippy (Pico 2 W)

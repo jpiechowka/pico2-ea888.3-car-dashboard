@@ -23,6 +23,9 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 The [21 October Rust documentation audit](docs/validation/rust-documentation-audit-2026-10-21.md)
 records source coverage, tested corrections and validation limits. The
 documentation policy includes reproducible private-item and cross-target checks.
+The [2 November full firmware/tooling audit](docs/validation/full-firmware-audit-2026-11-02.md)
+traces both utilities, dashboard, drivers, Studio and helper through ownership,
+cancellation and failure handling, with paired review and explicit validation limits.
 
 [![Studio Views workspace with the shared dashboard preview](docs/images/gallery/workflows/editor.jpg)](docs/configurator/gallery.md#edit-and-repair)
 
@@ -122,6 +125,10 @@ guides describe the current workflows and remaining device checks.
    JSON and startup timing need Apply or Discard before save/export/build.
 4. Use Undo/Redo for accepted changes. Export a complete project for a portable
    backup; browser storage belongs to this browser and origin and can fail or fill.
+
+Find can inspect a widget in another view without switching the selected preview.
+Its position choices and Duplicate action use the inspected widget's own view.
+[Actual inspector example](docs/validation/full-firmware-audit-2026-11-02.md#studio-helper-and-python-boundaries).
 
 Storage waits report a timeout after ten seconds of browser event-loop progress;
 suspended tabs can delay timers. Close an older tab when a database upgrade is
@@ -275,8 +282,9 @@ These are actual shared-renderer pixels with synthetic values 0, −2.5, 0 and
 −1.25°. [All sizes and reproduction](docs/configurator/gallery.md#ignition-retard-previews)
 and the [software validation record](docs/validation/ignition-retard-widget-2026-10-27.md)
 cover migration, warnings, clipping, browser round trips and linked image bounds.
-The checked BLE dashboard has 65,544 bytes of headroom, only 8 bytes above the
-unchanged admission floor; further static growth needs corresponding savings.
+The [2 November checked traced BLE dashboard](docs/validation/full-firmware-audit-2026-11-02.md#final-linked-images)
+has 66,688 bytes of headroom, 1,152 bytes above the unchanged admission floor.
+Further static growth requires fresh image admission; this is not measured stack high-water.
 The [warning/quality contracts](docs/configurator/advanced-controls.md) describe
 the remaining limits. Current exports use schema 7; host import migrates versions 1–6 while
 preserving their settings and complete-project artwork.
@@ -361,13 +369,15 @@ The standard `ble-probe` image retains its standard-read-only policy. A separate
 [`ngm-identity` image](docs/vehicle/ngm-identity.md) adds an explicit selected-peer
 INFO trial: fresh vendor reads, one configured SPSM 129 channel and only the
 four-byte `1F110000` application request. It has no ECU requests, pairing or
-automatic retry. The [1 November pre-flash audit](docs/validation/ngm-identity-audit-2026-11-01.md)
+automatic retry. The [1 November identity audit](docs/validation/ngm-identity-audit-2026-11-01.md)
 traces the complete operation through two senior engineer reviews, checks primary
 specifications and corrects stale-handle handling plus four shared Bluetooth
-signaling defects. It records exact current checks and image admission separately
+signaling defects. It records that checkpoint's checks and image admission separately
 from the [earlier implementation receipts](docs/validation/ngm-identity-2026-10-24.md).
-Both utilities passed fresh stock and 280/70 ELF/UF2 checks; the BLE dashboard
-passed its practical ELF gate. Physical NGM interoperability has not been validated.
+The [2 November full audit](docs/validation/full-firmware-audit-2026-11-02.md)
+extends the review to all firmware, retained drivers and tools, including command
+ownership, cryptography, buffer views and the current linked-image checks.
+Physical NGM interoperability has not been validated.
 SPSM 129 remains a configured
 research candidate, not a value discovered from the adapter.
 
@@ -566,9 +576,11 @@ UI work and cycles now share one completed observation; invalid SPI metadata
 stays unavailable. Probe read durations exclude later publication waits, and
 future scan-error timestamps cannot become a valid saved observation or a false
 zero age. Synthetic Studio FPS displays `--` because it has no Pico transfer measurement.
-The audit's traced BLE dashboard images retain 65,768 bytes of core-0 headroom,
+The historical October audit's traced BLE dashboard images retain 65,768 bytes of core-0 headroom,
 232 bytes above the unchanged admission floor; the probe retains 117,856 bytes.
 [Exact images, stack assumptions and verification](docs/validation/full-code-audit-2026-10-20.md#final-linked-images).
+Current source-bound results are recorded separately in the
+[November audit](docs/validation/full-firmware-audit-2026-11-02.md#verification-record-and-remaining-gates).
 
 The [2026-10-19 audit and validation record](docs/validation/probe-offline-audit-2026-10-19.md)
 maps fixes to both firmware routes, records tests and linked memory, and separates

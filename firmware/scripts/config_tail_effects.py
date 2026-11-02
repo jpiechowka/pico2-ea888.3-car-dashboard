@@ -1077,14 +1077,18 @@ def led_pattern_interface(
     ancestor_protected: Sequence[Storage],
     call_site: int,
 ) -> LedResult:
-    """All fields decode for every kind, including Off; padding stays opaque."""
+    """Decode every field, including Off; normal padding stays opaque.
+
+    Positive-count protection covers normal and error stores: byte1 is
+    untouched on success but receives the error code before tag254.
+    """
     from config_widget_children import color_interface
     from config_widget_contracts import ROLES as WIDGET
 
     proof = _current(objects, rows, proof, "LedPattern")
     q, d, guards = _layout(state, frame, 48, ancestor_protected)
     _visitor_caller(objects, rows, proof, state, output, frame, call_site, "LedPattern")
-    out = _output_layout(output, frame, q, d, guards, state.count.upper, ((0, 1), (2, 4), (6, 4)))
+    out = _output_layout(output, frame, q, d, guards, state.count.upper, ((0, 10),))
     result: LedResult = dict(
         proof=proof,
         before=state,

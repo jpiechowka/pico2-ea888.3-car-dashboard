@@ -7,7 +7,6 @@ Never executes target code.
 import copy
 import struct
 import sys
-from unittest.mock import patch
 from check_flash_lockout import check
 import check_memory_layout
 from elf_image import ElfImage
@@ -208,15 +207,17 @@ def main(args: list[str]) -> None:
     elfs = [ElfImage(path) for path in args]
     for elf in elfs:
         check(elf)
+        check_memory_layout.geometry(elf)
         bad_stack = copy.deepcopy(elf)
         bad_stack.symbols["_stack_start"] = 0
-        with patch.object(check_memory_layout, "ElfImage", return_value=bad_stack):
-            try:
-                check_memory_layout.check("in-memory corrupted ELF")
-            except AssertionError:
-                print("Rejected modified artifact: core0 stack top")
-            else:
-                raise AssertionError("missed core0 stack top")
+        try:
+            check_memory_layout.geometry(bad_stack)
+        except AssertionError as error:
+            if str(error) != "unexpected core 0 stack top":
+                raise AssertionError("stack mutation rejected for unrelated reason") from error
+            print("Rejected modified artifact: core0 stack top")
+        else:
+            raise AssertionError("missed core0 stack top")
         body_fixtures(elf)
         layout_fixtures(elf)
     for i, elf in enumerate(elfs):

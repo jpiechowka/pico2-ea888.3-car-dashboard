@@ -88,6 +88,10 @@ identity include the complete `firmware/vendor/` subtree, including radio binari
 and nested files. This does not rely on an untracked local firmware download.
 The [radio dependency review](../dependencies/radio-review-2026-10-18.md) records
 the retained buffer bounds, compatibility constraints and reviewed repairs.
+The [2 November full audit](../validation/full-firmware-audit-2026-11-02.md)
+records the subsequent shared host/HCI lifetime repairs, cryptography migration,
+radio-buffer review and fresh linked-image admission. Older image measurements
+remain dated evidence, not current allocation guarantees.
 
 ## Stream, deadlines and connection lifetime
 
@@ -155,6 +159,18 @@ again before each write chunk and received notification. The linked stack uses
 LE Secure Connections; legacy pairing is not enabled as a fallback. Controller
 `LeRand` seeds the host security RNG during startup. Pairing failure, lost bond,
 unsupported interactive pairing or encryption loss terminates the session.
+
+Deferred security work carries a checked connection lifetime in addition to its
+reusable controller handle. Stale queued key/encryption requests are discarded;
+stale bond notifications cannot change a replacement link or restore a removed
+identity/IRK to controller privacy state. Lifetimes never wrap: exhausted lifetime
+space rejects further connection admission. If a link closes after its security
+HCI command has been polled, the host terminates conservatively because the
+controller interface cannot establish whether submission occurred. The dashboard
+latches the runner failure and uses its existing watchdog recovery. Even an
+ordinary pairing disconnect can therefore reset the dashboard in this narrow
+race; neither canceling the future nor restarting the same host is safe recovery.
+This policy is absent from the no-pairing discovery utilities.
 
 The host has NoInputNoOutput capabilities and one volatile bond slot. Just Works
 encryption does not authenticate against an active MITM. Bond secrets are absent
@@ -260,3 +276,15 @@ Sources reopened 2026-10-18, plus the exact repository/locked sources:
 - [CYW source provenance](../../firmware/vendor/cyw43-provenance.json) and
   [Trouble source provenance](../../firmware/vendor/trouble-host-provenance.json):
   upstream archive identity and reviewed local changes.
+
+
+### Interrupted connection parameter replies
+
+The dashboard may cancel a parameter reply when service work ends, a deadline expires
+or an operation is canceled. If the reply has already been polled, the reviewed
+BLE host stops permanently because it cannot prove that no controller write
+was submitted. The existing fatal/watchdog path then recovers the device; this
+can occur during an ordinary disconnect race. A stale reply rejected before its
+first command poll causes no I/O. Recreating a runner does not clear the failure,
+and neither cancellation nor reset is reported as clean live completion. See
+[the vendor lifetime contract](../../firmware/vendor/trouble-host/LOCAL_PATCHES.md#public-connection-command-and-reply-lifetimes-2026-11-02).
