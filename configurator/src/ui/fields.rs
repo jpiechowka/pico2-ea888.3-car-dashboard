@@ -414,9 +414,9 @@ pub fn TextField(
     field: RawField,
     /// Visible label and accepted-edit event context.
     label: &'static str,
-    /// Supplemental field guidance; empty by default.
-    #[prop(default = "")]
-    hint: &'static str,
+    /// Owned supplemental field guidance, including formatted shared limits; empty by default.
+    #[prop(optional, into)]
+    hint: String,
     /// Explicit DOM ID; empty resolves the registry binding each render.
     #[prop(default = String::new())]
     id: String,

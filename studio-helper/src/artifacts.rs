@@ -127,7 +127,8 @@ pub(crate) fn converter(
 /// `sink` receives stage/status and tool diagnostics without machine-report stdout.
 /// Returns immutable UF2 plus retained lease only after source/input/image/range validation and a final
 /// cancellation check. Errors publish no artifact, but generated UF2 and diagnostics can remain in the owned attempt.
-/// Verification ranges must lie in `[0x10000000, 0x101FE000)`, excluding the reserved capture journal.
+/// Verification ranges must lie in `[0x10000000, 0x101FE000)`, excluding reserved settings.
+/// Dashboard images may occupy the probe's capture region; export saved captures before switching firmware.
 /// Software admission never asserts hardware qualification or authorizes a flash.
 pub(crate) fn admit(
     process: &mut crate::process::ProcessContext,

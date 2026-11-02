@@ -3,6 +3,8 @@ use std::path::Path;
 
 use dashboard_helper_protocol::*;
 
+use crate::flash_intent::{MAX_ATTEMPT_FILES, MAX_RECORD, record_name};
+
 /// Remove only local records for `attempt` below `repo`'s helper flash-attempt root.
 /// Returns `Ok(())` after held-handle removal of all recognized members and the empty
 /// directory. Preflights at most 16 files named 0–7 `.json`/`.pending`, bounded to
@@ -20,25 +22,23 @@ pub(crate) fn remove(
     let held_directory = crate::file_locks::DeleteFile::directory(&directory)?;
     let entries = std::fs::read_dir(&directory)
         .map_err(|e| e.to_string())?
-        .take(17)
+        .take(MAX_ATTEMPT_FILES + 1)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    if entries.len() > 16 {
+    if entries.len() > MAX_ATTEMPT_FILES {
         return Err("Unexpected flash record count; nothing removed".into());
     }
     let mut files = Vec::new();
     for entry in entries {
         let name = entry.file_name();
         let name = name.to_str().ok_or("Invalid flash record name")?;
-        if !(0..8).any(|n| name == format!("{n}.json") || name == format!("{n}.pending")) {
-            return Err("Unexpected flash record member; nothing removed".into());
-        }
+        let (_, published) = record_name(name).ok_or("Unexpected flash record member; nothing removed")?;
         let file = crate::file_locks::DeleteFile::open(&entry.path())?;
-        if file.len()? > 65536 {
+        if file.len()? > MAX_RECORD as u64 {
             return Err("Oversized flash record; nothing removed".into());
         }
         // Pending files can be partial after interruption. Published identities must match.
-        if name.ends_with(".json") {
+        if published {
             let bytes = file.bytes()?;
             let record: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid flash record")?;
             if record["schema_version"] != 1 || record["job_id"] != attempt.as_str() {

@@ -704,7 +704,7 @@ pub fn visit_validation(
         if config.views[..i].iter().any(|v| v.id == view.id) {
             issue!(at(ErrorCode::Duplicate, Field::ViewId));
         }
-        if !text_valid(&view.name, 14) {
+        if !text_valid(&view.name, MAX_VIEW_NAME_BYTES) {
             issue!(at(ErrorCode::Text, Field::ViewName));
         }
     }
@@ -941,7 +941,7 @@ pub fn visit_validation(
         if !(1..=30_000).contains(&warning.off_ms) {
             issue!(at(ErrorCode::Bounds, Field::WarningOff));
         }
-        if !text_valid(&warning.message, 20) {
+        if !text_valid(&warning.message, MAX_WARNING_MESSAGE_BYTES) {
             issue!(at(ErrorCode::Text, Field::WarningMessage));
         }
     }

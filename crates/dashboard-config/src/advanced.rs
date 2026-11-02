@@ -497,7 +497,7 @@ impl<'de> Deserialize<'de> for crate::WarningSettings {
             /// Candidate clear dwell milliseconds.
             off_ms: u16,
             /// Candidate warning message, at most twenty UTF-8 bytes before ASCII admission.
-            message: heapless::String<20>,
+            message: heapless::String<{ crate::MAX_WARNING_MESSAGE_BYTES }>,
             /// Candidate upper trigger-window edge.
             trigger_high: f32,
             /// Candidate upper clear-window edge.

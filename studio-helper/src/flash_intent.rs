@@ -6,7 +6,22 @@ use std::path::{Path, PathBuf};
 use dashboard_helper_protocol::*;
 use serde_json::{Value, json};
 /// Maximum UTF-8 JSON bytes in one durable flash observation.
-const MAX_RECORD: usize = 65536;
+pub(crate) const MAX_RECORD: usize = 65536;
+/// Maximum immutable published generations per attempt; pending files may coexist with each.
+pub(crate) const MAX_GENERATIONS: u8 = 8;
+/// Maximum recognized published/pending members in one attempt directory.
+pub(crate) const MAX_ATTEMPT_FILES: usize = MAX_GENERATIONS as usize * 2;
+/// Returns `(generation, published)` for exact `name` values `0..7.json`/`0..7.pending`, otherwise None.
+/// Shared history/cleanup admission rejects alternate spelling, unknown generations and unrelated files.
+pub(crate) fn record_name(name: &str) -> Option<(u8, bool)> {
+    let (generation, published) = match name.strip_suffix(".json") {
+        Some(value) => (value, true),
+        None => (name.strip_suffix(".pending")?, false),
+    };
+    let [digit] = generation.as_bytes() else { return None };
+    let generation = digit.checked_sub(b'0')?;
+    (generation < MAX_GENERATIONS).then_some((generation, published))
+}
 /// One generated flash-attempt directory with at most eight immutable published observations.
 pub(crate) struct Journal {
     /// Generated job-ID directory under the repository's private flash-attempt root.
@@ -80,7 +95,7 @@ impl Journal {
         outcome: WriteOutcome,
         exit: Option<i32>,
     ) -> Result<(), String> {
-        if self.generation >= 8 {
+        if self.generation >= MAX_GENERATIONS {
             return Err("Flash journal generation bound".into());
         }
         self.record["phase"] = json!(phase);
@@ -214,8 +229,9 @@ fn historical_request(value: &Value) -> Result<HistoricalRequest, String> {
         session_id,
     })
 }
-/// Returns at most 16 historical attempts beneath `repo`, reading published generations 0..7 and ignoring pending
-/// files. Missing root returns empty history; unknown/malformed/oversized records, links, identities or filesystem
+/// Returns at most 16 historical attempts beneath `repo`, validating every published generation 0..7 and taking
+/// the highest numeric generation. Recognized pending files must be regular and bounded; their contents are ignored.
+/// Missing root returns empty history; unknown/malformed/oversized records, links, identities or filesystem
 /// failures fail the whole read instead of falling back to older success. Only explicit Verified remains verified on
 /// recovery; other published outcomes become Unknown. No operation is resumed and running firmware/hardware remain
 /// unobserved.
@@ -237,54 +253,29 @@ pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
             .map_err(|_| "Invalid attempt name")?;
             let _hold = crate::file_locks::ancestors(&[path.join("record")])?;
             let mut latest = None;
-            for generation in 0..8 {
-                let record = path.join(format!("{generation}.json"));
-                if record.exists() {
-                    latest = Some(read(&record)?);
+            let mut summary = unpublished(job.clone());
+            for (count, member) in std::fs::read_dir(&path)
+                .map_err(|e| e.to_string())?
+                .take(MAX_ATTEMPT_FILES + 1)
+                .enumerate()
+            {
+                if count == MAX_ATTEMPT_FILES {
+                    return Err("Flash member count bound".into());
                 }
-            }
-            let mut summary = FlashAttemptSummary {
-                job_id: job.clone(),
-                original_session: None,
-                artifact_id: None,
-                device_id: None,
-                phase: FlashPhase::Unpublished,
-                write_outcome: WriteOutcome::NotStarted,
-                recovery_write_outcome: WriteOutcome::NotStarted,
-                exit: None,
-                historical_observation: true,
-                automatic_resume: false,
-                running_firmware_observed: false,
-                hardware_qualified: false,
-            };
-            if let Some(value) = latest {
-                if value["schema_version"] != 1 || value["job_id"] != job.as_str() {
-                    return Err("Invalid flash history identity".into());
+                let member = member.map_err(|e| e.to_string())?;
+                let name = member.file_name();
+                let (generation, published) = name.to_str().and_then(record_name).ok_or("Unknown flash member")?;
+                let file = crate::file_locks::read_file(&member.path())?;
+                let metadata = file.metadata().map_err(|e| e.to_string())?;
+                if !metadata.is_file() || metadata.len() > MAX_RECORD as u64 {
+                    return Err("Invalid flash member type or size".into());
                 }
-                let request = historical_request(&value["request"])?;
-                let session: SessionId =
-                    serde_json::from_value(value["session_id"].clone()).map_err(|_| "Invalid history session")?;
-                if session != request.session_id {
-                    return Err("Invalid historical session acknowledgement".into());
-                }
-                summary.original_session = Some(session);
-                summary.artifact_id = Some(request.artifact_id);
-                summary.device_id = Some(request.device_id);
-                summary.phase = serde_json::from_value(value["phase"].clone()).map_err(|_| "Invalid history phase")?;
-                summary.write_outcome =
-                    serde_json::from_value(value["write_outcome"].clone()).map_err(|_| "Invalid history outcome")?;
-                summary.recovery_write_outcome = if summary.write_outcome == WriteOutcome::Verified {
-                    WriteOutcome::Verified
-                } else {
-                    WriteOutcome::Unknown
-                };
-                if !value["raw_exit"].is_null() {
-                    summary.exit = Some(RawExit {
-                        windows_u32: serde_json::from_value(value["raw_exit"].clone())
-                            .map_err(|_| "Invalid raw exit")?,
-                        interpreted_i32: serde_json::from_value(value["interpreted_exit"].clone())
-                            .map_err(|_| "Invalid interpreted exit")?,
-                    });
+                if published {
+                    let record = historical_record(read(&member.path())?, &job, generation)?;
+                    if latest.is_none_or(|previous| previous < generation) {
+                        latest = Some(generation);
+                        summary = record;
+                    }
                 }
             }
             summary.validate().map_err(|e| e.to_string())?;
@@ -297,6 +288,62 @@ pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
     };
     history.validate().map_err(|e| e.to_string())?;
     Ok(history)
+}
+/// Returns empty historical evidence for `job`; it cannot authorize work or imply a write was performed.
+fn unpublished(job: JobId) -> FlashAttemptSummary {
+    FlashAttemptSummary {
+        job_id: job,
+        original_session: None,
+        artifact_id: None,
+        device_id: None,
+        phase: FlashPhase::Unpublished,
+        write_outcome: WriteOutcome::NotStarted,
+        recovery_write_outcome: WriteOutcome::NotStarted,
+        exit: None,
+        historical_observation: true,
+        automatic_resume: false,
+        running_firmware_observed: false,
+        hardware_qualified: false,
+    }
+}
+/// Decodes published `value` bound to directory `job` and filename `generation` (0..7).
+/// Returns read-only evidence after schema/identity/request/outcome validation; errors never fall back to an older
+/// observation. A successful decode retains no live request, device authority or artifact lease.
+fn historical_record(
+    value: Value,
+    job: &JobId,
+    generation: u8,
+) -> Result<FlashAttemptSummary, String> {
+    if value["schema_version"] != 1 || value["job_id"] != job.as_str() || value["generation"] != generation {
+        return Err("Invalid flash history identity or generation".into());
+    }
+    let request = historical_request(&value["request"])?;
+    let session: SessionId =
+        serde_json::from_value(value["session_id"].clone()).map_err(|_| "Invalid history session")?;
+    if session != request.session_id {
+        return Err("Invalid historical session acknowledgement".into());
+    }
+    let mut summary = unpublished(job.clone());
+    summary.original_session = Some(session);
+    summary.artifact_id = Some(request.artifact_id);
+    summary.device_id = Some(request.device_id);
+    summary.phase = serde_json::from_value(value["phase"].clone()).map_err(|_| "Invalid history phase")?;
+    summary.write_outcome =
+        serde_json::from_value(value["write_outcome"].clone()).map_err(|_| "Invalid history outcome")?;
+    summary.recovery_write_outcome = if summary.write_outcome == WriteOutcome::Verified {
+        WriteOutcome::Verified
+    } else {
+        WriteOutcome::Unknown
+    };
+    if !value["raw_exit"].is_null() {
+        summary.exit = Some(RawExit {
+            windows_u32: serde_json::from_value(value["raw_exit"].clone()).map_err(|_| "Invalid raw exit")?,
+            interpreted_i32: serde_json::from_value(value["interpreted_exit"].clone())
+                .map_err(|_| "Invalid interpreted exit")?,
+        });
+    }
+    summary.validate().map_err(|e| e.to_string())?;
+    Ok(summary)
 }
 #[cfg(test)]
 mod tests {
@@ -538,6 +585,105 @@ mod recovery_tests {
         assert!(history(&repo).is_err());
         std::fs::write(journal.directory.join("1.json"), vec![b' '; MAX_RECORD + 1]).unwrap();
         assert!(history(&repo).is_err());
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    /// Foreign members cannot hide behind an older verified record; recognized pending bytes remain non-authoritative.
+    fn unknown_history_members_never_fall_back_to_verified() {
+        let (repo, mut journal) = fixture();
+        journal
+            .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+            .unwrap();
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Verified
+        );
+        for name in ["8.json", "8.pending", "notes.txt", "00.json", "1.JSON"] {
+            let path = journal.directory.join(name);
+            std::fs::write(&path, b"{}").unwrap();
+            assert!(history(&repo).is_err(), "unknown member {name} was ignored");
+            std::fs::remove_file(path).unwrap();
+        }
+        let pending = journal.directory.join("1.pending");
+        std::fs::create_dir(&pending).unwrap();
+        assert!(history(&repo).is_err(), "pending directory was ignored");
+        std::fs::remove_dir(&pending).unwrap();
+        std::fs::write(&pending, vec![b'x'; MAX_RECORD + 1]).unwrap();
+        assert!(history(&repo).is_err(), "oversized pending member was ignored");
+        std::fs::write(&pending, b"{partial").unwrap();
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Verified
+        );
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    /// Every published generation retains valid schema/identity even when a newer verified record exists.
+    fn invalid_older_history_record_is_not_hidden_by_latest() {
+        let (repo, mut journal) = fixture();
+        journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+        let first = journal.record.clone();
+        journal
+            .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+            .unwrap();
+        assert!(history(&repo).is_ok());
+        for change in 0..3 {
+            let mut bad = first.clone();
+            match change {
+                0 => bad["schema_version"] = json!(2),
+                1 => bad["job_id"] = json!("f".repeat(32)),
+                _ => bad["request"]["board_acknowledgement"]["session_id"] = json!("c".repeat(32)),
+            }
+            std::fs::write(journal.directory.join("0.json"), serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(history(&repo).is_err(), "invalid earlier record {change} was hidden");
+        }
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    /// Published generation numbers must match their filename; numeric ordering admits the complete eight-record bound.
+    fn history_generation_is_bound_to_filename() {
+        let (repo, mut journal) = fixture();
+        for generation in 0..8 {
+            if generation == 7 {
+                journal
+                    .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+                    .unwrap();
+            } else {
+                journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+            }
+        }
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Verified
+        );
+        let valid = journal.record.clone();
+        for generation in [Value::Null, json!(0), json!(8), json!("7")] {
+            let mut bad = valid.clone();
+            bad["generation"] = generation;
+            std::fs::write(journal.directory.join("7.json"), serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(history(&repo).is_err(), "mismatched generation was admitted");
+        }
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    /// Empty and pending-only attempts stay unpublished and never create live consent or verified evidence.
+    fn unpublished_and_pending_only_history_remain_unqualified() {
+        let (repo, journal) = fixture();
+        for pending in [false, true] {
+            if pending {
+                std::fs::write(journal.directory.join("0.pending"), b"{partial").unwrap();
+            }
+            let result = history(&repo).unwrap();
+            let summary = &result.attempts[0];
+            assert_eq!(summary.phase, FlashPhase::Unpublished);
+            assert_eq!(summary.recovery_write_outcome, WriteOutcome::NotStarted);
+            assert!(!summary.automatic_resume && !summary.running_firmware_observed && !summary.hardware_qualified);
+            assert!(summary.original_session.is_none() && summary.artifact_id.is_none() && summary.device_id.is_none());
+        }
         drop(journal);
         cleanup(repo);
     }

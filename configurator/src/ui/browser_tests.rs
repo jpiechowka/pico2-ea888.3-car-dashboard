@@ -146,6 +146,250 @@ async fn run(ui: Ui) -> Result<(), JsValue> {
     super::ble_browser_tests::run(ui).await?;
     progress("RUN occupancy geometry").await;
     occupancy_cases(ui).await?;
+    progress("RUN inspected widget geometry").await;
+    inspected_geometry_cases(ui).await?;
+    Ok(())
+}
+
+/// Exercises Find and actual axis-change DOM handlers for a widget whose view may differ from selection.
+/// Both shapes, current selection and retained invalid placement must expose their own candidate grid;
+/// valid repairs and duplication use the widget's view, while orphan JSON stays read-only.
+/// Replaces `ui` with isolated in-memory fixtures and returns the first failure.
+async fn inspected_geometry_cases(ui: Ui) -> Result<(), JsValue> {
+    use dashboard_configurator::config::View;
+    use dashboard_configurator::workspace::Command;
+
+    let doc = web_sys::window().unwrap().document().unwrap();
+    for (selected_shape, widget_shape, columns, rows) in [
+        (Orientation::Landscape, Orientation::Portrait, 2_u8, 4_u8),
+        (Orientation::Portrait, Orientation::Landscape, 4_u8, 2_u8),
+    ] {
+        for state in 0..3 {
+            let mut raw = default_config();
+            raw.orientation = selected_shape;
+            raw.widgets.clear();
+            raw.views
+                .push(View {
+                    id: 2,
+                    name: "Inspected".try_into().unwrap(),
+                    orientation: Some(widget_shape),
+                })
+                .unwrap();
+            raw.widgets
+                .push(default_widget(
+                    Channel::Oil,
+                    41,
+                    2,
+                    Placement {
+                        column: 0,
+                        row: 0,
+                        span: Span::OneByOne,
+                    },
+                ))
+                .unwrap();
+            let mut editor = Editor::new(raw).unwrap();
+            if state == 1 {
+                editor
+                    .select(Selection {
+                        view: 2,
+                        widget: Some(41),
+                    })
+                    .unwrap();
+            } else if state == 2 {
+                check(
+                    editor
+                        .apply(Edit::MoveWidget {
+                            id: 41,
+                            view: 2,
+                            column: 0,
+                            row: 99,
+                        })
+                        .is_err(),
+                    "invalid placement fixture unexpectedly admitted",
+                )?;
+            }
+            let selected = editor.selection();
+            ui.inspection.set(None);
+            ui.error_inspection.set(None);
+            ui.editor.set(editor);
+            tick().await;
+            let target = ui
+                .editor
+                .with_untracked(|e| Registry::target(e, FieldKey::Row, TargetOwner::Widget(0)))
+                .map_err(|_| JsValue::from_str("inspection target unavailable"))?;
+            check(
+                command_palette::execute_current(ui, Command::Find(target)),
+                "Find widget failed",
+            )?;
+            tick().await;
+            check(
+                ui.editor.with_untracked(Editor::selection) == selected,
+                "Find changed editor selection",
+            )?;
+            if selected_shape == Orientation::Landscape && state == 0 {
+                progress("CHECK inspected portrait widget").await;
+            }
+            for (key, count) in [(FieldKey::Row, rows), (FieldKey::Column, columns)] {
+                let select = doc
+                    .get_element_by_id(&Registry::dom_id(key, TargetOwner::Widget(0)))
+                    .ok_or(JsValue::from_str("inspected axis selector missing"))?
+                    .dyn_into::<web_sys::HtmlSelectElement>()?;
+                check(!select.disabled(), "inspected axis repair is disabled")?;
+                let options = select.query_selector_all("option")?;
+                let retained = u32::from(state == 2 && key == FieldKey::Row);
+                check(
+                    options.length() == u32::from(count) + retained,
+                    "inspected axis options used selected view geometry",
+                )?;
+                for index in 0..u32::from(count) {
+                    let option = options.item(index).unwrap().dyn_into::<web_sys::Element>()?;
+                    check(
+                        option.get_attribute("value").as_deref() == Some(index.to_string().as_str()),
+                        "inspected axis omitted a valid coordinate",
+                    )?;
+                    check(
+                        !option.text_content().unwrap_or_default().contains("outside grid"),
+                        "valid inspected coordinate marked outside grid",
+                    )?;
+                }
+                select.set_value(&(count - 1).to_string());
+                select.dispatch_event(&web_sys::Event::new("change")?)?;
+                tick().await;
+            }
+            check(
+                ui.editor.with_untracked(|e| {
+                    !e.has_invalid_draft()
+                        && e.preview().config().widgets[0].placement
+                            == Placement {
+                                column: columns - 1,
+                                row: rows - 1,
+                                span: Span::OneByOne,
+                            }
+                }),
+                "inspected valid move or retained repair did not commit",
+            )?;
+        }
+    }
+    for (selected_full, target_full) in [(true, false), (false, false), (true, true), (false, true)] {
+        let mut raw = default_config();
+        if !selected_full {
+            raw.widgets.clear();
+        }
+        raw.views
+            .push(View {
+                id: 2,
+                name: "Duplicate".try_into().unwrap(),
+                orientation: Some(Orientation::Portrait),
+            })
+            .unwrap();
+        raw.widgets
+            .push(default_widget(
+                Channel::Oil,
+                41,
+                2,
+                Placement {
+                    column: 0,
+                    row: 0,
+                    span: Span::OneByOne,
+                },
+            ))
+            .unwrap();
+        let target_index = raw.widgets.len() - 1;
+        if target_full {
+            for slot in 1..8_u8 {
+                raw.widgets
+                    .push(default_widget(
+                        Channel::Oil,
+                        41 + u16::from(slot),
+                        2,
+                        Placement {
+                            column: slot % 2,
+                            row: slot / 2,
+                            span: Span::OneByOne,
+                        },
+                    ))
+                    .unwrap();
+            }
+        }
+        let before = raw.widgets.len();
+        ui.inspection.set(None);
+        ui.error_inspection.set(None);
+        ui.editor.set(Editor::new(raw).unwrap());
+        tick().await;
+        let target = ui
+            .editor
+            .with_untracked(|e| Registry::target(e, FieldKey::Row, TargetOwner::Widget(target_index)))
+            .map_err(|_| JsValue::from_str("duplicate inspection target unavailable"))?;
+        check(
+            command_palette::execute_current(ui, Command::Find(target)),
+            "Find duplicate target failed",
+        )?;
+        tick().await;
+        let button = doc
+            .query_selector("#studio-widget-inspector .widget-actions button")?
+            .ok_or(JsValue::from_str("visible duplicate button missing"))?
+            .dyn_into::<web_sys::HtmlElement>()?;
+        check(
+            button.text_content().as_deref() == Some("Duplicate widget"),
+            "wrong duplicate action target",
+        )?;
+        let before_key = ui.editor.with_untracked(Editor::accepted_config_key);
+        let before_selection = ui.editor.with_untracked(Editor::selection);
+        button.click();
+        tick().await;
+        check(
+            ui.editor.with_untracked(|e| {
+                !e.has_invalid_draft()
+                    && if target_full {
+                        e.accepted_config_key() == before_key && e.selection() == before_selection
+                    } else {
+                        e.preview().config().widgets.len() == before + 1
+                            && e.preview().config().widgets.iter().filter(|w| w.view == 2).count() == 2
+                    }
+            }),
+            "inspected duplication searched the selected view",
+        )?;
+    }
+    // An orphan in an unapplied JSON candidate stays inspectable without borrowing
+    // the selected view's otherwise valid grid or gaining typed edit authority.
+    let mut editor = Editor::default();
+    let mut orphan = default_config();
+    orphan.widgets.truncate(1);
+    orphan.widgets[0].view = 99;
+    let handle = editor.open_json().unwrap();
+    let parse = editor
+        .set_json_text(handle, serde_json::to_string(&orphan).unwrap())
+        .unwrap();
+    editor.finish_json_parse(parse).unwrap();
+    ui.inspection.set(None);
+    ui.error_inspection.set(None);
+    ui.editor.set(editor);
+    tick().await;
+    let target = ui
+        .editor
+        .with_untracked(|e| Registry::target(e, FieldKey::Row, TargetOwner::Widget(0)))
+        .map_err(|_| JsValue::from_str("orphan inspection target unavailable"))?;
+    check(
+        command_palette::execute_current(ui, Command::Find(target)),
+        "Find orphan failed",
+    )?;
+    tick().await;
+    check(ui.inspect_read_only(), "unapplied orphan gained typed edit authority")?;
+    check(
+        ui.inspected_widget().is_none(),
+        "orphan gained unambiguous widget authority",
+    )?;
+    check(
+        ui.editor.with_untracked(Editor::has_pending_json),
+        "orphan JSON was discarded",
+    )?;
+    for key in [FieldKey::Row, FieldKey::Column] {
+        check(
+            doc.get_element_by_id(&Registry::dom_id(key, TargetOwner::Widget(0)))
+                .is_none(),
+            "orphan borrowed another view's editable grid",
+        )?;
+    }
     Ok(())
 }
 /// Exercises actual input/change wiring on `ui`, preserving accepted state during invalid text and repairing export

@@ -11,6 +11,12 @@ pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 /// Maximum widget instances across all views, not per view.
 pub const MAX_WIDGETS: usize = 64;
+/// Maximum stored view-name UTF-8 bytes; admission additionally requires nonblank printable ASCII.
+pub const MAX_VIEW_NAME_BYTES: usize = 14;
+/// Maximum stored widget-label UTF-8 bytes; admission further limits text by the widget span.
+pub const MAX_WIDGET_LABEL_BYTES: usize = 24;
+/// Maximum stored warning-message UTF-8 bytes; admission additionally requires nonblank printable ASCII.
+pub const MAX_WARNING_MESSAGE_BYTES: usize = 20;
 /// Maximum accepted dashboard binary file bytes, including its envelope.
 pub const MAX_FILE_BYTES: usize = 16 * 1024;
 /// Maximum accepted JSON source bytes before bounded deserialization.
@@ -60,7 +66,7 @@ pub struct View {
     /// Unique nonzero identifier within the configuration.
     pub id: u8,
     /// Nonblank printable ASCII, at most fourteen bytes after admission.
-    pub name: String<14>,
+    pub name: String<MAX_VIEW_NAME_BYTES>,
     /// Mounting override; explicit JSON `null` inherits the device default.
     #[serde(deserialize_with = "crate::orientation::required_override")]
     pub orientation: Option<crate::Orientation>,
@@ -93,7 +99,7 @@ pub struct Widget {
     /// Logical cell position and span; 2×1 remains horizontal in portrait.
     pub placement: Placement,
     /// Printable nonblank label; admission allows twelve bytes per spanned column.
-    pub label: String<24>,
+    pub label: String<MAX_WIDGET_LABEL_BYTES>,
     /// Numeric precision and optional graph/statistic visibility.
     pub display: DisplayOptions,
     /// Raw-sample warning rule, independent of presentation smoothing.
@@ -432,7 +438,7 @@ pub struct WarningSettings {
     /// Required continuous clear duration in milliseconds, 1..=30,000.
     pub off_ms: u16,
     /// Printable nonblank warning label, at most twenty bytes.
-    pub message: String<20>,
+    pub message: String<MAX_WARNING_MESSAGE_BYTES>,
     /// Upper window edges, latching and snooze controls.
     pub advanced: crate::AdvancedWarning,
 }

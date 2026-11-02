@@ -51,6 +51,11 @@ validation errors that have no raw text, including inactive stored fields.
 The JSON candidate inspector resolves field and widget locations without changing
 accepted state. JSON remains read-only through visual controls until Apply or
 Discard; its text and linked diagnostics stay available in Diagnostics.
+Find can inspect a widget without selecting its view. Duplication searches that
+widget's view for space. Its row and column controls use that widget's candidate
+view orientation, including during placement repair.
+Missing or ambiguous view ownership remains read-only inspection rather than
+borrowing another view's editable grid.
 
 Pointer, field, import and save operations carry private owner/revision/request
 tokens. Old callbacks cannot change a newer selection, undo result, imported

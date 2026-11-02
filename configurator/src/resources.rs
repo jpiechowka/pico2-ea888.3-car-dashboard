@@ -90,9 +90,9 @@ impl ResourceLimits {
         views: MAX_VIEWS,
         widgets: MAX_WIDGETS,
         cells_per_view: 8,
-        view_name_bytes: 14,
-        widget_label_bytes: 24,
-        warning_message_bytes: 20,
+        view_name_bytes: MAX_VIEW_NAME_BYTES,
+        widget_label_bytes: MAX_WIDGET_LABEL_BYTES,
+        warning_message_bytes: MAX_WARNING_MESSAGE_BYTES,
     };
 }
 

@@ -16,6 +16,14 @@ after upgrading. No saved confirmation is migrated. The `/api/v1/` route namespa
 project/configuration formats and `pico2` Cargo/script identifiers stay compatible.
 Existing flash journals remain readable through a separate historical decoder;
 legacy records cannot create current consent or resume an operation.
+History admits at most eight published generations per attempt, named `0.json`
+through `7.json`, plus their bounded `.pending` files. Every published record must
+match its filename generation, attempt identity, schema and historical request;
+unknown files or malformed older records fail the read instead of exposing an
+older success. Pending contents may be incomplete and never advance the observed
+result. An empty or pending-only attempt remains unpublished. Explicit cleanup
+uses the same filename and byte bounds, preflights all members and never removes
+unknown files recursively.
 That identity-only correction preceded the separate [BLE prototype](ble-prototype.md).
 
 ## Workflow

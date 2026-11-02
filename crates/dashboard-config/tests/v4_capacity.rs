@@ -137,7 +137,6 @@ fn saved(c: &Config) -> String {
 
 #[test]
 /// Populated small/large widgets fit binary/JSON/editor ceilings and decode identically; optional fixture output is
-/// Populated small/large widgets fit binary/JSON/editor ceilings and decode identically; optional fixture output is
 /// explicit.
 fn maximum_documents_fit_and_slot_matches_owned() {
     for span in [Span::OneByOne, Span::TwoByTwo] {

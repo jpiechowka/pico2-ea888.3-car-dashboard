@@ -949,7 +949,7 @@ fn Views(
         </div>
         <For each=move || vec![ui.inspected_view()] key=|id| *id children=move |id| view! {
             <div class="view-controls">
-                <TextField ui field=RawField::ViewName(id) label="View name" hint="1–14 ASCII characters"/><orientation::Picker ui scope=orientation::Scope::View(id)/>
+                <TextField ui field=RawField::ViewName(id) label="View name" hint=format!("1–{MAX_VIEW_NAME_BYTES} ASCII characters")/><orientation::Picker ui scope=orientation::Scope::View(id)/>
                 <div class="view-tools">
                     <button id=Registry::dom_id(FieldKey::BootView,TargetOwner::Root) disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::SetBootView(id))>"Set as boot"</button>
                     <button disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::DuplicateView { id,name:"Copy".into() })>"Duplicate"</button>

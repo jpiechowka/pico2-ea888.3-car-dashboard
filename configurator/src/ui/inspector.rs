@@ -204,18 +204,21 @@ fn WidgetInspector(
     view! {
         <div class="inspector-body">
             <Group ui group=GroupId::Layout>
-            <TextField ui field=RawField::Widget(id,WidgetField::Label) label="Label" hint="ASCII · 12 characters at 1×1, 24 at wider sizes"/>
+            <TextField ui field=RawField::Widget(id,WidgetField::Label) label="Label" hint=format!("ASCII · 12 characters at 1×1, up to {MAX_WIDGET_LABEL_BYTES} at wider sizes")/>
             <Choice ui layout=true label="Size" value=Signal::derive(move || ui.widget(id).map(|w|match w.placement.span { Span::OneByOne=>"1",Span::TwoByOne=>"2",Span::TwoByTwo=>"4" }.to_string()).unwrap_or_default())
                 options=choices(&[("1","1 × 1 · compact"),("2","2 × 1 · wide"),("4","2 × 2 · large")])
                 on_change=Callback::new(move |(token,value): (FieldToken,String)| { let span=match value.as_str(){"1"=>Span::OneByOne,"2"=>Span::TwoByOne,"4"=>Span::TwoByTwo,_=>return};ui.typed(token,Edit::ResizeWidget { id,span }); })/>
             {move || {
-                let geometry=ui.editor.with(|e|e.editing_config().view_orientation(e.selection().view).unwrap_or(e.editing_config().orientation).geometry());
-                let placement=ui.widget(id).map(|w|w.placement);
+                let widget=ui.widget(id);
+                // Find can inspect another view without changing editor selection.
+                // Missing candidate views expose only the retained coordinate.
+                let geometry=ui.editor.with(|e|Registry::with_candidate(e,|config|widget.as_ref().and_then(|w|config.view_orientation(w.view)).map(|o|o.geometry())));
+                let placement=widget.map(|w|w.placement);
                 let axis=|count:u8, current:Option<u8>| { let mut options:Vec<_>=(0..count).map(|n|(n.to_string(),(u16::from(n)+1).to_string())).collect(); if let Some(n)=current.filter(|n|*n>=count){options.push((n.to_string(),format!("{} (outside grid)",u16::from(n)+1)));}options };
                 view!{<div class="field-pair">
-                <Choice ui layout=true label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=axis(geometry.columns(),placement.map(|p|p.column))
+                <Choice ui layout=true label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=axis(geometry.map_or(0,|g|g.columns()),placement.map(|p|p.column))
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(column)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.column=column);}})/>
-                <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=axis(geometry.rows(),placement.map(|p|p.row))
+                <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=axis(geometry.map_or(0,|g|g.rows()),placement.map(|p|p.row))
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
                 </div>}
             }}
@@ -289,7 +292,7 @@ fn WidgetInspector(
             </Show>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningOn) label="On dwell (ms)" hint="1–30000"/><TextField ui field=RawField::Widget(id,WidgetField::WarningOff) label="Off dwell (ms)" hint="1–30000"/></div>
             <super::advanced::WarningControls ui id/>
-            <TextField ui field=RawField::Widget(id,WidgetField::WarningMessage) label="Warning message" hint="1–20 ASCII characters; one line per warning"/>
+            <TextField ui field=RawField::Widget(id,WidgetField::WarningMessage) label="Warning message" hint=format!("1–{MAX_WARNING_MESSAGE_BYTES} ASCII characters; one line per warning")/>
             <div class="field"><span>"Warning order within this view"</span><div class="field-pair">
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,false)>"↑ Earlier"</button>
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,true)>"↓ Later"</button>
@@ -298,7 +301,11 @@ fn WidgetInspector(
             <Show when=move ||channel.scalar().is_some()><button on:click=move |_|{if let Some(scalar)=channel.scalar(){ui.source_channel.set(scalar);workspaces::open(ui,Workspace::DataWarnings,GroupId::Sources);}}>"Open channel source & decoder"</button></Show>
             <div class="widget-actions">
                 <button disabled=move ||ui.invalid() on:click=move |_| {
-                    if let Some(widget)=ui.widget(id) {if let Some(placement)=ui.free(widget.placement.span,None){ui.apply(Edit::DuplicateWidget{id,view:widget.view,placement});}else{ui.notice.set("No free space for this size in the current view.".into());}}
+                    if let Some(widget)=ui.widget(id) {
+                        // Inspection does not select the widget's view.
+                        let placement=ui.editor.with_untracked(|e|dashboard_configurator::geometry::first_free_placement(e.preview().config(),widget.view,widget.placement.span,None));
+                        if let Some(placement)=placement {ui.apply(Edit::DuplicateWidget{id,view:widget.view,placement});}else{ui.notice.set("No free space for this size in the widget's view.".into());}
+                    }
                 }>"Duplicate widget"</button>
                 <button class="danger-text" disabled=move ||ui.layout_locked() on:click=move |_|ui.apply(Edit::DeleteWidget(id))>"Remove widget"</button>
             </div>
