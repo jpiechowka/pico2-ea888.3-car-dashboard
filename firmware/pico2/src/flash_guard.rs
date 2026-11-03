@@ -291,7 +291,9 @@ impl CheckedFlash {
         {
             return Err(Error::RamBuffer);
         }
-        self.flash.blocking_write(offset, bytes).map_err(Error::from)
+        // The HAL rechecks the actual slice's complete SRAM extent and page geometry;
+        // its dedicated path needs no partial-page scratch buffer.
+        self.flash.blocking_write_ram(offset, bytes).map_err(Error::from)
     }
 
     /// Erases one 4096-byte sector at aligned physical `offset` when `conditions`

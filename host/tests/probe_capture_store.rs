@@ -148,6 +148,55 @@ fn set_generation(
     fix_page_crc(&mut flash.bytes[end..end + PAGE_BYTES]);
 }
 
+/// Host layout must not retain a third full envelope; ARM stack/resource admission is separate.
+#[test]
+fn slot_metadata_uses_less_storage_than_duplicated_selected_capture() {
+    assert!(core::mem::size_of::<SlotInfo>() < core::mem::size_of::<([CopyState; 2], Option<StoredCapture>)>());
+}
+
+/// Selection follows generation rather than physical order and always resolves to its retained copy state.
+#[test]
+fn selected_envelope_stays_coherent_across_copy_order_reset_and_restart() {
+    block_on(async {
+        let mut flash = Flash::new();
+        for slot in 0..SLOT_COUNT {
+            let empty = inspect_slot(&mut flash, slot).await.unwrap();
+            assert_eq!(empty.selected(), None);
+            assert_eq!(empty.copies(), &[CopyState::Empty; 2]);
+            let first = save_slot(&mut flash, slot, b"first").await.unwrap();
+            let one = inspect_slot(&mut flash, slot).await.unwrap();
+            assert_eq!(one.selected(), Some(first));
+            let second = save_slot(&mut flash, slot, b"second").await.unwrap();
+            let two = inspect_slot(&mut flash, slot).await.unwrap();
+            assert_eq!(two.selected(), Some(second));
+            for (copy, generation) in [(0, 50), (1, 51)] {
+                set_generation(&mut flash, usize::from(slot), copy, generation);
+                let info = inspect_slot(&mut flash, slot).await.unwrap();
+                let selected = info.selected().unwrap();
+                assert_eq!(selected.generation, generation);
+                assert_eq!(selected.slot, slot);
+                assert_eq!(usize::from(selected.copy), copy);
+                assert_eq!(info.copies()[copy], CopyState::Valid(selected));
+            }
+            reset_slot(&mut flash, slot).await.unwrap();
+            assert_eq!(inspect_slot(&mut flash, slot).await.unwrap().selected(), None);
+            let restarted = save_slot(&mut flash, slot, b"restart").await.unwrap();
+            assert_eq!((restarted.copy, restarted.generation), (0, 1));
+            assert_eq!(
+                inspect_slot(&mut flash, slot).await.unwrap().selected(),
+                Some(restarted)
+            );
+            // Earlier immutable results remain snapshots, never live authority over changed storage.
+            assert_eq!(one.selected(), Some(first));
+            assert_eq!(two.selected(), Some(second));
+            assert_eq!(
+                load_copy(&mut flash, second, &mut [0; 16]).await,
+                Err(Error::VerifyFailed)
+            );
+        }
+    });
+}
+
 /// Every byte mutation in the newest header/payload/commit rejects that copy and loads the previous committed bytes.
 #[test]
 fn corrupted_newest_header_payload_or_commit_falls_back_to_previous() {
@@ -163,8 +212,8 @@ fn corrupted_newest_header_payload_or_commit_falls_back_to_previous() {
             let mut flash = baseline.clone();
             flash.bytes[start + offset] ^= 1;
             let info = inspect_slot(&mut flash, 2).await.unwrap();
-            assert_eq!(info.selected.unwrap().generation, 1, "offset {offset}");
-            assert!(!matches!(info.copies[1], CopyState::Valid(_)));
+            assert_eq!(info.selected().unwrap().generation, 1, "offset {offset}");
+            assert!(!matches!(info.copies()[1], CopyState::Valid(_)));
             let mut output = [0; 8];
             let saved = load_slot(&mut flash, 2, &mut output).await.unwrap();
             assert_eq!(&output[..saved.length as usize], b"old");
@@ -182,7 +231,7 @@ fn unknown_schema_is_reported_and_never_overwritten_even_with_valid_other_copy()
         flash.bytes[COPY_BYTES + 8..COPY_BYTES + 10].copy_from_slice(&2u16.to_le_bytes());
         fix_page_crc(&mut flash.bytes[COPY_BYTES..COPY_BYTES + PAGE_BYTES]);
         assert_eq!(
-            inspect_slot(&mut flash, 0).await.unwrap().copies[1],
+            inspect_slot(&mut flash, 0).await.unwrap().copies()[1],
             CopyState::UnsupportedSchema(2)
         );
         let before = flash.bytes.clone();
@@ -212,7 +261,12 @@ fn equal_generations_and_overflow_are_refused_without_mutation() {
         assert_eq!(flash.bytes, before);
         set_generation(&mut flash, 0, 1, u64::MAX);
         assert_eq!(
-            inspect_slot(&mut flash, 0).await.unwrap().selected.unwrap().generation,
+            inspect_slot(&mut flash, 0)
+                .await
+                .unwrap()
+                .selected()
+                .unwrap()
+                .generation,
             u64::MAX
         );
         let before = flash.bytes.clone();
@@ -229,7 +283,7 @@ fn garbage_is_not_empty_and_no_valid_copy_never_autoformats() {
         assert_eq!(load_slot(&mut flash, 0, &mut [0; 10]).await, Err(Error::Empty));
         flash.bytes[PAGE_BYTES + 50] = 0;
         let info = inspect_slot(&mut flash, 0).await.unwrap();
-        assert_eq!(info.copies, [CopyState::Corrupt, CopyState::Empty]);
+        assert_eq!(info.copies(), &[CopyState::Corrupt, CopyState::Empty]);
         assert_eq!(load_slot(&mut flash, 0, &mut [0; 10]).await, Err(Error::Corrupt));
         assert_eq!(save_slot(&mut flash, 0, b"new").await, Err(Error::Corrupt));
         assert_eq!(flash.writes, 0);
@@ -249,7 +303,7 @@ fn silent_erase_and_program_failures_never_commit_unverified_data() {
             flash.silent_program = !bad_erase;
             assert_eq!(save_slot(&mut flash, 0, b"third").await, Err(Error::VerifyFailed));
             let info = inspect_slot(&mut flash, 0).await.unwrap();
-            assert_eq!(info.selected.unwrap().generation, 2);
+            assert_eq!(info.selected().unwrap().generation, 2);
         }
     });
 }
@@ -272,7 +326,12 @@ fn metadata_and_commit_are_bound_to_slot_copy_generation_length_and_payload() {
             flash.bytes[COPY_BYTES + offset..COPY_BYTES + offset + bytes.len()].copy_from_slice(&bytes);
             fix_page_crc(&mut flash.bytes[COPY_BYTES..COPY_BYTES + PAGE_BYTES]);
             assert_eq!(
-                inspect_slot(&mut flash, 0).await.unwrap().selected.unwrap().generation,
+                inspect_slot(&mut flash, 0)
+                    .await
+                    .unwrap()
+                    .selected()
+                    .unwrap()
+                    .generation,
                 1
             );
         }
@@ -283,7 +342,7 @@ fn metadata_and_commit_are_bound_to_slot_copy_generation_length_and_payload() {
             inspect_slot(&mut baseline, 0)
                 .await
                 .unwrap()
-                .selected
+                .selected()
                 .unwrap()
                 .generation,
             1
@@ -291,7 +350,7 @@ fn metadata_and_commit_are_bound_to_slot_copy_generation_length_and_payload() {
         // Moving complete copies to another numbered slot must not admit them.
         let misplaced = baseline.bytes[..COPY_BYTES].to_vec();
         baseline.bytes[SLOT_BYTES..SLOT_BYTES + COPY_BYTES].copy_from_slice(&misplaced);
-        assert_eq!(inspect_slot(&mut baseline, 1).await.unwrap().selected, None);
+        assert_eq!(inspect_slot(&mut baseline, 1).await.unwrap().selected(), None);
     });
 }
 
@@ -307,7 +366,10 @@ fn explicit_reset_recovers_damaged_slot_and_preserves_other_slots() {
         flash.bytes[SLOT_BYTES + 8] = 2;
         assert_eq!(save_slot(&mut flash, 1, b"new").await, Err(Error::UnsupportedSchema(2)));
         reset_slot(&mut flash, 1).await.unwrap();
-        assert_eq!(inspect_slot(&mut flash, 1).await.unwrap().copies, [CopyState::Empty; 2]);
+        assert_eq!(
+            inspect_slot(&mut flash, 1).await.unwrap().copies(),
+            &[CopyState::Empty; 2]
+        );
         assert_eq!(&flash.bytes[..SLOT_BYTES], &before[..SLOT_BYTES]);
         assert_eq!(&flash.bytes[2 * SLOT_BYTES..], &before[2 * SLOT_BYTES..]);
         assert_eq!(
@@ -345,7 +407,10 @@ fn interrupted_explicit_reset_is_local_and_repeat_requires_another_call() {
                 assert_eq!(&flash.bytes[3 * SLOT_BYTES..], &baseline.bytes[3 * SLOT_BYTES..]);
                 flash.fail_at = None;
                 reset_slot(&mut flash, 2).await.unwrap();
-                assert_eq!(inspect_slot(&mut flash, 2).await.unwrap().copies, [CopyState::Empty; 2]);
+                assert_eq!(
+                    inspect_slot(&mut flash, 2).await.unwrap().copies(),
+                    &[CopyState::Empty; 2]
+                );
             }
         }
     });
@@ -394,7 +459,7 @@ fn four_slots_keep_independent_payloads_across_alternating_commits() {
     block_on(async {
         let mut flash = Flash::new();
         for slot in 0..SLOT_COUNT {
-            assert_eq!(inspect_slot(&mut flash, slot).await.unwrap().selected, None);
+            assert_eq!(inspect_slot(&mut flash, slot).await.unwrap().selected(), None);
             let initial = save_slot(&mut flash, slot, &[slot; 300]).await.unwrap();
             assert_eq!(
                 (initial.slot, initial.copy, initial.generation, initial.length),
@@ -477,7 +542,10 @@ fn first_save_failure_never_admits_partial_payload_or_silently_repairs_a_torn_co
                     }
                     Err(Error::Empty) => {
                         outcomes[0] = true;
-                        assert_eq!(inspect_slot(&mut flash, 1).await.unwrap().copies, [CopyState::Empty; 2]);
+                        assert_eq!(
+                            inspect_slot(&mut flash, 1).await.unwrap().copies(),
+                            &[CopyState::Empty; 2]
+                        );
                     }
                     Err(Error::Corrupt) => {
                         outcomes[1] = true;

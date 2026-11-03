@@ -177,3 +177,44 @@ and state divider units accurately; no timing arithmetic changed. OneWire's
 presence comment states its actual 24us release delay. The WS2812 header separates
 the shared instruction pattern from its retained 2/5/3-cycle pulse constants;
 neither helper's instructions changed.
+
+## Shared RP235x boot setup owner (2026-11-03)
+
+RP235x erase, program, combined erase/program and fixed JEDEC ID operations now
+use one non-inlined, closed dispatcher owning the aligned 256-byte SRAM boot
+setup copy and its lifetime-bound call table. RP2040 retains its existing active
+bodies. The XIP-off RAM bodies, operation selection, core0 admission, core1 pause,
+interrupt/DMA exclusion, restoration checks and watchdog fail-stop are unchanged.
+No mutable static or direct BOOTRAM execution is introduced. Linked-image stack
+and RAM-call checks must still pass; source consolidation alone does not establish
+aggregate or peak stack savings, and no physical operation was performed.
+
+The [RP2350 datasheet, sections 4.3 and 5.2.7](https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008373-DS-2-rp2350-datasheet.pdf)
+describes BOOTRAM as non-executable and requires copying the saved position-independent
+setup into SRAM before execution. The pinned
+[SDK flash implementation](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/hardware_flash/flash.c)
+and [ROM API contract](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/pico_bootrom/include/pico/bootrom.h)
+retain the same copy/restore requirement. This patch preserves the HAL's scoped
+copy rather than adopting the SDK's static cache. Native flash/helper regressions
+and a native RP235xa type check cover portable behavior; target execution and
+resource admission remain separate validation.
+
+## RP235x checked SRAM program path (2026-11-03)
+
+`Flash::blocking_write_ram` accepts only nonempty whole-page input at a page-aligned
+flash offset. It first uses the existing capacity admission, then the pure
+`flash_write.rs` helper checks page geometry and the actual slice's entire source
+extent within [0x20000000,0x20080000). This deliberately narrower lower512KiB
+contract excludes additional SRAM banks and aliases; it does not describe all
+RP235x SRAM. Empty/out-of-range/overflowing sources return `OutOfBounds`, and
+unaligned offsets or lengths return `Unaligned`, before flash exclusion.
+
+The dedicated path needs no padding buffer and uses the same single
+`in_ram`/program call, scoped executable SRAM boot copy and restoration as the
+existing full-page path. `CheckedFlash::program` retains all application region,
+maintenance, core, mapping, DMA and complete-page SRAM checks before calling it.
+The general `blocking_write` body and RP2040 path remain unchanged. No new ROM
+command or exclusion bypass is introduced. Portable tests exercise the actual
+admission helper, including multipage/end/overflow/flash-source boundaries; they
+do not execute flash MMIO. Linked stack/flash and exact RAM-instruction gates
+remain mandatory; source structure alone proves no resource savings.

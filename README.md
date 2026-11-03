@@ -16,6 +16,7 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
 [Bluetooth setup](#bluetooth-prototype-in-studio) · [BLE discovery utility](#standalone-ble-discovery-utility) ·
 [NGM identity utility](docs/vehicle/ngm-identity.md) ·
+[Confirmed ECU collector](docs/vehicle/ngm-collector.md) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation) ·
 [Rust documentation](docs/validation/rust-documentation.md)
@@ -381,6 +382,31 @@ Physical NGM interoperability has not been validated.
 SPSM 129 remains a configured
 research candidate, not a value discovered from the adapter.
 
+The separate [`ngm-collector` image](docs/vehicle/ngm-collector.md) retains
+adapter-only Inspect and adds **hold B → confirm ECU reads**. It collects a fixed
+28-entry engine manifest once: session/identity information, existing widget
+research channels and the twelve owner-observed OBDeleven channels. It first
+requires a fresh valid INFO reply, space for all bounded evidence and an observed
+default ECU session. No unlock, session-change, ECU write, flashing, fault clearing,
+arbitrary command or automatic retry is available. Reads and their required
+flow-control replies are active CAN traffic; private adapter behavior and exact
+ECU support remain unverified. Raw results and explicitly unqualified candidate
+values export for offline work; they never feed dashboard measurements or alarms.
+
+| Confirmed collector action | Bounded raw evidence |
+| --- | --- |
+| ![Synthetic ECU collection confirmation](docs/images/ble-probe/ngm-collector-confirm-synthetic.png) | ![Synthetic collector result](docs/images/ble-probe/ngm-collector-result-synthetic.png) |
+
+These use the production renderer with synthetic evidence. A confirmation lasts
+15 seconds and accepts only a new gesture after that prompt's completed display
+transfer. Y cancels an active collection while retaining its evidence until cleanup;
+save useful partial or negative results before recovery or another inspection.
+See the [fixed manifest, exact transmitted bytes, limits and visit plan](docs/vehicle/ngm-collector.md).
+The [3 November offline validation](docs/validation/ngm-collector-2026-11-03.md)
+records the checked stock/280-70 collector artifacts, sibling-image regressions
+and remaining hardware qualification. These checks do not send traffic or flash a device.
+The standard probe controls below remain unchanged.
+
 Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
 lists nearby connectable BLE advertisements and offers **manual GATT inspection
 on encoder click or a two-second A hold**. Rotate or use short A/B presses to
@@ -491,19 +517,21 @@ From the repository root, build a checked CLI artifact using the installed tools
 ./firmware/scripts/Build-BleProbe.ps1 -Name probe-280-01 -Profile 280-70 -Expert
 # Separate INFO-only tool; build/check only, no device operation:
 ./firmware/scripts/Build-NgmIdentity.ps1 -Name ngm-stock-01 -Profile stock
+# Separate collector with locally confirmed fixed ECU reads; no device operation:
+./firmware/scripts/Build-NgmCollector.ps1 -Name collect-stock-01 -Profile stock
 ```
 
-Both wrappers write to `firmware/target/ble-probe-captures/<name>/`, using
-`ble-probe.elf/.uf2` or `ngm-identity.elf/.uf2`. Manifest schema 2 binds the tool
+All three wrappers write to `firmware/target/ble-probe-captures/<name>/`, using
+`ble-probe.elf/.uf2`, `ngm-identity.elf/.uf2` or `ngm-collector.elf/.uf2`. Manifest schema 2 binds the tool
 name to its linked discriminator. Normal USB product names are `Pico BLE Probe
-Captures` and `Pico NGM Identity Captures`; the same exporter handles both.
+Captures`, `Pico NGM Identity Captures` and `Pico NGM Collector Captures`; the same exporter handles all three.
 An ordinary `ble-probe` binary remains standard-only even when compiled with the
-identity feature. See the [NGM preparation and single-visit capture plan](docs/vehicle/ngm-identity.md#future-garage-runbook)
+collector feature. See the [NGM preparation and single-visit capture plan](docs/vehicle/ngm-collector.md#build-and-prepare-one-useful-visit)
 before any separately authorized flash or adapter experiment.
 
 The utility stays **outside Studio** and replaces the dashboard until you flash
 the dashboard back. It uses both cores, two fixed framebuffers, Cortex-M33
-instructions and bounded read-only discovery. The wrapper builds/checks only;
+instructions and bounded operation-specific policies. The wrapper builds/checks only;
 flashing is a separate explicit operation. The display stays full-brightness
 landscape. Its RGB status is:
 
@@ -548,9 +576,11 @@ Interrupted writes, endurance and broader USB qualification remain separate.
 
 Characteristic rejection now retains the first rejected declaration handle,
 original length and up to 19 raw bytes in live pages and saved exports. Capture
-payload v5 adds explicit tool mode and optional bounded NGM identity evidence.
+payload v5 keeps explicit identity mode and optional bounded NGM identity evidence;
+v6 is used only when collection evidence exists and adds 28 ordered raw rows plus
+a bounded terminal prefix. Ordinary/INFO captures remain byte-compatible v5.
 V4's cached-name provenance and boot reset evidence, and v3's global LED fault
-snapshot and configured radio GSPI speed, remain. V1–v4 are readable with absent
+snapshot and configured radio GSPI speed, remain. V1–v5 are readable with absent
 fields explicitly unavailable; existing slots are not rewritten. Identity
 attempts retain partial/failure bytes, directional channel limits and cleanup;
 parsed identity strings do not enable the future Studio connection handoff.

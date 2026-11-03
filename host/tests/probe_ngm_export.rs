@@ -203,6 +203,8 @@ fn connection_error_exports_raw_domain_code_without_inventing_channel_or_reply()
     assert_eq!(e["successful"], false);
     assert!(e["channel"].is_null());
     assert_eq!(e["request"]["submitted"], false);
+    assert_eq!(e["request"]["local_completion_confirmed"], false);
+    assert_eq!(e["request"]["outcome"], "unconfirmed");
     assert!(e["reply"]["derived_fields"].is_null());
     assert!(e["reply"]["max_observed_sdu_bytes"].is_null());
     assert_eq!(e["candidate"]["configured_spsm"], 129);
@@ -215,6 +217,7 @@ fn connection_error_exports_raw_domain_code_without_inventing_channel_or_reply()
             .all(|v| v["read"].is_null())
     );
     assert!(text_report(&value).contains("ngm_identity.fault.transport.raw_code_u16: 4660"));
+    assert!(text_report(&value).contains("ngm_identity.request.outcome: \"unconfirmed\""));
 }
 
 /// A database-invalidated first vendor read survives capture admission and JSON export without transport claims.
@@ -310,6 +313,10 @@ fn success_projection_and_publication_keep_content_identity_and_observed_name() 
     let value = decode_json(&bytes).unwrap();
     let e = &value["ngm_identity"];
     assert_eq!(e["successful"], true);
+    assert_eq!(e["request"]["submitted"], true);
+    assert_eq!(e["request"]["local_completion_confirmed"], true);
+    assert_eq!(e["request"]["outcome"], "local_completion_confirmed");
+    assert_eq!(e["request"]["submitted_at_boot_ms"], 30);
     for (field, expected) in [
         ("vendor", "v"),
         ("model", "m"),

@@ -1,7 +1,9 @@
 //! Read-only CDC transport. USB never sends radio requests or holds a flash lease
 //! while waiting for the host. Endpoint SRAM copies finish before each await.
 use core::fmt::Write;
-use core::pin::pin;
+use core::future::{Future, poll_fn};
+use core::pin::{Pin, pin};
+use core::task::{Context, Poll};
 
 use dashboard_core::discovery::capture_ui::UiError;
 use dashboard_core::discovery::capture_wire::*;
@@ -75,7 +77,8 @@ pub fn start(
     static CDC: StaticCell<Cdc> = StaticCell::new();
     let serial = SERIAL.init_with(heapless::String::new);
     let serial = embassy_rp::otp::get_chipid().ok().and_then(|id| {
-        write!(serial, "{id:016X}").ok()?;
+        // Share the bounded formatter without changing the 16-digit chip-ID representation.
+        write!(serial.as_mut_view(), "{id:016X}").ok()?;
         Some(serial.as_str())
     });
     let mut config = Config::new(0x2E8A, 0x0009);
@@ -108,7 +111,7 @@ async fn probe_usb_device_task(device: &'static mut UsbDevice<'static, UsbDriver
     crate::metrics::measure(0, pin!(device.run())).await;
 }
 #[embassy_executor::task]
-/// Owns `cdc` and its affine export buffer indefinitely. Parses bounded read-only
+/// Owns `cdc` and its affine export/directory buffers indefinitely. Parses bounded read-only
 /// requests per USB epoch; read inactivity resets parser after five seconds.
 /// Failed transmission waits for a fresh bus generation before any new response,
 /// preventing stale DPRAM bytes from being appended to a later session.
@@ -116,6 +119,9 @@ async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
     /// USB-only 8192-byte lease, separate from the UI capture allocation.
     static BYTES: StaticCell<storage::Buffer> = StaticCell::new();
     let mut bytes = Some(BYTES.init_with(|| [0; 8192]));
+    /// USB-owned snapshot lease; storage borrows it only for a directory refresh.
+    static DIRECTORY: StaticCell<storage::Directory> = StaticCell::new();
+    let mut directory = Some(DIRECTORY.init_with(|| [Ok(None); 4]));
     crate::metrics::measure(
         0,
         pin!(async {
@@ -152,7 +158,7 @@ async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
                     let mut failed = false;
                     for &byte in &packet[..n] {
                         if let Some(request) = parser.feed(byte)
-                            && respond(cdc, epoch, request, &mut bytes).await.is_err()
+                            && respond(cdc, epoch, request, &mut bytes, &mut directory).await.is_err()
                         {
                             crate::bridge::STATUS.usb_failed(same_session(epoch));
                             failed = true;
@@ -184,15 +190,16 @@ fn status(error: UiError) -> FrameStatus {
         _ => FrameStatus::StorageError,
     }
 }
-/// Responds to parsed `request` on `cdc` under `epoch`, circulating `bytes` only
-/// through the read-only storage owner. Returns unit error for wire/session/encode
-/// failure; always reacquires a Get lease before endpoint transmission. Never
+/// Responds to parsed `request` on `cdc` under `epoch`, circulating `bytes` and
+/// `directory` only through the read-only storage owner. Returns unit error for
+/// wire/session/encode failure; always reacquires the lease before transmission. Never
 /// cancel while waiting for storage, or the single affine exchange would be lost.
 async fn respond(
     cdc: &mut Cdc,
     epoch: Epoch,
     request: Result<Request, WireError>,
     bytes: &mut Option<&'static mut storage::Buffer>,
+    directory: &mut Option<&'static mut storage::Directory>,
 ) -> Result<(), ()> {
     match request {
         Err(_) => {
@@ -200,11 +207,11 @@ async fn respond(
             frame(cdc, epoch, FrameKind::Error, FrameStatus::InvalidRequest, None, 0, &[]).await?;
         }
         Ok(Request::List) => {
-            storage::USB_REQUEST.send(storage::UsbRequest::List).await;
-            let storage::UsbReply::Listed(slots) = storage::USB_REPLY.receive().await else {
-                panic!("USB list reply")
-            };
-            for (slot, entry) in slots.into_iter().enumerate() {
+            storage::usb_list(directory).await;
+            // Reacquire before any endpoint wait so reset/timeout cannot lose the
+            // directory, and storage remains free while USB holds this snapshot.
+            let slots = directory.as_deref().expect("returned USB directory lease");
+            for (slot, entry) in slots.iter().enumerate() {
                 match entry {
                     Ok(Some(meta)) => {
                         frame(
@@ -230,7 +237,7 @@ async fn respond(
                         )
                         .await?
                     }
-                    Err(e) => frame(cdc, epoch, FrameKind::ListEntry, status(e), Some(slot as u8), 0, &[]).await?,
+                    Err(e) => frame(cdc, epoch, FrameKind::ListEntry, status(*e), Some(slot as u8), 0, &[]).await?,
                 }
             }
         }
@@ -269,6 +276,7 @@ async fn respond(
 /// checked wire header then sends bounded packets on `cdc` for `epoch`. Returns
 /// unit error on invalid metadata or transport failure; earlier packets may have
 /// reached the host. Exact-64-byte nonempty payloads end with a zero-length packet.
+/// Header bytes are encoded directly into the array retained through its packet await.
 async fn frame(
     cdc: &mut Cdc,
     epoch: Epoch,
@@ -278,9 +286,10 @@ async fn frame(
     generation: u64,
     payload: &[u8],
 ) -> Result<(), ()> {
-    let header = FrameHeader::new(kind, status, slot, generation, payload)
+    let mut header = [0; HEADER_BYTES];
+    FrameHeader::new(kind, status, slot, generation, payload)
         .map_err(|_| ())?
-        .encode()
+        .encode_into(&mut header)
         .map_err(|_| ())?;
     packet(cdc, epoch, &header).await?;
     for part in payload.chunks(64) {
@@ -305,8 +314,24 @@ async fn packet(
     }
     // Locked RP driver awaits only before its synchronous SRAM copy. Cancelling
     // this wait cannot retain a borrowed application buffer or DMA descriptor.
-    match with_timeout(Duration::from_secs(2), SESSION.guard(epoch, cdc.write_packet(bytes))).await {
+    let mut sending = pin!(with_timeout(
+        Duration::from_secs(2),
+        SESSION.guard(epoch, cdc.write_packet(bytes))
+    ));
+    match poll_fn(|cx| poll_packet(sending.as_mut(), cx)).await {
         Ok(Ok(Ok(()))) => Ok(()),
         _ => Err(()),
     }
+}
+
+/// Polls the original pinned packet `sending` with `cx`, returning its unchanged readiness/output.
+/// This one statically dispatched future type shares the endpoint/session/deadline poll body
+/// across packet callers. The owner remains in packet: no move, allocation, extra queue or
+/// timeout/session reordering occurs, and dropping packet drops the same guarded wait.
+#[inline(never)]
+fn poll_packet<F: Future>(
+    sending: Pin<&mut F>,
+    cx: &mut Context<'_>,
+) -> Poll<F::Output> {
+    sending.poll(cx)
 }

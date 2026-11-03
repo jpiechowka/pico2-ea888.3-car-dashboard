@@ -18,6 +18,15 @@ There has been no live NGM identity-tool connection, flash, CoC acceptance test 
 physical power-cut validation in this implementation wave. The runbook below is
 for a future separately authorized device session; it is not a record of one.
 
+## Separate confirmed collection
+
+The [NGM collector](ngm-collector.md) is a third, separately identified image
+(tool byte 2). It retains adapter-only Inspect and adds a distinct confirmed
+finite ECU read action. Nothing on this page upgrades `ngm-identity` or the
+ordinary probe: their outbound application policies remain unchanged. The dated
+receipts above predate the collector and do not admit its image or qualify ECU
+support. Collector integration/image gates are tracked separately.
+
 ## Separate images and policy
 
 | Identity | Standard discovery | INFO-only trial |
@@ -119,8 +128,8 @@ letter or digit. `Profile` is `stock` (default) or `280-70`; the latter requires
 `-Expert`. The owner's reported working overclock does not qualify electrical
 margins. The wrapper builds/checks only and never opens or flashes a device.
 
-Both utility wrappers use `firmware/target/ble-probe-captures/<name>/`; names must
-be unique across both tools. This image's files are `ngm-identity.elf` and
+All three utility wrappers use `firmware/target/ble-probe-captures/<name>/`; names must
+be unique across the tools. This image's files are `ngm-identity.elf` and
 `ngm-identity.uf2`, alongside commands, source inventory, clocks, `manifest.json`
 and the image-check result. Utility **manifest schema 2** records
 `tool: "ngm-identity"`; the checker compares it with the one-byte value 1 in ELF
@@ -174,7 +183,8 @@ concrete evidence question; this tool does not enable them automatically.
 
 ## Capture and interpretation
 
-Both current utilities write **capture payload v5**, read legacy v1–v4 and keep
+The standard and INFO-only utilities write **capture payload v5**. Current shared
+decoders also read collector v6 and legacy v1–v4, while retaining
 the four-slot journal, USB framing and 8192-byte payload limit unchanged. The
 identity extension retains explicit producer mode, candidate/source policy, four
 vendor read outcomes, offered/actual directional limits, request submission,
@@ -198,7 +208,8 @@ The display adds bounded identity, vendor-read, transport and raw pages while
 keeping current telemetry. Green requires the ordinary live clean-completion
 checks **and** clean identity evidence. Saved successful evidence remains amber;
 faults remain red until explicit recovery. Full raw values remain in export.
-The ordinary probe can display saved identity evidence without sending INFO.
+The ordinary probe can display saved identity and collector evidence without
+sending INFO or ECU requests.
 
 JSON adds `identity_tool_mode` and `ngm_identity`; v1–v4 have both null. A v5
 identity-mode advertisement-only save has true mode with null trial evidence.
@@ -217,7 +228,7 @@ Loading and exporting never rewrite old slots. Unknown formats in either physica
 copy still block replacement until explicit Reset; a supported sibling may
 remain readable. Save/Reset and connections share an exclusive operation gate,
 held through actual cleanup/page restoration. Older firmware/exporters may reject
-v5: export first and keep the original binary before downgrading.
+v5/v6: export first and keep the original binary before downgrading.
 
 The [future Studio handoff](ble-capture-studio-handoff.md) remains disabled with
 no profile and no reusable handles. Neither parsed INFO nor a successful CoC

@@ -1,19 +1,22 @@
 # Saved BLE probe captures
 
-The [standalone probe](ble-probe.md) and separate [NGM identity tool](ngm-identity.md)
-save one selected peer's evidence into one
+The [standalone probe](ble-probe.md), [NGM identity tool](ngm-identity.md) and
+[confirmed ECU collector](ngm-collector.md) save one selected peer's evidence into one
 of four numbered slots. A committed save survives USB power removal. The saved
 record can be opened on the Pico or exported later as binary, JSON and text.
 Saving, viewing and exporting do not inspect the adapter again.
 
 This is a bounded evidence snapshot, not a Bluetooth sniffer, pairing transcript,
-application log or ECU trace. The [adapter research note](adapter-research.md)
+complete application log or complete ECU/CAN trace. Collector v6 adds bounded
+fixed-read replies, not a full bus transcript. The [adapter research note](adapter-research.md)
 explains what can be started offline and what remains unproved.
 
 ## Save, open, replace and reset
 
 1. Select the adapter, then inspect using encoder click or a two-second A hold.
-   For advertising only, use a short X press from the device list.
+   For advertising only, use a short X press from the device list. In the separate
+   collector image, hold B to open the ECU-read confirmation; ordinary Inspect
+   stays adapter-only. See its [lifecycle](ngm-collector.md#confirmation-and-lifecycle).
 2. Wait for Paused, including disconnect cleanup. Partial inspections and old
    advertisements remain useful; save them with their visible failure context.
 3. Hold X for two seconds to open the slots. Opening slots from a selected live
@@ -96,13 +99,19 @@ does not imply that the operation succeeded, and does not clear its red latch.
 The [confirmation-expiry follow-up](../validation/probe-confirmation-expiry-2026-10-22.md)
 records the reproduced UI fault, read-only generation-2 export and verification limits.
 
-The storage task owns one fixed reply record. It transfers an exclusive reference
+The storage task owns one fixed UI reply record. It transfers an exclusive reference
 to core 1 and waits for its return before servicing another request. Core 1 takes
 the returned byte lease even for a hidden or stale completion, then returns the
 record synchronously before rendering. Flash maintenance has already resumed
 both cores before this handoff. This avoids copying the directory through task
 stacks; it adds no payload buffer or framebuffer. USB requests can wait behind
 that serial owner, and a stalled UI remains subject to the progress watchdog.
+
+USB listing lends a separate fixed four-slot metadata snapshot to storage. Storage
+refreshes every entry and returns its exclusive reference before endpoint output.
+The sole USB requester reacquires it before checking the USB session; reset does
+not cancel this storage exchange. Storage does not wait for the host to consume
+the snapshot. No capture payload or framebuffer allocation is added by listing.
 
 The [RGB status LED](ble-probe.md#rgb-status-and-recovery) is purple while a local
 capture operation is pending, unless an error takes priority. Saved browsing is
@@ -117,9 +126,10 @@ separate busy colour; a current-session protocol/transfer failure latches red.
 Keep the capturing utility installed and plug the Pico into the PC with a USB data
 cable. **Do not hold BOOTSEL.** Normal firmware exposes USB CDC serial with
 VID `2E8A`, PID `0009`, product `Pico BLE Probe Captures` for the ordinary probe or
-`Pico NGM Identity Captures` for the identity image. BOOTSEL is a different device
+`Pico NGM Identity Captures` for the identity image, or
+`Pico NGM Collector Captures` for the collector. BOOTSEL is a different device
 and is not the export interface. Boot can start active scanning, which sends BLE
-scan requests; USB recovery never starts an inspection, connection or INFO request.
+scan requests; USB recovery never starts an inspection, connection, INFO or ECU request.
 The USB descriptor requests up to 500 mA when configured. That is a host power
 budget request, not measured consumption or qualification of a cable or supply.
 
@@ -149,7 +159,7 @@ owner's connected Pico on 2026-10-19, after their power-off/reopen check.
 This does not qualify every USB host/driver or interrupted-transfer scenario.
 
 Automatic selection is deliberately conservative: it requires exactly one
-matching VID/PID and one of those two exact product names, optionally followed by
+matching VID/PID and one of those three exact product names, optionally followed by
 the exact ` (COMx)` suffix for that enumerated port. Other prefixes or mismatched
 suffixes are rejected. Windows may expose its generic
 friendly name, such as `USB Serial Device (COM7)`, instead of the firmware's USB
@@ -259,6 +269,7 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | Primary services, characteristics and descriptors | Up to 24 / 64 / 128; exact UUIDs, handles, properties and parent relationships |
 | Standard reads | Up to 16 outcomes of 64 bytes; service/handle, result, raw error code when available, duration and bytes |
 | Link, ATT MTU, timings and cleanup | Observed connection parameters and negotiated ATT limit when available; ATT MTU is separate from identity-tool CoC limits |
+| Collection evidence (v6) | Exactly 28 compiled read rows, raw response prefixes up to 67 bytes each, attempt/local-submission/result times, pending NRC count, adapter supply/setup/cleanup and optional terminal prefix up to 245 bytes; no qualified live measurements |
 | Identity tool mode and evidence (v5) | Explicit producer mode plus optional selected-peer INFO trial; candidate/source policy, four bounded vendor reads, directional CoC limits, raw INFO, first fault and cleanup; see below |
 | Four stage flags and omissions/rejections | Partial, unrequested or limited work stays explicit; no invented missing records |
 | First failure and local/terminal context | Exact available reason, range and elapsed time; absent raw status remains absent |
@@ -281,7 +292,9 @@ corresponding standard service and readable property. Descriptors are discovered
 by identity only. The ordinary probe reads no vendor characteristic or descriptor
 value and writes no CCCD. The separate identity image adds only the four scoped
 vendor reads and INFO request described in its [contract](ngm-identity.md).
-Neither utility pairs, performs authentication or requests ECU data.
+The standard and identity utilities do not request ECU data. The separate
+collector adds only its confirmed fixed-read policy; none pairs or performs
+authentication. Saved data never changes any image's command authority.
 
 ### Identity trial evidence
 
@@ -308,7 +321,9 @@ Incomplete/malformed/negative replies and failed cleanup remain useful evidence.
 Five UTF-8 fields are derived only from a complete locally admitted frame with
 all observed bytes retained; they are untrusted claims, not authentication.
 
-`identity_tool_mode` is true/false for v5 producers and null for v1–v4. Evidence is
+`identity_tool_mode` is true for INFO/collector producers, false for the standard
+probe, and null for v1–v4. The name is retained for compatibility; true does not
+distinguish an INFO-only image from the collector. Evidence is
 null when no identity attempt exists; true mode alone does not mean a request was
 sent. Existing `identity` naming/hash fields keep their original meaning: INFO
 model/serial text never changes filenames. `connection_handoff.enabled` stays
@@ -322,10 +337,56 @@ success or reusable handles. The [pre-flash audit](../validation/ngm-identity-au
 records this boundary and additional first-save interruption, slow-read and
 retryable-write regressions. These are host tests, not physical power-cut results.
 
+### Collection evidence (v6)
+
+An explicit collector attempt retains exactly one row per compiled manifest
+entry, including unattempted reads. Each row records the stable index and DID,
+attempt/local-submission/response timestamps, protocol result, accepted NRC78
+count, announced response length and exact retained bytes. Complete UDS replies
+are at most 67 bytes: three header bytes plus at most 64 data bytes. A shorter
+retained prefix is explicitly incomplete. Unknown submission is not "not sent";
+a locally completed SDU is not a CAN acknowledgment.
+The pending NRC count is published only with a completed reply's row header;
+timeout/incomplete exchanges can retain zero without preserving earlier pending
+responses. It is not an intermediate-response history.
+
+V6 appends a small collection summary to the v5 metadata and adds ordered tag-5
+borrowed read records plus an optional tag-6 terminal prefix. The original four
+GATT counters remain unchanged; `collection_row_count` is separately 28. The
+terminal record is the latest bounded envelope or diagnostic prefix, at most
+245 bytes, not a full command/CAN transcript. Matching CLOSE, all-row coverage,
+positive/negative result and actual link cleanup remain separate facts. In
+particular, an early F186 denial/nondefault response can retain a matching CLOSE
+with 27 unattempted rows, without becoming a successful collection.
+
+The decoder checks canonical manifest order/uniqueness and DID correspondence,
+lengths, optional timestamps, sequential publication, default-session gating,
+full-raw/result consistency and terminal provenance/length. Frozen v1–v5 fixtures
+ensure reusable decoding clears collection fields. Unknown future versions still
+protect both journal copies. There is no migration or implicit rewrite on load.
+
+The encoder uses v6 only when collection evidence exists; older-format bytes and
+v5 exports do not gain invented collection observations. JSON adds a separate
+`collection` object and `record_counts.collection_rows`; its top-level policy and
+`tool_mode` explicitly identify collection. Raw GATT `records` and naming indexes
+remain separate. Optional numeric `candidate` objects are marked unqualified;
+unknown schemas, negatives, incomplete replies and width mismatches produce no
+number. Adapter supply is labelled separately from ECU/module voltage.
+
+Before the first collection command, the actual serializer measures existing
+frozen GATT/INFO and reserves 3,260 maximal collection bytes plus 512 bytes for
+bounded final metadata growth. If the result exceeds 8,192 bytes, collection is
+refused before Voltage/OPEN/ECU traffic. No inventory or raw row is silently
+removed. See the [collector contract](ngm-collector.md#deadlines-failure-and-evidence-capacity)
+for exact state, timing, command and interpretation limits. This is bounded
+software admission, not physical adapter or vehicle qualification.
+
 ## Storage, source identity and verification
 
-New captures use **payload schema v5**. Both utilities and the exporter also read
-legacy v1/v2/v3/v4 captures. V1 has no rejected-declaration field; v1/v2 have no LED
+Captures without collection evidence use **payload schema v5**; a collection
+attempt uses **v6**. Current utilities and the exporter read v1–v6. A collector
+image's adapter-only or advertisement save can therefore remain v5. V1 has no
+rejected-declaration field; v1/v2 have no LED
 fault mask/first source or radio GSPI rate. Those fields remain explicitly
 unavailable instead of being reconstructed from current firmware. JSON reports
 the actual input schema. V3 adds seven metadata bytes: fault mask `u16`, first
@@ -392,10 +453,10 @@ complete compiler-input closure, and firmware never asserts that it passed a
 post-link check. Keep the build receipt for later correlation.
 
 Utility manifest schema 2 also binds `tool` to the ELF `.probe_tool` discriminator:
-0 `ble-probe`, 1 `ngm-identity`. Capture schema 5, utility manifest schema 2 and
-unchanged journal/USB framing versions are separate contracts. Fresh integrated
+0 `ble-probe`, 1 `ngm-identity`, 2 `ngm-collector`. Capture schemas 5/6, utility
+manifest schema 2 and unchanged journal/USB framing versions are separate contracts. Fresh integrated
 image receipts and source-provenance checks remain required; previous probe
-receipts do not admit the new shared-source binaries or identity image.
+receipts do not admit newly changed shared-source binaries or the collector image.
 
 **Export before loading other firmware.** A dashboard or old probe image may use
 the capture region; erase-all destroys it. A linker reservation does not prove

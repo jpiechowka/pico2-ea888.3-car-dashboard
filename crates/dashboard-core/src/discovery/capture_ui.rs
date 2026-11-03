@@ -55,12 +55,15 @@ fn readable_slot(
 /// over all-empty, then corrupt. Performs no journal I/O.
 pub fn slot_from_journal(info: &super::capture_store::SlotInfo) -> Slot {
     use super::capture_store::CopyState;
-    let unsupported = info.copies.iter().any(|v| matches!(v, CopyState::UnsupportedSchema(_)));
-    if let Some(selected) = info.selected {
+    let unsupported = info
+        .copies()
+        .iter()
+        .any(|v| matches!(v, CopyState::UnsupportedSchema(_)));
+    if let Some(selected) = info.selected() {
         readable_slot(selected.generation, unsupported)
     } else if unsupported {
         Slot::Unsupported
-    } else if info.copies.iter().all(|v| *v == CopyState::Empty) {
+    } else if info.copies().iter().all(|v| *v == CopyState::Empty) {
         Slot::Empty
     } else {
         Slot::Corrupt

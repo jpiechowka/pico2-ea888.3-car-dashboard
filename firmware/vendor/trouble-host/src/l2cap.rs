@@ -322,6 +322,19 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.metrics(self.index, f)
     }
 
+    /// Dequeues one complete owned SDU through originating `stack`, or returns None if empty.
+    /// Returns InvalidValue for a foreign stack before dequeue, or ChannelClosed for a closed
+    /// channel/marker. This synchronous check grants no credits, submits no signaling and
+    /// registers no waiter; use receive_sdu for waiting/credit replenishment. Drop returned
+    /// packets promptly to release their original pool allocation.
+    pub fn try_receive_sdu<T: Controller>(
+        &mut self,
+        stack: &Stack<'_, T, P>,
+    ) -> Result<Option<Sdu<P::Packet>>, BleHostError<T::Error>> {
+        check_stack(self.manager, stack)?;
+        self.manager.try_receive_sdu(self.index).map_err(Into::into)
+    }
+
     /// Returns a listener for `connection` on originating `stack`, retaining a cloned connection owner.
     /// SPSMs must already be registered on the stack. Panics before changing listener state for a duplicate
     /// listener, foreign stack or exhausted connection reference count. Dropping a listener releases admission.

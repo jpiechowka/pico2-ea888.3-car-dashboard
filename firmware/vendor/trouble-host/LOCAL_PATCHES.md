@@ -36,6 +36,21 @@ above 16. AuthReq::new sets the SC bit. Bond records are bounded RAM state and n
 flash persistence is added here. Secure Connections Just Works is encryption,
 not authenticated MITM protection; physical peer behavior remains unverified.
 
+## Nonblocking complete-SDU inspection (3 November 2026)
+
+`L2capChannel::try_receive_sdu` validates the originating stack and synchronously
+dequeues at most one already complete owned SDU. An empty queue returns `None`;
+closed channels/markers return `ChannelClosed`. It submits no credits or signaling,
+registers no waiter and preserves partial reassembly. The normal awaited receive
+remains the credit-replenishment path. This permits the explicit NGM collector to
+reject queued duplicate or premature input before granting another command.
+
+Polling `receive_sdu` once and dropping its future is not equivalent: an empty
+queue with exhausted credits may begin a credit signal, whose cancellation closes
+the channel. Regressions exercise empty zero-credit checks, exact packet ownership,
+closed markers/slots, and wrong-stack rejection before dequeue. This is a local
+queue observation, not a guarantee that later radio input cannot arrive.
+
 ## Reproducible host tests
 
 Physical serial integration tests are explicitly ignored unless selected with

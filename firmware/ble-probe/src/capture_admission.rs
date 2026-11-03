@@ -44,7 +44,7 @@ pub async fn inspect<S: journal::Storage>(
     let mut selected: Option<journal::StoredCapture> = None;
     let mut unsupported = false;
     let mut malformed = false;
-    for copy in info.copies {
+    for &copy in info.copies() {
         match copy {
             journal::CopyState::UnsupportedSchema(_) => unsupported = true,
             journal::CopyState::Valid(meta) => {
@@ -66,9 +66,9 @@ pub async fn inspect<S: journal::Storage>(
             _ => {}
         }
     }
-    let empty = info.copies == [journal::CopyState::Empty; 2];
+    let empty = info.copies() == &[journal::CopyState::Empty; 2];
     let slot = match selected {
-        Some(meta) if unsupported || malformed || info.selected.is_some_and(|m| m.generation == u64::MAX) => {
+        Some(meta) if unsupported || malformed || info.selected().is_some_and(|m| m.generation == u64::MAX) => {
             ui::Slot::SavedBlocked {
                 generation: meta.generation,
             }

@@ -734,6 +734,121 @@ fn cancelled_chunk_publication_can_flush_exact_evidence_during_cleanup() {
     assert!(matches!(session.outcome(), Some(Outcome::Failed(_))));
 }
 
+/// Final INFO backpressure stays inside its original reply deadline, even with collector policy.
+#[test]
+fn final_info_publication_cannot_consume_the_collection_window() {
+    for collector in [false, true] {
+        let mut session = if collector {
+            Session::new_for_collection()
+        } else {
+            Session::new()
+        };
+        session.start(EPOCH, 0).unwrap();
+        session.event(EPOCH, 0, SessionEvent::Connected).unwrap();
+        session.event(EPOCH, 0, SessionEvent::Discovered).unwrap();
+        let clock = Time::default();
+        let vendor = Vendor::default();
+        let mut link = Link::default();
+        link.received.push_back(info());
+        let drops = link.drops.clone();
+        let mut publication = Publication::default();
+        let updates = RefCell::new(Vec::new());
+        let blocked = async |update| {
+            if matches!(update, Update::Chunk { .. }) {
+                assert_eq!(drops.get(), 1);
+                pending::<()>().await;
+            }
+            updates.borrow_mut().push(update);
+        };
+        {
+            let mut work = pin!(identity_flow::run_connected(
+                &mut session,
+                &clock,
+                &vendor,
+                &mut link,
+                (10, [12, 14, 16, 18]),
+                &mut publication,
+                &blocked,
+            ));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(work.as_mut().poll(&mut cx).is_pending());
+            clock.0.set(2_000);
+            assert_eq!(work.as_mut().poll(&mut cx), Poll::Ready(Err(FailureReason::Timeout)));
+        }
+        assert_eq!(link.sent, [vec![0x1F, 0x11, 0, 0]]);
+        assert!(session.fault().is_some());
+        assert!(session.outcome().is_none());
+        session.begin_link_cleanup(EPOCH, clock.now_ms()).unwrap();
+        assert!(session.deadline_ms().unwrap() <= 7_000);
+        ready(identity_flow::publish_progress(
+            &mut publication,
+            &session,
+            &clock,
+            &async |update| {
+                updates.borrow_mut().push(update);
+            },
+        ));
+        let mut evidence = Evidence::new(0);
+        for update in updates.into_inner() {
+            assert!(evidence.apply(update));
+        }
+        assert_eq!(evidence.raw(), info());
+        assert_eq!(evidence.sdu_count, 1);
+        assert!(!evidence.raw_incomplete());
+    }
+}
+
+/// Late or reversed queue-completion clocks retain evidence but cannot authorize collector handoff.
+#[test]
+fn final_info_publication_rechecks_completion_time_before_returning_success() {
+    for completion_ms in [2_099, 2_100, 99] {
+        let mut session = Session::new_for_collection();
+        session.start(EPOCH, 100).unwrap();
+        session.event(EPOCH, 100, SessionEvent::Connected).unwrap();
+        session.event(EPOCH, 100, SessionEvent::Discovered).unwrap();
+        let clock = Time::default();
+        clock.0.set(100);
+        let mut link = Link::default();
+        link.received.push_back(info());
+        let updates = RefCell::new(Vec::new());
+        let result = ready(identity_flow::run_connected(
+            &mut session,
+            &clock,
+            &Vendor::default(),
+            &mut link,
+            (10, [12, 14, 16, 18]),
+            &mut Publication::default(),
+            &async |update| {
+                if matches!(update, Update::Chunk { .. }) {
+                    clock.0.set(completion_ms);
+                }
+                updates.borrow_mut().push(update);
+            },
+        ));
+        assert_eq!(
+            result,
+            if completion_ms == 2_099 {
+                Ok(false)
+            } else {
+                Err(FailureReason::Timeout)
+            }
+        );
+        assert_eq!(
+            updates
+                .borrow()
+                .iter()
+                .filter(|u| matches!(u, Update::Chunk { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(link.sent.len(), 1);
+        assert_eq!(session.fault().is_some(), completion_ms != 2_099);
+        if completion_ms == 99 {
+            assert_eq!(session.fault().unwrap().reason, Reason::TimeReversed);
+        }
+    }
+}
+
 /// Per-read and whole-stage deadlines drop pending I/O and prohibit further sends.
 #[test]
 fn blocked_io_times_out_at_its_fixed_deadline() {
@@ -766,6 +881,143 @@ fn blocked_io_times_out_at_its_fixed_deadline() {
             _ => 2_000,
         });
         assert_eq!(work.as_mut().poll(&mut cx), Poll::Ready(Err(FailureReason::Timeout)));
+    }
+}
+
+/// Timeout/cancellation after handing off bytes preserves unknown completion through capture/export.
+#[test]
+fn interrupted_send_exports_unconfirmed_completion_without_retry() {
+    use dashboard_core::discovery::capture::{self, BuildIdentity, BuildProfile};
+    use dashboard_core::discovery::{Advertisement, Input, Peer, Probe, RadioPhase, ReportKind};
+    use dashboard_host_validation::probe_captures::decode_json;
+
+    for timeout in [false, true] {
+        let mut session = admitted();
+        let clock = Time::default();
+        let vendor = Vendor::default();
+        let mut link = Link {
+            blocked: 2,
+            ..Default::default()
+        };
+        let mut publication = Publication::default();
+        let updates = RefCell::new(Vec::new());
+        let emit = async |update| {
+            updates.borrow_mut().push(update);
+        };
+        {
+            let mut work = pin!(identity_flow::run_connected(
+                &mut session,
+                &clock,
+                &vendor,
+                &mut link,
+                (10, [12, 14, 16, 18]),
+                &mut publication,
+                &emit,
+            ));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(work.as_mut().poll(&mut cx).is_pending());
+            if timeout {
+                clock.0.set(2_000);
+                assert_eq!(work.as_mut().poll(&mut cx), Poll::Ready(Err(FailureReason::Timeout)));
+            }
+        }
+        // The synthetic transport recorded every byte before its completion suspended.
+        assert_eq!(link.sent, [vec![0x1F, 0x11, 0, 0]]);
+        if !timeout {
+            clock.0.set(1);
+            session.event(EPOCH, clock.now_ms(), SessionEvent::Cancel).unwrap();
+        }
+        ready(identity_flow::publish_progress(
+            &mut publication,
+            &session,
+            &clock,
+            &emit,
+        ));
+        ready(identity_flow::publish_progress(
+            &mut publication,
+            &session,
+            &clock,
+            &emit,
+        ));
+        assert_eq!(session.fault().unwrap().stage, Stage::SendingInfo);
+        assert!(session.take_request(EPOCH, clock.now_ms()).is_err());
+        assert_eq!(link.sent.len(), 1);
+        assert!(
+            !updates
+                .borrow()
+                .iter()
+                .any(|u| matches!(u, Update::RequestSubmitted { .. }))
+        );
+
+        let mut probe = Probe::new();
+        probe.identity_mode = true;
+        probe.catalog.observe(Advertisement::new(
+            Peer {
+                address: [1, 2, 3, 4, 5, 6],
+                random: false,
+            },
+            ReportKind::Connectable,
+            -50,
+            b"\x06\x09Label",
+            0,
+        ));
+        probe.input(Input::Click, 0).unwrap();
+        probe.phase = RadioPhase::Paused;
+        probe
+            .inspection
+            .accept(InspectionItem::Identity(Update::Start { at_ms: 0 }));
+        probe.inspection.accept(InspectionItem::Service(Service {
+            start: 10,
+            end: 30,
+            uuid: uuid(0xFFF1),
+        }));
+        for (index, value) in [0x0081, 0x0082, 0xFFF2, 0xFFF3].into_iter().enumerate() {
+            probe.inspection.accept(InspectionItem::Characteristic(Characteristic {
+                service_start: 10,
+                declaration: 11 + index as u16 * 2,
+                handle: 12 + index as u16 * 2,
+                properties: 2,
+                uuid: uuid(value),
+            }));
+        }
+        probe.inspection.stages = [true; 4];
+        for update in updates.into_inner() {
+            probe.inspection.accept(InspectionItem::Identity(update));
+        }
+        assert_eq!(probe.inspection.malformed, 0);
+        assert!(
+            probe
+                .inspection
+                .identity
+                .as_ref()
+                .unwrap()
+                .request_submitted_at_ms
+                .is_none()
+        );
+        let mut bytes = vec![0; 8192];
+        let length = capture::encode(
+            &probe,
+            BuildIdentity {
+                source_digest: [0x55; 32],
+                cpu_hz: 150_000_000,
+                spi_hz: 37_500_000,
+                profile: BuildProfile::Stock,
+                source_identity_available: true,
+            },
+            clock.now_ms(),
+            &mut bytes,
+        )
+        .unwrap();
+        let value = decode_json(&bytes[..length]).unwrap();
+        assert_eq!(value["schema"], 5);
+        let request = &value["ngm_identity"]["request"];
+        assert_eq!(request["submitted"], false, "legacy field records completion only");
+        assert!(request["submitted_at_boot_ms"].is_null());
+        assert_eq!(request["local_completion_confirmed"], false);
+        assert_eq!(
+            request["outcome"], "unconfirmed",
+            "recorded bytes must never be called unsent"
+        );
     }
 }
 

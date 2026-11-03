@@ -10,7 +10,7 @@ import shutil
 import sys
 import tomllib
 
-from ble_probe_image import GATE, check, check_sources, sha, source_hashes, source_digest
+from ble_probe_image import GATE, TOOLS, check, check_sources, sha, source_hashes, source_digest
 from validation import require
 from script_values import integer_value, object_fields, string_value
 
@@ -24,7 +24,7 @@ BIN_RUSTC_FLAGS = ["-C", "llvm-args=--inline-threshold=100000"]
 
 def build_command(profile: str, tool: str = "ble-probe") -> list[str]:
     require(profile in ("stock", "280-70"), "unknown profile")
-    require(tool in ("ble-probe", "ngm-identity"), "unknown utility")
+    require(tool in TOOLS, "unknown utility")
     args = [
         "cargo",
         "rustc",
@@ -37,7 +37,7 @@ def build_command(profile: str, tool: str = "ble-probe") -> list[str]:
         "--target",
         TARGET,
     ]
-    features = ["ngm-identity"] if tool == "ngm-identity" else []
+    features = [] if tool == "ble-probe" else [tool]
     if profile == "280-70":
         features.append("cpu280-spi70-1v30")
     if features:
@@ -96,7 +96,7 @@ def build(name: str, profile: str, expert: bool, tool: str = "ble-probe") -> Non
         re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name) is not None, "invalid attempt name"
     )
     require(profile in ("stock", "280-70"), "unknown profile")
-    require(tool in ("ble-probe", "ngm-identity"), "unknown utility")
+    require(tool in TOOLS, "unknown utility")
     require(profile == "stock" or expert, "280-70 requires explicit Expert")
     attempt = REPO / "firmware/target/ble-probe-captures" / name
     attempt.mkdir(parents=True, exist_ok=False)
@@ -225,7 +225,7 @@ def main() -> None:
     parser.add_argument("name")
     parser.add_argument("--profile", choices=("stock", "280-70"), default="stock")
     parser.add_argument("--expert", action="store_true")
-    parser.add_argument("--tool", choices=("ble-probe", "ngm-identity"), default="ble-probe")
+    parser.add_argument("--tool", choices=TOOLS, default="ble-probe")
     args = BuildOptions()
     parser.parse_args(namespace=args)
     build(args.name, args.profile, args.expert, args.tool)

@@ -40,6 +40,7 @@ pub enum IsoError {
     /// Reserved inactive-transaction error; current entry points ignore inactive frames.
     Inactive,
 }
+
 /// Receive outcome; FC bytes must be transmitted and acknowledged through `flow_control_sent`.
 #[derive(Debug, PartialEq, Eq)]
 // A response owns its bounded 256-byte storage; no allocator or live receiver
@@ -50,7 +51,7 @@ pub enum RxEvent {
     Ignored,
     /// Accepted consecutive data; more frames are required within the current block.
     Pending,
-    /// Receiver pauses until the caller confirms UART completion of this CTS.
+    /// Receiver pauses until the caller confirms local transport completion of this CTS.
     FlowControl(
         /// Eight CAN data bytes, including PCI and padding.
         [u8; 8],
@@ -65,6 +66,45 @@ pub enum RxEvent {
         /// Reassembled application bytes without padding.
         Payload,
     ),
+}
+
+/// Receive outcome borrowing completed bytes from the receiver instead of moving its256-byte buffer.
+/// A live completion borrow prevents resetting/reusing that receiver; other events carry no payload.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RxEventRef<'a> {
+    /// Receiver idle, different responder or different epoch; no completed bytes are exposed.
+    Ignored,
+    /// Accepted data requires more frames within the current block.
+    Pending,
+    /// Receiver awaits caller-confirmed local CTS completion before accepting consecutive frames.
+    FlowControl(
+        /// Eight CAN data bytes, including PCI and padding.
+        [u8; 8],
+    ),
+    /// Receiver aborted the oversized response; the caller decides whether to transmit overflow FC.
+    Overflow(
+        /// Eight CAN data bytes for overflow FC.
+        [u8; 8],
+    ),
+    /// Receiver is idle; completed bytes remain borrowed until the caller releases this event.
+    Complete(
+        /// One through256 reassembled application bytes, excluding PCI and padding.
+        &'a [u8],
+    ),
+}
+
+/// Small parser result shared by owned and borrowed entry points; never contains a payload copy.
+enum Progress {
+    /// No admitted response data.
+    Ignored,
+    /// More response data is needed.
+    Pending,
+    /// The fixed CTS is required before more consecutive data.
+    FlowControl,
+    /// The oversized first frame aborted reassembly.
+    Overflow,
+    /// The receiver is idle with one complete payload retained internally.
+    Complete,
 }
 /// Single-response reassembly phase; FC completion explicitly gates each block.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,7 +140,7 @@ pub struct IsoTpRx {
     next_sequence: u8,
     /// Frames still permitted by the last completed CTS, zero while awaiting CTS.
     block_remaining: u8,
-    /// Accepted application prefix, discarded on abort and moved out on completion.
+    /// Accepted prefix, discarded on abort/begin; completion is borrowed or moved by the chosen API.
     payload: Payload,
 }
 impl Default for IsoTpRx {
@@ -190,8 +230,10 @@ impl IsoTpRx {
         Ok(())
     }
 
-    /// Called only after the FC bytes have left UART TX, not merely been queued.
-    /// This is UART completion; Longan provides no CAN transmission ACK.
+    /// Called only after the caller's transport confirms complete local FC submission,
+    /// not merely application queueing. UART callers must wait until bytes leave TX;
+    /// other transports must use their corresponding local completion boundary.
+    /// Local completion alone does not prove CAN transmission or peer processing.
     /// `now_ms` is monotonic completion time in milliseconds. Returns success after
     /// opening a four-frame block and renewing its deadline, capped by the total deadline;
     /// timeout, reversal or an unexpected phase aborts and returns the corresponding error.
@@ -220,9 +262,56 @@ impl IsoTpRx {
         epoch: u64,
         now_ms: u64,
     ) -> Result<RxEvent, IsoError> {
+        Ok(match self.advance(frame, epoch, now_ms)? {
+            Progress::Ignored => RxEvent::Ignored,
+            Progress::Pending => RxEvent::Pending,
+            Progress::FlowControl => RxEvent::FlowControl(CTS),
+            Progress::Overflow => RxEvent::Overflow(OVERFLOW),
+            Progress::Complete => RxEvent::Complete(core::mem::take(&mut self.payload)),
+        })
+    }
+
+    /// Processes `frame` for exact caller `epoch` at monotonic `now_ms` milliseconds using the
+    /// same parser, inclusive deadlines and failure effects as [`Self::on_frame`]. Returns a
+    /// small event borrowing complete bytes, or an aborting parse/deadline error. Ignored frames
+    /// never expose a prior completion. Begin/abort clear retained bytes before subsequent use.
+    /// The receiver cannot be mutated while a returned completion is still used:
+    ///
+    /// ```compile_fail
+    /// use dashboard_core::diagnostics::{CanFrame, isotp::{IsoTpRx, RxEventRef}};
+    /// let mut receiver = IsoTpRx::new();
+    /// receiver.begin(0x7E8, 1, 0, 100).unwrap();
+    /// let frame = CanFrame::new(0x7E8, &[1, 42]).unwrap();
+    /// let RxEventRef::Complete(bytes) = receiver.on_frame_ref(&frame, 1, 0).unwrap() else { panic!() };
+    /// receiver.abort();
+    /// assert_eq!(bytes, &[42]);
+    /// ```
+    pub fn on_frame_ref(
+        &mut self,
+        frame: &CanFrame,
+        epoch: u64,
+        now_ms: u64,
+    ) -> Result<RxEventRef<'_>, IsoError> {
+        Ok(match self.advance(frame, epoch, now_ms)? {
+            Progress::Ignored => RxEventRef::Ignored,
+            Progress::Pending => RxEventRef::Pending,
+            Progress::FlowControl => RxEventRef::FlowControl(CTS),
+            Progress::Overflow => RxEventRef::Overflow(OVERFLOW),
+            Progress::Complete => RxEventRef::Complete(&self.payload),
+        })
+    }
+
+    /// Admits `frame` against `epoch`/monotonic `now_ms`, returning shared parser progress.
+    /// Timeout checks precede foreign/idle rejection; parse failures abort retained payload.
+    fn advance(
+        &mut self,
+        frame: &CanFrame,
+        epoch: u64,
+        now_ms: u64,
+    ) -> Result<Progress, IsoError> {
         self.poll_timeout(now_ms)?;
         if !self.active() || frame.id() != self.id || epoch != self.epoch {
-            return Ok(RxEvent::Ignored);
+            return Ok(Progress::Ignored);
         }
         let result = self.receive(frame.data(), now_ms);
         if result.is_err() {
@@ -238,7 +327,7 @@ impl IsoTpRx {
         &mut self,
         bytes: &[u8],
         now_ms: u64,
-    ) -> Result<RxEvent, IsoError> {
+    ) -> Result<Progress, IsoError> {
         let Some(&pci) = bytes.first() else {
             return Err(IsoError::Length);
         };
@@ -269,14 +358,14 @@ impl IsoTpRx {
                 }
                 if self.total > MAX_PAYLOAD {
                     self.abort();
-                    return Ok(RxEvent::Overflow(OVERFLOW));
+                    return Ok(Progress::Overflow);
                 }
                 self.payload
                     .extend_from_slice(&bytes[2..])
                     .map_err(|_| IsoError::Length)?;
                 self.phase = Phase::AwaitFlowControl;
                 self.frame_deadline_ms = now_ms.saturating_add(INTER_FRAME_MS).min(self.deadline_ms);
-                Ok(RxEvent::FlowControl(CTS))
+                Ok(Progress::FlowControl)
             }
             2 => {
                 if self.phase == Phase::AwaitFlowControl {
@@ -302,18 +391,115 @@ impl IsoTpRx {
                     self.complete()
                 } else if self.block_remaining == 0 {
                     self.phase = Phase::AwaitFlowControl;
-                    Ok(RxEvent::FlowControl(CTS))
+                    Ok(Progress::FlowControl)
                 } else {
-                    Ok(RxEvent::Pending)
+                    Ok(Progress::Pending)
                 }
             }
             _ => Err(IsoError::FrameType),
         }
     }
 
-    /// Enters idle and returns Complete with the payload moved out; this helper never returns Err.
-    fn complete(&mut self) -> Result<RxEvent, IsoError> {
+    /// Enters idle and returns Complete with payload retained for the selected public API.
+    /// This helper never returns Err and never moves the payload array.
+    fn complete(&mut self) -> Result<Progress, IsoError> {
         self.phase = Phase::Idle;
-        Ok(RxEvent::Complete(core::mem::take(&mut self.payload)))
+        Ok(Progress::Complete)
+    }
+}
+
+#[cfg(test)]
+/// Borrowed/owned parser parity and retained-buffer lifetime regressions, using synthetic CAN only.
+mod tests {
+    use super::*;
+
+    /// Returns a synthetic fixed-responder frame for `bytes`; invalid test DLC panics.
+    fn frame(bytes: &[u8]) -> CanFrame { CanFrame::new(0x7E8, bytes).unwrap() }
+
+    /// Converts borrowed `event` to an owned test observation for exact legacy API comparison.
+    /// Returns identical tags/bytes; no production collector uses this copying helper.
+    fn owned(event: RxEventRef<'_>) -> RxEvent {
+        match event {
+            RxEventRef::Ignored => RxEvent::Ignored,
+            RxEventRef::Pending => RxEvent::Pending,
+            RxEventRef::FlowControl(bytes) => RxEvent::FlowControl(bytes),
+            RxEventRef::Overflow(bytes) => RxEvent::Overflow(bytes),
+            RxEventRef::Complete(bytes) => RxEvent::Complete(Payload::from_slice(bytes).unwrap()),
+        }
+    }
+
+    /// Every legal application length keeps exact owned events, FC blocks and full256-byte support.
+    #[test]
+    fn borrowed_and_owned_paths_match_all_payload_lengths() {
+        for length in 1..=MAX_PAYLOAD {
+            let expected: Payload = (0..length).map(|n| n as u8).collect();
+            let mut borrowed = IsoTpRx::new();
+            let mut legacy = IsoTpRx::new();
+            borrowed.begin(0x7E8, 1, 0, 5000).unwrap();
+            legacy.begin(0x7E8, 1, 0, 5000).unwrap();
+            let mut first = [0; 8];
+            let mut consumed = if length <= 7 {
+                first[0] = length as u8;
+                first[1..=length].copy_from_slice(&expected);
+                length
+            } else {
+                first[..2].copy_from_slice(&[0x10 | (length >> 8) as u8, length as u8]);
+                first[2..].copy_from_slice(&expected[..6]);
+                6
+            };
+            let first = frame(&first);
+            let mut event = owned(borrowed.on_frame_ref(&first, 1, 0).unwrap());
+            assert_eq!(event, legacy.on_frame(&first, 1, 0).unwrap());
+            let mut sequence = 1u8;
+            while consumed < length {
+                if matches!(event, RxEvent::FlowControl(_)) {
+                    borrowed.flow_control_sent(0).unwrap();
+                    legacy.flow_control_sent(0).unwrap();
+                }
+                let count = (length - consumed).min(7);
+                let mut next = [0; 8];
+                next[0] = 0x20 | sequence;
+                next[1..=count].copy_from_slice(&expected[consumed..consumed + count]);
+                let next = frame(&next);
+                event = owned(borrowed.on_frame_ref(&next, 1, 0).unwrap());
+                assert_eq!(event, legacy.on_frame(&next, 1, 0).unwrap());
+                consumed += count;
+                sequence = (sequence + 1) & 15;
+            }
+            assert_eq!(event, RxEvent::Complete(expected));
+            assert!(!borrowed.active() && !legacy.active());
+            assert_eq!(borrowed.on_frame_ref(&frame(&[1, 99]), 1, 0), Ok(RxEventRef::Ignored));
+        }
+    }
+
+    /// Foreign data, overflow and timeout never expose retained completion; restart clears old bytes.
+    #[test]
+    fn borrowed_rejection_abort_and_restart_never_republish_old_completion() {
+        let mut rx = IsoTpRx::new();
+        rx.begin(0x7E8, 1, 10, 20).unwrap();
+        assert_eq!(rx.on_frame_ref(&frame(&[1, 9]), 2, 11), Ok(RxEventRef::Ignored));
+        let foreign = CanFrame::new(0x7E9, &[1, 9]).unwrap();
+        assert_eq!(rx.on_frame_ref(&foreign, 1, 12), Ok(RxEventRef::Ignored));
+        assert_eq!(
+            rx.on_frame_ref(&frame(&[2, 8, 9]), 1, 20),
+            Ok(RxEventRef::Complete(&[8, 9]))
+        );
+        rx.abort();
+        assert!(rx.payload.is_empty());
+        assert_eq!(rx.on_frame_ref(&frame(&[1, 7]), 1, 21), Ok(RxEventRef::Ignored));
+        rx.begin(0x7E8, 2, 30, 40).unwrap();
+        assert_eq!(rx.on_frame_ref(&frame(&[1, 7]), 2, 41), Err(IsoError::Timeout));
+        assert!(rx.payload.is_empty());
+        rx.begin(0x7E8, 3, 50, 60).unwrap();
+        assert_eq!(
+            rx.on_frame_ref(&frame(&[0x11, 1, 0, 0, 0, 0, 0, 0]), 3, 50),
+            Ok(RxEventRef::Overflow(OVERFLOW))
+        );
+        assert!(rx.payload.is_empty());
+        rx.begin(0x7E8, 4, 70, 80).unwrap();
+        assert_eq!(rx.on_frame_ref(&frame(&[1, 6]), 4, 70), Ok(RxEventRef::Complete(&[6])));
+        rx.begin(0x7E8, 5, 90, 100).unwrap();
+        assert!(rx.payload.is_empty());
+        assert_eq!(rx.on_frame_ref(&frame(&[1, 5]), 5, 90), Ok(RxEventRef::Complete(&[5])));
     }
 }

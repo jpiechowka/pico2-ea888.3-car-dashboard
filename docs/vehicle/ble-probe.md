@@ -11,8 +11,11 @@ This guide's connection/read policy describes the **`ble-probe` binary**. The sa
 package also has a separate [NGM INFO-only image](ngm-identity.md), with distinct
 entrypoint, title, USB product and linked tool marker. Enabling its Cargo feature
 does not change the ordinary probe's standard-read allowlist or send INFO. Both
-share controls, capture storage/export and diagnostics; default firmware builds
-still select the dashboard.
+share controls, capture storage/export and diagnostics. A third
+[NGM collector image](ngm-collector.md) retains adapter-only Inspect and separately
+confirms a fixed ECU read manifest; its active CAN policy does not apply to this
+standard image. Feature unification cannot change the linked tool policy.
+Default firmware builds still select the dashboard.
 
 The [2 November full audit](../validation/full-firmware-audit-2026-11-02.md)
 records the shared scan/connection/HCI fixes, memory checks and offline validation.
@@ -225,7 +228,7 @@ and [pending physical checks](../validation/pico2-dnuc-runbook.md#standalone-pro
 ### Device names
 
 The scanner retains a nonempty observed name when a later packet omits it.
-Complete packet names take priority; otherwise a complete cached name precedes
+Complete packet names take priority; otherwise a complete, untruncated cached name precedes
 shortened packet names. Empty shortened fields cannot hide a usable name. After
 explicit selected-peer Inspect, a successful, nonempty, non-truncated GAP Device
 Name read can label that exact address/type when no complete packet name exists.

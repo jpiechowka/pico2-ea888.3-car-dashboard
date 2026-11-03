@@ -146,6 +146,11 @@ pub enum InventoryStage {
 /// Owned event payload admitted to the current inspection by its outer request generation.
 #[derive(Clone, Copy, Debug)]
 pub enum InspectionItem {
+    /// Small update to separately confirmed raw engine collection; never a standard GATT read.
+    Collection(
+        /// Outer model fences generation; collection admission checks ordering and raw bounds.
+        super::collection::Update,
+    ),
     /// Small update to a separately requested identity trial, never a standard read.
     Identity(
         /// Revision fencing occurs in the outer model; relationships are checked here.
@@ -265,6 +270,8 @@ pub fn descriptor_range(
 
 /// Bounded, partial inventory retained even when enumeration fails or is cancelled.
 pub struct Inspection {
+    /// Explicit raw engine collection, absent for standard and identity-only inspections.
+    pub collection: super::collection::Storage,
     /// Explicit identity-trial evidence, absent for ordinary standard-only inspections.
     pub identity: Option<super::identity::Evidence>,
     /// Admitted, nonoverlapping primary services; at most 24.
@@ -302,6 +309,7 @@ impl Inspection {
     /// Returns empty incomplete inventory; all stage/cleanup flags and counters start clear.
     pub const fn new() -> Self {
         Self {
+            collection: super::collection::Storage::new(),
             identity: None,
             services: Vec::new(),
             characteristics: Vec::new(),
@@ -319,6 +327,28 @@ impl Inspection {
         }
     }
 
+    /// Clears inventory, optional evidence, timing, counters and completion flags in place.
+    /// Runtime navigation uses this instead of constructing a whole replacement inspection;
+    /// it performs no I/O and does not acknowledge cleanup of an active connection.
+    #[inline(never)]
+    pub fn clear(&mut self) {
+        self.collection.clear();
+        self.identity = None;
+        self.services.clear();
+        self.characteristics.clear();
+        self.descriptors.clear();
+        self.values.clear();
+        self.link = None;
+        self.started_at_ms = None;
+        self.ended_at_ms = None;
+        self.disconnect_reason = None;
+        self.cleanup_complete = false;
+        self.stages = [false; 4];
+        self.omitted = 0;
+        self.malformed = 0;
+        self.complete = false;
+    }
+
     /// Applies `item` to `self`, returning unit. Validates UUID widths, handle ownership,
     /// range overlap, read allowlisting and read-result/failure consistency before insertion.
     /// Rejected structure increments `malformed`; full vectors increment `omitted`;
@@ -330,25 +360,48 @@ impl Inspection {
         &mut self,
         item: InspectionItem,
     ) {
+        self.accept_ref(&item);
+    }
+
+    /// Admits borrowed `item` under [`Self::accept`]'s unchanged validation and counters.
+    /// Copies accepted evidence into resident storage; no reference survives this call.
+    /// The outer model still owns generation admission and completion publication.
+    #[inline(always)]
+    pub fn accept_ref(
+        &mut self,
+        item: &InspectionItem,
+    ) {
         let accepted = match item {
+            InspectionItem::Collection(update) => {
+                if let super::collection::Update::Start { at_ms } = update {
+                    if self.collection.is_some() || self.started_at_ms.is_none_or(|start| *at_ms < start) {
+                        self.malformed = self.malformed.saturating_add(1);
+                    } else {
+                        let _ = self.collection.start(*at_ms);
+                    }
+                } else if self.collection.as_mut().is_none_or(|e| !e.apply(*update)) {
+                    self.malformed = self.malformed.saturating_add(1);
+                }
+                return;
+            }
             InspectionItem::Identity(update) => {
                 if let super::identity::Update::Start { at_ms } = update {
-                    if self.identity.is_some() || self.started_at_ms.is_none_or(|start| at_ms < start) {
+                    if self.identity.is_some() || self.started_at_ms.is_none_or(|start| *at_ms < start) {
                         self.malformed = self.malformed.saturating_add(1);
                     } else {
                         // Initialize the final optional evidence slot.
-                        let _ = self.identity.insert(super::identity::Evidence::new(at_ms));
+                        let _ = self.identity.insert(super::identity::Evidence::new(*at_ms));
                     }
                     return;
                 }
-                let relationship = match &update {
+                let relationship = match update {
                     super::identity::Update::Vendor(value) => {
                         self.stages.iter().all(|&done| done)
                             && super::identity::vendor_relationship(value, &self.services, &self.characteristics)
                     }
                     _ => true,
                 };
-                if !relationship || self.identity.as_mut().is_none_or(|e| !e.apply(update)) {
+                if !relationship || self.identity.as_mut().is_none_or(|e| !e.apply_ref(update)) {
                     self.malformed = self.malformed.saturating_add(1);
                 }
                 return;
@@ -365,7 +418,7 @@ impl Inspection {
                     self.malformed = self.malformed.saturating_add(1);
                     return;
                 }
-                self.services.push(service).is_ok()
+                self.services.push(*service).is_ok()
             }
             InspectionItem::Characteristic(characteristic) => {
                 let valid = self.services.iter().any(|service| {
@@ -389,7 +442,7 @@ impl Inspection {
                     self.malformed = self.malformed.saturating_add(1);
                     return;
                 }
-                self.characteristics.push(characteristic).is_ok()
+                self.characteristics.push(*characteristic).is_ok()
             }
             InspectionItem::Value(value) => {
                 let valid = self.characteristics.iter().any(|c| {
@@ -413,10 +466,10 @@ impl Inspection {
                     .iter_mut()
                     .find(|v| v.handle == value.handle && v.service_start == value.service_start)
                 {
-                    *previous = value;
+                    *previous = *value;
                     true
                 } else {
-                    self.values.push(value).is_ok()
+                    self.values.push(*value).is_ok()
                 }
             }
             InspectionItem::Descriptor(descriptor) => {
@@ -439,14 +492,14 @@ impl Inspection {
                     self.malformed = self.malformed.saturating_add(1);
                     return;
                 }
-                self.descriptors.push(descriptor).is_ok()
+                self.descriptors.push(*descriptor).is_ok()
             }
             InspectionItem::Link(link) => {
-                self.link = Some(link);
+                self.link = Some(*link);
                 true
             }
             InspectionItem::StageComplete(stage) => {
-                self.stages[stage as usize] = true;
+                self.stages[*stage as usize] = true;
                 true
             }
         };

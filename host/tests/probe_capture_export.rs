@@ -445,6 +445,31 @@ fn port_selection_requires_known_product_or_explicit_matching_usb_candidate() {
     assert!(select_port(&[wrong], Some("COM4")).is_err());
 }
 
+/// Collector USB naming is accepted exactly, including only the matching Windows COM suffix.
+#[test]
+fn collector_product_is_automatically_selected_without_accepting_lookalikes() {
+    for name in ["Pico NGM Collector Captures", "Pico NGM Collector Captures (COM7)"] {
+        assert_eq!(select_port(&[port("COM7", Some(name))], None).unwrap(), "COM7");
+    }
+    for name in [
+        "Pico NGM Collector Captures (COM8)",
+        "Pico NGM Collector Captures extra",
+        "Pico NGM Collector",
+    ] {
+        assert!(select_port(&[port("COM7", Some(name))], None).is_err());
+    }
+    assert!(
+        select_port(
+            &[
+                port("COM7", Some("Pico NGM Collector Captures")),
+                port("COM8", Some(USB_PRODUCT))
+            ],
+            None
+        )
+        .is_err()
+    );
+}
+
 /// Publication validates first, creates binary/JSON/text plus COMPLETE once and never overwrites an existing export.
 #[test]
 fn publication_is_validated_unique_complete_and_never_overwrites() {

@@ -444,7 +444,7 @@ fn legacy_versions_clear_identity_and_unknown_versions_stay_protected() {
         assert!(view.metadata().identity.is_none());
     }
     let mut unknown = bytes.clone();
-    unknown[8..10].copy_from_slice(&6u16.to_le_bytes());
+    unknown[8..10].copy_from_slice(&7u16.to_le_bytes());
     let crc = capture_store::crc32(&unknown[..20]);
     unknown[20..24].copy_from_slice(&crc.to_le_bytes());
     assert_eq!(

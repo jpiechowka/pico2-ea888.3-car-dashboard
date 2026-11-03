@@ -11,6 +11,8 @@ pub mod capture_ui;
 pub mod capture_wire;
 /// Stable peer catalogue with per-packet observation provenance.
 mod catalog;
+/// Bounded explicit raw engine read collection; separate from identity and standard GATT.
+pub mod collection;
 /// Bounded operation failure and rejected declaration evidence.
 mod failure;
 /// Shared fault-bit assignments and LED priority classification.

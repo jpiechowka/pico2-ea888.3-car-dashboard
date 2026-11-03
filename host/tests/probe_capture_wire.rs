@@ -66,6 +66,9 @@ fn frame_matches_independent_struct_zlib_fixture_and_enforces_semantics_after_cr
     ];
     let h = FrameHeader::decode(&fixture).unwrap();
     assert_eq!(h.encode().unwrap(), fixture);
+    let mut destination = [0xA5; HEADER_BYTES];
+    h.encode_into(&mut destination).unwrap();
+    assert_eq!(destination, fixture);
     assert_eq!(h.validate_payload(b"abc"), Ok(()));
     for (at, value) in [(8, 2), (9, 255), (10, 5), (11, 255), (12, 0), (20, 0), (22, 1)] {
         let mut b = fixture;
@@ -76,6 +79,65 @@ fn frame_matches_independent_struct_zlib_fixture_and_enforces_semantics_after_cr
     }
     assert!(FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, &vec![0; 8193]).is_err());
     assert!(FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, &vec![0; 8192]).is_ok());
+}
+
+/// In-place encoding overwrites reused storage, including reserved bytes, at maximum length/generation.
+#[test]
+fn in_place_header_matches_frozen_maximum_capture_and_reuses_destination() {
+    // Independent Python struct.pack("<8sBBBBQH2xI", ...) and zlib.crc32.
+    let fixture = [
+        66, 76, 69, 67, 85, 83, 66, 49, 1, 0, 4, 1, 255, 255, 255, 255, 255, 255, 255, 255, 0, 32, 0, 0, 232, 195, 85,
+        178, 15, 137, 141, 223,
+    ];
+    let payload = vec![0xA5; capture_store::PAYLOAD_MAX];
+    let header = FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(3), u64::MAX, &payload).unwrap();
+    let mut destination = [0xFF; HEADER_BYTES];
+    header.encode_into(&mut destination).unwrap();
+    assert_eq!(destination, fixture);
+    assert_eq!(header.encode().unwrap(), fixture);
+    assert_eq!(FrameHeader::decode(&destination), Ok(header));
+    header.validate_payload(&payload).unwrap();
+    let end = FrameHeader::new(FrameKind::End, FrameStatus::Ok, None, 0, &[]).unwrap();
+    end.encode_into(&mut destination).unwrap();
+    assert_eq!(destination, end.encode().unwrap());
+    assert_eq!(FrameHeader::decode(&destination), Ok(end));
+}
+
+/// Every rejected header leaves all caller-owned bytes intact, even after prior successful encoding.
+#[test]
+fn invalid_in_place_headers_preserve_destination() {
+    let valid = FrameHeader::new(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, b"a").unwrap();
+    let invalid = [
+        FrameHeader { slot: Some(4), ..valid },
+        FrameHeader { slot: None, ..valid },
+        FrameHeader { generation: 0, ..valid },
+        FrameHeader { length: 8193, ..valid },
+        FrameHeader { length: 0, ..valid },
+        FrameHeader {
+            status: FrameStatus::Empty,
+            ..valid
+        },
+        FrameHeader {
+            kind: FrameKind::End,
+            ..valid
+        },
+        FrameHeader {
+            kind: FrameKind::ListEntry,
+            ..valid
+        },
+        FrameHeader {
+            kind: FrameKind::Error,
+            ..valid
+        },
+    ];
+    for original in [[0xA5; HEADER_BYTES], valid.encode().unwrap()] {
+        let mut destination = original;
+        for header in invalid {
+            assert_eq!(header.encode_into(&mut destination), Err(WireError::InvalidHeader));
+            assert_eq!(destination, original);
+            assert_eq!(header.encode(), Err(WireError::InvalidHeader));
+        }
+    }
 }
 
 /// List/error/End combinations retain distinct slot/generation/payload semantics, including empty/oversized length

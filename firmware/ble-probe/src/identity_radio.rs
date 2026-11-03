@@ -1,4 +1,5 @@
-//! Identity-image-only adapter wiring. One explicit peer, one INFO SDU, normal link cleanup.
+//! Explicit identity/collector adapter wiring. One peer and INFO SDU, optional confirmed reads,
+//! and actual link cleanup; ordinary Inspect remains INFO-only in every image.
 
 use core::cell::{Cell, RefCell};
 use core::pin::pin;
@@ -44,6 +45,18 @@ struct Attempt<'a> {
     epoch: Epoch,
     /// Reliable publication offsets surviving cancellation.
     publication: &'a mut Publication,
+    /// Explicit collector owners retained outside every cancelable connection future.
+    #[cfg(feature = "ngm-collector")]
+    collection: Option<&'a mut CollectorAttempt>,
+}
+
+/// Collector-only protocol and publication owners; neither is copied into a child future.
+#[cfg(feature = "ngm-collector")]
+struct CollectorAttempt {
+    /// Sole finite command authority and bounded raw receive storage.
+    session: dashboard_core::ble::canyonero::collection::Session,
+    /// Queue offsets and observations surviving cancellation until actual cleanup.
+    publication: crate::collection_flow::Publication,
 }
 
 impl Clock for Monotonic {
@@ -81,6 +94,9 @@ struct Channel<'a, 's, 'c> {
     connection: &'a Connection<'c, Pool>,
     /// Sole channel owner, absent before successful open or after explicit drop.
     channel: Option<L2capChannel<'a, Pool>>,
+    /// Live bridge generation checked immediately before each collector write.
+    #[cfg(feature = "ngm-collector")]
+    revision: u32,
 }
 
 impl Drop for Channel<'_, '_, '_> {
@@ -116,6 +132,10 @@ impl Transport for Channel<'_, '_, '_> {
 
     /// Opens only configured candidate129; returns local/peer limits and unavailable CIDs/credits.
     async fn open(&mut self) -> Result<ChannelParameters, TransportFault> {
+        #[cfg(feature = "ngm-collector")]
+        if bridge::collection_cancelled(self.revision) {
+            return Err(flow::transport_fault(FailureReason::InvalidState, false));
+        }
         if self.channel.is_some() {
             return Err(flow::transport_fault(FailureReason::InvalidState, false));
         }
@@ -144,6 +164,10 @@ impl Transport for Channel<'_, '_, '_> {
         &mut self,
         request: InfoRequest,
     ) -> Result<(), TransportFault> {
+        #[cfg(feature = "ngm-collector")]
+        if bridge::collection_cancelled(self.revision) {
+            return Err(flow::transport_fault(FailureReason::InvalidState, false));
+        }
         let channel = self
             .channel
             .as_mut()
@@ -167,6 +191,71 @@ impl Transport for Channel<'_, '_, '_> {
     }
 }
 
+#[cfg(feature = "ngm-collector")]
+impl crate::collection_flow::Transport for Channel<'_, '_, '_> {
+    /// Same pool-owned complete SDU as INFO, on the already open channel.
+    type Sdu = Sdu<<Pool as trouble_host::PacketPool>::Packet>;
+
+    /// Checks the existing channel's complete-packet queue without credits, signaling or awaits.
+    /// Rejects missing/closed owners; caller drops any returned packet before publication.
+    fn try_receive(&mut self) -> Result<Option<Self::Sdu>, dashboard_core::ble::canyonero::collection::Error> {
+        use dashboard_core::ble::canyonero::collection::Error;
+        self.channel
+            .as_mut()
+            .ok_or(Error::State)?
+            .try_receive_sdu(self.stack)
+            .map_err(|_| Error::Cancelled)
+    }
+
+    /// Validates affine `request` against live `session`, bridge generation and `clock`
+    /// immediately before submission. Local completion is recorded before returning even
+    /// when late; cancellation retains possible partial effects and never retries bytes.
+    async fn send(
+        &mut self,
+        request: dashboard_core::ble::canyonero::collection::Request,
+        session: &mut dashboard_core::ble::canyonero::collection::Session,
+        clock: &impl Clock,
+    ) -> Result<(), dashboard_core::ble::canyonero::collection::Error> {
+        use dashboard_core::ble::canyonero::collection::Error;
+        if bridge::request().revision != self.revision {
+            return Err(Error::Stale);
+        }
+        if bridge::collection_cancelled(self.revision) {
+            return Err(Error::Cancelled);
+        }
+        session.validate(request.token(), clock.now_ms())?;
+        let channel = self.channel.as_mut().ok_or(Error::State)?;
+        session.mark_attempt(request.token(), clock.now_ms())?;
+        channel
+            .send(self.stack, request.bytes())
+            .await
+            .map_err(|_| Error::Cancelled)?;
+        session.sent(request.token(), clock.now_ms())
+    }
+
+    /// Receives one packet on the same INFO channel; flow drops it before publication.
+    /// Returns the owned SDU, or Cancelled for channel/transport failure without proving its cause.
+    async fn receive(&mut self) -> Result<Self::Sdu, dashboard_core::ble::canyonero::collection::Error> {
+        Transport::receive(self)
+            .await
+            .map_err(|_| dashboard_core::ble::canyonero::collection::Error::Cancelled)
+    }
+}
+
+/// Publishes one bounded collector `update` under the originating bridge `revision`.
+/// Returns a lazy future completing on queue acceptance, not core1 application; cancellation
+/// leaves an unqueued update with the caller's resumable publication owner.
+#[cfg(feature = "ngm-collector")]
+fn emit_collection(
+    revision: u32,
+    update: dashboard_core::discovery::collection::Update,
+) -> impl core::future::Future<Output = ()> {
+    bridge::emit_event(Event::Item {
+        revision,
+        item: InspectionItem::Collection(update),
+    })
+}
+
 /// Returns the lazy queue send for identity `update` under selected `revision`.
 /// No publication occurs before polling. Callers bound active-operation waits
 /// and retain final cleanup publication until queue acceptance.
@@ -184,8 +273,8 @@ fn emit(
 /// through cleanup and terminal publication. Session begins before connect; active I/O
 /// races generation cancellation and uses fixed stage deadlines. Terminal evidence
 /// publication is reliable and may wait for queue capacity after the cleanup deadline.
-/// No retry, alternate PSM,
-/// pairing, voltage, RPC or automotive command is available on this route.
+/// Inspect remains INFO-only. Only the collector image and explicit Collect action admit
+/// the separately bounded collection on this same channel after valid, unlimited INFO.
 pub async fn inspect_peer(
     stack: &RadioStack<'_>,
     central: &mut Central<'_, RadioController, Pool>,
@@ -199,9 +288,26 @@ pub async fn inspect_peer(
         operation: u64::from(request.revision),
         maintenance: 0,
     };
+    #[cfg(feature = "ngm-collector")]
+    let collect = crate::tool_kind() == crate::ToolKind::NgmCollector
+        && matches!(request.action, dashboard_core::discovery::Action::Collect(selected) if selected == peer);
+    #[cfg(feature = "ngm-collector")]
+    let mut session = if collect {
+        Session::new_for_collection()
+    } else {
+        Session::new()
+    };
+    #[cfg(not(feature = "ngm-collector"))]
     let mut session = Session::new();
     let started = clock.now_ms();
     let mut publication = Publication::new(started);
+    #[cfg(feature = "ngm-collector")]
+    let mut collection = collect.then(|| {
+        CollectorAttempt {
+            session: dashboard_core::ble::canyonero::collection::Session::new(),
+            publication: crate::collection_flow::Publication::new(started),
+        }
+    });
     if session.start(epoch, started).is_err() {
         radio::failed(
             request.revision,
@@ -214,21 +320,20 @@ pub async fn inspect_peer(
     let config = radio::selected_config(&peers);
     let connect_started = Instant::now();
     let result = {
-        let connect = async {
+        let connect = pin!(async {
             radio::state(request.revision, RadioPhase::Connecting, ProbeError::None).await;
             central.connect(&config).await
-        };
-        select(
-            radio::changed(request.revision),
-            flow::connect(
-                &clock,
-                session.deadline_ms().unwrap(),
-                &mut publication,
-                &|update| emit(request.revision, update),
-                pin!(connect),
-            ),
-        )
-        .await
+        });
+        let publish = |update| emit(request.revision, update);
+        let started = pin!(flow::connect(
+            &clock,
+            session.deadline_ms().unwrap(),
+            &mut publication,
+            &publish,
+            connect,
+        ));
+        // Both operation owners end here before interpreting cancellation or cleanup.
+        select(radio::interrupted(request.revision), started).await
     };
     let connection = match result {
         Either::First(()) => {
@@ -243,7 +348,10 @@ pub async fn inspect_peer(
                     let _ = flow::before(
                         &clock,
                         session.deadline_ms().unwrap_or(clock.now_ms()),
-                        radio::failed(request.revision, InspectionFailure::new(FailureStage::Connect, reason)),
+                        pin!(radio::failed(
+                            request.revision,
+                            InspectionFailure::new(FailureStage::Connect, reason)
+                        )),
                     )
                     .await;
                     None
@@ -261,10 +369,10 @@ pub async fn inspect_peer(
             let _ = flow::before(
                 &clock,
                 session.deadline_ms().unwrap_or(clock.now_ms()),
-                radio::failed(
+                pin!(radio::failed(
                     request.revision,
                     InspectionFailure::new(FailureStage::Connect, FailureReason::PeerMismatch),
-                ),
+                )),
             )
             .await;
         } else if session.event(epoch, clock.now_ms(), SessionEvent::Connected).is_ok() {
@@ -280,15 +388,18 @@ pub async fn inspect_peer(
                     Attempt {
                         session: &mut session,
                         epoch,
-                        publication: &mut publication
+                        publication: &mut publication,
+                        #[cfg(feature = "ngm-collector")]
+                        collection: collection.as_mut(),
                     }
                 ));
                 // Select borrows the pinned work; cancellation drops it before cleanup.
                 // The outer inspector retains the radio stack-admission boundary.
-                select(radio::changed(request.revision), work).await
+                select(radio::interrupted(request.revision), work).await
             };
             // Stop the live link before any error/evidence publication can wait for capacity.
             connection.disconnect();
+            let _ = session.begin_link_cleanup(epoch, clock.now_ms());
             limited = match result {
                 Either::First(()) => {
                     let _ = session.event(epoch, clock.now_ms(), SessionEvent::Cancel);
@@ -299,7 +410,7 @@ pub async fn inspect_peer(
                     let _ = flow::before(
                         &clock,
                         session.deadline_ms().unwrap_or(clock.now_ms()),
-                        radio::failed(request.revision, failure),
+                        pin!(radio::failed(request.revision, failure)),
                     )
                     .await;
                     false
@@ -310,13 +421,13 @@ pub async fn inspect_peer(
             let _ = flow::before(
                 &clock,
                 session.deadline_ms().unwrap_or(clock.now_ms()),
-                radio::link_info(
+                pin!(radio::link_info(
                     connection,
                     request.revision,
                     connected_at_ms,
                     connect_elapsed_ms,
                     mtu_ready.get(),
-                ),
+                )),
             )
             .await;
         }
@@ -331,6 +442,8 @@ pub async fn inspect_peer(
             session: &mut session,
             epoch,
             publication: &mut publication,
+            #[cfg(feature = "ngm-collector")]
+            collection: collection.as_mut(),
         },
         limited,
     )
@@ -354,6 +467,8 @@ async fn connected_work(
         session,
         epoch,
         publication,
+        #[cfg(feature = "ngm-collector")]
+        mut collection,
     } = attempt;
     let clock = Monotonic;
     let discovery_deadline = session
@@ -368,7 +483,9 @@ async fn connected_work(
         async |client| {
             let client = *client;
             mtu_ready.set(true);
-            let work = async {
+            // Construct directly in its pinned residence; avoid moving the enlarged
+            // inventory/collection future through another temporary stack slot.
+            let work = pin!(async {
                 let endpoints = RefCell::new(FreshEndpoints::default());
                 let observed = |event: Event| {
                     if let Event::Item { item, .. } = &event {
@@ -409,8 +526,10 @@ async fn connected_work(
                     stack,
                     connection,
                     channel: None,
+                    #[cfg(feature = "ngm-collector")]
+                    revision,
                 };
-                flow::run_connected(
+                let limited = flow::run_connected(
                     session,
                     &clock,
                     client,
@@ -420,9 +539,59 @@ async fn connected_work(
                     &|update| emit(revision, update),
                 )
                 .await
-                .map_err(|reason| InspectionFailure::new(FailureStage::Inspection, reason))
-            };
-            match select(pin!(work), pin!(client.task())).await {
+                .map_err(|reason| InspectionFailure::new(FailureStage::Inspection, reason))?;
+                #[cfg(feature = "ngm-collector")]
+                if let Some(collection) = collection.as_deref_mut() {
+                    if limited || session.fault().is_some() || session.decoder().identity().is_none() {
+                        return Err(InspectionFailure::new(
+                            FailureStage::Inspection,
+                            FailureReason::Capacity,
+                        ));
+                    }
+                    let admission = async || {
+                        if bridge::request().revision != revision || bridge::collection_cancelled(revision) {
+                            return false;
+                        }
+                        bridge::COLLECTION_ADMISSION.signal(revision);
+                        loop {
+                            let (observed, admitted) = bridge::COLLECTION_ADMITTED.wait().await;
+                            if observed == revision {
+                                return admitted
+                                    && bridge::request().revision == revision
+                                    && !bridge::collection_cancelled(revision);
+                            }
+                        }
+                    };
+                    crate::collection_flow::run(
+                        &mut collection.session,
+                        epoch,
+                        &clock,
+                        &mut channel,
+                        &mut collection.publication,
+                        &admission,
+                        &|update| emit_collection(revision, update),
+                    )
+                    .await
+                    .map_err(|error| {
+                        InspectionFailure::new(
+                            FailureStage::Inspection,
+                            match error {
+                                dashboard_core::ble::canyonero::collection::Error::Capacity => FailureReason::Capacity,
+                                dashboard_core::ble::canyonero::collection::Error::Timeout => FailureReason::Timeout,
+                                _ => FailureReason::Other,
+                            },
+                        )
+                    })?;
+                    if !collection.publication.successful() {
+                        return Err(InspectionFailure::new(
+                            FailureStage::Inspection,
+                            FailureReason::InvalidValue,
+                        ));
+                    }
+                }
+                Ok(limited)
+            });
+            match select(work, pin!(client.task())).await {
                 Either::First(result) => result,
                 Either::Second(result) => {
                     Err(InspectionFailure::new(
@@ -457,26 +626,33 @@ async fn finish(
         session,
         epoch,
         publication,
+        #[cfg(feature = "ngm-collector")]
+        collection,
     } = attempt;
     let clock = Monotonic;
-    if bridge::request().revision != revision {
+    if bridge::request().revision != revision || bridge::collection_cancelled(revision) {
         let _ = session.event(epoch, clock.now_ms(), SessionEvent::Cancel);
     }
     if let Some(connection) = connection {
         connection.disconnect();
     }
+    let _ = session.begin_link_cleanup(epoch, clock.now_ms());
     let deadline = session.deadline_ms().unwrap_or(clock.now_ms());
-    let complete = flow::before(&clock, deadline, async {
-        radio::state(revision, RadioPhase::Disconnecting, ProbeError::None).await;
-        flow::publish_progress(publication, session, &clock, &|update| emit(revision, update)).await;
-        while !stack.connections_idle() {
-            Timer::after_millis(10).await;
-        }
-    })
+    let complete = flow::before(
+        &clock,
+        deadline,
+        pin!(async {
+            radio::state(revision, RadioPhase::Disconnecting, ProbeError::None).await;
+            flow::publish_progress(publication, session, &clock, &|update| emit(revision, update)).await;
+            while !stack.connections_idle() {
+                Timer::after_millis(10).await;
+            }
+        }),
+    )
     .await
     .is_ok();
     let context = connection.map(radio::connection_context);
-    if bridge::request().revision != revision {
+    if bridge::request().revision != revision || bridge::collection_cancelled(revision) {
         let _ = session.event(epoch, clock.now_ms(), SessionEvent::Cancel);
     }
     let normal = complete
@@ -500,6 +676,20 @@ async fn finish(
     // Original submission timestamps precede cleanup progress. Keep reliable terminal
     // publication ordered even if the timed cleanup flush was canceled midway.
     flow::publish_progress(publication, session, &clock, &|update| emit(revision, update)).await;
+    #[cfg(feature = "ngm-collector")]
+    if let Some(collection) = collection {
+        if !collection.session.finished() {
+            let _ = collection.session.cancel(epoch, clock.now_ms());
+        }
+        crate::collection_flow::finish(
+            &mut collection.publication,
+            &collection.session,
+            &clock,
+            session.cleanup(),
+            &|update| emit_collection(revision, update),
+        )
+        .await;
+    }
     emit(
         revision,
         Update::End {
@@ -522,12 +712,14 @@ async fn finish(
     if !complete {
         radio::fault(ProbeError::Cleanup).await;
     }
-    if session.outcome() == Some(Outcome::Success) {
+    if session.outcome() == Some(Outcome::Success) && !bridge::collection_cancelled(revision) {
         bridge::emit_event(Event::Complete { revision, limited }).await;
         radio::state(
             revision,
             RadioPhase::Paused,
-            if limited {
+            if bridge::collection_cancelled(revision) {
+                ProbeError::Transport
+            } else if limited {
                 ProbeError::Capacity
             } else {
                 ProbeError::None

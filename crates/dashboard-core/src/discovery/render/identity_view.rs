@@ -1,5 +1,5 @@
 //! INFO trial rows shared by live and frozen capture rendering; never performs I/O.
-use super::{EvidenceLines, hex, printable, reason_line};
+use super::{EvidenceLines, hex, reason_line};
 use crate::ble::canyonero::{CleanupOutcome, DecodeError, Reason, Stage, TransportDomain, parse_frame};
 use crate::discovery::ReadResult;
 use crate::discovery::identity::Evidence;
@@ -17,7 +17,7 @@ pub(super) fn details(
     emit.text("NGM INFO / explicit selected-peer trial");
     emit.text("Candidate SPSM 129 / source configured");
     emit.text("Discovered SPSM: unavailable");
-    emit.text("One INFO request; no ECU requests or polling");
+    emit.text("INFO stage: one adapter query, no ECU request");
     let Some(e) = evidence else {
         emit.text("Identity attempt evidence unavailable");
         return;
@@ -139,7 +139,7 @@ fn field(
     match value {
         Some(value) => {
             for chunk in value.as_bytes().chunks(50) {
-                emit.text(&printable::<50>(chunk));
+                emit.printable(chunk);
             }
         }
         None => emit.text("Unavailable (empty field)"),

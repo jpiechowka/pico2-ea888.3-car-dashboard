@@ -622,6 +622,12 @@ jobs:
           - profile: 280-70
             tool: ngm-identity
             features: ngm-identity,cpu280-spi70-1v30
+          - profile: stock
+            tool: ngm-collector
+            features: ngm-collector
+          - profile: 280-70
+            tool: ngm-collector
+            features: ngm-collector,cpu280-spi70-1v30
     defaults:
       run:
         working-directory: firmware
@@ -647,4 +653,10 @@ jobs:
       - name: Check linked layout and conservative stack paths
         # This is explicitly the ELF-only CI stage. CLI captures additionally
         # bind sources/options and check pinned-converter UF2 equality.
-        run: python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/${{ matrix.tool }} --elf-only --result target/${{ matrix.tool }}-layout.json
+        run: python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/${{ matrix.tool }} --elf-only --expected-tool ${{ matrix.tool }} --result target/${{ matrix.tool }}-layout.json
+      - name: Standard binary retains standard policy with collection feature enabled
+        if: matrix.tool == 'ble-probe' && matrix.profile == 'stock'
+        # Features make shared code available; only the selected binary fixes traffic policy.
+        run: |
+          cargo rustc --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features ngm-collector -- -C llvm-args=--inline-threshold=100000
+          python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/ble-probe --elf-only --expected-tool ble-probe --result target/ble-probe-collector-feature-layout.json

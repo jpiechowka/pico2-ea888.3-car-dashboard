@@ -51,41 +51,14 @@ pub struct UiRequest {
     /// Exclusive UI buffer; returned through the response on every ordinary path.
     pub buffer: Option<&'static mut Buffer>,
 }
-/// Read-only USB journal requests; no erase/program operation exists here.
-pub enum UsbRequest {
-    /// Return opaque journal metadata for all four slots.
-    List,
-    /// Load an integrity-checked raw payload into the USB-owned allocation.
-    Get {
-        /// Logical slot index checked by the journal.
-        slot: u8,
-        /// Exclusive destination lease returned on both success and failure.
-        buffer: &'static mut Buffer,
-    },
-}
-/// USB result that releases storage ownership before endpoint transmission.
-pub enum UsbReply {
-    /// Metadata, empty state or independent error for each physical logical slot.
-    Listed(
-        /// Four entries in slot order; payload decoding is not implied.
-        [Result<Option<journal::StoredCapture>, ui::UiError>; 4],
-    ),
-    /// Loaded metadata/result paired with the returned affine byte allocation.
-    Loaded {
-        /// Journal result; success identifies the valid prefix length and CRC.
-        result: Result<journal::StoredCapture, ui::UiError>,
-        /// Original USB destination lease even if the load failed.
-        buffer: &'static mut Buffer,
-    },
-}
+/// Read-only USB queue protocol, shared with native ownership regressions.
+#[path = "usb_storage.rs"]
+mod usb_storage;
+pub use usb_storage::{Directory, USB_REPLY, USB_REQUEST, UsbReply, UsbRequest, list as usb_list};
 /// Capacity-one local UI operation queue.
 pub static UI_REQUEST: Channel<CriticalSectionRawMutex, UiRequest, 1> = Channel::new();
 /// Affine result envelope exchange; storage waits until core1 returns the record.
 pub static UI_REPLY: capture_reply::Mailbox = capture_reply::Mailbox::new();
-/// Capacity-one read-only USB request queue.
-pub static USB_REQUEST: Channel<CriticalSectionRawMutex, UsbRequest, 1> = Channel::new();
-/// USB response queue returning the payload lease before any host wait.
-pub static USB_REPLY: Channel<CriticalSectionRawMutex, UsbReply, 1> = Channel::new();
 /// Single payload allocation exclusively circulated between UI and storage.
 static UI_BYTES: StaticCell<Buffer> = StaticCell::new();
 /// Returns the zeroed UI payload lease once; panics on repeated initialization.
@@ -206,22 +179,22 @@ fn admission_error(e: admission::Error<Error>) -> ui::UiError {
 /// supported old copies remain readable beside unsupported/damaged siblings.
 async fn listing(
     storage: &mut Storage,
-    slots: &mut [Result<Option<journal::StoredCapture>, ui::UiError>; 4],
+    slots: &mut Directory,
 ) {
     for (slot, out) in slots.iter_mut().enumerate() {
         *out = match journal::inspect_slot(storage, slot as u8).await {
             Ok(info) => {
                 // An intact old copy stays readable. Unknown or damaged copies
                 // without one must be explicitly reset locally before save.
-                if let Some(selected) = info.selected {
+                if let Some(selected) = info.selected() {
                     Ok(Some(selected))
                 } else if info
-                    .copies
+                    .copies()
                     .iter()
                     .any(|c| matches!(c, journal::CopyState::UnsupportedSchema(_)))
                 {
                     Err(ui::UiError::Unsupported)
-                } else if info.copies.iter().any(|c| *c != journal::CopyState::Empty) {
+                } else if info.copies().iter().any(|c| *c != journal::CopyState::Empty) {
                     Err(ui::UiError::Corrupt)
                 } else {
                     Ok(None)
@@ -277,24 +250,24 @@ pub async fn probe_storage_task(flash: CheckedFlash) {
         0,
         pin!(async {
             let mut storage = Storage { flash };
-            let mut decoder = capture::Decoder::new();
+            /// Sole parsing metadata workspace; borrowed views prevent concurrent reuse.
+            /// Static placement avoids moving metadata with the storage task's future.
+            static DECODER: StaticCell<capture::Decoder> = StaticCell::new();
+            let decoder = DECODER.init_with(capture::Decoder::new);
             /// Single response envelope filled in place to avoid large future copies.
             static REPLY: StaticCell<UiReply> = StaticCell::new();
             let mut reply = REPLY.init_with(UiReply::new);
             loop {
                 match select(UI_REQUEST.receive(), USB_REQUEST.receive()).await {
                     Either::First(request) => {
-                        handle_ui(&mut storage, &mut decoder, request, reply).await;
+                        handle_ui(&mut storage, decoder, request, reply).await;
                         reply = UI_REPLY.publish(reply).await;
                     }
-                    Either::Second(UsbRequest::List) => {
-                        // Fill the final reply in place instead of returning and
-                        // moving the four-slot array through an async result.
-                        let mut reply = UsbReply::Listed([Ok(None); 4]);
-                        if let UsbReply::Listed(slots) = &mut reply {
-                            listing(&mut storage, slots).await;
-                        }
-                        USB_REPLY.send(reply).await;
+                    Either::Second(UsbRequest::List(slots)) => {
+                        // Fill the USB-owned allocation directly. Returning its lease
+                        // releases storage before the host can stall endpoint sends.
+                        listing(&mut storage, slots).await;
+                        USB_REPLY.send(UsbReply::Listed(slots)).await;
                     }
                     Either::Second(UsbRequest::Get { slot, buffer }) => {
                         let result = journal::load_slot(&mut storage, slot, buffer).await.map_err(error);

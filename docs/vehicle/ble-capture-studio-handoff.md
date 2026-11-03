@@ -1,6 +1,6 @@
 # BLE capture to Studio connection handoff
 
-Updated 2026-10-24. The exporter adds connection evidence to device-labelled
+Updated 2026-11-03. The exporter adds connection evidence to device-labelled
 `.json` and `.txt` files, derived from the validated `.blecap`. **Studio does not yet
 import captures or create arbitrary adapter profiles.** This is the data
 contract and planned admission path for that later feature.
@@ -9,9 +9,13 @@ The Pico already saves bounded observations: peer identity, raw advertisements,
 primary services, characteristics, descriptor identities, allowlisted standard
 reads, link parameters, completion and failures. The separate
 [NGM identity tool](ngm-identity.md) adds bounded raw vendor/CoC/INFO evidence in
-payload v5. The connection-hint projection runs on the PC and adds no Pico storage
-or BLE traffic; the new captured identity evidence has its own bounded storage.
-The exporter also reads legacy v1–v4 binaries without inventing missing fields.
+payload v5. The separately confirmed [NGM collector](ngm-collector.md) adds
+fixed engine-read evidence in payload v6; tool discriminator 2 remains distinct
+from the INFO-only image's 1 and standard probe's 0. The connection-hint projection
+runs on the PC and adds no Pico storage or BLE traffic; captured identity and
+collection evidence have their own bounded storage.
+The exporter reads v1–v6 binaries without inventing missing fields; collection
+absence preserves existing v5 projection behavior.
 
 ## What the exporter adds now
 
@@ -27,8 +31,12 @@ without it remains an old report; regenerate it from its binary with offline
 | `identity.device_key`, `file_stem` | Observed address label (`p-`/`r-` plus 12 display-order hex digits) and safe common artifact stem. Never a permanent physical ID, connection selector or trusted input path. |
 | `identity.device_name` | Selected label or null. Raw hex, valid UTF-8 or null, source (`scan_response`, `advertisement`, `gap_device_name`), complete/truncated flags, cached status, boot-relative observation time and GAP read record index or null. See [name selection and filename rules](ble-probe-captures.md#recover-captures-on-a-pc); original packets and read records remain authoritative. |
 | `cached_name`, `boot` | Optional v4 raw naming/reset observations, unavailable for legacy payloads. Cached labels do not establish stable identity; previous watchdog stage/time does not establish cause. These fields do not enable connection or authentication. |
-| `identity_tool_mode` | Explicit v5 producer policy: true for the identity image, false for ordinary probe; null for v1–v4. True alone does not imply an INFO request or successful connection. |
+| `identity_tool_mode` | Explicit v5/v6 producer mode: true for INFO and collector images, false for ordinary probe; null for v1–v4. True alone does not imply an INFO request or successful connection. |
 | `ngm_identity` | Optional v5 trial evidence, null for legacy/no attempt. Policy/source pin, configured SPSM129 versus discovered null, four raw vendor read slots, offered/observed directional channel fields, request submission, raw reply/length counters, derived five fields and lifecycle/fault/cleanup. It never changes naming `identity` or enables a profile. |
+| `tool_mode`, top-level `policy` for v6 collection | `ngm-collector` and the explicit fixed-engine raw-collection policy. The scoped `ngm_identity` subsection still describes adapter INFO only. A collector image's adapter-only v5 capture does not invent this field. |
+| `collection` | Separate v6 summary, fixed route/manifest, 28 rows, raw bytes, attempt/submission/response times, pending NRC count and latest terminal prefix. Adapter supply and ECU module voltage remain distinct. Unknown/mismatched/incomplete schemas never produce a numeric candidate. |
+| `record_counts.collection_rows` | Exactly 28 when collection exists. These rows are in `collection.rows`, not mixed into the original GATT `records` array or endpoint indexes. |
+| `collection.rows[].candidate` | Optional explicitly unqualified family conversion from a complete exact-width reply, with units and `live_measurement: false`; null for unknown schemas, negatives, mismatch or incomplete bytes. Never a dashboard sample or alarm input. |
 | `export.artifacts` | Exact `binary`, `json` and `text` basenames written to the new output directory. Derived from the safe stem, not raw BLE names. A future importer must not treat supplied JSON filenames as trusted paths. |
 | Each `uuid.canonical` | Lowercase expanded 128-bit UUID text. `wire_hex`, `width_bytes` and `assigned_u16` remain, preserving original encoding. |
 | Each characteristic's `property_flags` | Eight booleans: broadcast, read, write without response, write request, notify, indicate, authenticated signed writes and extended properties. Raw `properties` remains. These describe declared procedures, not verified access permissions. |
@@ -63,7 +71,18 @@ failure remain inspectable even when parsed fields are unavailable. Null channel
 CIDs/remaining credits are unavailable observations, not zero. The configured
 candidate SPSM remains 129 even after acceptance; no dynamic-discovery claim is
 created. The generic handoff remains `evidence_only`, disabled, with no profile
-and no reusable saved handles, including after a successful INFO trial.
+and no reusable saved handles, including after a successful INFO trial or fixed-read collection.
+
+For collection captures, evaluate `collection` independently as raw research.
+A positive response, matching CLOSE, complete manifest and clean BLE teardown are
+different observations. An early session denial can have a CLOSE acknowledgment
+without later reads. A raw-schema match is not exact-ECU qualification, and saved
+responses never authorize replay or live CAN traffic. The generic handoff consumes
+neither collection candidates nor saved channel handles; Studio import and any
+vehicle-profile integration remain unavailable.
+The pending NRC count accompanies completed-reply row publication. Zero in a
+timeout/incomplete row does not prove that no pending reply arrived; intermediate
+pending history is not retained.
 
 Original timestamps, raw bytes, failures, build identity and global error scope
 remain intact. No host date replaces boot-relative observation time. Slot and
@@ -118,12 +137,15 @@ profile table or guess an ELM-compatible transport.
 | Security requirements or proprietary authentication | Standard protected-read errors are clues, not a complete handshake. Do not store passwords, keys or PINs in portable projects. |
 | NGM/ECUconnect transport and dynamic SPSM | Ordinary probe remains standard-only. The separate INFO tool can try one source-configured candidate129 and retain acceptance/refusal; it does not discover a dynamic SPSM. No physical identity-tool result is claimed yet. |
 | Secondary/included services and descriptor values | Current inventory covers primary services and descriptor identities. Extend bounded discovery/read policy only if a qualified protocol needs these fields. |
+| Exact fixed-read response schemas and DNUC support | A separately authorized collector attempt can retain the closed manifest's raw replies. Owner-confirmed OBDeleven labels and family-source formulas remain distinct from independently verified widths/scaling and live qualification. |
 | Reconnect, cold-start and adapter/ECU compatibility | Repeated device observations and profile-specific tests; a clean inventory is insufficient. |
 
 See [NGM/OBDeleven evidence boundaries](adapter-research.md) for pinned research.
 Further protocol work must follow a concrete evidence gap. The ordinary probe's
 no-pairing and standard-read-only contract remains intact; the separate identity
 tool does not enable arbitrary commands, automotive requests or Studio import.
+The collector's separately confirmed fixed reads do not enable arbitrary commands
+or establish a qualified Studio/vehicle profile.
 
 ## Specification cross-checks
 

@@ -75,6 +75,15 @@ settings adapter retains its journal and maintenance policy; the probe has a
 single core0 storage task, with separate affine UI and USB byte buffers. USB
 offers only directory and read operations and cannot erase or save a slot.
 
+Both routes program checked 256-byte SRAM pages through the RP235x
+`blocking_write_ram` API. It checks flash capacity and page alignment and requires
+the complete source slice within lower 512 KiB SRAM (`0x20000000..0x20080000`);
+source byte alignment is unrestricted. This intentionally narrower source contract
+avoids the general API's partial-page scratch copy. The existing core0/IRQ/DMA/XIP
+exclusion and caller readback checks remain. General partial-page writes and the
+RP2040 path are unchanged. See the reviewed
+[HAL overlay](../../firmware/vendor/embassy-rp/LOCAL_PATCHES.md).
+
 Probe capture writes use one maintenance window per 4 KiB erase or 256-byte
 program, retaining the 400 ms preparation, 500 ms write and 1000 ms total limits.
 The display drains its current transfer and acknowledges quiescence before the

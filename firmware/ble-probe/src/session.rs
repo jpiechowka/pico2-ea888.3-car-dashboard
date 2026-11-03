@@ -1,5 +1,6 @@
 //! Portable connection supervision, shared with native lifecycle regressions.
 use core::future::Future;
+use core::pin::pin;
 
 use embassy_futures::select::{Either, select};
 
@@ -31,10 +32,10 @@ pub async fn inspect_with_events<C, T, E>(
     run: impl AsyncFnOnce(&C) -> Result<T, E>,
     events: impl Future<Output = E>,
 ) -> Result<T, E> {
-    let work = async {
+    let work = pin!(async {
         let client = startup.await?;
         run(&client).await
-    };
+    });
     // Work wins simultaneous readiness, retaining the operation's stage/range.
     // The event consumer is already active while MTU startup is suspended.
     match select(work, events).await {

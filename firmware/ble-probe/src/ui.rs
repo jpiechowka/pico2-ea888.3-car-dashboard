@@ -16,11 +16,13 @@ use crate::{bridge, maintenance, metrics, storage};
 /// a FREE framebuffer, returns stale reply leases, and parks before acquisition
 /// during flash maintenance. Never cancel an outstanding affine exchange.
 pub async fn probe_ui_task_run() {
-    /// Sole in-place bounded live catalogue and inspection state.
+    /// Sole resident model; inactive collection capacity has no initialized row array to construct.
+    /// The linked image gate still checks initializer stack use; init_with alone is not a guarantee.
     static MODEL: StaticCell<Probe> = StaticCell::new();
     let model = MODEL.init_with(Probe::new);
     model.boot = Some(bridge::BOOT.receive().await);
-    model.identity_mode = crate::tool_kind() == crate::ToolKind::NgmIdentity;
+    model.identity_mode = crate::tool_kind() != crate::ToolKind::StandardProbe;
+    model.collection_enabled = crate::tool_kind() == crate::ToolKind::NgmCollector;
     model.radio_bus_hz = dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq());
     // Sole UI-owner state lives in place, like MODEL. Keeping these larger
     // values out of the async future avoids whole-future construction copies.
@@ -36,6 +38,8 @@ pub async fn probe_ui_task_run() {
     let start = metrics::snapshot_into(&mut model.diagnostics);
     let mut fps = CompletionRate::new(start.at_us, start.completed);
     let mut last_resume = None;
+    #[cfg(feature = "ngm-collector")]
+    let mut collection_admission = None;
     loop {
         maintenance::UI_QUIET.store(maintenance::FRAME_INHIBIT.load(Ordering::SeqCst), Ordering::SeqCst);
         maintenance::ui_boundary(&mut last_resume).await;
@@ -55,20 +59,40 @@ pub async fn probe_ui_task_run() {
             }
             bridge::STATUS.capture_complete(captures, reply.id, &reply.completion);
         });
+        // Take admission before draining its preceding events. Signals published
+        // later wait for another loop, avoiding an empty-queue/Start publication race.
+        #[cfg(feature = "ngm-collector")]
+        if let Some(revision) = bridge::COLLECTION_ADMISSION.try_take() {
+            collection_admission = Some(revision);
+        }
         // Reliable inventory/completion evidence must precede a save decision.
         for _ in 0..8 {
             match bridge::EVENTS.try_receive() {
-                Ok(e) => bridge::STATUS.event(model, e),
+                Ok(e) => bridge::STATUS.event_ref(model, &e),
                 Err(_) => break,
             }
         }
+        if let Some((id, at)) = bridge::presented_prompt() {
+            model.collection_presented(id, at);
+        }
         for _ in 0..16 {
-            let Ok(control) = bridge::INPUTS.try_receive() else {
+            let Ok(edge) = bridge::INPUTS.try_receive() else {
                 break;
             };
+            let control = edge.control;
             let context = context(model);
             let live = captures.screen() == cap::Screen::Live;
+            if !live
+                || matches!(
+                    control,
+                    bridge::Control::XShort | bridge::Control::XHold | bridge::Control::Recover
+                )
+            {
+                model.dismiss_collection();
+            }
             let (capture_input, live_input) = match control {
+                bridge::Control::Collect if live => (None, Some(Input::Collect)),
+                bridge::Control::Collect => (None, None),
                 bridge::Control::XShort => (Some(cap::Input::XShort), None),
                 bridge::Control::XHold => (Some(cap::Input::XHold), None),
                 bridge::Control::Recover => (Some(cap::Input::Recover), None),
@@ -85,7 +109,7 @@ pub async fn probe_ui_task_run() {
                 bridge::Control::Back => (Some(cap::Input::Back), None),
             };
             if let Some(input) = live_input {
-                live_input_apply(model, input, now);
+                live_input_observed(model, input, edge.at_ms, Instant::now().as_millis());
             }
             if let Some(input) = capture_input
                 && let Some(action) = bridge::STATUS.capture_input(captures, input, now, context)
@@ -94,13 +118,29 @@ pub async fn probe_ui_task_run() {
             }
             model.page = model.page.min(discovery::page_count(model).saturating_sub(1));
         }
+        // Inputs use fresh observations; the earlier diagnostic snapshot can
+        // precede a newly opened prompt and must not look like time reversal.
+        model.expire_collection(Instant::now().as_millis());
+        // A signal can arrive after its preceding queue send but before core1
+        // applies that event. Only answer after draining the reliable queue;
+        // the producer is then parked awaiting this generation-bound reply.
+        #[cfg(feature = "ngm-collector")]
+        if bridge::EVENTS.is_empty()
+            && let Some(revision) = collection_admission.take()
+        {
+            let accepted = revision == model.request.revision
+                && model.inspection.collection.is_some()
+                && !model.cancel_collection
+                && capture::collection_fits(model, build_identity(), Instant::now().as_millis());
+            bridge::COLLECTION_ADMITTED.signal((revision, accepted));
+        }
         if let Some(action) = bridge::STATUS.capture_tick(captures, now) {
             action_apply(action, captures, model, &mut bytes, decoder, now);
         }
         // Controls change the generation before queued scan reports are admitted.
         for _ in 0..32 {
             match bridge::REPORTS.try_receive() {
-                Ok(e) => bridge::STATUS.event(model, e),
+                Ok(e) => bridge::STATUS.event_ref(model, &e),
                 Err(_) => break,
             }
         }
@@ -142,8 +182,16 @@ pub async fn probe_ui_task_run() {
                     let _ = discovery::render_slots(&mut renderer, captures, model.diagnostics);
                 }
             }
-            if let Err(embassy_sync::channel::TrySendError::Full(frame)) = bridge::READY.try_send(frame) {
-                bridge::FREE.send(frame).await;
+            let ready = bridge::ReadyFrame {
+                pixels: frame,
+                prompt_id: if captures.screen() == cap::Screen::Live {
+                    model.collection_prompt_id()
+                } else {
+                    None
+                },
+            };
+            if let Err(embassy_sync::channel::TrySendError::Full(frame)) = bridge::READY.try_send(ready) {
+                bridge::FREE.send(frame.pixels).await;
             }
             last_frame = now;
         }
@@ -172,11 +220,25 @@ fn live_input_apply(
     input: Input,
     now: u64,
 ) {
+    live_input_observed(model, input, now, now);
+}
+/// Applies an edge `input` observed at `observed_at` using current `now`, both boot milliseconds.
+/// A queued pre-presentation click cannot confirm active traffic; only checked requests reach core0.
+/// `model` receives the edge and supplies the current revision for cancellation/reset publication.
+fn live_input_observed(
+    model: &mut Probe,
+    input: Input,
+    observed_at: u64,
+    now: u64,
+) {
     if matches!(input, Input::Recover) && model.phase == RadioPhase::Fault {
         bridge::RESET_REQUESTED.store(true, Ordering::Relaxed);
     }
-    if let Some(request) = bridge::STATUS.input(model, input, now) {
+    if let Some(request) = bridge::STATUS.input_observed(model, input, observed_at, now) {
         bridge::set_request(request);
+    }
+    if model.cancel_collection {
+        bridge::cancel_collection(model.request.revision);
     }
 }
 /// Applies confirmed capture `action` using `captures`, live `model`, affine

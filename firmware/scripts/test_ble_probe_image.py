@@ -14,18 +14,27 @@ import build_ble_probe as build
 
 
 class ProbeAdmission(unittest.TestCase):
-    def test_identity_tool_requires_explicit_binary_features_and_marker(self) -> None:
-        args = build.build_command("stock", "ngm-identity")
-        self.assertEqual(args[args.index("--bin") + 1], "ngm-identity")
-        self.assertIn("ngm-identity", args[args.index("--features") + 1].split(","))
-        args = build.build_command("280-70", "ngm-identity")
-        self.assertEqual(
-            set(args[args.index("--features") + 1].split(",")),
-            {"ngm-identity", "cpu280-spi70-1v30"},
-        )
-        with self.assertRaises(AssertionError):
-            build.build_command("stock", "unknown")
-        for value, name in ((0, "ble-probe"), (1, "ngm-identity")):
+    def test_tool_requires_explicit_binary_features_and_exact_marker(self) -> None:
+        for tool in ("ngm-identity", "ngm-collector"):
+            args = build.build_command("stock", tool)
+            self.assertEqual(args[args.index("--bin") + 1], tool)
+            self.assertEqual(args[args.index("--features") + 1], tool)
+            args = build.build_command("280-70", tool)
+            self.assertEqual(
+                args[args.index("--features") + 1].split(","),
+                [tool, "cpu280-spi70-1v30"],
+            )
+        for unknown in (
+            "unknown",
+            "ngm",
+            "NGM-collector",
+            "ngm-collector ",
+            "ngm-collector,ngm-identity",
+        ):
+            with self.subTest(tool=unknown), self.assertRaises(AssertionError):
+                build.build_command("stock", unknown)
+        tools = ((0, "ble-probe"), (1, "ngm-identity"), (2, "ngm-collector"))
+        for value, name in tools:
             elf = ImageFixture(
                 data=bytes([value]),
                 section_entries=[(1, ".probe_tool", (0, 1, 2, 0x10000100, 0, 1, 0, 0, 1, 0))],
@@ -33,12 +42,18 @@ class ProbeAdmission(unittest.TestCase):
                 segments=[(1, 0, 0x10000100, 0x10000100, 1, 1, 4, 1)],
             )
             self.assertEqual(image.linked_tool(elf, name), name)
-            for wrong in ("unknown", "ble-probe" if value else "ngm-identity"):
+            for wrong in (
+                "unknown",
+                "NGM-collector",
+                "ngm-collector ",
+                *(other for _, other in tools if other != name),
+            ):
                 with self.assertRaises(AssertionError):
                     image.linked_tool(elf, wrong)
-            elf.data = b"\x02"
-            with self.assertRaises(AssertionError):
-                image.linked_tool(elf)
+            for unknown_marker in (3, 255):
+                elf.data = bytes([unknown_marker])
+                with self.assertRaises(AssertionError):
+                    image.linked_tool(elf)
 
     def test_manifest_requires_object_and_exact_integer_schema_before_source_access(self) -> None:
         with TemporaryDirectory() as directory:
@@ -318,7 +333,24 @@ class ProbeAdmission(unittest.TestCase):
                 self.assertTrue(result["source_identity"]["snapshot_bound"])
                 self.assertEqual(result["tool"], "ble-probe")
                 flash.assert_called_once_with(elf)
-                for wrong in (None, "ngm-identity", "unknown", True):
+                original_elf = elf.data
+                elf.data = elf.data[:-1] + b"\x02"
+                collector_manifest = dict(
+                    manifest, tool="ngm-collector", elf_sha256=image.sha(elf.data)
+                )
+                write_manifest(collector_manifest)
+                collector = image.check(elf_path, uf2_path, manifest_path, root)
+                self.assertEqual(collector["tool"], "ngm-collector")
+                self.assertTrue(collector["source_identity"]["snapshot_bound"])
+                for collector_wrong in ("ble-probe", "ngm-identity", "collector", "ngm-collector "):
+                    write_manifest(dict(collector_manifest, tool=collector_wrong))
+                    with (
+                        self.subTest(collector_tool=collector_wrong),
+                        self.assertRaisesRegex(AssertionError, "linked utility differs"),
+                    ):
+                        image.check(elf_path, uf2_path, manifest_path, root)
+                elf.data = original_elf
+                for wrong in (None, "ngm-identity", "ngm-collector", "unknown", True):
                     write_manifest(dict(manifest, tool=wrong))
                     with self.subTest(tool=wrong), self.assertRaises(AssertionError):
                         image.check(elf_path, uf2_path, manifest_path, root)
@@ -364,6 +396,12 @@ class ProbeAdmission(unittest.TestCase):
             self.assertFalse(result["source_identity"]["available"])
             self.assertFalse(result["source_bound"])
             flash.assert_called_once_with(elf)
+            with self.assertRaisesRegex(AssertionError, "linked utility differs"):
+                image.inspect_elf(elf, "ngm-collector")
+            elf.data = elf.data[:-1] + b"\x02"
+            self.assertEqual(image.inspect_elf(elf, "ngm-collector")["tool"], "ngm-collector")
+            with self.assertRaisesRegex(AssertionError, "linked utility differs"):
+                image.inspect_elf(elf, "ble-probe")
             with (
                 patch.object(
                     image, "check_flash_lockout", side_effect=AssertionError("unreviewed helper")
@@ -465,6 +503,17 @@ class ProbeAdmission(unittest.TestCase):
         with patch.object(image, "frames", return_value=sizes):
             result = image.stack_check(elf, 65536)
             self.assertEqual(result["bounds"]["radio"], 128 + 24576)
+            core1 = functions.pop("probe_core1")
+            for crate in ("9ble_probe", "12ngm_identity", "13ngm_collector"):
+                symbol = f"_RNvCsabc_{crate}11probe_core1"
+                functions[symbol] = core1
+                self.assertEqual(image.stack_check(elf, 65536)["bounds"], result["bounds"])
+                del functions[symbol]
+            functions["_RNvCsabc_17ngm_collector_bad11probe_core1"] = core1
+            with self.assertRaisesRegex(AssertionError, "core1 render entry"):
+                image.stack_check(elf, 65536)
+            del functions["_RNvCsabc_17ngm_collector_bad11probe_core1"]
+            functions["probe_core1"] = core1
             for name in ("probe_storage_task", "probe_usb_device_task", "probe_usb_capture_task"):
                 key = "TaskStorage4poll" + name
                 saved = functions.pop(key)
@@ -508,6 +557,7 @@ class ProbeAdmission(unittest.TestCase):
             ("14identity_radio12inspect_peer", 0x10003000, 2048),
             ("13identity_flow13run_connected", 0x10003004, 2048),
             ("14dashboard_core9discovery6render", 0x10003008, 6500),
+            ("15collection_flow13run_connected", 0x1000300C, 1024),
         )
         for name, address, size in additions:
             functions[name] = (address, 4, 1)

@@ -1074,6 +1074,22 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    /// Dequeues at most one complete SDU from local `chan` without polling or granting credits.
+    /// Returns None when empty or ChannelClosed for a closed slot/marker. No controller work,
+    /// waiter registration, assembly mutation or signaling occurs; the returned packet owns
+    /// its original pool allocation until dropped. Normal receive remains the credit-grant path.
+    pub(crate) fn try_receive_sdu(&self, chan: ChannelIndex) -> Result<Option<Sdu<P::Packet>>, Error> {
+        let storage = self.channel(chan);
+        if storage.state != ChannelState::Connected {
+            return Err(Error::ChannelClosed);
+        }
+        match storage.inbound.chan.try_receive() {
+            Ok(Some(pdu)) => Ok(Some(Sdu::from_pdu(pdu))),
+            Ok(None) => Err(Error::ChannelClosed),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Returns one complete owned SDU from local `chan` through originating `ble`. Replenishment occurs only while waiting; there is no await after dequeue. A canceled credit submission closes the channel; idle receive cancellation consumes no SDU.
     pub(crate) async fn receive_sdu<T: Controller>(
         &self,

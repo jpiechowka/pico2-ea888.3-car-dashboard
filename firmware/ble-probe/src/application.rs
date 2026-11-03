@@ -1,17 +1,21 @@
 // Included once by each explicit binary. Keeping owners in the binary optimization
 // unit preserves the reviewed binary-only LLVM policy without applying it to HAL
-// dependencies. Core0 owns hardware; core1 owns catalogue/rendering. No ECU polling.
+// dependencies. Core0 owns hardware; core1 owns catalogue/rendering. Only the
+// collector entrypoint permits a separately confirmed, finite ECU read sequence.
 
 /// Bounded cross-core messages and atomic progress/fault observations.
 mod bridge;
 /// Affine storage reply-envelope exchange with core1.
 mod capture_reply;
+/// Explicit fixed ECU read orchestration; only the collector binary may invoke it.
+#[cfg(feature = "ngm-collector")]
+mod collection_flow;
 /// Lossless stage-aware mapping of host/controller failures.
 mod errors;
 /// Bounded adapter-only identity orchestration behind explicit image selection.
 #[cfg(feature = "ngm-identity")]
 mod identity_flow;
-/// Hardware CoC adapter for the manually selected identity utility.
+/// Hardware CoC adapter for manual identity and separately confirmed collection.
 #[cfg(feature = "ngm-identity")]
 pub mod identity_radio;
 /// Bounded standard-service GATT enumeration and allowed reads.
@@ -79,7 +83,11 @@ static CORE1_EXECUTOR: StaticCell<Executor> = StaticCell::new();
 /// Panics on repeated initialization, an unavailable kind or broken ownership
 /// invariants. Never pairs or issues an automatic inspection request.
 pub async fn run(spawner: Spawner) {
-    assert!(tool_kind() == ToolKind::StandardProbe || cfg!(feature = "ngm-identity"));
+    assert!(match tool_kind() {
+        ToolKind::StandardProbe => true,
+        ToolKind::NgmIdentity => cfg!(feature = "ngm-identity"),
+        ToolKind::NgmCollector => cfg!(feature = "ngm-collector"),
+    });
     let mut config = embassy_rp::config::Config::default();
     config.clocks = dashboard_pico2::clock_profile::clock_config();
     let p = embassy_rp::init(config);

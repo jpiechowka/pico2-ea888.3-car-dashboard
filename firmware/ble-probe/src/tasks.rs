@@ -67,7 +67,7 @@ pub async fn probe_display_task(
                 let frame = bridge::READY.receive().await;
                 bridge::DISPLAY_ACTIVE.store(true, Ordering::SeqCst);
                 // Never timeout/drop the SPI future or return its buffer on failure.
-                if flush_plan(&mut display, frame, &DamagePlan::full(), || {})
+                if flush_plan(&mut display, frame.pixels, &DamagePlan::full(), || {})
                     .await
                     .is_err()
                 {
@@ -78,7 +78,8 @@ pub async fn probe_display_task(
                 light.set_high();
                 bridge::DISPLAY_ACTIVE.store(false, Ordering::SeqCst);
                 metrics::frame_completed();
-                bridge::FREE.send(frame).await;
+                bridge::frame_presented(frame.prompt_id, Instant::now().as_millis());
+                bridge::FREE.send(frame.pixels).await;
             }
         }),
     )
@@ -89,6 +90,8 @@ pub async fn probe_display_task(
 /// Owns active-low buttons `a`, `b`, `x`, `y` on core0 and sends bounded controls.
 /// Polls every 10 ms after handling; queue backpressure can extend the interval.
 /// A hold inspects, X distinguishes short/hold, and Y hold requests recovery.
+/// Collector-only B uses deferred short/hold: next peer on release, or a local
+/// ECU-read confirmation after two seconds; the hold never confirms or transmits.
 /// This permanent task does not directly start BLE or mutate capture storage.
 pub async fn probe_inputs_task(
     a: Peri<'static, PIN_12>,
@@ -110,29 +113,29 @@ pub async fn probe_inputs_task(
             loop {
                 let now = Instant::now().as_millis();
                 for (i, button) in buttons.iter().enumerate() {
-                    if i == 1 {
+                    if i == 1 && crate::tool_kind() != crate::ToolKind::NgmCollector {
                         if next.update(button.is_low(), now) {
-                            bridge::INPUTS.send(UiInput::Rotate(1)).await;
+                            bridge::emit_control(UiInput::Rotate(1), now).await;
                         }
                         continue;
                     }
                     let edges = deferred[i].update(button.is_low(), now);
                     if edges.short {
-                        bridge::INPUTS
-                            .send(match i {
+                        bridge::emit_control(match i {
                                 0 => UiInput::Rotate(-1),
+                                1 => UiInput::Rotate(1),
                                 2 => UiInput::XShort,
                                 _ => UiInput::Back,
-                            })
+                            }, now)
                             .await;
                     }
                     if edges.held {
-                        bridge::INPUTS
-                            .send(match i {
+                        bridge::emit_control(match i {
                                 0 => UiInput::Click,
+                                1 => UiInput::Collect,
                                 2 => UiInput::XHold,
                                 _ => UiInput::Recover,
-                            })
+                            }, now)
                             .await;
                     }
                 }
@@ -171,10 +174,10 @@ pub async fn probe_encoder_task(mut bus: I2c<'static, I2C0, embassy_rp::i2c::Asy
                     if let Some(delta) = seesaw::read_delta(&mut bus).await?
                         && delta != 0
                     {
-                        bridge::INPUTS.send(UiInput::Rotate(delta)).await;
+                        bridge::emit_control(UiInput::Rotate(delta), Instant::now().as_millis()).await;
                     }
                     if button.update(seesaw::read_button(&mut bus).await?, Instant::now().as_millis()) {
-                        bridge::INPUTS.send(UiInput::Click).await;
+                        bridge::emit_control(UiInput::Click, Instant::now().as_millis()).await;
                     }
                     Ok::<(), seesaw::EncoderError>(())
                 }

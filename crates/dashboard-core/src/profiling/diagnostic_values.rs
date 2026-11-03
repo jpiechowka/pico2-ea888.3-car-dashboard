@@ -1,4 +1,5 @@
 //! Bounded presentation and validity shared by both diagnostic firmware routes.
+//! Capacity-erased string views share formatting code while retaining each buffer's bound.
 use core::fmt::Write;
 
 use heapless::String;
@@ -135,7 +136,7 @@ pub fn memory_kib(
 pub fn work_text(value: Option<u32>) -> String<8> {
     let mut out = String::new();
     if let Some(v) = value.filter(|&v| v <= 1000) {
-        let _ = write!(out, "{}.{:01}%", v / 10, v % 10);
+        let _ = write!(out.as_mut_view(), "{}.{:01}%", v / 10, v % 10);
     } else {
         let _ = out.push_str("--");
     }
@@ -151,7 +152,7 @@ pub fn rate_text(value: Option<f32>) -> String<8> {
     match value {
         Some(v) if v.is_finite() && (0.0..1000.0).contains(&v) => {
             let tenths = (v * 10.0 + 0.5) as u32;
-            let _ = write!(out, "{}.{:01}", tenths / 10, tenths % 10);
+            let _ = write!(out.as_mut_view(), "{}.{:01}", tenths / 10, tenths % 10);
         }
         Some(v) if v.is_finite() && v >= 1000.0 => {
             let _ = out.push_str(">999");
@@ -161,4 +162,36 @@ pub fn rate_text(value: Option<f32>) -> String<8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+/// Formatting boundaries retain unavailable states and rounded decimal values.
+mod tests {
+    use super::*;
+
+    /// Rounding across the display threshold and invalid extremes never truncate or look like zero.
+    #[test]
+    fn text_preserves_rounding_boundaries_and_unavailable_extremes() {
+        for (value, expected) in [
+            (None, "--"),
+            (Some(f32::MIN), "--"),
+            (Some(f32::NEG_INFINITY), "--"),
+            (Some(f32::NAN), "--"),
+            (Some(-0.0), "0.0"),
+            (Some(999.94), "999.9"),
+            (Some(999.99), "1000.0"),
+            (Some(1000.0), ">999"),
+            (Some(f32::MAX), ">999"),
+        ] {
+            assert_eq!(rate_text(value).as_str(), expected);
+        }
+        for (value, expected) in [
+            (None, "--"),
+            (Some(0), "0.0%"),
+            (Some(1000), "100.0%"),
+            (Some(u32::MAX), "--"),
+        ] {
+            assert_eq!(work_text(value).as_str(), expected);
+        }
+    }
 }

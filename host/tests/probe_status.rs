@@ -88,6 +88,53 @@ fn scanning_drives_only_the_active_low_blue_channel() {
     assert_eq!(levels(&status, &model), [true, true, false]);
 }
 
+/// Borrowed delivery rejects stale payloads, retains copied evidence and never changes request authority.
+#[test]
+fn borrowed_events_preserve_generation_and_evidence_after_source_reuse() {
+    let status = Status::new();
+    let mut model = start(&status);
+    inventory(&status, &mut model);
+    let request = model.request;
+    let mut source = Event::Item {
+        revision: request.revision - 1,
+        item: InspectionItem::Value(InfoValue {
+            service_start: 1,
+            handle: 3,
+            uuid: 0x2A00,
+            value: Payload::new(b"retained"),
+            result: ReadResult::Ok,
+            failure: None,
+            elapsed_ms: 7,
+        }),
+    };
+    status.event_ref(&mut model, &source);
+    assert!(model.inspection.values.is_empty());
+    assert_eq!(status.error_latch(), ErrorLatch::None);
+    if let Event::Item { revision, .. } = &mut source {
+        *revision = request.revision;
+    }
+    status.event_ref(&mut model, &source);
+    source = Event::Complete {
+        revision: request.revision,
+        limited: false,
+    };
+    status.event_ref(&mut model, &source);
+    assert_eq!(model.inspection.values[0].value.as_slice(), b"retained");
+    assert!(model.inspection.complete);
+    assert_eq!(model.request, request);
+    status.event_ref(
+        &mut model,
+        &Event::InspectionEnd {
+            revision: request.revision,
+            at_ms: 30,
+            cleanup_complete: false,
+            disconnect_reason: None,
+        },
+    );
+    assert_eq!(status.error_latch(), ErrorLatch::Other);
+    assert_eq!(model.request, request);
+}
+
 /// Returns a model inspecting the selected public peer after a click at 20 ms.
 /// `status` receives scanning/report/input transitions; panics if the click is not admitted.
 fn start(status: &Status) -> Probe {
@@ -278,18 +325,19 @@ fn identity_image_requires_its_own_clean_result_and_latches_partial_failure() {
     assert_eq!(levels(&status, &model), [false, true, true]);
 }
 
-/// A clean INFO result becomes green only after link cleanup; saved views never reuse live success.
-#[test]
-fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber() {
-    use dashboard_core::ble::canyonero::{CleanupOutcome, Stage};
+/// Populates `model` with complete synthetic INFO and all scoped vendor reads through actual admission.
+/// `status` observes each event; final identity/link cleanup is deliberately left pending.
+fn identity_ready(
+    status: &Status,
+    model: &mut Probe,
+) {
+    use dashboard_core::ble::canyonero::Stage;
     use identity::{ChannelParameters, Update, VENDOR_UUIDS};
-    let status = Status::new();
-    let mut model = start(&status);
     model.identity_mode = true;
-    inventory(&status, &mut model);
+    inventory(status, model);
     event(
-        &status,
-        &mut model,
+        status,
+        model,
         InspectionItem::Service(Service {
             start: 5,
             end: 20,
@@ -298,8 +346,8 @@ fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber(
     );
     for (i, uuid) in VENDOR_UUIDS.into_iter().enumerate() {
         event(
-            &status,
-            &mut model,
+            status,
+            model,
             InspectionItem::Characteristic(Characteristic {
                 service_start: 5,
                 declaration: 6 + i as u16 * 2,
@@ -309,15 +357,11 @@ fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber(
             }),
         );
     }
-    event(
-        &status,
-        &mut model,
-        InspectionItem::Identity(Update::Start { at_ms: 20 }),
-    );
+    event(status, model, InspectionItem::Identity(Update::Start { at_ms: 20 }));
     for (i, uuid) in VENDOR_UUIDS.into_iter().enumerate() {
         event(
-            &status,
-            &mut model,
+            status,
+            model,
             InspectionItem::Identity(Update::Vendor(InfoValue {
                 service_start: 5,
                 handle: 7 + i as u16 * 2,
@@ -355,8 +399,235 @@ fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber(
             fault: None,
         },
     ] {
-        event(&status, &mut model, InspectionItem::Identity(update));
+        event(status, model, InspectionItem::Identity(update));
     }
+}
+
+/// Returns a selected synthetic collector with valid INFO pending final cleanup.
+/// `status` applies the setup observations through the actual fault-latching reducer.
+fn collector_ready(status: &Status) -> Probe {
+    let mut model = start(status);
+    model.collection_enabled = true;
+    model.request.action = Action::Collect(model.selected_device().unwrap().peer);
+    identity_ready(status, &mut model);
+    use collection::Update;
+    for update in [
+        Update::Start { at_ms: 50 },
+        Update::Voltage {
+            millivolts: 12000,
+            at_ms: 51,
+        },
+        Update::Opened { handle: 2, at_ms: 52 },
+        Update::Configured { at_ms: 53 },
+    ] {
+        event(status, &mut model, InspectionItem::Collection(update));
+    }
+    model
+}
+
+/// Publishes a complete response `raw` for closed manifest `id` through actual `status`/model admission.
+/// Request timestamps are consecutive from54ms; `result` is the correlated protocol outcome.
+/// `model` receives the ordered attempt, completion and raw response under its current revision.
+fn collector_row(
+    status: &Status,
+    model: &mut Probe,
+    id: dashboard_core::ble::canyonero::reads::ReadId,
+    result: dashboard_core::ble::canyonero::collection::ReadStatus,
+    raw: &[u8],
+) {
+    use collection::Update;
+    let at = 54 + id.index() as u64 * 3;
+    for update in [
+        Update::Attempt { id, at_ms: at },
+        Update::Submitted { id, at_ms: at + 1 },
+        Update::RowHeader {
+            id,
+            at_ms: at + 2,
+            status: result,
+            length: raw.len() as u8,
+            pending: 0,
+        },
+        Update::Chunk {
+            id,
+            offset: 0,
+            bytes: Payload::new(raw),
+        },
+    ] {
+        event(status, model, InspectionItem::Collection(update));
+    }
+}
+
+/// Finishes the synthetic INFO lifecycle and link at190/200ms, retaining collection outcome independently.
+/// `status` applies actual latch policy to `model` while publishing terminal cleanup and completion.
+fn collector_cleanup(
+    status: &Status,
+    model: &mut Probe,
+) {
+    event(
+        status,
+        model,
+        InspectionItem::Identity(identity::Update::End {
+            at_ms: 190,
+            cleanup: dashboard_core::ble::canyonero::CleanupOutcome::Clean,
+        }),
+    );
+    status.event(
+        model,
+        Event::InspectionEnd {
+            revision: model.request.revision,
+            at_ms: 200,
+            cleanup_complete: true,
+            disconnect_reason: Some(0x16),
+        },
+    );
+    complete(status, model, false);
+}
+
+/// Actual RGB policy needs all28 positive complete responses and both clean terminal lifecycles.
+#[test]
+fn collector_green_requires_all_positive_responses_and_clean_terminal_evidence() {
+    use dashboard_core::ble::canyonero::CleanupOutcome;
+    use dashboard_core::ble::canyonero::collection::ReadStatus;
+    use dashboard_core::ble::canyonero::reads::ReadId;
+    let status = Status::new();
+    let mut model = collector_ready(&status);
+    for id in ReadId::ALL {
+        collector_row(
+            &status,
+            &mut model,
+            id,
+            ReadStatus::Positive,
+            &[0x62, (id.did() >> 8) as u8, id.did() as u8, 1],
+        );
+    }
+    assert_ne!(levels(&status, &model), [true, false, true]);
+    event(
+        &status,
+        &mut model,
+        InspectionItem::Collection(collection::Update::End {
+            at_ms: 150,
+            completed: true,
+            fault: None,
+            cleanup: CleanupOutcome::Clean,
+            last_submission: None,
+        }),
+    );
+    assert_ne!(levels(&status, &model), [true, false, true]);
+    collector_cleanup(&status, &mut model);
+    assert_eq!(model.inspection.malformed, 0);
+    assert_eq!(status.fault_latch(), FaultLatch::EMPTY);
+    assert_eq!(levels(&status, &model), [true, false, true]);
+}
+
+/// Complete negatives, early close, incomplete raw publication and unknown writes remain red after cleanup.
+#[test]
+fn collector_negative_early_close_partial_and_unknown_outcomes_never_turn_green() {
+    use collection::Update;
+    use dashboard_core::ble::canyonero::CleanupOutcome;
+    use dashboard_core::ble::canyonero::collection::{Error, EvidenceKind, ReadStatus};
+    use dashboard_core::ble::canyonero::reads::ReadId;
+    for case in 0..5 {
+        let status = Status::new();
+        let mut model = collector_ready(&status);
+        if case == 3 {
+            event(
+                &status,
+                &mut model,
+                InspectionItem::Collection(Update::Attempt {
+                    id: ReadId::ActiveSession,
+                    at_ms: 54,
+                }),
+            );
+        } else {
+            for id in ReadId::ALL {
+                if case == 1 {
+                    collector_row(
+                        &status,
+                        &mut model,
+                        id,
+                        ReadStatus::SessionNotDefault,
+                        &[0x62, 0xF1, 0x86, 3],
+                    );
+                    break;
+                }
+                if case == 2 {
+                    for update in [
+                        Update::Attempt { id, at_ms: 54 },
+                        Update::Submitted { id, at_ms: 55 },
+                        Update::RowHeader {
+                            id,
+                            at_ms: 56,
+                            status: ReadStatus::Positive,
+                            length: 4,
+                            pending: 0,
+                        },
+                        Update::Chunk {
+                            id,
+                            offset: 0,
+                            bytes: Payload::new(&[0x62, 0xF1]),
+                        },
+                    ] {
+                        event(&status, &mut model, InspectionItem::Collection(update));
+                    }
+                    break;
+                }
+                if case == 0 && id == ReadId::OdxIdentifier {
+                    collector_row(&status, &mut model, id, ReadStatus::Negative(0x31), &[0x7F, 0x22, 0x31]);
+                } else {
+                    collector_row(
+                        &status,
+                        &mut model,
+                        id,
+                        ReadStatus::Positive,
+                        &[0x62, (id.did() >> 8) as u8, id.did() as u8, 1],
+                    );
+                }
+            }
+        }
+        if case == 4 {
+            event(
+                &status,
+                &mut model,
+                InspectionItem::Collection(Update::TerminalHeader {
+                    kind: EvidenceKind::Envelope,
+                    length: 4,
+                }),
+            );
+            event(
+                &status,
+                &mut model,
+                InspectionItem::Collection(Update::TerminalChunk {
+                    offset: 0,
+                    bytes: Payload::new(&[0x1F]),
+                }),
+            );
+        }
+        event(
+            &status,
+            &mut model,
+            InspectionItem::Collection(Update::End {
+                at_ms: 150,
+                completed: matches!(case, 0 | 1 | 4),
+                fault: matches!(case, 2 | 3).then_some(Error::Cancelled),
+                cleanup: CleanupOutcome::Clean,
+                last_submission: None,
+            }),
+        );
+        collector_cleanup(&status, &mut model);
+        assert_eq!(model.inspection.malformed, 0, "case {case}");
+        assert!(status.fault_latch().contains(Fault::Probe), "case {case}");
+        assert_eq!(levels(&status, &model), [false, true, true], "case {case}");
+    }
+}
+
+/// A clean INFO result becomes green only after link cleanup; saved views never reuse live success.
+#[test]
+fn clean_identity_requires_both_cleanup_observations_and_saved_view_stays_amber() {
+    use dashboard_core::ble::canyonero::CleanupOutcome;
+    use identity::Update;
+    let status = Status::new();
+    let mut model = start(&status);
+    identity_ready(&status, &mut model);
     complete(&status, &mut model, false);
     assert_ne!(levels(&status, &model), [true, false, true]);
     event(

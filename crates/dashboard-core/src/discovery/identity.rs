@@ -138,7 +138,9 @@ pub struct Evidence {
     pub vendor_values: [Option<InfoValue>; 4],
     /// Offered and actual channel observations; absent before parameter preparation.
     pub channel: Option<ChannelParameters>,
-    /// Time of successful local submission, or unavailable/not submitted.
+    /// Boot-relative milliseconds of confirmed complete local INFO SDU submission.
+    /// None means completion is unconfirmed: an attempt and partial or complete bytes
+    /// may already have been sent. Neither state acknowledges peer processing or authorizes retry.
     pub request_submitted_at_ms: Option<u64>,
     /// Total observed SDU bytes, saturated at u64::MAX, before any retained-prefix omission.
     pub observed_bytes: u64,
@@ -184,6 +186,7 @@ impl Evidence {
     /// Returns true only for one valid INFO frame, successful request submission,
     /// completed normal cleanup and no fault or omitted receive evidence.
     /// Actual live-vs-saved and link/inventory qualification belong to the caller.
+    #[inline(always)]
     pub fn successful(&self) -> bool {
         if self.stage != Stage::Finished
             || self.ended_at_ms.is_none()
@@ -214,24 +217,35 @@ impl Evidence {
         &mut self,
         update: Update,
     ) -> bool {
+        self.apply_ref(&update)
+    }
+
+    /// Applies borrowed `update` with [`Self::apply`]'s ordering, bounds and first-fault rules.
+    /// Accepted bytes are copied into resident evidence; the borrow ends on return.
+    /// Invalid updates return false without mutation, and no update initiates I/O.
+    #[inline(always)]
+    pub fn apply_ref(
+        &mut self,
+        update: &Update,
+    ) -> bool {
         if self.ended_at_ms.is_some() {
             return false;
         }
         match update {
             Update::Start { .. } => return false,
             Update::Stage { stage, at_ms, fault } => {
-                if stage == Stage::Idle
-                    || stage == Stage::Finished
-                    || stage_order(stage) < stage_order(self.stage)
-                    || (at_ms < self.updated_at_ms
+                if *stage == Stage::Idle
+                    || *stage == Stage::Finished
+                    || stage_order(*stage) < stage_order(self.stage)
+                    || (*at_ms < self.updated_at_ms
                         && !fault.is_some_and(|f| f.reason == crate::ble::canyonero::Reason::TimeReversed))
-                    || fault.is_some_and(|f| f.at_ms > at_ms.max(self.updated_at_ms))
+                    || fault.is_some_and(|f| f.at_ms > (*at_ms).max(self.updated_at_ms))
                 {
                     return false;
                 }
-                self.stage = stage;
-                self.updated_at_ms = at_ms.max(self.updated_at_ms);
-                self.fault = self.fault.or(fault);
+                self.stage = *stage;
+                self.updated_at_ms = (*at_ms).max(self.updated_at_ms);
+                self.fault = self.fault.or(*fault);
             }
             Update::Vendor(value) => {
                 let Some(index) = VENDOR_UUIDS.iter().position(|&uuid| uuid == value.uuid) else {
@@ -243,32 +257,32 @@ impl Evidence {
                 {
                     return false;
                 }
-                self.vendor_values[index] = Some(value);
+                self.vendor_values[index] = Some(*value);
             }
             Update::Channel(parameters) => {
                 if !parameters.valid() {
                     return false;
                 }
-                self.channel = Some(parameters);
+                self.channel = Some(*parameters);
             }
             Update::RequestSubmitted { at_ms } => {
-                if self.request_submitted_at_ms.is_some() || at_ms < self.updated_at_ms || self.channel.is_none() {
+                if self.request_submitted_at_ms.is_some() || *at_ms < self.updated_at_ms || self.channel.is_none() {
                     return false;
                 }
-                self.request_submitted_at_ms = Some(at_ms);
-                self.updated_at_ms = at_ms;
+                self.request_submitted_at_ms = Some(*at_ms);
+                self.updated_at_ms = *at_ms;
             }
             Update::Sdu { length } => {
                 if self.request_submitted_at_ms.is_none() {
                     return false;
                 }
-                self.observed_bytes = self.observed_bytes.saturating_add(u64::from(length));
+                self.observed_bytes = self.observed_bytes.saturating_add(u64::from(*length));
                 self.sdu_count = self.sdu_count.saturating_add(1);
-                self.max_sdu_bytes = self.max_sdu_bytes.max(length);
+                self.max_sdu_bytes = self.max_sdu_bytes.max(*length);
             }
             Update::Chunk { offset, bytes } => {
                 let len = usize::from(bytes.len);
-                let start = usize::from(offset);
+                let start = usize::from(*offset);
                 let end = start + len;
                 if start != usize::from(self.raw_len)
                     || len == 0
@@ -283,12 +297,12 @@ impl Evidence {
                 self.raw_len = end as u8;
             }
             Update::End { at_ms, cleanup } => {
-                if at_ms < self.updated_at_ms || cleanup == CleanupOutcome::Pending {
+                if *at_ms < self.updated_at_ms || *cleanup == CleanupOutcome::Pending {
                     return false;
                 }
-                self.updated_at_ms = at_ms;
-                self.ended_at_ms = Some(at_ms);
-                self.cleanup = cleanup;
+                self.updated_at_ms = *at_ms;
+                self.ended_at_ms = Some(*at_ms);
+                self.cleanup = *cleanup;
                 self.stage = Stage::Finished;
             }
         }
@@ -297,6 +311,7 @@ impl Evidence {
 
     /// Returns whether internal bookkeeping is valid at boot-relative capture time `at_ms`.
     /// Failed/partial attempts remain valid evidence; no success is fabricated.
+    #[inline(always)]
     pub fn valid(
         &self,
         at_ms: u64,

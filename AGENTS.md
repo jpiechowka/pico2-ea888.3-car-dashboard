@@ -240,6 +240,20 @@ use `cargo build` for compilation without device operations.
   remains standard even when the identity feature is compiled. Capture v5 keeps
   bounded raw identity evidence and legacy v1-v4 decoding; saved results never
   grant live success or authorize reusing handles. Retain all image/slot limits.
+  The separate [NGM collector](docs/vehicle/ngm-collector.md) uses linked tool2;
+  Inspect remains INFO-only, while hold B opens a fresh-peer, 15-second collection
+  prompt requiring a new gesture after that exact frame's completed transfer.
+  Expired prompts consume clicks until navigation; saved data never grants authority.
+  Collection first requires fresh complete INFO and worst-case capture reservation,
+  then raw CAN00/500k/7E0-to-7E8, one fixed 28-DID UDS22 manifest and only correlated
+  bounded CTS. Continue after F186 only for exact 62F18601; never force a session,
+  unlock, write/flash/control/reset/clear faults, scan identifiers, or retry.
+  Preserve private affine command permits, queued-complete-SDU checks, deadlines,
+  unknown partial-send effects and actual cleanup. Active cancellation retains its
+  evidence generation without auto-reconnecting. Conditional capturev6 retains raw
+  bounded evidence and v1-v5 decoding; no collection value qualifies live widgets.
+  Public client semantics do not prove private adapter-autonomous traffic or exact
+  ECU behavior. Active reads can affect power/timers; never claim zero state change.
   A deliberate RP2350 NORMAL ROM reboot also uses the watchdog timer and can
   invalidate retained scratch; ambiguous TIMER/type0 evidence must not be treated
   as proof of a missed feed or silently normalized as a healthy reboot.

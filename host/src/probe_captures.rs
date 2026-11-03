@@ -1,6 +1,8 @@
 //! Read-only probe capture recovery, separate from hardware discovery.
 /// Derived termination policy kept separate from historical capture flags.
 mod assessment;
+/// Separate offline raw engine collection evidence; legacy exports remain unchanged.
+mod collection;
 /// Disabled connection hints derived from validated inventory and shared address rules.
 mod handoff;
 /// Content identity and portable names preserving raw observed-name provenance.
@@ -175,12 +177,13 @@ fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
     let digest = hex(&sha2_const_stable::Sha256::new().update(bytes).finalize());
     let (identity, publication) = identity::derive(&view.view(), &digest);
     let m = view.metadata();
-    let records:Vec<Value>=view.records().map(|r|match r{
+    let records:Vec<Value>=view.records().filter_map(|r|Some(match r{
+        Record::Collection(_)|Record::CollectionEnvelope(_)=>return None,
         Record::Service(v)=>json!({"type":"service","start_handle":v.start,"end_handle":v.end,"uuid":uuid(v.uuid)}),
         Record::Characteristic(v)=>json!({"type":"characteristic","service_start_handle":v.service_start,"declaration_handle":v.declaration,"value_handle":v.handle,"properties":v.properties,"property_flags":handoff::properties(v.properties),"uuid":uuid(v.uuid)}),
         Record::Descriptor(v)=>json!({"type":"descriptor","service_start_handle":v.service_start,"characteristic_value_handle":v.characteristic_handle,"handle":v.handle,"uuid":uuid(v.uuid)}),
         Record::Value(v)=>json!({"type":"standard_read","service_start_handle":v.service_start,"handle":v.handle,"uuid_u16":v.uuid,"result":format!("{:?}",v.result),"failure":reason(v.failure),"elapsed_ms":v.elapsed_ms,"raw_hex":hex(v.bytes),"utf8":core::str::from_utf8(v.bytes).ok(),"truncated":v.truncated,"standard_length_valid":v.length_valid()})
-    }).collect();
+    })).collect();
     let mut value = json!({"format":"BLECAP01","schema":m.schema_version,"export_schema":1,
         "binary":{"byte_length":bytes.len(),"sha256":digest},
         "connection_handoff":handoff::connection(&view),
@@ -199,8 +202,21 @@ fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
     value["identity"] = identity;
     value["identity_tool_mode"] = json!(m.identity_mode);
     value["ngm_identity"] = ngm::project(m.identity.as_ref());
+    if m.collection.is_some() {
+        value["collection"] = collection::project(&view.view());
+        value["record_counts"]["collection_rows"] = json!(m.collection_row_count);
+    }
     if m.identity_mode == Some(true) {
         value["policy"] = json!(ngm::POLICY);
+    }
+    if m.collection.is_some() {
+        value["tool_mode"] = json!("ngm-collector");
+        value["policy"] = json!("explicit-fixed-engine-single-DID-raw-collection-v1");
+        value["limits"] = json!(
+            "The adapter INFO subsection is adapter-only. Collection contains active diagnostic request evidence and \
+             optional unqualified family interpretations; no live measurement, exact ECU support or \
+             adapter-autonomous behavior is established."
+        );
     }
     value["cached_name"] = m.cached_name.map(|n|json!({"source":n.source.label(),"raw_hex":hex(n.data.as_slice()),"utf8":core::str::from_utf8(n.data.as_slice()).ok(),"complete":n.complete,"truncated":n.data.truncated,"observed_at_boot_ms":n.at_ms})).unwrap_or(Value::Null);
     value["boot"] = m.boot.map(|b|json!({"raw_watchdog_reason":b.raw_reason,"rom_boot_type":b.boot_type,"classification":b.label(),"watchdog_fault":b.watchdog_fault(),"previous":b.previous.map(|p|json!({"stage_code":p.stage.code(),"stage":p.stage.label(),"observed_at_previous_boot_ms":p.elapsed_ms})),"scope":"Last retained observation, not proven reset cause or exact reset time. Power removal may erase it; producer image unknown."})).unwrap_or(Value::Null);
@@ -321,6 +337,8 @@ pub const USB_PID: u16 = 0x0009;
 pub const USB_PRODUCT: &str = "Pico BLE Probe Captures";
 /// Separate INFO-only tool product identity accepted for automatic unique selection.
 pub const NGM_USB_PRODUCT: &str = "Pico NGM Identity Captures";
+/// Separately confirmed fixed-read collector product accepted for automatic unique selection.
+pub const COLLECTOR_USB_PRODUCT: &str = "Pico NGM Collector Captures";
 /// Returns whether enumerated `port` is USB with the capture VID/PID, without opening it.
 pub fn is_candidate(port: &serialport::SerialPortInfo) -> bool {
     matches!(&port.port_type,serialport::SerialPortType::UsbPort(usb)if usb.vid==USB_VID&&usb.pid==USB_PID)
@@ -332,12 +350,14 @@ fn matches_product(
     product: &str,
     port_name: &str,
 ) -> bool {
-    [USB_PRODUCT, NGM_USB_PRODUCT].into_iter().any(|base| {
-        product == base
-            || product.strip_prefix(base).is_some_and(|suffix| {
-                suffix.strip_prefix(" (").and_then(|suffix| suffix.strip_suffix(')')) == Some(port_name)
-            })
-    })
+    [USB_PRODUCT, NGM_USB_PRODUCT, COLLECTOR_USB_PRODUCT]
+        .into_iter()
+        .any(|base| {
+            product == base
+                || product.strip_prefix(base).is_some_and(|suffix| {
+                    suffix.strip_prefix(" (").and_then(|suffix| suffix.strip_suffix(')')) == Some(port_name)
+                })
+        })
 }
 /// Returns an enumerated capture port name from `ports` without opening hardware.
 /// `explicit` must exactly match a VID/PID candidate; None additionally requires a unique matching product string.

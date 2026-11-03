@@ -16,6 +16,8 @@ const SEND_MS: u64 = 2_000;
 const REPLY_MS: u64 = 2_000;
 /// Normal link cleanup budget in milliseconds.
 const CLEANUP_MS: u64 = 5_000;
+/// Explicit collector's post-INFO allowance, including admission, collection and cleanup.
+const COLLECTION_CLOSING_MS: u64 = 90_000;
 
 /// Identity of one operation on one link; owner-assigned counters never wrap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +47,8 @@ pub enum Stage {
     SendingInfo,
     /// Whole INFO request was submitted and a reply is pending.
     AwaitingInfo,
-    /// Owner must finish channel/link cleanup; identity is not yet success.
+    /// Owner must finish channel/link cleanup, optionally after its explicitly reserved
+    /// collector window; identity is not yet success.
     Closing,
     /// Attempt ended; inspect outcome and cleanup separately.
     Finished,
@@ -242,6 +245,8 @@ pub struct Session {
     deadline_ms: u64,
     /// True after the sole request permit was issued.
     request_taken: bool,
+    /// Explicit collector policy; only valid INFO may open its longer closing window.
+    collection_window: bool,
     /// Single raw receive allocation, also backing borrowed identity fields.
     decoder: FrameDecoder,
 }
@@ -262,7 +267,47 @@ impl Session {
             last_ms: 0,
             deadline_ms: 0,
             request_taken: false,
+            collection_window: false,
             decoder: FrameDecoder::new(),
+        }
+    }
+
+    /// Returns an idle INFO session reserving at most90 seconds after valid INFO for a
+    /// separately authorized collection and actual cleanup. Failures before valid INFO retain
+    /// the five-second cleanup budget. No extra request is granted by this constructor.
+    /// The owner must call [`Self::begin_link_cleanup`] when collection work stops.
+    pub const fn new_for_collection() -> Self {
+        Self {
+            collection_window: true,
+            ..Self::new()
+        }
+    }
+
+    /// Starts actual link cleanup for `epoch` at monotonic `now_ms` milliseconds.
+    /// Only Closing accepts this call; stale identities leave state unchanged. The deadline
+    /// becomes the earlier of its existing bound and five seconds from now, never extending
+    /// on repeated calls. Expired/reversed clocks retain a fault; no cleanup is acknowledged.
+    /// Returns unit after bounding the deadline, or a stale, inactive or clock rejection.
+    pub fn begin_link_cleanup(
+        &mut self,
+        epoch: Epoch,
+        now_ms: u64,
+    ) -> Result<(), Rejected> {
+        self.check_epoch(epoch)?;
+        if self.stage != Stage::Closing {
+            return Err(Rejected::NotActive);
+        }
+        self.check_time(now_ms)?;
+        self.deadline_ms = self.deadline_ms.min(now_ms.saturating_add(CLEANUP_MS));
+        Ok(())
+    }
+
+    /// Returns the fixed post-INFO allowance for this explicit constructor policy.
+    const fn closing_budget_ms(&self) -> u64 {
+        if self.collection_window {
+            COLLECTION_CLOSING_MS
+        } else {
+            CLEANUP_MS
         }
     }
 
@@ -361,7 +406,7 @@ impl Session {
             (Stage::OpeningCoc, Event::ChannelOpened) => (Stage::SendingInfo, Some(SEND_MS)),
             (Stage::SendingInfo, Event::InfoSent) if self.request_taken => {
                 if self.decoder.has_identity() {
-                    (Stage::Closing, Some(CLEANUP_MS))
+                    (Stage::Closing, Some(self.closing_budget_ms()))
                 } else {
                     (Stage::AwaitingInfo, Some(REPLY_MS))
                 }
@@ -432,7 +477,7 @@ impl Session {
             Ok(status) => {
                 if status == DecodeStatus::Complete && self.stage == Stage::AwaitingInfo {
                     self.stage = Stage::Closing;
-                    self.set_deadline(now_ms, CLEANUP_MS)?;
+                    self.set_deadline(now_ms, self.closing_budget_ms())?;
                 }
                 Ok(status)
             }

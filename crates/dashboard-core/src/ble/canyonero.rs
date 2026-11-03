@@ -1,4 +1,5 @@
-//! Bounded INFO-only CANyonero codec and diagnostic session, with no vehicle commands.
+//! Bounded CANyonero codecs. The identity session issues INFO only; the separate
+//! collection policy uses a closed diagnostic-read catalogue and owns no I/O.
 //!
 //! Wire framing and field order follow the public [CANyonero encoder](https://github.com/Automotive-Swift/Swift-CANyonero/blob/78091bb5599c4f5e3002fbd5700b826a625e8b04/Sources/libCANyonero/Protocol.cpp).
 //! The 245-byte frame ceiling, 64-byte fields and strict text validation are local
@@ -6,6 +7,12 @@
 
 mod session;
 pub use session::*;
+
+/// Compiled ECU read identifiers and raw reply admission; never live measurements.
+pub mod reads;
+
+/// Explicit finite raw-CAN collection policy; separate from the INFO-only session.
+pub mod collection;
 
 /// Maximum retained received bytes, including the four-byte header.
 pub const MAX_FRAME_BYTES: usize = 245;

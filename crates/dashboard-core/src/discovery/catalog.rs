@@ -41,18 +41,37 @@ impl Device {
     /// nonprintable bytes with `?`; returns an empty string when no name is available.
     pub fn name(&self) -> String<31> { names::device_name(self).map(|n| printable(n.bytes)).unwrap_or_default() }
 
-    /// Updates `self`'s cache with `name` only when it is not older and does not downgrade
-    /// a complete, untruncated name. Returns unit; rejected observations leave the cache intact.
-    fn remember_name(
+    /// Admits `source`/`complete`/`truncated` at boot-relative `at_ms` only when not older
+    /// than the cache and not downgrading a complete untruncated name. Rejection returns
+    /// None without mutation. Success updates metadata and returns resident storage;
+    /// the caller must synchronously replace its byte array and length before publishing.
+    fn name_destination(
         &mut self,
-        name: names::ObservedName,
-    ) {
-        if self.cached_name.as_ref().is_none_or(|old| {
-            name.at_ms >= old.at_ms
-                && (!(old.complete && !old.data.truncated) || (name.complete && !name.data.truncated))
-        }) {
-            self.cached_name = Some(name);
+        source: names::NameSource,
+        complete: bool,
+        truncated: bool,
+        at_ms: u64,
+    ) -> Option<&mut names::ObservedName> {
+        if self
+            .cached_name
+            .as_ref()
+            .is_some_and(|old| at_ms < old.at_ms || (old.complete && !old.data.truncated && !(complete && !truncated)))
+        {
+            return None;
         }
+        let name = self.cached_name.get_or_insert_with(|| {
+            names::ObservedName {
+                data: Payload::empty(),
+                source,
+                complete,
+                at_ms,
+            }
+        });
+        name.source = source;
+        name.complete = complete;
+        name.at_ms = at_ms;
+        name.data.truncated = truncated;
+        Some(name)
     }
 
     /// Returns milliseconds since `self`'s last report at boot-relative `now_ms`;
@@ -90,10 +109,12 @@ impl Catalog {
     /// Caches complete GAP `data` for exact `peer` at boot-relative `at_ms` milliseconds.
     /// Empty/truncated data, unknown peers and observations older than the peer's last
     /// packet are ignored. Returns unit; raw packets and report timestamps stay intact.
+    /// Accepted payload storage is copied directly into the resident cache; `data` is
+    /// borrowed only during the call and its bytes/length/truncation remain unchanged.
     pub(super) fn remember_gap_name(
         &mut self,
         peer: Peer,
-        data: Payload<64>,
+        data: &Payload<64>,
         at_ms: u64,
     ) {
         if data.as_slice().is_empty() || data.truncated {
@@ -103,13 +124,10 @@ impl Catalog {
             .devices
             .iter_mut()
             .find(|d| d.peer == peer && at_ms >= d.last_seen_ms)
+            && let Some(name) = device.name_destination(names::NameSource::Gap, true, false, at_ms)
         {
-            device.remember_name(names::ObservedName {
-                data,
-                source: names::NameSource::Gap,
-                complete: true,
-                at_ms,
-            });
+            name.data.bytes.copy_from_slice(&data.bytes);
+            name.data.len = data.len;
         }
     }
 
@@ -121,6 +139,16 @@ impl Catalog {
     pub fn observe(
         &mut self,
         report: Advertisement,
+    ) {
+        self.observe_ref(&report);
+    }
+
+    /// Admits borrowed `report` with [`Self::observe`]'s identity, time and capacity checks.
+    /// Retained packet/name bytes are copied into the catalogue; no borrow survives return.
+    #[inline(always)]
+    pub fn observe_ref(
+        &mut self,
+        report: &Advertisement,
     ) {
         if report.kind == ReportKind::Other {
             return;
@@ -171,8 +199,14 @@ impl Catalog {
         } else {
             names::NameSource::Advertisement
         };
-        if let Some(name) = names::packet_observation(&report.data, source, report.at_ms) {
-            device.remember_name(name);
+        if let Some(name) = names::packet_observation(&report.data, source, report.at_ms)
+            && let Some(cached) = device.name_destination(name.source, name.complete, name.truncated, report.at_ms)
+        {
+            // AD names contain at most 29 bytes. Preserve Payload::new's zeroed tail
+            // while copying the borrowed selected field directly into retained storage.
+            cached.data.bytes.fill(0);
+            cached.data.bytes[..name.bytes.len()].copy_from_slice(name.bytes);
+            cached.data.len = name.bytes.len() as u8;
         }
         if report.kind == ReportKind::ScanResponse {
             device.response = report.data;

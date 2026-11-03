@@ -24,6 +24,8 @@ from validation import require
 from script_values import integer_value, object_fields, string_value
 
 GATE = "ble_probe_practical_image"
+# Tuple index is the exact linked policy discriminator, never a filename alias.
+TOOLS = ("ble-probe", "ngm-identity", "ngm-collector")
 FLASH_START = 0x10000000
 CAPTURES_START = 0x101E6000
 CAPTURES_END = 0x101FE000
@@ -193,9 +195,9 @@ def _linked_marker(
 def linked_tool(elf: InspectableImage, expected: str | None = None) -> str:
     """Reject missing, unknown or mismatched executable policy, including in CI."""
     raw, _ = _linked_marker(elf, ".probe_tool", "BLE_PROBE_TOOL_KIND", 1)
-    require(raw[0] in (0, 1), "unknown linked utility")
-    tool = ("ble-probe", "ngm-identity")[raw[0]]
-    require(expected is None or expected == tool, "linked utility differs from manifest")
+    require(raw[0] < len(TOOLS), "unknown linked utility")
+    tool = TOOLS[raw[0]]
+    require(expected is None or expected == tool, "linked utility differs from expected policy")
     return tool
 
 
@@ -325,7 +327,9 @@ def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
         address & ~1
         for name, (address, _, _) in elf.functions.items()
         if name == "probe_core1"
-        or re.fullmatch(r"_RNvCs[A-Za-z0-9]+_(?:9ble_probe|12ngm_identity)11probe_core1", name)
+        or re.fullmatch(
+            r"_RNvCs[A-Za-z0-9]+_(?:9ble_probe|12ngm_identity|13ngm_collector)11probe_core1", name
+        )
     }
     require(len(entry_addresses) == 1, "missing or ambiguous core1 render entry")
     # Include the matching executor specialization, FnOnce shim and core startup
@@ -353,6 +357,7 @@ def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
                 "5radio",
                 "14identity_radio",
                 "13identity_flow",
+                "15collection_flow",
                 "cyw43",
                 "trouble_host",
                 "bt_hci",
@@ -376,13 +381,13 @@ def stack_check(elf: InspectableImage, headroom: int) -> ProbeStackRecord:
     }
 
 
-def inspect_elf(elf: InspectableImage) -> ProbeLayoutRecord:
-    """CI layout stage only; full capture also requires sources and UF2 equality."""
+def inspect_elf(elf: InspectableImage, expected_tool: str | None = None) -> ProbeLayoutRecord:
+    """Check CI layout and optional exact policy; full admission also binds sources/UF2."""
     static, headroom = geometry(elf)
     mapping, program = inspect_program(elf)
     reservation = capture_reservation(elf, mapping)
     identity = linked_identity(elf)
-    tool = linked_tool(elf)
+    tool = linked_tool(elf, expected_tool)
     check_flash_lockout(elf)
     return {
         "schema": 1,
@@ -476,12 +481,16 @@ def main() -> None:
     parser.add_argument(
         "--elf-only", action="store_true", help="CI layout stage, no artifact admission"
     )
+    parser.add_argument(
+        "--expected-tool", choices=TOOLS, help="require this exact linked policy in ELF-only CI"
+    )
     parser.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     if args.elf_only:
         require(args.uf2 is None and args.manifest is None, "ELF-only stage takes only an ELF")
-        result = inspect_elf(ElfImage(args.elf))
+        result = inspect_elf(ElfImage(args.elf), args.expected_tool)
     else:
+        require(args.expected_tool is None, "full admission takes its policy from the manifest")
         require(
             args.uf2 is not None and args.manifest is not None,
             "full admission needs UF2 and manifest",

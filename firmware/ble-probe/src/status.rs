@@ -61,33 +61,61 @@ impl Status {
     /// after this operation survives every subsequent activity update.
     fn recover(&self) { self.word.swap(RadioPhase::Stopping as u32, Ordering::Relaxed); }
 
-    /// Applies live `input` at boot-relative `now_ms` to `model`, clearing the
+    /// Host-test convenience applying live `input` at boot-relative `now_ms` to `model`, clearing the
     /// latch only for Recover and then observing resulting faults. Returns any
     /// new radio request; the caller publishes it to the sole radio owner.
+    #[cfg(not(target_os = "none"))]
     pub fn input(
         &self,
         model: &mut Probe,
         input: Input,
         now_ms: u64,
     ) -> Option<Request> {
+        self.input_observed(model, input, now_ms, now_ms)
+    }
+
+    /// Applies queued `input` observed at `observed_at_ms` at current `now_ms`.
+    /// Preserves the edge timestamp through presentation admission and returns any
+    /// checked request. Recovery alone clears the fault latch; old clicks do not confirm.
+    /// `model` is the live probe mutated by the edge and then inspected for latched faults.
+    pub fn input_observed(
+        &self,
+        model: &mut Probe,
+        input: Input,
+        observed_at_ms: u64,
+        now_ms: u64,
+    ) -> Option<Request> {
         if matches!(input, Input::Recover) {
             self.recover();
         }
-        let request = model.input(input, now_ms);
+        let request = model.input_observed(input, observed_at_ms, now_ms);
         self.observe_probe(model);
         request
     }
 
-    /// Applies current-generation `event` to `model`, rejecting stale generations
-    /// before inspecting payloads. Latches malformed reports, capacity, incomplete
-    /// inspection and cleanup faults without generating another radio request.
-    #[inline(always)]
+    /// Host-call compatibility for owned `event` applied to `model`; delegates unchanged admission to
+    /// [`Self::event_ref`] and retains no reference after this synchronous call.
+    #[cfg(not(target_os = "none"))]
     pub fn event(
         &self,
         model: &mut Probe,
         event: Event,
     ) {
-        let revision = match &event {
+        self.event_ref(model, &event);
+    }
+
+    /// Applies borrowed current-generation `event` to `model`, rejecting stale generations
+    /// before inspecting payloads. Latches malformed reports, capacity, incomplete
+    /// inspection and cleanup faults without generating another radio request.
+    /// The dequeued event stays with the caller; admitted bytes are copied into the
+    /// resident model. No borrow survives this call and no queue lock is acquired.
+    #[inline(always)]
+    pub fn event_ref(
+        &self,
+        model: &mut Probe,
+        event: &Event,
+    ) {
+        let revision = match event {
             Event::Report { revision, .. }
             | Event::State { revision, .. }
             | Event::Item { revision, .. }
@@ -99,7 +127,7 @@ impl Status {
         if revision != model.request.revision {
             return;
         }
-        if let Event::Report { report, .. } = &event
+        if let Event::Report { report, .. } = event
             && model.request.action == Action::Scan(true)
             && report.kind != ReportKind::Other
             && (report.data.truncated || AdFields::new(report.data.as_slice()).any(|f| f.is_err()))
@@ -109,19 +137,19 @@ impl Status {
         // Retain only terminal flags across model admission, not another full
         // inventory/report event and its owned evidence payload.
         let cleanup_failed = matches!(
-            &event,
+            event,
             Event::InspectionEnd {
                 cleanup_complete: false,
                 ..
             }
         );
-        let enumeration_ended = matches!(&event, Event::Complete { .. });
-        model.event(event);
+        let enumeration_ended = matches!(event, Event::Complete { .. });
+        model.event_ref(event);
         self.observe_probe(model);
-        if cleanup_failed && matches!(model.request.action, Action::Inspect(_)) {
+        if cleanup_failed && model.request.action.peer().is_some() {
             self.record(Fault::Probe);
         }
-        if enumeration_ended && matches!(model.request.action, Action::Inspect(_)) && !model.inspection.complete {
+        if enumeration_ended && model.request.action.peer().is_some() && !model.inspection.complete {
             self.record(Fault::Probe);
         }
     }
@@ -137,6 +165,10 @@ impl Status {
             || model.failure.is_some()
             || inspection.malformed != 0
             || inspection.values.iter().any(|v| !valid_read(v))
+            || inspection
+                .collection
+                .as_ref()
+                .is_some_and(|e| e.summary.fault.is_some() || (e.summary.ended_at_ms.is_some() && !e.successful()))
             || inspection.identity.as_ref().is_some_and(|i| {
                 i.fault.is_some()
                     || (i.ended_at_ms.is_some() && !i.successful())
@@ -342,10 +374,16 @@ impl Status {
 /// stage complete, acknowledged normal cleanup, matching termination evidence,
 /// valid bounded values and link/timing metadata. Saved data cannot satisfy this.
 /// The identity image additionally requires a complete fault-free INFO session;
-/// standard inventory alone never establishes identity success.
+/// collection additionally requires all28 complete positive replies and actual
+/// cleanup. Standard inventory alone never establishes either success.
 fn clean_probe(model: &Probe) -> bool {
     let i = &model.inspection;
-    matches!(model.request.action, Action::Inspect(peer) if model.selected_device().is_some_and(|d| d.peer == peer))
+    !model.cancel_collection
+        && model
+            .request
+            .action
+            .peer()
+            .is_some_and(|peer| model.selected_device().is_some_and(|d| d.peer == peer))
         && model.error == ProbeError::None
         && model.failure.is_none()
         && i.complete
@@ -365,6 +403,8 @@ fn clean_probe(model: &Probe) -> bool {
             .is_some_and(|(start, end)| end >= start)
         && i.values.iter().all(|v| valid_read(v) && !v.value.truncated)
         && (!model.identity_mode || i.identity.as_ref().is_some_and(|e| e.successful()))
+        && (!matches!(model.request.action, Action::Collect(_))
+            || i.collection.as_ref().is_some_and(|e| e.successful()))
 }
 
 /// Returns whether `value` succeeded without failure and has the allowed byte

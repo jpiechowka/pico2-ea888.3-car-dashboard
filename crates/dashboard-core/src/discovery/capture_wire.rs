@@ -200,8 +200,20 @@ impl FrameHeader {
     /// Returns `self` as a 32-byte version-one header with zero reserved bytes and
     /// header CRC over its first 28 bytes; invalid metadata returns InvalidHeader.
     pub fn encode(self) -> Result<[u8; HEADER_BYTES], WireError> {
-        self.validate()?;
         let mut b = [0; HEADER_BYTES];
+        self.encode_into(&mut b)?;
+        Ok(b)
+    }
+
+    /// Writes `self` into caller-owned 32-byte `b` as a version-one header, including
+    /// zero reserved bytes and CRC over the first 28 bytes. Returns unit on success;
+    /// invalid metadata returns InvalidHeader before changing any destination byte.
+    pub fn encode_into(
+        self,
+        b: &mut [u8; HEADER_BYTES],
+    ) -> Result<(), WireError> {
+        self.validate()?;
+        b.fill(0);
         b[..8].copy_from_slice(b"BLECUSB1");
         b[8] = 1;
         b[9] = match self.status {
@@ -225,7 +237,7 @@ impl FrameHeader {
         b[24..28].copy_from_slice(&self.payload_crc.to_le_bytes());
         let crc = crc32(&b[..28]);
         b[28..32].copy_from_slice(&crc.to_le_bytes());
-        Ok(b)
+        Ok(())
     }
 
     /// Returns a validated header from exact 32-byte `b`. Rejects wrong length,

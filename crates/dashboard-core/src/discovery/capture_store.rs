@@ -85,10 +85,29 @@ pub enum CopyState {
 /// Admission of both copies, preserving inactive unknown formats even when one copy is readable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotInfo {
-    /// Physical-copy states in index order.
-    pub copies: [CopyState; 2],
-    /// Valid copy with highest generation; absent if neither copy is valid.
-    pub selected: Option<StoredCapture>,
+    /// Physical-copy states in index order; immutable outside journal admission.
+    copies: [CopyState; 2],
+    /// Index of the valid highest-generation copy, absent if neither is valid.
+    /// Metadata remains in `copies` rather than a duplicated envelope.
+    selected: Option<u8>,
+}
+
+impl SlotInfo {
+    /// Returns borrowed admitted copy states in physical index order, including inactive
+    /// unknown formats. The immutable view preserves selection coherence; no I/O occurs.
+    pub fn copies(&self) -> &[CopyState; 2] { &self.copies }
+
+    /// Returns the admitted highest-generation envelope, or None without a valid
+    /// selected index/state. Bounds and physical copy identity are checked before access;
+    /// equal valid generations are rejected by [`inspect_slot`] before publishing `self`.
+    /// This snapshot grants no addressing authority without later storage reverification.
+    pub fn selected(&self) -> Option<StoredCapture> {
+        let index = self.selected?;
+        match self.copies.get(usize::from(index))? {
+            CopyState::Valid(capture) if capture.copy == index => Some(*capture),
+            _ => None,
+        }
+    }
 }
 
 /// Journal operation failure; mutation errors do not imply that flash stayed unchanged.
@@ -387,15 +406,15 @@ pub async fn inspect_slot<S: Storage>(
     for copy in 0..2 {
         let state = inspect_copy(storage, slot, copy).await?;
         if let CopyState::Valid(candidate) = state {
-            if let Some(previous) = info.selected {
+            if let Some(previous) = info.selected() {
                 if candidate.generation == previous.generation {
                     return Err(Error::AmbiguousGeneration);
                 }
                 if candidate.generation > previous.generation {
-                    info.selected = Some(candidate);
+                    info.selected = Some(copy);
                 }
             } else {
-                info.selected = Some(candidate);
+                info.selected = Some(copy);
             }
         }
         info.copies[usize::from(copy)] = state;
@@ -429,7 +448,7 @@ pub async fn load_slot<S: Storage>(
     destination: &mut [u8],
 ) -> Result<StoredCapture, Error<S::Error>> {
     let info = inspect_slot(storage, slot).await?;
-    let capture = info.selected.ok_or_else(|| unavailable(info))?;
+    let capture = info.selected().ok_or_else(|| unavailable(info))?;
     read_payload(storage, capture, destination).await
 }
 
@@ -536,7 +555,7 @@ pub async fn save_slot<S: Storage>(
             return Err(Error::UnsupportedSchema(version));
         }
     }
-    let (copy, generation) = match info.selected {
+    let (copy, generation) = match info.selected() {
         Some(previous) => {
             (
                 1 - previous.copy,

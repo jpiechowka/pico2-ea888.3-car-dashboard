@@ -10,6 +10,11 @@ bench = false
 default = ["simple-outline"]
 simple-outline = ["dashboard-core/simple-outline"]
 
+# Path-included firmware modules retain this target-only cfg; this declares a
+# checked value without enabling a host behavior feature or weakening warnings.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("ngm-collector"))'] }
+
 [dependencies]
 dashboard-config = { path = "../crates/dashboard-config" }
 dashboard-core = { path = "../crates/dashboard-core", default-features = false }

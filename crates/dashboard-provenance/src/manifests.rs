@@ -13,7 +13,7 @@ const HAL_HASH: &str = "5d98f472894c1ecffac5596c657af5305c57282d29e8746d7fec0339
 /// Embassy source revision associated with the pinned HAL and original radio firmware inventory.
 const COMMIT: &str = "84444a19eb57d978e3c09fcdc8e60cdd7278eb03";
 /// Exact reviewed HAL replacement/addition paths; update coherently with overlay provenance.
-const HAL_PATCHES: [&str; 75] = [
+const HAL_PATCHES: [&str; 76] = [
     "Cargo.lock",
     "Cargo.toml",
     "Cargo.toml.orig",
@@ -35,6 +35,7 @@ const HAL_PATCHES: [&str; 75] = [
     "src/flash.rs",
     "src/flash_probe.rs",
     "src/flash_read.rs",
+    "src/flash_write.rs",
     "src/float/add_sub.rs",
     "src/float/cmp.rs",
     "src/float/conv.rs",

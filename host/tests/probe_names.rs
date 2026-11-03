@@ -168,3 +168,53 @@ fn cache_respects_complete_names_time_and_exact_peer_identity() {
     catalog.observe(report(PEER, ReportKind::ScanResponse, &[2, 1, 6, 20, 9, b'X'], 15));
     assert_eq!(catalog.devices()[0].name(), "NEW");
 }
+
+/// Truncated complete packets stay raw but cannot replace a good cache; an equal-time
+/// complete observation may replace it, clearing the old retained name's suffix.
+#[test]
+fn packet_cache_commit_keeps_priority_time_and_exact_raw_prefix() {
+    let mut catalog = Catalog::new();
+    catalog.observe(report(PEER, ReportKind::Connectable, b"\x05\x09LONG", 10));
+    let original = catalog.devices()[0].cached_name.unwrap();
+    let mut truncated = report(PEER, ReportKind::ScanResponse, b"\x03\x09A\xFF", 11);
+    truncated.data.truncated = true;
+    catalog.observe_ref(&truncated);
+    assert_eq!(catalog.devices()[0].cached_name, Some(original));
+    assert_eq!(catalog.devices()[0].response, truncated.data);
+    catalog.observe(report(PEER, ReportKind::ScanResponse, b"\x02\x09Z", 11));
+    let replaced = catalog.devices()[0].cached_name.unwrap();
+    assert_eq!(replaced.data, Payload::new(b"Z"));
+    assert_eq!(replaced.source, names::NameSource::ScanResponse);
+    assert_eq!(replaced.at_ms, 11);
+    catalog.observe(report(PEER, ReportKind::Connectable, &[2, 1, 6], 12));
+    catalog.observe(report(PEER, ReportKind::ScanResponse, &[2, 1, 6], 12));
+    assert_eq!(catalog.devices()[0].name(), "Z");
+    assert_eq!(catalog.devices()[0].cached_name, Some(replaced));
+}
+
+/// GAP commit copies the original payload exactly, including unused storage, while
+/// later shorter reads replace it and older cache times cannot overwrite the result.
+#[test]
+fn gap_cache_borrows_read_without_changing_raw_storage_or_observation_times() {
+    let mut p = inspecting(0x1800);
+    let mut raw = Payload::new(&[0xFF; 64]);
+    raw.len = 3;
+    raw.bytes[..3].copy_from_slice(b"A\0Z");
+    value(&mut p, ReadResult::Ok, raw);
+    let revision = p.request.revision;
+    end(&mut p, revision, 20);
+    assert_eq!(p.selected_device().unwrap().cached_name.unwrap().data, raw);
+    assert_eq!(p.inspection.values[0].value, raw);
+    assert_eq!(p.selected_device().unwrap().advertisement.as_slice(), &[2, 1, 6]);
+    assert_eq!(p.selected_device().unwrap().last_seen_ms, 1);
+    assert_eq!(p.selected_device().unwrap().name(), "A?Z");
+    value(&mut p, ReadResult::Ok, Payload::new(b"new"));
+    end(&mut p, revision, 19);
+    assert_eq!(p.selected_device().unwrap().cached_name.unwrap().data, raw);
+    end(&mut p, revision, 20);
+    let cached = p.selected_device().unwrap().cached_name.unwrap();
+    assert_eq!(cached.data, Payload::new(b"new"));
+    assert_eq!(cached.source, names::NameSource::Gap);
+    assert_eq!(cached.at_ms, 20);
+    assert!(cached.complete && !cached.data.truncated);
+}

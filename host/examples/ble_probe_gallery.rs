@@ -14,8 +14,18 @@ fn save(
     name: &str,
     p: &Probe,
 ) {
+    save_at(dir, name, p, 12_400);
+}
+/// Renders synthetic `p` at boot-relative `at_ms`, writing `name`.ppm under `dir`.
+/// Rendering and file failures panic; no radio or display hardware is accessed.
+fn save_at(
+    dir: &Path,
+    name: &str,
+    p: &Probe,
+    at_ms: u64,
+) {
     let mut frame = AlignedFrame::boxed();
-    render(&mut St7789Renderer::new(&mut frame.0), p, 12_400).unwrap();
+    render(&mut St7789Renderer::new(&mut frame.0), p, at_ms).unwrap();
     save_frame(dir, name, &frame);
 }
 /// Converts all landscape RGB565 `frame` pixels to RGB888 P6 under `dir` with stem `name` and .ppm suffix.
@@ -404,10 +414,113 @@ fn save_identity_scenes(
         }
     }
 }
-/// Emits synthetic scan/inspection/saved-slot/error/reset-evidence PPMs into the first CLI argument's directory.
-/// Missing arguments, fixture invariant failures and I/O errors panic; trailing arguments are ignored and existing
-/// images replaced. All radio, timing, memory and peer observations are fabricated display fixtures; no device is
-/// contacted.
+/// Applies synthetic collection `update` through `p`'s revision-qualified event path.
+/// Panics on rejected evidence; fabricated replies do not invoke any transport.
+fn collection_update(
+    p: &mut Probe,
+    update: collection::Update,
+) {
+    let malformed = p.inspection.malformed;
+    p.event(Event::Item {
+        revision: p.request.revision,
+        item: InspectionItem::Collection(update),
+    });
+    assert_eq!(p.inspection.malformed, malformed);
+}
+
+/// Writes synthetic collector confirmation, expiry and complete raw-result scenes to `dir`.
+/// `diagnostics`, all timings, adapter voltage and ECU reply bytes are fabricated;
+/// production model, evidence admission and rendering are used without radio I/O.
+fn save_collection_scenes(
+    dir: &Path,
+    diagnostics: ProbeDiagnostics,
+) {
+    use collection::Update;
+    use dashboard_core::ble::canyonero::CleanupOutcome;
+    use dashboard_core::ble::canyonero::collection::ReadStatus;
+    use dashboard_core::ble::canyonero::reads::ReadId;
+
+    let mut prompt = identity_probe(diagnostics);
+    prompt.collection_enabled = true;
+    assert!(prompt.input(Input::Collect, 12_010).is_none());
+    assert_eq!(prompt.screen, Screen::CollectionConfirm);
+    assert!(prompt.collection_confirmation.is_some());
+    save(dir, "ngm-collector-confirm-synthetic", &prompt);
+    prompt.collection_presented(prompt.collection_prompt_id().unwrap(), 12_400);
+    let original_request = prompt.request;
+    prompt.expire_collection(27_010);
+    assert!(prompt.collection_confirmation.is_none());
+    assert_eq!(prompt.screen, Screen::CollectionConfirm);
+    assert!(prompt.input(Input::Click, 27_011).is_none());
+    assert_eq!(prompt.request, original_request);
+    save_at(dir, "ngm-collector-expired-synthetic", &prompt, 27_011);
+
+    let mut result = identity_probe(diagnostics);
+    result.collection_enabled = true;
+    // A synthetic action labels the fabricated evidence; it never reaches a radio task.
+    result.request.action = Action::Collect(result.selected_device().unwrap().peer);
+    identity_reply(&mut result, b"\x1f\x91\x00\x09v\nm\nh\ns\nf");
+    collection_update(&mut result, Update::Start { at_ms: 12_041 });
+    collection_update(
+        &mut result,
+        Update::Voltage {
+            millivolts: 12_400,
+            at_ms: 12_042,
+        },
+    );
+    collection_update(
+        &mut result,
+        Update::Opened {
+            handle: 2,
+            at_ms: 12_043,
+        },
+    );
+    collection_update(&mut result, Update::Configured { at_ms: 12_044 });
+    for id in ReadId::ALL {
+        let at_ms = 12_045 + id.index() as u64;
+        let mut raw = vec![0x62, (id.did() >> 8) as u8, id.did() as u8];
+        raw.extend(std::iter::repeat_n(1, id.expected_data_len().unwrap_or(1)));
+        collection_update(&mut result, Update::Attempt { id, at_ms });
+        collection_update(&mut result, Update::Submitted { id, at_ms });
+        collection_update(
+            &mut result,
+            Update::RowHeader {
+                id,
+                at_ms,
+                status: ReadStatus::Positive,
+                length: raw.len() as u8,
+                pending: 0,
+            },
+        );
+        collection_update(
+            &mut result,
+            Update::Chunk {
+                id,
+                offset: 0,
+                bytes: Payload::new(&raw),
+            },
+        );
+    }
+    collection_update(
+        &mut result,
+        Update::End {
+            at_ms: 12_090,
+            completed: true,
+            fault: None,
+            cleanup: CleanupOutcome::Clean,
+            last_submission: None,
+        },
+    );
+    identity_end(&mut result);
+    assert!(result.inspection.collection.as_ref().unwrap().successful());
+    result.page = 0;
+    save(dir, "ngm-collector-result-synthetic", &result);
+}
+
+/// Emits synthetic scan/inspection/collection/saved-slot/error/reset-evidence PPMs into the first CLI argument's
+/// directory. Missing arguments, fixture invariant failures and I/O errors panic; trailing arguments are ignored and
+/// existing images replaced. All radio, timing, memory and peer observations are fabricated display fixtures; no device
+/// is contacted.
 fn main() {
     let directory = std::env::args_os().nth(1).expect("output directory");
     let directory = Path::new(&directory);
@@ -763,6 +876,7 @@ fn main() {
     }
     save_timeout_scenes(directory, p.diagnostics);
     save_identity_scenes(directory, p.diagnostics);
+    save_collection_scenes(directory, p.diagnostics);
     // Deliberately fabricated failure, not a diagnosis of any physical peer.
     p.event(Event::Failure {
         revision: p.request.revision,

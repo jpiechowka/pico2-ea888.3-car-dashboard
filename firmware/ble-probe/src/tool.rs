@@ -8,6 +8,8 @@ pub enum ToolKind {
     StandardProbe = 0,
     /// Explicit selected-peer NGM identity trial; requires the `ngm-identity` feature.
     NgmIdentity = 1,
+    /// Adapter Inspect plus separately confirmed fixed ECU reads, never automatic on boot.
+    NgmCollector = 2,
 }
 
 impl ToolKind {
@@ -16,6 +18,7 @@ impl ToolKind {
         match self {
             Self::StandardProbe => "BLE probe",
             Self::NgmIdentity => "NGM identity",
+            Self::NgmCollector => "NGM collect",
         }
     }
 
@@ -24,6 +27,7 @@ impl ToolKind {
         match self {
             Self::StandardProbe => "Inspect GATT",
             Self::NgmIdentity => "Inspect NGM INFO",
+            Self::NgmCollector => "Inspect NGM INFO",
         }
     }
 
@@ -32,6 +36,7 @@ impl ToolKind {
         match self {
             Self::StandardProbe => "Pico BLE Probe Captures",
             Self::NgmIdentity => "Pico NGM Identity Captures",
+            Self::NgmCollector => "Pico NGM Collector Captures",
         }
     }
 }

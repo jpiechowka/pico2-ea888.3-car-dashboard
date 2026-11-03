@@ -116,24 +116,17 @@ fn packet_name(
         })
 }
 
-/// Returns an owned name from `data`, preferring complete AD type 9 over shortened 8.
+/// Borrows a name from `data`, preferring complete AD type 9 over shortened 8.
 /// `source` and boot-relative `at_ms` identify this packet. Empty/absent names return
 /// `None`; packet truncation remains set even if the selected field itself fits.
+/// The returned bytes remain tied to `data`; no payload copy or cache mutation occurs.
 pub(super) fn packet_observation(
     data: &Payload<31>,
     source: NameSource,
     at_ms: u64,
-) -> Option<ObservedName> {
-    let name = packet_name(data.as_slice(), data.truncated, source, Some(at_ms), 9)
-        .or_else(|| packet_name(data.as_slice(), data.truncated, source, Some(at_ms), 8))?;
-    let mut data = Payload::new(name.bytes);
-    data.truncated |= name.truncated;
-    Some(ObservedName {
-        data,
-        source,
-        complete: name.complete,
-        at_ms,
-    })
+) -> Option<NameRef<'_>> {
+    packet_name(data.as_slice(), data.truncated, source, Some(at_ms), 9)
+        .or_else(|| packet_name(data.as_slice(), data.truncated, source, Some(at_ms), 8))
 }
 
 /// Borrows the best name in `device`: complete current packet, complete untruncated
@@ -230,6 +223,30 @@ impl SavedIdentity {
                 name.truncated |= n.truncated;
                 name
             }),
+        }
+    }
+}
+
+#[cfg(test)]
+/// Packet selection borrows exact raw bytes while retaining observation provenance.
+mod tests {
+    use super::*;
+
+    /// Complete fields win over earlier shortened fields; source truncation and
+    /// timestamp survive, and empty/malformed fields cannot supply a name.
+    #[test]
+    fn packet_observation_borrows_selected_raw_field() {
+        let mut packet = Payload::new(b"\x02\x08S\x04\x09A\xFFZ");
+        packet.truncated = true;
+        let name = packet_observation(&packet, NameSource::ScanResponse, u64::MAX).unwrap();
+        assert_eq!(name.bytes, b"A\xFFZ");
+        assert_eq!(name.bytes.as_ptr(), packet.bytes[5..].as_ptr());
+        assert_eq!(name.source, NameSource::ScanResponse);
+        assert!(name.complete && name.truncated && !name.cached);
+        assert_eq!(name.observed_at_ms, Some(u64::MAX));
+        assert_eq!(name.record_index, None);
+        for raw in [&b"\x01\x09"[..], &b"\x04\x09X"[..], &b""[..]] {
+            assert!(packet_observation(&Payload::new(raw), NameSource::Advertisement, 0).is_none());
         }
     }
 }

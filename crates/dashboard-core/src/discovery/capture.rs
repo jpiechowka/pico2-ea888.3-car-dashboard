@@ -4,8 +4,11 @@ use super::names::{NameSource, ObservedName};
 use super::*;
 use crate::health::reset::{BootEvidence, ResetRecord, ResetStage};
 
+/// Borrowed capture-v6 collection rows and compact summary, separate from GATT counts.
+mod collection_codec;
 /// Stable bounded identity metadata extension; legacy schemas omit it.
 mod identity_codec;
+pub use collection_codec::TerminalRef;
 
 /// Capture producer's supported clock-profile label; rates are retained separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +47,7 @@ pub enum CaptureError {
     Truncated,
     /// Capture discriminator does not match the supported format family.
     Magic,
-    /// Capture schema is outside supported versions 1..=5.
+    /// Capture schema is outside supported versions 1..=6.
     Version,
     /// Header or body CRC disagrees with the input bytes.
     Integrity,
@@ -119,6 +122,16 @@ impl ValueRef<'_> {
 /// One admitted record, iterated in service/characteristic/descriptor/value group order.
 #[derive(Clone, Copy, Debug)]
 pub enum Record<'a> {
+    /// Bounded raw engine-read evidence, never a qualified live measurement.
+    Collection(
+        /// Fixed-manifest identity, timing, result and borrowed raw prefix.
+        collection::RowRef<'a>,
+    ),
+    /// Latest terminal transport prefix, not a full wire transcript.
+    CollectionEnvelope(
+        /// Borrowed raw terminal prefix with explicit observed length/provenance.
+        TerminalRef<'a>,
+    ),
     /// Nonoverlapping primary-service range.
     Service(
         /// Owned service declaration.
@@ -144,7 +157,11 @@ pub enum Record<'a> {
 /// Frozen producer and selected-peer context; optional legacy fields remain unavailable.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureMetadata {
-    /// Actual admitted payload schema version in 1..=5, independent of journal/USB versions.
+    /// Small v6 collection context; raw rows are borrowed separately, absent in v1-v5.
+    pub collection: Option<collection::Summary>,
+    /// Collection row count, exactly28 when present, otherwise zero; excludes GATT counts.
+    pub collection_row_count: u8,
+    /// Actual admitted payload schema version in 1..=6, independent of journal/USB versions.
     pub schema_version: u16,
     /// Producer image selected identity mode; absent in legacy v1-v4, never inferred.
     pub identity_mode: Option<bool>,
@@ -219,6 +236,8 @@ pub struct CaptureMetadata {
 impl CaptureMetadata {
     /// Private invalid parsing seed, never published before full field/relationship admission.
     const EMPTY: Self = Self {
+        collection: None,
+        collection_row_count: 0,
         schema_version: 0,
         identity_mode: None,
         identity: None,
@@ -318,7 +337,7 @@ impl Decoder {
     }
 
     /// Returns an admitted view borrowing `self` and immutable `bytes` after envelope,
-    /// CRC, field, count, metadata and GATT-relationship checks. Supports schema 1..=5;
+    /// CRC, field, count, metadata and record-relationship checks. Supports schema 1..=6;
     /// legacy absent fields are cleared on every reuse. Errors leave unpublished partial
     /// metadata in `self`, so no previous view survives this mutable call.
     pub fn decode<'a>(
@@ -330,7 +349,7 @@ impl Decoder {
 
     /// Encodes selected-peer `probe` with producer `build` at boot-relative `captured_at_ms`
     /// milliseconds into `output`, then validates by decoding with `self`'s reusable storage.
-    /// Returns the admitted schema-v5 byte count, at most 8192; output tail is unchanged.
+    /// Returns the admitted v5/v6 byte count, at most8192; output tail is unchanged.
     /// Errors leave a partial or fully encoded but untrusted prefix. Performs no allocation,
     /// radio or storage I/O and never turns incomplete evidence into complete evidence.
     pub fn encode(
@@ -412,6 +431,8 @@ struct Writer<'a> {
     bytes: &'a mut [u8],
     /// Next write offset, always no greater than admitted output capacity.
     pos: usize,
+    /// Dry-run mode executes identical serializers and bounds without touching output storage.
+    measuring: bool,
 }
 impl Writer<'_> {
     /// Appends `data` to `self`, returning unit; checked overflow/payload limit returns
@@ -425,10 +446,12 @@ impl Writer<'_> {
         if end > PAYLOAD_MAX {
             return Err(CaptureError::TooLarge);
         }
-        self.bytes
-            .get_mut(self.pos..end)
-            .ok_or(CaptureError::BufferTooSmall)?
-            .copy_from_slice(data);
+        if !self.measuring {
+            self.bytes
+                .get_mut(self.pos..end)
+                .ok_or(CaptureError::BufferTooSmall)?
+                .copy_from_slice(data);
+        }
         self.pos = end;
         Ok(())
     }
@@ -538,7 +561,9 @@ impl Writer<'_> {
         self.u16(0)?;
         let start = self.pos;
         write(self)?;
-        self.bytes[length..length + 2].copy_from_slice(&((self.pos - start) as u16).to_le_bytes());
+        if !self.measuring {
+            self.bytes[length..length + 2].copy_from_slice(&((self.pos - start) as u16).to_le_bytes());
+        }
         Ok(())
     }
 }
@@ -611,8 +636,19 @@ impl<'a> Reader<'a> {
     /// Returns width-prefixed wire-order UUID from `self`; rejects widths other than
     /// 2/4/16 or truncated bytes. Width/body prefixes may already be consumed on error.
     fn uuid(&mut self) -> Result<Uuid, CaptureError> {
+        Uuid::from_wire(self.uuid_bytes()?).ok_or(CaptureError::InvalidData)
+    }
+
+    /// Borrows width-prefixed UUID bytes from `self`; preserves width/truncation error order.
+    /// Only 2/4/16-byte bodies are returned, with no owned UUID array or normalization.
+    fn uuid_bytes(&mut self) -> Result<&'a [u8], CaptureError> {
         let len = usize::from(self.u8()?);
-        Uuid::from_wire(self.take(len)?).ok_or(CaptureError::InvalidData)
+        let bytes = self.take(len)?;
+        if matches!(len, 2 | 4 | 16) {
+            Ok(bytes)
+        } else {
+            Err(CaptureError::InvalidData)
+        }
     }
 }
 
@@ -852,8 +888,10 @@ fn write_metadata(
 ) -> Result<(), CaptureError> {
     let d = p.selected_device().ok_or(CaptureError::NoPeer)?;
     let i = &p.inspection;
-    let requested = matches!(p.request.action,Action::Inspect(peer)if peer==d.peer);
-    if matches!(p.request.action,Action::Inspect(peer)if peer!=d.peer) {
+    let requested = p.request.action.peer() == Some(d.peer);
+    if p.request.action.peer().is_some_and(|peer| peer != d.peer)
+        || (i.collection.is_some() && (!matches!(p.request.action, Action::Collect(_)) || !p.identity_mode))
+    {
         return Err(CaptureError::InvalidState);
     }
     w.bytes(&b.source_digest)?;
@@ -952,10 +990,11 @@ fn write_metadata(
     Ok(())
 }
 /// Decodes schema `version` metadata from `r` into unpublished reusable `m`, returning unit.
-/// Caller first bounds version to 1..=5. Validates primitive codes, RSSI, UUID-independent
+/// Caller first bounds version to1..=6. Validates primitive codes, RSSI, UUID-independent
 /// lengths, ATT MTU 23..=517, positive build clocks and radio clock at most 50 MHz/CPU half.
 /// Explicitly clears fields absent in legacy schemas. Errors leave partial `m` and reader
 /// progress; complete temporal/relationship validation occurs before any view is returned.
+#[inline(always)]
 fn read_metadata<'a>(
     r: &mut Reader<'a>,
     m: &mut CaptureMetadata,
@@ -1059,6 +1098,8 @@ fn read_metadata<'a>(
     m.boot = None;
     m.identity = None;
     m.identity_mode = None;
+    m.collection = None;
+    m.collection_row_count = 0;
     if version >= 3 {
         m.fault_latch = Some(FaultLatch::from_parts(r.u16()?, r.u8()?).ok_or(CaptureError::InvalidData)?);
         let hz = r.u32()?;
@@ -1114,17 +1155,27 @@ fn read_metadata<'a>(
         m.identity_mode = Some(r.bool()?);
         identity_codec::read(r, &mut m.identity)?;
     }
+    if version >= 6 {
+        m.collection_row_count = collection_codec::read_summary(r, &mut m.collection)?;
+    }
     Ok(())
+}
+
+/// Consumes the common tag/u16-length envelope from `r`, returning its tag and borrowed body.
+/// Truncation can consume the header; body semantics and trailing bytes remain caller checks.
+fn record_body<'a>(r: &mut Reader<'a>) -> Result<(u8, Reader<'a>), CaptureError> {
+    let tag = r.u8()?;
+    let n = usize::from(r.u16()?);
+    Ok((tag, Reader { bytes: r.take(n)? }))
 }
 
 /// Returns the next tag/u16-length record consumed from `r`, validating exact body
 /// consumption, UUID widths and read outcome/failure consistency. Value bytes borrow
 /// the source and are at most 64. Errors may consume the envelope/body; cross-record
 /// ownership and ordering require the subsequent full-stream checks.
+#[inline(always)]
 fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
-    let tag = r.u8()?;
-    let n = usize::from(r.u16()?);
-    let mut row = Reader { bytes: r.take(n)? };
+    let (tag, mut row) = record_body(r)?;
     let record = match tag {
         1 => {
             Record::Service(Service {
@@ -1173,6 +1224,8 @@ fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
                 bytes: row.take(len)?,
             })
         }
+        5 => Record::Collection(collection_codec::read_row(&mut row)?),
+        6 => Record::CollectionEnvelope(collection_codec::read_terminal(&mut row)?),
         _ => return Err(CaptureError::InvalidData),
     };
     if !row.bytes.is_empty() {
@@ -1183,7 +1236,7 @@ fn read_record<'a>(r: &mut Reader<'a>) -> Result<Record<'a>, CaptureError> {
 
 /// Output is untrusted on error. No allocation or complete-model clone occurs.
 /// Serializes `probe`, producer `build` and boot-relative `captured_at_ms` into `output`,
-/// returning schema-v5 byte count with header/body CRCs and grouped records. Returns
+/// returning v5 (ordinary/identity) or v6 (collection) byte count with CRCs and grouped records. Returns
 /// bounds/field errors with possible partial writes. The caller must run full decode
 /// before accepting this prefix; raw encoding alone does not establish metadata consistency.
 fn encode_bytes(
@@ -1192,9 +1245,54 @@ fn encode_bytes(
     captured_at_ms: u64,
     output: &mut [u8],
 ) -> Result<usize, CaptureError> {
-    let mut w = Writer { bytes: output, pos: 0 };
+    let mut w = Writer {
+        bytes: output,
+        pos: 0,
+        measuring: false,
+    };
+    let metadata_len = write_body(&mut w, probe, build, captured_at_ms, false)?;
+    let total = w.pos;
+    let count = probe.inspection.services.len()
+        + probe.inspection.characteristics.len()
+        + probe.inspection.descriptors.len()
+        + probe.inspection.values.len()
+        + probe
+            .inspection
+            .collection
+            .as_ref()
+            .map_or(0, |e| 28 + usize::from(e.summary.terminal_kind.is_some()));
+    w.bytes[..8].copy_from_slice(MAGIC);
+    let version = if probe.inspection.collection.is_some() { 6u16 } else { 5 };
+    w.bytes[8..10].copy_from_slice(&version.to_le_bytes());
+    w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
+    w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
+    w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
+    let body_crc = crc32(&w.bytes[HEADER..total]);
+    w.bytes[16..20].copy_from_slice(&body_crc.to_le_bytes());
+    let header_crc = crc32(&w.bytes[..20]);
+    w.bytes[20..24].copy_from_slice(&header_crc.to_le_bytes());
+    Ok(total)
+}
+
+/// Serializes the exact body for `probe`/`build`/`captured_at_ms`; `reserve` replaces
+/// collection fields by their maximal encoded budget. Returns metadata length in bytes.
+/// Writer dry-run mode shares every ordinary field/record serializer and capacity error.
+/// `w` receives the body or counts its bytes; failures may leave an untrusted written prefix.
+// Share the serializer across writing, sizing and reservation even under the
+// utility binary's aggressive inlining policy; preserve one bounded call frame.
+#[inline(never)]
+fn write_body(
+    w: &mut Writer<'_>,
+    probe: &Probe,
+    build: BuildIdentity,
+    captured_at_ms: u64,
+    reserve: bool,
+) -> Result<usize, CaptureError> {
     w.bytes(&[0; HEADER])?;
-    write_metadata(&mut w, probe, build, captured_at_ms)?;
+    write_metadata(w, probe, build, captured_at_ms)?;
+    if !reserve && let Some(e) = probe.inspection.collection.as_ref() {
+        collection_codec::write_summary(w, &e.summary)?;
+    }
     let metadata_len = w.pos - HEADER;
     for v in &probe.inspection.services {
         w.record(1, |w| {
@@ -1236,48 +1334,202 @@ fn encode_bytes(
             w.bytes(v.value.as_slice())
         })?;
     }
-    let total = w.pos;
-    let count = probe.inspection.services.len()
-        + probe.inspection.characteristics.len()
-        + probe.inspection.descriptors.len()
-        + probe.inspection.values.len();
-    w.bytes[..8].copy_from_slice(MAGIC);
-    w.bytes[8..10].copy_from_slice(&5u16.to_le_bytes());
-    w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
-    w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
-    w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
-    let body_crc = crc32(&w.bytes[HEADER..total]);
-    w.bytes[16..20].copy_from_slice(&body_crc.to_le_bytes());
-    let header_crc = crc32(&w.bytes[..20]);
-    w.bytes[20..24].copy_from_slice(&header_crc.to_le_bytes());
-    Ok(total)
+    if reserve {
+        collection_codec::reserve(w)?;
+    } else if let Some(e) = probe.inspection.collection.as_ref() {
+        collection_codec::write_records(w, e)?;
+    }
+    Ok(metadata_len)
 }
 
-/// Returns the first service in `view` whose declaration equals `start`, or `None`.
-/// Used during relationship admission; scans immutable records without allocating an index.
-fn find_service(
-    view: &CaptureView<'_>,
-    start: u16,
-) -> Option<Service> {
-    view.records().find_map(|r| {
-        match r {
-            Record::Service(s) if s.start == start => Some(s),
-            _ => None,
-        }
-    })
+/// Returns exact serialized size of current `probe` evidence at `captured_at_ms` with `build`.
+/// Executes the production body serializers without an 8192-byte scratch allocation.
+/// Field/capacity errors are preserved; this does not replace full semantic decode admission.
+pub fn encoded_size(
+    probe: &Probe,
+    build: BuildIdentity,
+    captured_at_ms: u64,
+) -> Result<usize, CaptureError> {
+    let mut w = Writer {
+        bytes: &mut [],
+        pos: 0,
+        measuring: true,
+    };
+    write_body(&mut w, probe, build, captured_at_ms, false)?;
+    Ok(w.pos)
 }
-/// Returns the first characteristic in `view` with value `handle`, or `None`.
-/// Uses immutable record iteration; duplicate exclusion is checked separately.
-fn find_characteristic(
-    view: &CaptureView<'_>,
-    handle: u16,
-) -> Option<Characteristic> {
-    view.records().find_map(|r| {
-        match r {
-            Record::Characteristic(c) if c.handle == handle => Some(c),
-            _ => None,
+
+/// Returns whether frozen GATT/INFO plus maximal collection and final metadata fit 8192 bytes.
+/// Requires explicit Collect, full GATT stages, complete submitted INFO and a selected peer.
+/// Caller must freeze GATT/vendor/raw INFO after admission and reserve before the voltage command.
+/// The 512-byte finalization allowance exceeds upper bounds for remaining optional growth:
+/// packet prefixes/observations84, peer RSSI1, link26, lifecycle18, failure48,
+/// scan22, name77, boot14, identity channel16/fault16/end8 =430 bytes.
+/// These conservatively include complete optional bodies/presence bytes; bounded UUIDs,
+/// GATT values, vendor values and INFO bytes are frozen. Fixed counters/flags do not grow.
+/// False permits no collection traffic; this function performs no I/O or model mutation.
+/// `probe` supplies the live selected operation/evidence; `build` supplies its frozen build identity.
+/// `captured_at_ms` is the boot-relative snapshot time used to admit existing INFO timestamps.
+pub fn collection_fits(
+    probe: &Probe,
+    build: BuildIdentity,
+    captured_at_ms: u64,
+) -> bool {
+    if !matches!(probe.request.action, Action::Collect(_))
+        || !probe.identity_mode
+        || !probe.collection_enabled
+        || probe.phase != RadioPhase::Discovering
+        || probe.inspection.started_at_ms.is_none()
+        || probe.inspection.ended_at_ms.is_some()
+        || probe.inspection.cleanup_complete
+        || probe.inspection.omitted != 0
+        || probe.inspection.malformed != 0
+        || probe.error != ProbeError::None
+        || probe.failure.is_some()
+        || !probe.inspection.stages.iter().all(|&v| v)
+        || probe.inspection.identity.as_ref().is_none_or(|e| {
+            !e.valid(captured_at_ms)
+                || e.channel.is_none()
+                || e.fault.is_some()
+                || e.ended_at_ms.is_some()
+                || e.request_submitted_at_ms.is_none()
+                || e.raw_incomplete()
+                || crate::ble::canyonero::validate_frame(e.raw()).is_err()
+        })
+    {
+        return false;
+    }
+    let mut w = Writer {
+        bytes: &mut [],
+        pos: 0,
+        measuring: true,
+    };
+    write_body(&mut w, probe, build, captured_at_ms, true).is_ok()
+        && w.pos.checked_add(512).is_some_and(|n| n <= PAYLOAD_MAX)
+}
+
+/// Checked envelopes of one `tag` in an immutable, fully primitive-validated record stream.
+/// Nested relationship scans borrow only matching bodies instead of constructing every Record.
+struct Bodies<'a> {
+    /// Unconsumed envelopes; shared framing checks remain active even for skipped tags.
+    reader: Reader<'a>,
+    /// Desired GATT tag, supplied only by private relationship checks.
+    tag: u8,
+}
+impl<'a> Iterator for Bodies<'a> {
+    /// Matching body or a framing error; errors stop further iteration.
+    type Item = Result<Reader<'a>, CaptureError>;
+
+    /// Returns the next matching checked envelope, None at end, or one terminal framing error.
+    /// Body semantics are established by decode_into's preceding complete read_record pass.
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.reader.bytes.is_empty() {
+            match record_body(&mut self.reader) {
+                Ok((tag, body)) if tag == self.tag => return Some(Ok(body)),
+                Ok(_) => {}
+                Err(error) => {
+                    self.reader.bytes = &[];
+                    return Some(Err(error));
+                }
+            }
         }
-    })
+        None
+    }
+}
+
+/// Returns checked borrowed envelopes of `tag` from primitive-admitted `view`; no allocation.
+fn bodies<'a>(
+    view: &CaptureView<'a>,
+    tag: u8,
+) -> Bodies<'a> {
+    Bodies {
+        reader: Reader { bytes: view.records },
+        tag,
+    }
+}
+
+/// Service fields needed by relationships; UUID bytes borrow the immutable capture.
+struct ServiceRef<'a> {
+    /// Service declaration handle.
+    start: u16,
+    /// Inclusive final service handle.
+    end: u16,
+    /// Checked 2/4/16-byte wire UUID, interpreted only for read allowlisting.
+    uuid: &'a [u8],
+}
+
+/// Characteristic fields needed by relationships without an owned UUID array.
+struct CharacteristicRef<'a> {
+    /// Parent service declaration handle.
+    service_start: u16,
+    /// Characteristic declaration handle.
+    declaration: u16,
+    /// Characteristic value handle.
+    handle: u16,
+    /// Original property bits, including Read at bit1.
+    properties: u8,
+    /// Checked 2/4/16-byte wire UUID.
+    uuid: &'a [u8],
+}
+
+/// Reads service `body` through shared primitive readers; requires exact consumption.
+/// Returns borrowed fields or the same truncation, width or trailing-byte error.
+fn service_ref(mut body: Reader<'_>) -> Result<ServiceRef<'_>, CaptureError> {
+    let row = ServiceRef {
+        start: body.u16()?,
+        end: body.u16()?,
+        uuid: body.uuid_bytes()?,
+    };
+    if !body.bytes.is_empty() {
+        return Err(CaptureError::Trailing);
+    }
+    Ok(row)
+}
+
+/// Reads characteristic `body` through shared primitive readers; requires exact consumption.
+/// Returns borrowed fields or the same truncation, width or trailing-byte error.
+fn characteristic_ref(mut body: Reader<'_>) -> Result<CharacteristicRef<'_>, CaptureError> {
+    let row = CharacteristicRef {
+        service_start: body.u16()?,
+        declaration: body.u16()?,
+        handle: body.u16()?,
+        properties: body.u8()?,
+        uuid: body.uuid_bytes()?,
+    };
+    if !body.bytes.is_empty() {
+        return Err(CaptureError::Trailing);
+    }
+    Ok(row)
+}
+
+/// Finds service declaration `start` in primitive-validated `view`, borrowing its UUID.
+/// Returns None when absent; checked envelope/body errors propagate without mutation.
+fn find_service<'a>(
+    view: &CaptureView<'a>,
+    start: u16,
+) -> Result<Option<ServiceRef<'a>>, CaptureError> {
+    for body in bodies(view, 1) {
+        let row = service_ref(body?)?;
+        if row.start == start {
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
+}
+
+/// Finds characteristic value `handle` in primitive-validated `view`, borrowing its UUID.
+/// Returns None when absent; checked envelope/body errors propagate without mutation.
+fn find_characteristic<'a>(
+    view: &CaptureView<'a>,
+    handle: u16,
+) -> Result<Option<CharacteristicRef<'a>>, CaptureError> {
+    for body in bodies(view, 2) {
+        let row = characteristic_ref(body?)?;
+        if row.handle == handle {
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
 }
 /// Returns unit if bounded, fully parsed `view` has coherent metadata and GATT relationships.
 /// Checks nonoverlap/uniqueness, parent handles, descriptor boundaries and service-qualified
@@ -1335,83 +1587,127 @@ fn relationships(view: &CaptureView<'_>) -> Result<(), CaptureError> {
     let mut chars = 0u16;
     let mut descriptors = 0u16;
     let mut values = 0u16;
+    let mut collection_rows = 0usize;
+    let mut terminal_rows = 0usize;
+    let mut previous_collection_complete = true;
+    let mut previous_collection_time = 0;
+    let mut default_session = false;
     for record in view.records() {
         let valid = match record {
+            Record::Collection(row) => {
+                let Some(summary) = view.metadata.collection.as_ref() else {
+                    return Err(CaptureError::Relationships);
+                };
+                let valid = row.id.index() == collection_rows
+                    && row.valid(summary)
+                    && (row.attempted_at_ms().is_none()
+                        || (previous_collection_complete
+                            && (collection_rows == 0 || default_session)
+                            && row.attempted_at_ms().is_some_and(|at| at >= previous_collection_time)));
+                if collection_rows == 0 {
+                    default_session = row.complete() && row.raw == [0x62, 0xF1, 0x86, 1];
+                }
+                previous_collection_complete = row.complete();
+                previous_collection_time = row.completed_at_ms().unwrap_or(previous_collection_time);
+                collection_rows += 1;
+                valid
+            }
+            Record::CollectionEnvelope(raw) => {
+                terminal_rows += 1;
+                view.metadata
+                    .collection
+                    .as_ref()
+                    .is_some_and(|s| s.terminal_kind == Some(raw.kind) && s.terminal_len == raw.declared_len)
+                    && terminal_rows == 1
+            }
             Record::Service(s) => {
                 let prior = services;
                 services += 1;
-                s.start != 0
-                    && s.end >= s.start
-                    && view
-                        .records()
-                        .filter_map(|r| if let Record::Service(v) = r { Some(v) } else { None })
-                        .take(usize::from(prior))
-                        .all(|v| s.start > v.end || s.end < v.start)
+                let mut valid = s.start != 0 && s.end >= s.start;
+                for body in bodies(view, 1).take(usize::from(prior)) {
+                    let previous = service_ref(body?)?;
+                    valid &= s.start > previous.end || s.end < previous.start;
+                }
+                valid
             }
             Record::Characteristic(c) => {
                 let prior = chars;
                 chars += 1;
-                find_service(view, c.service_start)
-                    .is_some_and(|s| c.declaration > s.start && c.handle > c.declaration && c.handle <= s.end)
-                    && view
-                        .records()
-                        .filter_map(|r| {
-                            if let Record::Characteristic(v) = r {
-                                Some(v)
-                            } else {
-                                None
-                            }
-                        })
-                        .take(usize::from(prior))
-                        .all(|v| {
-                            c.declaration != v.declaration
-                                && c.handle != v.handle
-                                && c.handle != v.declaration
-                                && c.declaration != v.handle
-                                && (c.service_start != v.service_start
-                                    || c.declaration > v.handle
-                                    || v.declaration > c.handle)
-                        })
+                let mut valid = find_service(view, c.service_start)?
+                    .is_some_and(|s| c.declaration > s.start && c.handle > c.declaration && c.handle <= s.end);
+                for body in bodies(view, 2).take(usize::from(prior)) {
+                    let v = characteristic_ref(body?)?;
+                    valid &= c.declaration != v.declaration
+                        && c.handle != v.handle
+                        && c.handle != v.declaration
+                        && c.declaration != v.handle
+                        && (c.service_start != v.service_start || c.declaration > v.handle || v.declaration > c.handle);
+                }
+                valid
             }
             Record::Descriptor(d) => {
                 let prior = descriptors;
                 descriptors += 1;
-                find_characteristic(view, d.characteristic_handle).is_some_and(|c| {
-                    c.service_start == d.service_start
+                let mut valid = false;
+                if let Some(c) = find_characteristic(view, d.characteristic_handle)? {
+                    valid = c.service_start == d.service_start
                         && d.handle > c.handle
-                        && find_service(view, d.service_start).is_some_and(|s| d.handle <= s.end)
-                        && !view.records().any(|r| {
-                            matches!(r, Record::Characteristic(v)
-                                if v.service_start == d.service_start
-                                    && v.declaration > c.handle
-                                    && v.declaration <= d.handle)
-                        })
-                }) && view
-                    .records()
-                    .filter_map(|r| if let Record::Descriptor(v) = r { Some(v) } else { None })
-                    .take(usize::from(prior))
-                    .all(|v| v.handle != d.handle)
+                        && find_service(view, d.service_start)?.is_some_and(|s| d.handle <= s.end);
+                    for body in bodies(view, 2) {
+                        let v = characteristic_ref(body?)?;
+                        valid &= !(v.service_start == d.service_start
+                            && v.declaration > c.handle
+                            && v.declaration <= d.handle);
+                    }
+                }
+                for body in bodies(view, 3).take(usize::from(prior)) {
+                    let mut body = body?;
+                    body.u16()?;
+                    body.u16()?;
+                    valid &= body.u16()? != d.handle;
+                }
+                valid
             }
             Record::Value(v) => {
                 let prior = values;
                 values += 1;
-                find_characteristic(view, v.handle).is_some_and(|c| {
-                    c.service_start == v.service_start
-                        && c.uuid.short() == Some(v.uuid)
-                        && find_service(view, c.service_start).is_some_and(|s| may_read(s.uuid, c.uuid, c.properties))
-                }) && view
-                    .records()
-                    .filter_map(|r| if let Record::Value(v) = r { Some(v) } else { None })
-                    .take(usize::from(prior))
-                    .all(|p| p.handle != v.handle)
+                let mut valid = false;
+                if let Some(c) = find_characteristic(view, v.handle)? {
+                    let characteristic = Uuid::from_wire(c.uuid).ok_or(CaptureError::InvalidData)?;
+                    if c.service_start == v.service_start
+                        && characteristic.short() == Some(v.uuid)
+                        && let Some(s) = find_service(view, c.service_start)?
+                    {
+                        let service = Uuid::from_wire(s.uuid).ok_or(CaptureError::InvalidData)?;
+                        valid = may_read(service, characteristic, c.properties);
+                    }
+                }
+                for body in bodies(view, 4).take(usize::from(prior)) {
+                    let mut body = body?;
+                    body.u16()?;
+                    valid &= body.u16()? != v.handle;
+                }
+                valid
             }
         };
         if !valid {
             return Err(CaptureError::Relationships);
         }
     }
+    if collection_rows != usize::from(view.metadata.collection_row_count)
+        || terminal_rows
+            != usize::from(
+                view.metadata
+                    .collection
+                    .as_ref()
+                    .is_some_and(|s| s.terminal_kind.is_some()),
+            )
+    {
+        return Err(CaptureError::Relationships);
+    }
     if !view.metadata.gatt_requested
         && (view.counts != [0; 4]
+            || view.metadata.collection.is_some()
             || view.metadata.link.is_some()
             || view.metadata.started_at_ms.is_some()
             || view.metadata.ended_at_ms.is_some()
@@ -1443,13 +1739,22 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
             .is_none_or(|o| (m.first_seen_ms..=m.last_seen_ms).contains(&o.at_ms))
     };
     if m.revision == 0
+        || m.collection.as_ref().is_some_and(|s| {
+            m.schema_version != 6
+                || m.identity_mode != Some(true)
+                || !m.gatt_requested
+                || m.started_at_ms.is_none_or(|start| s.started_at_ms < start)
+                || !s.valid(m.captured_at_ms)
+                || m.collection_row_count != 28
+        })
+        || (m.collection.is_none() && m.collection_row_count != 0)
         || m.identity.as_ref().is_some_and(|identity| {
             m.identity_mode != Some(true)
                 || !m.gatt_requested
                 || m.started_at_ms.is_none_or(|start| identity.started_at_ms < start)
                 || !identity.valid(m.captured_at_ms)
         })
-        || m.cached_name.is_some_and(|name| {
+        || m.cached_name.as_ref().is_some_and(|name| {
             name.at_ms < m.first_seen_ms
                 || name.at_ms > m.captured_at_ms
                 || match name.source {
@@ -1466,6 +1771,7 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
         || m.last_seen_ms > m.captured_at_ms
         || m.scan_diagnostics
             .last
+            .as_ref()
             .is_some_and(|last| last.at_ms > m.captured_at_ms)
         || m.advertisement.observation.is_none()
         || !packet_time_valid(&m.advertisement)
@@ -1473,7 +1779,7 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
         || m.started_at_ms.is_some_and(|start| start > m.captured_at_ms)
         || m.ended_at_ms
             .is_some_and(|end| end > m.captured_at_ms || m.started_at_ms.is_none_or(|start| end < start))
-        || m.link.is_some_and(|link| {
+        || m.link.as_ref().is_some_and(|link| {
             link.connected_at_ms > m.captured_at_ms
                 || m.started_at_ms.is_none_or(|start| link.connected_at_ms < start)
                 || m.ended_at_ms.is_some_and(|end| link.connected_at_ms > end)
@@ -1481,7 +1787,7 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
         || (m.cleanup_complete || m.disconnect_reason.is_some()) && m.ended_at_ms.is_none()
         || m.stages[1..].iter().any(|&complete| complete) && !m.stages[0]
         || (m.stages[2] || m.stages[3]) && !m.stages[1]
-        || m.failure.is_some_and(|f| {
+        || m.failure.as_ref().is_some_and(|f| {
             f.rejected.is_some()
                 && (f.stage != FailureStage::Characteristics
                     || f.range.is_none()
@@ -1518,7 +1824,7 @@ pub fn check_header(
     if r.take(8)? != MAGIC {
         return Err(CaptureError::Magic);
     }
-    if !matches!(r.u16()?, 1..=5) {
+    if !matches!(r.u16()?, 1..=6) {
         return Err(CaptureError::Version);
     }
     let total = usize::from(r.u16()?);
@@ -1537,7 +1843,8 @@ pub fn check_header(
 /// Parses immutable `bytes` into unpublished reusable `metadata`, returning a view
 /// borrowing both only after all CRC, schema, ordered-record/count and relationship checks.
 /// Errors may partially update metadata but expose no view; at most 8192 input bytes
-/// and 24/64/128/16 records are admitted. No heap allocation or hardware I/O occurs.
+/// and 24/64/128/16 GATT records plus 28 collection rows/one terminal prefix are admitted.
+/// No heap allocation or hardware I/O occurs.
 // Reuse the complete validator across UI and journal call sites without duplicating
 // its record traversal under the utility binary's aggressive inlining policy.
 #[inline(never)]
@@ -1567,16 +1874,30 @@ fn decode_into<'a>(
         return Err(CaptureError::Trailing);
     }
     let mut previous = 0;
+    let mut collection_count = 0;
+    let mut terminal_count = 0;
     for _ in 0..count {
         let tag = *r.bytes.first().ok_or(CaptureError::Truncated)?;
-        if !(1..=4).contains(&tag) || tag < previous {
+        if !(1..=6).contains(&tag) || tag < previous || (tag >= 5 && metadata.schema_version < 6) {
             return Err(CaptureError::InvalidData);
         }
         previous = tag;
-        let index = usize::from(tag - 1);
-        view.counts[index] += 1;
-        if view.counts[index] > [24, 64, 128, 16][index] {
-            return Err(CaptureError::InvalidData);
+        if tag <= 4 {
+            let index = usize::from(tag - 1);
+            view.counts[index] += 1;
+            if view.counts[index] > [24, 64, 128, 16][index] {
+                return Err(CaptureError::InvalidData);
+            }
+        } else if tag == 5 {
+            collection_count += 1;
+            if collection_count > 28 {
+                return Err(CaptureError::InvalidData);
+            }
+        } else {
+            terminal_count += 1;
+            if terminal_count > 1 {
+                return Err(CaptureError::InvalidData);
+            }
         }
         read_record(&mut r)?;
     }
@@ -1603,7 +1924,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedCapture<'_>, CaptureError> {
     })
 }
 /// Convenience encoder; firmware should reuse Decoder::encode.
-/// Returns admitted schema-v5 prefix length written to `output` from selected-peer `probe`,
+/// Returns admitted v5/v6 prefix length written to `output` from selected-peer `probe`,
 /// producer `build` and boot-relative `captured_at_ms` milliseconds. Uses temporary decoder
 /// storage to revalidate all encoded state; errors leave output untrusted. No I/O occurs.
 pub fn encode(
@@ -1613,4 +1934,164 @@ pub fn encode(
     output: &mut [u8],
 ) -> Result<usize, CaptureError> {
     Decoder::new().encode(probe, build, captured_at_ms, output)
+}
+
+#[cfg(test)]
+/// Borrowed nested scans retain framing checks and complete capture relationship admission.
+mod borrowed_lookup_tests {
+    use super::*;
+
+    /// Borrowed and owned projections reject every truncated declaration with the same error.
+    #[test]
+    fn borrowed_gatt_fields_match_full_parser_and_share_envelope_errors() {
+        for bytes in [
+            &[1, 7, 0, 1, 0, 20, 0, 2, 0x0A, 0x18][..],
+            &[2, 10, 0, 1, 0, 2, 0, 3, 0, 2, 2, 0x29, 0x2A][..],
+        ] {
+            for length in 0..=bytes.len() {
+                let input = &bytes[..length];
+                let owned = read_record(&mut Reader { bytes: input });
+                let borrowed = record_body(&mut Reader { bytes: input }).and_then(|(tag, body)| {
+                    if tag == 1 {
+                        service_ref(body).map(|r| (r.start, r.end, 0, r.uuid))
+                    } else {
+                        characteristic_ref(body).map(|r| (r.service_start, r.declaration, r.handle, r.uuid))
+                    }
+                });
+                match (owned, borrowed) {
+                    (Ok(Record::Service(a)), Ok((start, end, _, uuid))) => {
+                        assert_eq!((a.start, a.end), (start, end));
+                        assert_eq!(Some(a.uuid), Uuid::from_wire(uuid));
+                    }
+                    (Ok(Record::Characteristic(a)), Ok((service, declaration, handle, uuid))) => {
+                        assert_eq!(
+                            (a.service_start, a.declaration, a.handle),
+                            (service, declaration, handle)
+                        );
+                        assert_eq!(Some(a.uuid), Uuid::from_wire(uuid));
+                    }
+                    (Err(a), Err(b)) => assert_eq!(a, b),
+                    _ => panic!("projection changed parser admission at length {length}"),
+                }
+            }
+        }
+        // Skipped tags still require a complete envelope, then the iterator stops on error.
+        let mut scan = Bodies {
+            reader: Reader { bytes: &[2, 8, 0, 1] },
+            tag: 1,
+        };
+        assert!(matches!(scan.next(), Some(Err(CaptureError::Truncated))));
+        assert!(scan.next().is_none());
+        // Invalid widths and trailing fields cannot be hidden by the borrowed projection.
+        for bytes in [
+            &[1, 8, 0, 1, 0, 20, 0, 3, 1, 2, 3][..],
+            &[1, 8, 0, 1, 0, 20, 0, 2, 1, 2, 3][..],
+        ] {
+            let owned = read_record(&mut Reader { bytes }).err();
+            let borrowed = record_body(&mut Reader { bytes })
+                .and_then(|(_, body)| service_ref(body))
+                .err();
+            assert_eq!(owned, borrowed);
+            assert!(owned.is_some());
+        }
+    }
+
+    /// Returns a synthetic pending inspection with one DIS service and readable characteristic, at 11ms.
+    fn probe() -> Probe {
+        let mut p = Probe::new();
+        p.catalog.observe(Advertisement::new(
+            Peer {
+                address: [1; 6],
+                random: false,
+            },
+            ReportKind::Connectable,
+            -50,
+            &[],
+            10,
+        ));
+        p.input(Input::Click, 11).unwrap();
+        p.inspection
+            .services
+            .push(Service {
+                start: 1,
+                end: 20,
+                uuid: Uuid::from_wire(&[0x0A, 0x18]).unwrap(),
+            })
+            .unwrap();
+        p.inspection
+            .characteristics
+            .push(Characteristic {
+                service_start: 1,
+                declaration: 2,
+                handle: 3,
+                properties: 2,
+                uuid: Uuid::from_wire(&[0x29, 0x2A]).unwrap(),
+            })
+            .unwrap();
+        p
+    }
+
+    /// Encodes untrusted `p` with valid CRCs, then runs complete production decoding.
+    /// Returns semantic/format errors without relying on the live model to reject invalid rows first.
+    fn admitted(p: &Probe) -> Result<(), CaptureError> {
+        let mut bytes = [0; PAYLOAD_MAX];
+        let len = encode_bytes(
+            p,
+            BuildIdentity {
+                source_digest: [1; 32],
+                cpu_hz: 150_000_000,
+                spi_hz: 75_000_000,
+                profile: BuildProfile::Stock,
+                source_identity_available: true,
+            },
+            12,
+            &mut bytes,
+        )?;
+        decode(&bytes[..len]).map(|_| ())
+    }
+
+    /// Narrow repeated scans still reject duplicate, crossing and missing-parent relationships.
+    #[test]
+    fn borrowed_relationship_scans_keep_nonlocal_rejections() {
+        let mut p = probe();
+        assert_eq!(admitted(&p), Ok(()));
+        p.inspection.services.push(p.inspection.services[0]).unwrap();
+        assert_eq!(admitted(&p), Err(CaptureError::Relationships));
+        let mut p = probe();
+        p.inspection.characteristics[0].service_start = 99;
+        assert_eq!(admitted(&p), Err(CaptureError::Relationships));
+        let mut p = probe();
+        p.inspection
+            .characteristics
+            .push(Characteristic {
+                declaration: 4,
+                handle: 5,
+                ..p.inspection.characteristics[0]
+            })
+            .unwrap();
+        p.inspection
+            .descriptors
+            .push(Descriptor {
+                service_start: 1,
+                characteristic_handle: 3,
+                handle: 5,
+                uuid: Uuid::from_wire(&[1, 0x29]).unwrap(),
+            })
+            .unwrap();
+        assert_eq!(admitted(&p), Err(CaptureError::Relationships));
+        let mut p = probe();
+        let value = InfoValue {
+            service_start: 1,
+            handle: 3,
+            uuid: 0x2A29,
+            value: Payload::new(b"x"),
+            result: ReadResult::Ok,
+            failure: None,
+            elapsed_ms: 0,
+        };
+        p.inspection.values.push(value).unwrap();
+        assert_eq!(admitted(&p), Ok(()));
+        p.inspection.values.push(value).unwrap();
+        assert_eq!(admitted(&p), Err(CaptureError::Relationships));
+    }
 }

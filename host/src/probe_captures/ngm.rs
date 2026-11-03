@@ -19,6 +19,7 @@ fn protocol_error(error: DecodeError) -> Value {
 
 /// Returns JSON null for absent evidence, otherwise lossless bounded observations and derived parsing.
 /// `evidence` must have passed the capture decoder; absent fields remain null and no I/O is performed.
+/// A missing submission timestamp means unconfirmed completion, never proof of zero transmitted bytes.
 pub(super) fn project(evidence: Option<&Evidence>) -> Value {
     let Some(e) = evidence else { return Value::Null };
     let mut decoder = FrameDecoder::new();
@@ -54,7 +55,9 @@ pub(super) fn project(evidence: Option<&Evidence>) -> Value {
             "observed_peer_receive":{"mtu_bytes":c.peer_mtu,"mps_bytes":c.peer_mps,"cid":c.peer_cid,"remaining_credits":c.peer_credits}
         })),
         "request":{"allowed_hex":"1f110000","submitted":e.request_submitted_at_ms.is_some(),"submitted_at_boot_ms":e.request_submitted_at_ms,
-            "scope":"Complete local SDU submission only; not peer processing acknowledgment."},
+            "local_completion_confirmed":e.request_submitted_at_ms.is_some(),
+            "outcome":if e.request_submitted_at_ms.is_some(){"local_completion_confirmed"}else{"unconfirmed"},
+            "scope":"submitted is a legacy alias for local_completion_confirmed, not peer processing acknowledgment. False/null means completion is unconfirmed: an attempt and partial or complete bytes may already have been sent; it does not mean unsent and does not authorize retry."},
         "reply":{"raw_prefix_hex":hex(e.raw()),"retained_bytes":e.raw().len(),"observed_bytes":e.observed_bytes,
             "omitted_observed_bytes":e.observed_bytes.saturating_sub(e.raw().len() as u64),"prefix_incomplete":e.raw_incomplete(),
             "capacity_bytes":MAX_FRAME_BYTES,"observed_sdu_count":e.sdu_count,"max_observed_sdu_bytes":(e.sdu_count>0).then_some(e.max_sdu_bytes),

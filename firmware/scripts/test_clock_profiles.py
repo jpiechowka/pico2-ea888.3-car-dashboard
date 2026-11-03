@@ -40,6 +40,11 @@ class ClockProfiles(unittest.TestCase):
                 "ngm-identity",
                 ["--features", "ngm-identity,cpu280-spi70-1v30"],
             ),
+            "ngm-collector": ("ngm-collector", ["--features", "ngm-collector"]),
+            "ngm-collector-280-70-1v30": (
+                "ngm-collector",
+                ["--features", "ngm-collector,cpu280-spi70-1v30"],
+            ),
         }
         self.assertEqual(set(aliases), expected | ble_aliases | utility_aliases.keys())
         self.assertEqual(len(expected), 20)
@@ -85,7 +90,17 @@ class ClockProfiles(unittest.TestCase):
         )
         probe_features = object_fields(probe["features"], "invalid probe features")
         self.assertEqual(probe_features["default"], [])
+        self.assertEqual(probe_features["ngm-collector"], ["ngm-identity"])
         self.assertEqual(probe_features["cpu280-spi70-1v30"], ["dashboard-pico2/cpu280-spi70-1v30"])
+        binaries = {
+            string_value(row["name"], "invalid utility binary name"): row
+            for value in array_items(probe["bin"], "invalid utility binaries")
+            for row in (object_fields(value, "invalid utility binary"),)
+        }
+        self.assertEqual(set(binaries), {"ble-probe", "ngm-identity", "ngm-collector"})
+        self.assertNotIn("required-features", binaries["ble-probe"])
+        for tool in ("ngm-identity", "ngm-collector"):
+            self.assertEqual(binaries[tool]["required-features"], [tool])
         self.assertEqual(
             object_fields(config["build"], "invalid build target")["target"],
             "thumbv8m.main-none-eabihf",

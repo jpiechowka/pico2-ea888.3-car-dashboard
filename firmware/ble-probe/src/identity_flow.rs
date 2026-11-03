@@ -1,6 +1,7 @@
 //! Portable explicit identity-trial sequencing; hardware adapters own link/CoC I/O.
 
 use core::future::Future;
+use core::pin::pin;
 
 use dashboard_core::ble::canyonero::{
     DecodeStatus,
@@ -173,10 +174,14 @@ pub async fn connect<T>(
     emit: &impl AsyncFn(Update),
     future: impl Future<Output = T>,
 ) -> Result<T, FailureReason> {
-    before(clock, deadline_ms, async {
-        publication.publish_start(emit).await;
-        future.await
-    })
+    before(
+        clock,
+        deadline_ms,
+        pin!(async {
+            publication.publish_start(emit).await;
+            future.await
+        }),
+    )
     .await
 }
 
@@ -333,6 +338,10 @@ pub async fn publish_progress(
 /// and reliable `emit` are I/O seams; `publication` survives cancellation for cleanup flush.
 /// Returns whether vendor reads were protected/unavailable/truncated, or a terminal local
 /// classification. First detailed transport/protocol fault is retained in session.
+/// Final INFO publication uses the original reply deadline, including a post-completion
+/// clock check; a longer collector Closing allowance never extends queue backpressure.
+/// Timed operations stay pinned here until each await statement ends, releasing losing
+/// work before fault handling or another operation without moving its future through the timer.
 /// Caller must cancel/drop all client/channel work and confirm full normal link cleanup.
 pub async fn run_connected(
     session: &mut Session,
@@ -363,7 +372,12 @@ pub async fn run_connected(
             failure: None,
             elapsed_ms: 0,
         });
-        let read = before(clock, read_deadline, client.read(handle, &mut observation.value.bytes)).await;
+        let read = before(
+            clock,
+            read_deadline,
+            pin!(client.read(handle, &mut observation.value.bytes)),
+        )
+        .await;
         let (result, failure) = match read {
             Ok(Ok(len)) if len <= observation.value.bytes.len() => {
                 observation.value.len = len as u8;
@@ -395,7 +409,13 @@ pub async fn run_connected(
             fail(session, epoch, clock, FailureReason::Timeout);
         }
         let publish_deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-        if let Err(reason) = before(clock, publish_deadline, publish_pending(publication, session, emit)).await {
+        let published = before(
+            clock,
+            publish_deadline,
+            pin!(publish_pending(publication, session, emit)),
+        )
+        .await;
+        if let Err(reason) = published {
             fail(session, epoch, clock, reason);
             return Err(reason);
         }
@@ -413,11 +433,15 @@ pub async fn run_connected(
         return Err(FailureReason::Timeout);
     }
     let deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-    let channel = before(clock, deadline, async {
-        publish_stage(session, clock, emit).await;
-        emit(Update::Channel(offered_parameters())).await;
-        transport.open().await
-    })
+    let channel = before(
+        clock,
+        deadline,
+        pin!(async {
+            publish_stage(session, clock, emit).await;
+            emit(Update::Channel(offered_parameters())).await;
+            transport.open().await
+        }),
+    )
     .await;
     let channel = match channel {
         Ok(Ok(channel)) => channel,
@@ -438,16 +462,20 @@ pub async fn run_connected(
         return Err(FailureReason::Timeout);
     }
     let deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-    let send = before(clock, deadline, async {
-        publish_pending(publication, session, emit).await;
-        publish_stage(session, clock, emit).await;
-        let request = session
-            .take_request(epoch, clock.now_ms())
-            .map_err(|_| transport_fault(FailureReason::InvalidState, false))?;
-        transport.send(request).await?;
-        publication.pending_submitted_ms = Some(clock.now_ms());
-        Ok(())
-    })
+    let send = before(
+        clock,
+        deadline,
+        pin!(async {
+            publish_pending(publication, session, emit).await;
+            publish_stage(session, clock, emit).await;
+            let request = session
+                .take_request(epoch, clock.now_ms())
+                .map_err(|_| transport_fault(FailureReason::InvalidState, false))?;
+            transport.send(request).await?;
+            publication.pending_submitted_ms = Some(clock.now_ms());
+            Ok(())
+        }),
+    )
     .await;
     match send {
         Ok(Ok(())) => {}
@@ -464,10 +492,14 @@ pub async fn run_connected(
         return Err(FailureReason::Timeout);
     }
     let deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-    let publication_result = before(clock, deadline, async {
-        publish_pending(publication, session, emit).await;
-        publish_stage(session, clock, emit).await;
-    })
+    let publication_result = before(
+        clock,
+        deadline,
+        pin!(async {
+            publish_pending(publication, session, emit).await;
+            publish_stage(session, clock, emit).await;
+        }),
+    )
     .await;
     if let Err(reason) = publication_result {
         fail(session, epoch, clock, reason);
@@ -475,7 +507,7 @@ pub async fn run_connected(
     }
     loop {
         let deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-        let received = before(clock, deadline, transport.receive()).await;
+        let received = before(clock, deadline, pin!(transport.receive())).await;
         let sdu = match received {
             Ok(Ok(sdu)) => sdu,
             Ok(Err(error)) => {
@@ -492,11 +524,24 @@ pub async fn run_connected(
         let parsed = session.receive(epoch, clock.now_ms(), bytes);
         // The decoder owns the retained prefix before any publication can suspend.
         drop(sdu);
-        let deadline = session.deadline_ms().ok_or(FailureReason::InvalidState)?;
-        if let Err(reason) = before(clock, deadline, publish_pending(publication, session, emit)).await {
+        // Parsing valid INFO enters Closing, but its cleanup/collector allowance must
+        // not extend this reply's publication budget or permit a late collector handoff.
+        let published = before(clock, deadline, pin!(publish_pending(publication, session, emit))).await;
+        if let Err(reason) = published {
             fail(session, epoch, clock, reason);
             return Err(reason);
         }
+        // before retains a completed future's effects even if its poll crossed the
+        // deadline. Keep that evidence, then refuse to advance authority when late.
+        if clock.now_ms() >= deadline {
+            fail(session, epoch, clock, FailureReason::Timeout);
+            return Err(FailureReason::Timeout);
+        }
+        // Closing may have a later deadline, but its monotonic-clock guard still
+        // applies before a completed INFO result can hand off to another owner.
+        session
+            .event(epoch, clock.now_ms(), SessionEvent::Tick)
+            .map_err(|_| FailureReason::Timeout)?;
         match parsed {
             Ok(DecodeStatus::NeedMore) => {}
             Ok(DecodeStatus::Complete) => return Ok(limited),

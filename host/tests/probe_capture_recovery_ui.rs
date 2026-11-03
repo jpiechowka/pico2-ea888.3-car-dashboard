@@ -64,8 +64,8 @@ fn older_valid_capture_remains_loadable_and_unknown_sibling_requires_full_reset_
             .unwrap();
         flash.0[journal::COPY_BYTES + 8..journal::COPY_BYTES + 10].copy_from_slice(&2u16.to_le_bytes());
         let info = journal::inspect_slot(&mut flash, 0).await.unwrap();
-        assert_eq!(info.selected.unwrap().generation, 1);
-        assert_eq!(info.copies[1], journal::CopyState::UnsupportedSchema(2));
+        assert_eq!(info.selected().unwrap().generation, 1);
+        assert_eq!(info.copies()[1], journal::CopyState::UnsupportedSchema(2));
         let status = ui::slot_from_journal(&info);
         assert_eq!(status, ui::Slot::SavedBlocked { generation: 1 });
         assert_eq!(
@@ -114,7 +114,7 @@ fn older_valid_capture_remains_loadable_and_unknown_sibling_requires_full_reset_
             journal::inspect_slot(&mut flash, 0)
                 .await
                 .unwrap()
-                .copies
+                .copies()
                 .iter()
                 .all(|v| *v == journal::CopyState::Empty)
         );

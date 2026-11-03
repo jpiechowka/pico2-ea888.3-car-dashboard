@@ -11,6 +11,10 @@ mod probe;
 #[cfg(feature = "rp2040")]
 #[path = "flash_read.rs"]
 mod read_layout;
+#[cfg(feature = "_rp235x")]
+#[path = "flash_write.rs"]
+/// Program-page size and host-tested admission for bounded RP235x SRAM inputs.
+mod write_layout;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
@@ -49,6 +53,10 @@ pub const USE_BOOT2: bool = !cfg!(feature = "run-from-ram") | cfg!(feature = "_r
 // RP2040 boot-rom flash functions, that are optimized for flash compatibility
 // rather than performance.
 /// Flash page size.
+#[cfg(feature = "_rp235x")]
+pub const PAGE_SIZE: usize = write_layout::PAGE_BYTES;
+/// Flash page size in bytes for RP2040.
+#[cfg(feature = "rp2040")]
 pub const PAGE_SIZE: usize = 256;
 /// Flash write size.
 pub const WRITE_SIZE: usize = 1;
@@ -63,7 +71,7 @@ pub const ASYNC_READ_SIZE: usize = 4;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
-    /// Operation using a location not in flash.
+    /// Flash extent exceeds capacity, or the dedicated RAM-write input is empty/outside admitted SRAM.
     OutOfBounds,
     /// Unaligned operation or using unaligned buffers.
     Unaligned,
@@ -269,6 +277,37 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
             unsafe { in_ram(|| ram_helpers::flash_range_program(unaligned_offset as u32, &pad_buf))? }
         }
 
+        Ok(())
+    }
+
+    /// Programs nonempty whole-page `bytes` at page-aligned flash-relative `offset`,
+    /// without padding or copying. The entire source must lie in lower512KiB SRAM
+    /// [0x20000000,0x20080000); this deliberately excludes other banks and aliases.
+    /// Flash capacity is checked first. Empty/out-of-SRAM/overflowing input returns
+    /// OutOfBounds, page misalignment returns Unaligned, and wrong-core admission
+    /// returns InvalidCore, all before programming. Source address need not be aligned.
+    /// Retains the same core/IRQ/DMA exclusion and ROM path as [`Self::blocking_write`].
+    /// Callers still own maintenance exclusion; completion supplies no device status,
+    /// verification or rollback, and ROM work cannot be cancelled safely once entered.
+    #[cfg(feature = "_rp235x")]
+    pub fn blocking_write_ram(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
+        check_write(self, offset, bytes.len())?;
+        write_layout::check_ram_write(offset, bytes.len(), bytes.as_ptr() as usize).map_err(|error| {
+            match error {
+                write_layout::RamWriteError::OutOfBounds => Error::OutOfBounds,
+                write_layout::RamWriteError::Unaligned => Error::Unaligned,
+            }
+        })?;
+        trace!(
+            "Writing {:?} SRAM bytes to 0x{:x}",
+            bytes.len(),
+            FLASH_BASE as u32 + offset
+        );
+        unsafe { in_ram(|| ram_helpers::flash_range_program(offset, bytes))? }
         Ok(())
     }
 
@@ -613,6 +652,70 @@ mod ram_helpers {
         }
     }
 
+    /// Closed RP235x operations sharing one scoped executable SRAM boot-setup copy.
+    #[cfg(feature = "_rp235x")]
+    enum FlashOperation<'a> {
+        /// Erase `len` bytes at flash-relative `addr`; both must be sector-aligned.
+        Erase {
+            /// Flash-relative byte offset.
+            addr: u32,
+            /// Byte count, a multiple of 4096.
+            len: u32,
+        },
+        /// Program SRAM `data` at page-aligned flash-relative `addr` without erasing.
+        Program {
+            /// Flash-relative byte offset, a multiple of 256.
+            addr: u32,
+            /// Live SRAM input with a page-aligned byte length.
+            data: &'a [u8],
+        },
+        /// Erase then program SRAM `data` at sector-aligned flash-relative `addr`.
+        EraseAndProgram {
+            /// Flash-relative byte offset, a multiple of 4096.
+            addr: u32,
+            /// Live SRAM input with a sector-aligned byte length.
+            data: &'a [u8],
+        },
+        /// Fixed read-only JEDEC 9F transaction on the admitted CS0 device.
+        Jedec,
+    }
+
+    /// Executes `operation` using one local 256-byte boot copy and its borrowed ROM/RAM table.
+    /// Returns the JEDEC 24-bit ID for Jedec, otherwise zero; no status/rollback is invented.
+    /// Setup runs with XIP available; the unchanged SRAM inner restores XIP before returning.
+    /// A non-generic owner avoids separate boot arrays for each closure specialization.
+    ///
+    /// # Safety
+    /// Caller must hold the existing core/IRQ/DMA exclusion and validate operation ranges.
+    /// Stack SRAM holding the boot copy must permit instruction execution throughout this call.
+    /// Program input must remain in SRAM. BOOTRAM must contain valid position-independent
+    /// setup code; it is not executable itself. The local copy/table must not escape this call.
+    /// RP235x CS0-only restoration and watchdog-backed fail-stop requirements are unchanged.
+    #[cfg(feature = "_rp235x")]
+    #[inline(never)]
+    unsafe fn run_flash_operation(operation: FlashOperation<'_>) -> u32 {
+        let erase = matches!(
+            operation,
+            FlashOperation::Erase { .. } | FlashOperation::EraseAndProgram { .. }
+        );
+        let write = matches!(
+            operation,
+            FlashOperation::Program { .. } | FlashOperation::EraseAndProgram { .. }
+        );
+        let mut boot2 = [0u32; 64];
+        core::ptr::copy_nonoverlapping(BOOTRAM_BASE, boot2.as_mut_ptr(), 64);
+        let ptrs = flash_function_pointers_with_boot2(erase, write, &boot2);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        match operation {
+            FlashOperation::Erase { addr, len } => write_flash_inner(addr, len, None, &ptrs),
+            FlashOperation::Program { addr, data } | FlashOperation::EraseAndProgram { addr, data } => {
+                write_flash_inner(addr, data.len() as u32, Some(data), &ptrs);
+            }
+            FlashOperation::Jedec => return jedec_id_inner(&ptrs),
+        }
+        0
+    }
+
     /// Erase a flash range starting at `addr` with length `len`.
     ///
     /// `addr` and `len` must be multiples of 4096
@@ -633,20 +736,25 @@ mod ram_helpers {
         addr: u32,
         len: u32,
     ) {
-        let mut boot2 = [0u32; 256 / 4];
-        let ptrs = if USE_BOOT2 {
-            #[cfg(feature = "rp2040")]
-            rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
-            #[cfg(feature = "_rp235x")]
-            core::ptr::copy_nonoverlapping(BOOTRAM_BASE as *const u8, boot2.as_mut_ptr() as *mut u8, 256);
-            flash_function_pointers_with_boot2(true, false, &boot2)
-        } else {
-            flash_function_pointers(true, false)
-        };
+        #[cfg(feature = "_rp235x")]
+        {
+            run_flash_operation(FlashOperation::Erase { addr, len });
+        }
+        #[cfg(feature = "rp2040")]
+        {
+            let mut boot2 = [0u32; 256 / 4];
+            let ptrs = if USE_BOOT2 {
+                #[cfg(feature = "rp2040")]
+                rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
+                flash_function_pointers_with_boot2(true, false, &boot2)
+            } else {
+                flash_function_pointers(true, false)
+            };
 
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-        write_flash_inner(addr, len, None, &ptrs as *const FlashFunctionPointers);
+            write_flash_inner(addr, len, None, &ptrs as *const FlashFunctionPointers);
+        }
     }
 
     /// Erase and rewrite a flash range starting at `addr` with data `data`.
@@ -669,25 +777,30 @@ mod ram_helpers {
         addr: u32,
         data: &[u8],
     ) {
-        let mut boot2 = [0u32; 256 / 4];
-        let ptrs = if USE_BOOT2 {
-            #[cfg(feature = "rp2040")]
-            rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
-            #[cfg(feature = "_rp235x")]
-            core::ptr::copy_nonoverlapping(BOOTRAM_BASE as *const u8, (boot2).as_mut_ptr() as *mut u8, 256);
-            flash_function_pointers_with_boot2(true, true, &boot2)
-        } else {
-            flash_function_pointers(true, true)
-        };
+        #[cfg(feature = "_rp235x")]
+        {
+            run_flash_operation(FlashOperation::EraseAndProgram { addr, data });
+        }
+        #[cfg(feature = "rp2040")]
+        {
+            let mut boot2 = [0u32; 256 / 4];
+            let ptrs = if USE_BOOT2 {
+                #[cfg(feature = "rp2040")]
+                rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
+                flash_function_pointers_with_boot2(true, true, &boot2)
+            } else {
+                flash_function_pointers(true, true)
+            };
 
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-        write_flash_inner(
-            addr,
-            data.len() as u32,
-            Some(data),
-            &ptrs as *const FlashFunctionPointers,
-        );
+            write_flash_inner(
+                addr,
+                data.len() as u32,
+                Some(data),
+                &ptrs as *const FlashFunctionPointers,
+            );
+        }
     }
 
     /// Write a flash range starting at `addr` with data `data`.
@@ -710,25 +823,30 @@ mod ram_helpers {
         addr: u32,
         data: &[u8],
     ) {
-        let mut boot2 = [0u32; 256 / 4];
-        let ptrs = if USE_BOOT2 {
-            #[cfg(feature = "rp2040")]
-            rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
-            #[cfg(feature = "_rp235x")]
-            core::ptr::copy_nonoverlapping(BOOTRAM_BASE as *const u8, boot2.as_mut_ptr() as *mut u8, 256);
-            flash_function_pointers_with_boot2(false, true, &boot2)
-        } else {
-            flash_function_pointers(false, true)
-        };
+        #[cfg(feature = "_rp235x")]
+        {
+            run_flash_operation(FlashOperation::Program { addr, data });
+        }
+        #[cfg(feature = "rp2040")]
+        {
+            let mut boot2 = [0u32; 256 / 4];
+            let ptrs = if USE_BOOT2 {
+                #[cfg(feature = "rp2040")]
+                rom_data::memcpy44(&mut boot2 as *mut _, FLASH_BASE, 256);
+                flash_function_pointers_with_boot2(false, true, &boot2)
+            } else {
+                flash_function_pointers(false, true)
+            };
 
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-        write_flash_inner(
-            addr,
-            data.len() as u32,
-            Some(data),
-            &ptrs as *const FlashFunctionPointers,
-        );
+            write_flash_inner(
+                addr,
+                data.len() as u32,
+                Some(data),
+                &ptrs as *const FlashFunctionPointers,
+            );
+        }
     }
 
     /// # Safety
@@ -971,13 +1089,7 @@ mod ram_helpers {
     /// # Safety
     /// Caller must quiesce all other XIP users and preserve the CS0-only boot-XIP contract.
     #[cfg(feature = "_rp235x")]
-    pub unsafe fn flash_jedec_id() -> u32 {
-        let mut boot2 = [0u32; 64];
-        core::ptr::copy_nonoverlapping(BOOTRAM_BASE, boot2.as_mut_ptr(), 64);
-        let ptrs = flash_function_pointers_with_boot2(false, false, &boot2);
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-        jedec_id_inner(&ptrs)
-    }
+    pub unsafe fn flash_jedec_id() -> u32 { run_flash_operation(FlashOperation::Jedec) }
 
     #[cfg(feature = "_rp235x")]
     #[inline(never)]

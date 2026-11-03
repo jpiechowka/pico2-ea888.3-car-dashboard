@@ -1095,6 +1095,82 @@ fn channel_receive_rejects_foreign_stack_before_dequeue() {
     });
 }
 
+/// A synchronous empty check cannot start a credit signal or close an exhausted-credit channel.
+#[test]
+fn try_receive_sdu_is_read_only_when_empty_and_transfers_queued_owner_once() {
+    with_link(|stack, host, conn| {
+        let index = host
+            .channels()
+            .alloc(conn, Some(0x41), |s| {
+                s.state = ChannelState::Connected;
+                s.inc_ref();
+                s.flow_control = CreditFlowControl::new(CreditFlowPolicy::Every(1), 0);
+            })
+            .unwrap();
+        let mut channel = L2capChannel::new(index, host.channels());
+        for _ in 0..3 {
+            assert!(channel.try_receive_sdu(stack).unwrap().is_none());
+        }
+        assert_eq!(host.channels().channel(index).state, ChannelState::Connected);
+        assert_eq!(host.channels().channel(index).flow_control.available(), 0);
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        packet.as_mut()[..3].copy_from_slice(&[1, 2, 3]);
+        let pointer = packet.as_ref().as_ptr();
+        host.channels()
+            .channel(index)
+            .inbound
+            .try_send(Pdu::new(packet, 3))
+            .unwrap();
+        let sdu = channel.try_receive_sdu(stack).unwrap().unwrap();
+        assert_eq!(sdu.as_ref(), [1, 2, 3]);
+        assert_eq!(sdu.as_ref().as_ptr(), pointer);
+        assert!(channel.try_receive_sdu(stack).unwrap().is_none());
+        drop(sdu);
+        assert_eq!(host.channels().channel(index).state, ChannelState::Connected);
+        assert_eq!(host.channels().channel(index).flow_control.available(), 0);
+        host.channels().channel(index).inbound.close().unwrap();
+        assert!(matches!(
+            channel.try_receive_sdu(stack),
+            Err(BleHostError::BleHost(Error::ChannelClosed))
+        ));
+        host.channels().channel_mut(index).close();
+        assert!(matches!(
+            channel.try_receive_sdu(stack),
+            Err(BleHostError::BleHost(Error::ChannelClosed))
+        ));
+    });
+}
+
+/// Equal channel indices never allow a nonblocking read through the wrong originating stack.
+#[test]
+fn try_receive_sdu_rejects_foreign_stack_without_consuming_either_queue() {
+    with_link(|first_stack, first, conn| {
+        with_link(|second_stack, _, _| {
+            let index = first
+                .channels()
+                .alloc(conn, Some(0x41), |s| {
+                    s.state = ChannelState::Connected;
+                    s.inc_ref();
+                })
+                .unwrap();
+            let mut packet = DefaultPacketPool::allocate().unwrap();
+            packet.as_mut()[0] = 0x42;
+            first
+                .channels()
+                .channel(index)
+                .inbound
+                .try_send(Pdu::new(packet, 1))
+                .unwrap();
+            let mut channel = L2capChannel::new(index, first.channels());
+            assert!(matches!(
+                channel.try_receive_sdu(second_stack),
+                Err(BleHostError::BleHost(Error::InvalidValue))
+            ));
+            assert_eq!(channel.try_receive_sdu(first_stack).unwrap().unwrap().as_ref(), [0x42]);
+        });
+    });
+}
+
 /// A link command cannot target an unrelated controller merely because its handle number matches.
 #[test]
 fn connection_command_rejects_foreign_stack_before_io() {

@@ -119,6 +119,15 @@ pub(crate) async fn changed(revision: u32) {
         Timer::after_millis(10).await;
     }
 }
+/// Stops active identity/collection work when `revision` changes or that collector is canceled.
+/// Checks every10ms without changing the request. Post-operation waits must use changed instead,
+/// so a retained canceled Collect action can publish End and cannot automatically reconnect.
+#[cfg(feature = "ngm-identity")]
+pub(crate) async fn interrupted(revision: u32) {
+    while bridge::request().revision == revision && !bridge::collection_cancelled(revision) {
+        Timer::after_millis(10).await;
+    }
+}
 /// Never returns: latches fatal radio state for `error`, publishes it, then waits forever.
 /// Clears ready and preserves the outer CYW owner until independent watchdog reset.
 pub(crate) async fn fault(error: ProbeError) -> ! {
@@ -184,11 +193,17 @@ pub async fn run(resources: Resources) -> ! {
 async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
     /// Single host resource pool with one connection and two L2CAP channels.
     static RESOURCES: StaticCell<HostResources<Pool, 1, 2>> = StaticCell::new();
-    let stack = trouble_host::new(
-        ExternalController::<_, 5>::new(driver),
-        RESOURCES.init_with(HostResources::new),
-    )
-    .build();
+    /// Permanent stack/controller owner, initialized once in its final residence.
+    /// The noncancelable host never returns; borrowed runners and operations cannot
+    /// outlive or reconstruct it. This replaces stack storage in the host future.
+    static STACK: StaticCell<RadioStack<'static>> = StaticCell::new();
+    let stack: &'static RadioStack<'static> = STACK.init_with(|| {
+        trouble_host::new(
+            ExternalController::<_, 5>::new(driver),
+            RESOURCES.init_with(HostResources::new),
+        )
+        .build()
+    });
     let reports = Reports::new();
     let mut runner = stack.runner();
     let active_inspection = Cell::new(None);
@@ -196,7 +211,7 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
         // Keep one runner owner across the latch and race; cleanup follows this scope.
         let runner = pin!(runner.run_with_handler(&reports));
         let hci = pin!(crate::session::latch_completion(runner, latch_fault));
-        let work = pin!(operations(&stack, &reports, &active_inspection));
+        let work = pin!(operations(stack, &reports, &active_inspection));
         select(hci, work).await
     };
     match outcome {
@@ -261,7 +276,8 @@ async fn operations(
     active_inspection: &Cell<Option<u32>>,
 ) -> ! {
     // command() waits for initialized state and proves HCI response flow.
-    match with_timeout(Duration::from_secs(10), stack.command(ReadBdAddr::new())).await {
+    let initialized = with_timeout(Duration::from_secs(10), pin!(stack.command(ReadBdAddr::new()))).await;
+    match initialized {
         Ok(Ok(_)) => bridge::RADIO_READY.store(true, Ordering::Release),
         _ => fault(ProbeError::Transport).await,
     }
@@ -286,7 +302,8 @@ async fn operations(
                 let mut scanner = Scanner::new(&mut central);
                 // A canceled start cannot expose a stop-ack handle. Fail closed
                 // if start fails; a successful start always receives stop().await.
-                let session = match with_timeout(Duration::from_secs(3), scanner.scan(&config)).await {
+                let started = with_timeout(Duration::from_secs(3), pin!(scanner.scan(&config))).await;
+                let session = match started {
                     Ok(Ok(session)) => session,
                     _ => fault(ProbeError::Scan).await,
                 };
@@ -295,11 +312,17 @@ async fn operations(
                 changed(request.revision).await;
                 reports.set_revision(None);
                 state(bridge::request().revision, RadioPhase::Stopping, ProbeError::None).await;
-                if with_timeout(Duration::from_secs(5), session.stop()).await.is_err() {
+                let stopped = with_timeout(Duration::from_secs(5), pin!(session.stop())).await;
+                if stopped.is_err() {
                     fault(ProbeError::Cleanup).await;
                 }
             }
-            Action::Inspect(peer) => {
+            Action::Inspect(peer) | Action::Collect(peer) => {
+                if matches!(request.action, Action::Collect(_)) && crate::tool_kind() != crate::ToolKind::NgmCollector {
+                    state(request.revision, RadioPhase::Paused, ProbeError::Transport).await;
+                    changed(request.revision).await;
+                    continue;
+                }
                 let Some(lease) = bridge::OPERATION_GATE.connection() else {
                     // A previously admitted journal mutation may span several
                     // page/restoration cycles. Re-read generation before retry.

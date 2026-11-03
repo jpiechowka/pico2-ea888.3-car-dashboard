@@ -11,6 +11,8 @@ use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
 
 use super::*;
+/// Shared raw ECU collection rows; rendering never creates command authority.
+mod collection_view;
 /// Shared live/saved adapter identity evidence rows with bounded text and raw bytes.
 mod identity_view;
 /// Full-screen dark background, in native RGB565 component ranges.
@@ -73,7 +75,11 @@ fn status_copy(probe: &Probe) -> &'static str {
 /// Returns whether `probe`'s active request explicitly inspects its selected
 /// address/type identity; retained records alone do not establish a request.
 fn gatt_requested(probe: &Probe) -> bool {
-    matches!(probe.request.action, Action::Inspect(peer) if probe.selected_device().is_some_and(|d| d.peer == peer))
+    probe
+        .request
+        .action
+        .peer()
+        .is_some_and(|peer| probe.selected_device().is_some_and(|d| d.peer == peer))
 }
 
 /// Returns two footer rows for `probe` at boot-relative milliseconds `now_ms`.
@@ -83,6 +89,18 @@ fn control_hints(
     probe: &Probe,
     now_ms: u64,
 ) -> [&'static str; 2] {
+    if probe.screen == Screen::CollectionConfirm {
+        if probe.collection_confirmation.is_none() {
+            return [
+                "Confirmation expired / no request sent",
+                "Y: Back   Hold B 2s: New confirmation",
+            ];
+        }
+        return [
+            "Click/Hold A 2s: Confirm ECU reads",
+            "Y: Cancel / no collection request",
+        ];
+    }
     let details = probe.screen == Screen::Details;
     // These phases ignore both Inspect inputs; keep the footer honest while
     // the radio acknowledges stop/disconnect, including after cancellation.
@@ -162,38 +180,24 @@ fn control_hints(
     };
     [first, second]
 }
-/// Returns all set GATT characteristic `properties` bit labels in wire-bit
-/// order, or `None` text for zero; all eight labels fit the 50-byte buffer.
-fn properties_text(properties: u8) -> String<50> {
-    let mut out = String::new();
-    for (bit, label) in [
-        (1, "Bcast"),
-        (2, "R"),
-        (4, "WriteCmd"),
-        (8, "W"),
-        (16, "Notify"),
-        (32, "Indicate"),
-        (64, "Signed"),
-        (128, "Ext"),
-    ] {
-        if properties & bit != 0 {
-            if !out.is_empty() {
-                let _ = out.push(' ');
-            }
-            let _ = out.push_str(label);
-        }
-    }
-    if out.is_empty() {
-        let _ = out.push_str("None");
-    }
-    out
-}
 /// Returns the prefix successfully formatted from `args` into 50 bytes;
 /// formatting/capacity errors are ignored, so callers bound their row content.
+/// The capacity-erased view shares formatter code without changing UTF-8 writes.
+#[cfg(test)]
 fn line(args: core::fmt::Arguments<'_>) -> String<50> {
     let mut s = String::new();
-    let _ = s.write_fmt(args);
+    let _ = s.as_mut_view().write_fmt(args);
     s
+}
+/// Clears the reusable 50-byte `scratch` lane, formats `args` and returns its borrowed prefix.
+/// Formatting/capacity errors retain successful UTF-8 writes; the borrow ends before reuse.
+fn line_into<'a>(
+    scratch: &'a mut String<50>,
+    args: core::fmt::Arguments<'_>,
+) -> &'a str {
+    scratch.clear();
+    let _ = scratch.as_mut_view().write_fmt(args);
+    scratch.as_str()
 }
 /// Draws single-line sanitized ASCII `s` into `d` at top-left pixel (`x`, `y`)
 /// in `c` using 6x10 glyphs. Returns the first target error after possible
@@ -228,6 +232,18 @@ fn font_text<D: DrawTarget<Color = Rgb565>>(
 /// negative or nonfinite values, and the shared overflow marker above range.
 fn rate(value: Option<f32>) -> String<8> { crate::diagnostic_values::rate_text(value) }
 
+/// Returns signed `value` in dBm (at most seven bytes), or `RSSI?` when unavailable.
+/// This formats observed evidence only; it neither validates RSSI nor estimates distance.
+fn rssi(value: Option<i8>) -> String<8> {
+    let mut out = String::new();
+    if let Some(value) = value {
+        let _ = write!(out.as_mut_view(), "{value}dBm");
+    } else {
+        let _ = out.push_str("RSSI?");
+    }
+    out
+}
+
 /// Returns one-decimal percent for instrumented work `value` in tenths-percent
 /// `0..=1000`, otherwise `--%`; this is not whole-core utilization.
 fn work(value: Option<u16>) -> String<8> {
@@ -243,7 +259,7 @@ fn work(value: Option<u16>) -> String<8> {
 fn memory(value: Option<MemoryUse>) -> String<12> {
     let mut s = String::new();
     if let Some((used, total)) = value.and_then(|v| crate::diagnostic_values::memory_kib(v.used, v.total)) {
-        let _ = write!(s, "{used}/{total}K");
+        let _ = write!(s.as_mut_view(), "{used}/{total}K");
     } else {
         let _ = s.push_str("--/--K");
     }
@@ -255,20 +271,25 @@ fn memory(value: Option<MemoryUse>) -> String<12> {
 /// stack values remain observed samples, not continuous high-water marks.
 /// Each lane lies within the fixed screen bounds, so callers pass the original
 /// target without adding a redundant full-screen clip around these lane clips.
+/// Reuses caller-owned `scratch` for each lane; text borrows end before the next format.
 fn telemetry<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     values: ProbeDiagnostics,
+    scratch: &mut String<50>,
 ) -> Result<(), D::Error> {
     let mut fps = d.clipped(&Rectangle::new(Point::new(10, 25), Size::new(152, 10)));
     text(
         &mut fps,
         10,
         25,
-        &line(format_args!(
-            "FPS {} AVG {}",
-            rate(values.fps.map(|v| v.current)).as_str(),
-            rate(values.fps.map(|v| v.average)).as_str()
-        )),
+        line_into(
+            scratch,
+            format_args!(
+                "FPS {} AVG {}",
+                rate(values.fps.map(|v| v.current)).as_str(),
+                rate(values.fps.map(|v| v.average)).as_str()
+            ),
+        ),
         WHITE,
     )?;
     let mut cpu = d.clipped(&Rectangle::new(Point::new(166, 25), Size::new(144, 10)));
@@ -276,11 +297,14 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         &mut cpu,
         166,
         25,
-        &line(format_args!(
-            "W C0 {} C1 {}",
-            work(values.work[0]).as_str(),
-            work(values.work[1]).as_str()
-        )),
+        line_into(
+            scratch,
+            format_args!(
+                "W C0 {} C1 {}",
+                work(values.work[0]).as_str(),
+                work(values.work[1]).as_str()
+            ),
+        ),
         WHITE,
     )?;
     let mut ram = d.clipped(&Rectangle::new(Point::new(10, 37), Size::new(300, 10)));
@@ -288,12 +312,15 @@ fn telemetry<D: DrawTarget<Color = Rgb565>>(
         &mut ram,
         10,
         37,
-        &line(format_args!(
-            "Static {} SP0 {} SP1 {}",
-            memory(values.ram).as_str(),
-            memory(values.stacks[0]).as_str(),
-            memory(values.stacks[1]).as_str()
-        )),
+        line_into(
+            scratch,
+            format_args!(
+                "Static {} SP0 {} SP1 {}",
+                memory(values.ram).as_str(),
+                memory(values.stacks[0]).as_str(),
+                memory(values.stacks[1]).as_str()
+            ),
+        ),
         MUTED,
     )
 }
@@ -361,8 +388,32 @@ impl<'a> EvidenceLines<'a> {
         }
     }
 
+    /// Counts one row and, with an active sink, sanitizes the first 50 `bytes` into
+    /// existing scratch: ASCII 32..=126 survives and every other byte becomes `?`.
+    /// Empty input emits an empty row. The callback borrows scratch only for this call;
+    /// no source bytes are changed or retained and later rows replace the scratch text.
+    #[inline(never)]
+    fn printable(
+        &mut self,
+        bytes: &[u8],
+    ) {
+        self.count += 1;
+        if let Some(output) = &mut self.output {
+            self.scratch.clear();
+            for &byte in bytes.iter().take(self.scratch.capacity()) {
+                let _ = self.scratch.push(if (32..=126).contains(&byte) {
+                    char::from(byte)
+                } else {
+                    '?'
+                });
+            }
+            output(&self.scratch);
+        }
+    }
+
     /// Counts one row; formats `args` only with an active sink, retaining any
-    /// successfully written prefix on formatting/capacity failure.
+    /// successfully written UTF-8 prefix on formatting/capacity failure.
+    /// The borrowed view retains the scratch capacity and shares writer code.
     #[inline(never)]
     fn formatted(
         &mut self,
@@ -371,7 +422,41 @@ impl<'a> EvidenceLines<'a> {
         self.count += 1;
         if let Some(output) = &mut self.output {
             self.scratch.clear();
-            let _ = self.scratch.write_fmt(args);
+            let _ = self.scratch.as_mut_view().write_fmt(args);
+            output(&self.scratch);
+        }
+    }
+
+    /// Counts one row and, with a sink, writes set GATT `properties` bit labels
+    /// in wire-bit order into existing scratch. Zero emits `None`; all eight
+    /// labels fit its 50 bytes. The callback borrows the row only for this call.
+    fn properties(
+        &mut self,
+        properties: u8,
+    ) {
+        self.count += 1;
+        if let Some(output) = &mut self.output {
+            self.scratch.clear();
+            for (bit, label) in [
+                (1, "Bcast"),
+                (2, "R"),
+                (4, "WriteCmd"),
+                (8, "W"),
+                (16, "Notify"),
+                (32, "Indicate"),
+                (64, "Signed"),
+                (128, "Ext"),
+            ] {
+                if properties & bit != 0 {
+                    if !self.scratch.is_empty() {
+                        let _ = self.scratch.push(' ');
+                    }
+                    let _ = self.scratch.push_str(label);
+                }
+            }
+            if self.scratch.is_empty() {
+                let _ = self.scratch.push_str("None");
+            }
             output(&self.scratch);
         }
     }
@@ -464,7 +549,7 @@ fn packet_bytes(
                 } else {
                     "Shortened name:"
                 });
-                emit.text(&printable::<50>(f.data));
+                emit.printable(f.data);
             }
             0x0A if f.data.len() == 1 => emit.formatted(format_args!("TX power: {} dBm", f.data[0] as i8)),
             0xFF if f.data.len() >= 2 => {
@@ -591,6 +676,8 @@ fn record_details(
 ) {
     use capture::Record;
     match record {
+        Record::Collection(row) => collection_view::row(row, emit),
+        Record::CollectionEnvelope(raw) => collection_view::terminal(raw, emit),
         Record::Service(s) => {
             emit.formatted(format_args!("SERVICE {:04X}-{:04X}", s.start, s.end));
             emit.uuid(s.uuid);
@@ -610,7 +697,7 @@ fn record_details(
                 "Decl {:04X} / properties 0x{:02X}",
                 c.declaration, c.properties
             ));
-            emit.text(&properties_text(c.properties));
+            emit.properties(c.properties);
         }
         Record::Descriptor(d) => {
             emit.formatted(format_args!(
@@ -642,7 +729,7 @@ fn record_details(
                     emit.text("! Unexpected standard length; raw retained");
                 }
                 for chunk in v.bytes.chunks(48) {
-                    emit.text(&printable::<50>(chunk));
+                    emit.printable(chunk);
                 }
                 emit.text("Value RAW HEX:");
                 hex(v.bytes, emit);
@@ -681,7 +768,7 @@ fn failure_details(
     if let Some((decl, value)) = failure.last_accepted {
         emit.formatted(format_args!("Last accepted decl {decl:04X} / value {value:04X}"));
     }
-    rejected_details(failure.rejected, emit);
+    rejected_details(failure.rejected.as_ref(), emit);
 }
 /// Emits global `scan` counts and optional last-error fields through `emit`.
 /// `now` is live boot-relative milliseconds (age may be unavailable); None retains
@@ -774,10 +861,10 @@ fn peer_details(
         d.age_ms(now) / 1000,
         d.reports
     ));
-    emit.text(&match d.rssi {
-        Some(rssi) => line(format_args!("RSSI: {rssi} dBm (not distance)")),
-        None => line(format_args!("RSSI unavailable")),
-    });
+    match d.rssi {
+        Some(rssi) => emit.formatted(format_args!("RSSI: {rssi} dBm (not distance)")),
+        None => emit.text("RSSI unavailable"),
+    }
     packet_observation("Advertisement", d.advertisement_meta, now, emit);
     packet("ADVERTISEMENT", &d.advertisement, emit);
     packet_observation("Scan response", d.response_meta, now, emit);
@@ -842,12 +929,30 @@ fn peer_details(
 /// Traverses current `probe` evidence into `emit` using snapshot milliseconds
 /// `now` for ages. Preserves peer failures separately from global scan/fault/boot
 /// evidence and makes no radio or storage requests.
-#[inline(never)]
+#[inline(always)]
 fn details(
     probe: &Probe,
     now: u64,
     emit: &mut EvidenceLines<'_>,
 ) {
+    if gatt_requested(probe)
+        && let Some(e) = probe.inspection.collection.as_ref()
+    {
+        collection_view::summary(&e.summary, emit);
+        for id in crate::ble::canyonero::reads::ReadId::ALL {
+            collection_view::row(e.row(id), emit);
+        }
+        if let Some(kind) = e.summary.terminal_kind {
+            collection_view::terminal(
+                capture::TerminalRef {
+                    kind,
+                    declared_len: e.summary.terminal_len,
+                    raw: e.terminal(),
+                },
+                emit,
+            );
+        }
+    }
     if probe.identity_mode && gatt_requested(probe) {
         identity_view::details(probe.inspection.identity.as_ref(), emit);
     }
@@ -889,7 +994,7 @@ fn name_details(
         return;
     };
     for chunk in name.bytes.chunks(50) {
-        emit.text(&printable::<50>(chunk));
+        emit.printable(chunk);
     }
     emit.formatted(format_args!(
         "Name source: {} / {}",
@@ -968,10 +1073,11 @@ fn radio_clock_details(
         None => emit.text("Radio GSPI: not recorded"),
     }
 }
-/// Sends optional `rejected` declaration to `emit`, labeling any decoded value
-/// handle unvalidated and distinguishing its 19-byte prefix from complete raw data.
+/// Borrows optional `rejected` declaration for this call, sending its rows to
+/// `emit` without retaining or copying the evidence. Decoded value handles remain
+/// unvalidated and its 19-byte prefix is distinguished from complete raw data.
 fn rejected_details(
-    rejected: Option<RejectedDeclaration>,
+    rejected: Option<&RejectedDeclaration>,
     emit: &mut EvidenceLines<'_>,
 ) {
     if let Some(r) = rejected {
@@ -998,7 +1104,7 @@ pub fn page_count(probe: &Probe) -> usize {
 /// Traverses validated saved `view` into `emit` with frozen boot-relative
 /// timestamps, source identity and raw record bytes. Current live state never
 /// replaces capture evidence; no radio/storage operation is initiated.
-#[inline(never)]
+#[inline(always)]
 fn saved_details(
     view: &capture::CaptureView<'_>,
     emit: &mut EvidenceLines<'_>,
@@ -1014,6 +1120,9 @@ fn saved_details(
     emit.formatted(format_args!("Captured at: {} ms", m.captured_at_ms));
     emit.formatted(format_args!("Request revision: {}", m.revision));
     emit.formatted(format_args!("Radio {:?} / {:?}", m.phase, m.error));
+    if let Some(s) = m.collection.as_ref() {
+        collection_view::summary(s, emit);
+    }
     if m.identity_mode == Some(true) {
         identity_view::details(m.identity.as_ref(), emit);
     }
@@ -1086,7 +1195,9 @@ fn saved_details(
         "Source identity unavailable; digest bytes:"
     });
     hex(&m.build.source_digest, emit);
-    emit.text(if m.identity_mode == Some(true) {
+    emit.text(if m.collection.is_some() {
+        "Fixed ECU reads; raw evidence remains unqualified"
+    } else if m.identity_mode == Some(true) {
         "INFO only; no pairing, ECU requests or polling"
     } else {
         "No pairing, arbitrary reads, writes or ECU data"
@@ -1102,18 +1213,19 @@ pub fn saved_page_count(view: &capture::CaptureView<'_>) -> usize {
     lines.count.div_ceil(LINES).max(1)
 }
 /// Clears fixed 320x240 `d` and paints `title` with current-Pico `diagnostics`.
-/// Returns `Ok(())` or the first target error, leaving prior writes intact.
+/// Reuses `scratch` for telemetry; returns `Ok(())` or the first target error, leaving prior writes intact.
 fn capture_header<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     title: &str,
     diagnostics: ProbeDiagnostics,
+    scratch: &mut String<50>,
 ) -> Result<(), D::Error> {
     {
         let mut clipped = d.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
         rect(&mut clipped, 0, 0, 320, 240, BG)?;
         font_text(&mut clipped, Point::new(10, 5), title, WHITE, &FONT_9X15)?;
     }
-    telemetry(d, diagnostics)
+    telemetry(d, diagnostics, scratch)
 }
 /// Borrows the validated capture; never reconstructs or copies a complete Probe.
 /// Paints `view` into the 320x240 clip of `target`. Zero-based `slot` is labelled
@@ -1127,29 +1239,25 @@ pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
     page: usize,
     diagnostics: ProbeDiagnostics,
 ) -> Result<(), D::Error> {
-    capture_header(target, "SAVED BLE CAPTURE", diagnostics)?;
+    let mut scratch = String::new();
+    capture_header(target, "SAVED BLE CAPTURE", diagnostics, &mut scratch)?;
     // Use the same screen target as live rendering so text/shape code is shared.
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
     let pages = saved_page_count(view);
     let page = page.min(pages - 1);
-    let slot_label = if slot < 4 {
-        line(format_args!("Slot {}", slot + 1))
+    let heading = if slot < 4 {
+        line_into(
+            &mut scratch,
+            format_args!("Slot {} / read only / {}/{}", slot + 1, page + 1, pages),
+        )
     } else {
-        line(format_args!("Slot --"))
+        line_into(
+            &mut scratch,
+            format_args!("Slot -- / read only / {}/{}", page + 1, pages),
+        )
     };
-    text(
-        d,
-        10,
-        61,
-        &line(format_args!(
-            "{} / read only / {}/{}",
-            slot_label.as_str(),
-            page + 1,
-            pages
-        )),
-        RED,
-    )?;
+    text(d, 10, 61, heading, RED)?;
     let mut index = 0;
     let mut error = None;
     saved_details(
@@ -1219,7 +1327,8 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
     diagnostics: ProbeDiagnostics,
 ) -> Result<(), D::Error> {
     use capture_ui::{Operation, Screen as CaptureScreen};
-    capture_header(target, "CAPTURE SLOTS", diagnostics)?;
+    let mut scratch = String::new();
+    capture_header(target, "CAPTURE SLOTS", diagnostics, &mut scratch)?;
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
     let screen = ui.screen();
@@ -1265,45 +1374,54 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
         if usize::from(ui.selected()) == index {
             rect(d, 6, y, 3, 29, RED)?;
         }
-        let identity = ui.identities()[index];
+        let identity = ui.identities()[index].as_ref();
         let title = if let Some(identity) = identity {
             let name = printable::<31>(identity.name.as_slice());
-            line(format_args!(
-                "{} {} | {}",
-                index + 1,
-                if matches!(slot, capture_ui::Slot::SavedBlocked { .. }) {
-                    "Protected"
-                } else {
-                    "Saved"
-                },
-                if name.is_empty() { "Unnamed" } else { name.as_str() }
-            ))
+            line_into(
+                &mut scratch,
+                format_args!(
+                    "{} {} | {}",
+                    index + 1,
+                    if matches!(slot, capture_ui::Slot::SavedBlocked { .. }) {
+                        "Protected"
+                    } else {
+                        "Saved"
+                    },
+                    if name.is_empty() { "Unnamed" } else { name.as_str() }
+                ),
+            )
         } else {
-            line(format_args!("Slot {} / {}", index + 1, slot_label(slot)))
+            line_into(&mut scratch, format_args!("Slot {} / {}", index + 1, slot_label(slot)))
         };
-        text(d, 14, y + 1, &title, WHITE)?;
+        text(d, 14, y + 1, title, WHITE)?;
         let detail =
             if let capture_ui::Slot::Saved { generation } | capture_ui::Slot::SavedBlocked { generation } = slot {
                 if let Some(identity) = identity {
-                    line(format_args!(
-                        "{} {} / gen {generation}",
-                        if identity.peer.random { "R" } else { "P" },
-                        identity.peer.to_string().as_str()
-                    ))
+                    line_into(
+                        &mut scratch,
+                        format_args!(
+                            "{} {} / gen {generation}",
+                            if identity.peer.random { "R" } else { "P" },
+                            identity.peer.to_string().as_str()
+                        ),
+                    )
                 } else {
-                    line(format_args!("Generation {generation}"))
+                    line_into(&mut scratch, format_args!("Generation {generation}"))
                 }
             } else {
-                line(format_args!(
-                    "{}",
-                    if matches!(slot, capture_ui::Slot::Corrupt | capture_ui::Slot::Unsupported) {
-                        "Export first; never erased automatically"
-                    } else {
-                        "USB serial provides read-only recovery"
-                    }
-                ))
+                line_into(
+                    &mut scratch,
+                    format_args!(
+                        "{}",
+                        if matches!(slot, capture_ui::Slot::Corrupt | capture_ui::Slot::Unsupported) {
+                            "Export first; never erased automatically"
+                        } else {
+                            "USB serial provides read-only recovery"
+                        }
+                    ),
+                )
             };
-        text(d, 14, y + 14, &detail, MUTED)?;
+        text(d, 14, y + 14, detail, MUTED)?;
     }
     rect(d, 0, 204, 320, 36, PANEL)?;
     let confirm = matches!(screen, CaptureScreen::ConfirmOverwrite | CaptureScreen::ConfirmReset);
@@ -1335,6 +1453,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     probe: &Probe,
     now_ms: u64,
 ) -> Result<(), D::Error> {
+    let mut scratch = String::new();
     {
         let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
         let d = &mut clipped;
@@ -1343,7 +1462,13 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         font_text(
             d,
             Point::new(10, 7),
-            if probe.identity_mode { "NGM INFO" } else { "BLE PROBE" },
+            if probe.collection_enabled {
+                "NGM COLLECT"
+            } else if probe.identity_mode {
+                "NGM INFO"
+            } else {
+                "BLE PROBE"
+            },
             WHITE,
             &FONT_9X15,
         )?;
@@ -1353,35 +1478,43 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         } else {
             " "
         };
-        text(d, 112, 10, &line(format_args!("{spin} {:?}", probe.phase)), WHITE)?;
+        text(
+            d,
+            112,
+            10,
+            line_into(&mut scratch, format_args!("{spin} {:?}", probe.phase)),
+            WHITE,
+        )?;
     }
-    telemetry(target, probe.diagnostics)?;
+    telemetry(target, probe.diagnostics, &mut scratch)?;
     let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
     let d = &mut clipped;
     text(
         d,
         10,
         49,
-        &if probe.screen == Screen::Details
+        if probe.screen == Screen::Details
             && let Some(peer) = probe.selected_device()
         {
-            line(format_args!(
-                "{} / {}",
-                peer.peer.to_string().as_str(),
-                peer.peer.kind_label()
-            ))
+            line_into(
+                &mut scratch,
+                format_args!("{} / {}", peer.peer.to_string().as_str(), peer.peer.kind_label()),
+            )
         } else {
-            line(format_args!(
-                "{}/{} peers lost:{} full:{}",
-                if probe.catalog.devices().is_empty() {
-                    0
-                } else {
-                    probe.selected.min(probe.catalog.devices().len() - 1) + 1
-                },
-                probe.catalog.devices().len(),
-                probe.dropped_reports,
-                probe.catalog.overflow_reports
-            ))
+            line_into(
+                &mut scratch,
+                format_args!(
+                    "{}/{} peers lost:{} full:{}",
+                    if probe.catalog.devices().is_empty() {
+                        0
+                    } else {
+                        probe.selected.min(probe.catalog.devices().len() - 1) + 1
+                    },
+                    probe.catalog.devices().len(),
+                    probe.dropped_reports,
+                    probe.catalog.overflow_reports
+                ),
+            )
         },
         MUTED,
     )?;
@@ -1389,18 +1522,35 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         d,
         10,
         61,
-        &line(format_args!(
-            "{} HCIbad:{}",
-            status_copy(probe),
-            probe.malformed_reports
-        )),
+        line_into(
+            &mut scratch,
+            format_args!("{} HCIbad:{}", status_copy(probe), probe.malformed_reports),
+        ),
         if probe.error == ProbeError::None && probe.fault_latch.category() == ErrorLatch::None {
             MUTED
         } else {
             RED
         },
     )?;
-    if probe.screen == Screen::List {
+    if probe.screen == Screen::CollectionConfirm {
+        let mut row = 0;
+        let mut error = None;
+        confirmation_lines(
+            probe,
+            &mut EvidenceLines::new(Some(&mut |s| {
+                if row < LINES
+                    && error.is_none()
+                    && let Err(e) = text(d, 10, 88 + row as i32 * 11, s, WHITE)
+                {
+                    error = Some(e);
+                }
+                row += 1;
+            })),
+        );
+        if let Some(e) = error {
+            return Err(e);
+        }
+    } else if probe.screen == Screen::List {
         let devices = probe.catalog.devices();
         let selected = probe.selected.min(devices.len().saturating_sub(1));
         let start = selected / 4 * 4;
@@ -1423,16 +1573,15 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
                 d,
                 14,
                 y + 16,
-                &line(format_args!(
-                    "{} {} {}s",
-                    device.peer.to_string().as_str(),
-                    device
-                        .rssi
-                        .map(|r| line(format_args!("{r}dBm")))
-                        .unwrap_or_else(|| line(format_args!("RSSI?")))
-                        .as_str(),
-                    device.age_ms(now_ms) / 1000
-                )),
+                line_into(
+                    &mut scratch,
+                    format_args!(
+                        "{} {} {}s",
+                        device.peer.to_string().as_str(),
+                        rssi(device.rssi).as_str(),
+                        device.age_ms(now_ms) / 1000
+                    ),
+                ),
                 MUTED,
             )?;
         }
@@ -1443,20 +1592,25 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             d,
             10,
             75,
-            &line(format_args!(
-                "{}  {}/{}",
-                if probe.selected_device().is_none() {
-                    "SCAN DIAGNOSTICS"
-                } else if gatt_requested(probe) && probe.identity_mode {
-                    "GATT + ADAPTER IDENTITY"
-                } else if gatt_requested(probe) {
-                    "ADVERTISEMENT + GATT"
-                } else {
-                    "ADVERTISEMENT"
-                },
-                page + 1,
-                pages
-            )),
+            line_into(
+                &mut scratch,
+                format_args!(
+                    "{}  {}/{}",
+                    if probe.selected_device().is_none() {
+                        "SCAN DIAGNOSTICS"
+                    } else if matches!(probe.request.action, Action::Collect(_)) {
+                        "ADAPTER + ECU READS"
+                    } else if gatt_requested(probe) && probe.identity_mode {
+                        "GATT + ADAPTER IDENTITY"
+                    } else if gatt_requested(probe) {
+                        "ADVERTISEMENT + GATT"
+                    } else {
+                        "ADVERTISEMENT"
+                    },
+                    page + 1,
+                    pages
+                ),
+            ),
             RED,
         )?;
         let mut index = 0;
@@ -1486,7 +1640,9 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         d,
         8,
         228,
-        if probe.encoder_connected {
+        if probe.collection_enabled && probe.screen != Screen::CollectionConfirm {
+            "Hold B/X/Y 2s: ECU reads / slots / recover"
+        } else if probe.encoder_connected {
             "Hold X 2s: slots | Hold Y 2s: recover"
         } else {
             "Hold X/Y 2s: slots/recover | NO ENCODER"
@@ -1495,11 +1651,211 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     )
 }
 
+/// Emits at most ten confirmation rows for selected `probe` into `emit`.
+/// Copy identifies active traffic and exact routing; no command is created or confirmed.
+fn confirmation_lines(
+    probe: &Probe,
+    emit: &mut EvidenceLines<'_>,
+) {
+    if probe.collection_confirmation.is_none() {
+        emit.text("ECU READ CONFIRMATION EXPIRED");
+        emit.text("No collection request was started");
+        emit.text("Click is ignored until you leave this screen");
+        emit.text("Y returns to the device list");
+        emit.text("Hold B 2s to request a new confirmation");
+        return;
+    }
+    emit.text("CONFIRM ECU READ COLLECTION");
+    if let Some(device) = probe.selected_device() {
+        emit.formatted(format_args!(
+            "Peer {} / {}",
+            device.peer.to_string().as_str(),
+            if device.peer.random { "R" } else { "P" }
+        ));
+        let name = device.name();
+        emit.text(if name.is_empty() { "Name unavailable" } else { &name });
+    }
+    emit.text("This sends active CAN traffic to the ECU");
+    emit.text("28 fixed reads / 500k / 7E0 -> 7E8");
+    emit.text("No writes or unlock; no session change");
+    emit.text("Stops unless default session is observed");
+    emit.text("Close other diagnostic apps before confirming");
+    emit.text("Raw results retained; no automatic retry");
+    emit.text("Confirmation expires after 15 seconds");
+}
+
 #[cfg(test)]
 /// Pixel parity, evidence preservation, pagination and truthful recovery-copy regressions.
 mod tests {
     use super::*;
     extern crate std;
+
+    /// Formatting into a reused lane clears prior text and retains the original UTF-8/error prefix rules.
+    #[test]
+    fn reused_line_lane_preserves_prefixes_and_replaces_prefilled_text() {
+        let mut scratch = String::<50>::try_from("old row that must disappear").unwrap();
+        assert_eq!(line_into(&mut scratch, format_args!("{}", "new")), "new");
+        assert_eq!(line_into(&mut scratch, format_args!("")), "");
+        let prefix = "123456789012345678901234567890123456789012345678901";
+        let suffix = "é";
+        assert_eq!(
+            line_into(&mut scratch, format_args!("{}{suffix}", &prefix[..48])),
+            "123456789012345678901234567890123456789012345678é"
+        );
+        assert_eq!(
+            line_into(&mut scratch, format_args!("{}{suffix}", &prefix[..49])),
+            &prefix[..49]
+        );
+        assert_eq!(line_into(&mut scratch, format_args!("{prefix}")), "");
+        /// A formatter may fail after writing a valid prefix; drawing retains that exact prefix.
+        struct Partial;
+        impl core::fmt::Display for Partial {
+            /// Writes a literal prefix to `f`, then returns the formatter's deliberate error.
+            fn fmt(
+                &self,
+                f: &mut core::fmt::Formatter<'_>,
+            ) -> core::fmt::Result {
+                f.write_str("partial")?;
+                Err(core::fmt::Error)
+            }
+        }
+        assert_eq!(
+            line_into(&mut scratch, format_args!("head:{} tail", Partial)),
+            "head:partial"
+        );
+        assert_eq!(
+            line_into(&mut scratch, format_args!("{} {}", i64::MIN, u64::MAX)),
+            "-9223372036854775808 18446744073709551615"
+        );
+    }
+
+    /// Scratch reuse preserves hostile-byte replacement, truncation, empty rows and count-only parity.
+    #[test]
+    fn printable_rows_preserve_every_byte_and_reset_between_callbacks() {
+        let bytes: std::vec::Vec<u8> = (0..=u8::MAX).collect();
+        let mut inputs: std::vec::Vec<&[u8]> = bytes.chunks(50).collect();
+        inputs.extend([&b""[..], &b"\0\n\r\x7F\x80\xFF !~"[..], bytes.as_slice(), &b"short"[..]]);
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        let mut sink = |row: &str| rows.push(row.into());
+        let mut emit = EvidenceLines::new(Some(&mut sink));
+        let mut count = EvidenceLines::new(None);
+        for input in &inputs {
+            emit.printable(input);
+            count.printable(input);
+        }
+        assert_eq!(emit.count, inputs.len());
+        assert_eq!(count.count, inputs.len());
+        for (input, row) in inputs.into_iter().zip(rows) {
+            let expected: std::string::String = input
+                .iter()
+                .take(50)
+                .map(|&byte| {
+                    if byte.is_ascii_graphic() || byte == b' ' {
+                        char::from(byte)
+                    } else {
+                        '?'
+                    }
+                })
+                .collect();
+            assert_eq!(row, expected);
+        }
+    }
+
+    /// The compact list label retains every signed octet and keeps absence distinct from zero.
+    #[test]
+    fn compact_rssi_label_preserves_signed_range_and_absence() {
+        assert_eq!(rssi(None).as_str(), "RSSI?");
+        for value in i8::MIN..=i8::MAX {
+            assert_eq!(rssi(Some(value)).as_str(), std::format!("{value}dBm"));
+        }
+        assert_eq!(rssi(Some(i8::MIN)).as_str(), "-128dBm");
+        assert_eq!(rssi(Some(0)).as_str(), "0dBm");
+        assert_eq!(rssi(Some(i8::MAX)).as_str(), "127dBm");
+    }
+    /// Row overflow keeps complete UTF-8 writes only; the reusable sink clears old text.
+    #[test]
+    fn formatted_rows_keep_utf8_prefixes_and_reset_after_overflow() {
+        let prefix = "123456789012345678901234567890123456789012345678901";
+        let suffix = "é";
+        assert_eq!(
+            line(format_args!("{}{suffix}", &prefix[..48])).as_str(),
+            "123456789012345678901234567890123456789012345678é"
+        );
+        assert_eq!(line(format_args!("{}{suffix}", &prefix[..49])).as_str(), &prefix[..49]);
+        assert!(line(format_args!("{prefix}")).is_empty());
+
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        let mut sink = |row: &str| rows.push(row.into());
+        let mut emit = EvidenceLines::new(Some(&mut sink));
+        emit.formatted(format_args!("{}{suffix}", &prefix[..49]));
+        emit.formatted(format_args!("{prefix}"));
+        emit.formatted(format_args!("{} {}", i64::MIN, u64::MAX));
+        assert_eq!(emit.count, 3);
+        assert_eq!(
+            rows,
+            [
+                "1234567890123456789012345678901234567890123456789",
+                "",
+                "-9223372036854775808 18446744073709551615",
+            ]
+        );
+    }
+
+    /// Confirmation copy and maximal evidence retain all numbers within the50-character lane.
+    #[test]
+    fn collection_rows_and_confirmation_are_bounded_and_explicit() {
+        use crate::ble::canyonero::collection::{Command, ReadStatus, SendState, Submission};
+        use crate::ble::canyonero::reads::ReadId;
+        let mut p = probe();
+        p.collection_enabled = true;
+        p.identity_mode = true;
+        p.phase = RadioPhase::Scanning;
+        p.input(Input::Collect, 0);
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        confirmation_lines(&p, &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))));
+        assert!(rows.iter().any(|s| s.contains("active CAN traffic")));
+        assert!(rows.iter().any(|s| s.contains("7E0 -> 7E8")));
+        assert!(rows.iter().any(|s| s.contains("no session change")));
+        assert_eq!(
+            control_hints(&p, 0),
+            [
+                "Click/Hold A 2s: Confirm ECU reads",
+                "Y: Cancel / no collection request"
+            ]
+        );
+        p.expire_collection(15_000);
+        rows.clear();
+        confirmation_lines(&p, &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))));
+        assert!(rows.iter().any(|s| s.contains("EXPIRED")));
+        assert!(control_hints(&p, 15_000)[0].contains("expired"));
+        let mut s = collection::Evidence::new(u64::MAX).summary;
+        s.adapter_mv = Some(u16::MAX);
+        s.last_submission = Some(Submission {
+            command: Command::FlowControl(ReadId::ChargeActuatorAcknowledgment),
+            state: SendState::InFlightUnknown,
+            attempted_at_ms: Some(u64::MAX),
+            completed_at_ms: None,
+        });
+        collection_view::summary(&s, &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))));
+        for id in ReadId::ALL {
+            collection_view::row(
+                collection::RowRef::new(
+                    id,
+                    [Some(u64::MAX); 3],
+                    Some(ReadStatus::Negative(255)),
+                    3,
+                    67,
+                    &[0xAB; 67],
+                ),
+                &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))),
+            );
+        }
+        assert!(rows.iter().all(|s| s.is_ascii() && s.len() <= 50));
+        assert!(rows.iter().any(|s| s == "Local completion: 18446744073709551615 ms"));
+        assert!(rows.iter().any(|s| s == "Adapter supply: 65535 mV / not ECU voltage"));
+        assert!(rows.iter().any(|s| s == "Last command: CTS for 2065"));
+        assert_eq!(p.request, Request::INITIAL, "rendering must never authorize traffic");
+    }
     /// INFO image exposes candidate provenance and partial raw evidence without
     /// rendering standard-only success or changing its manual request.
     #[test]
@@ -1868,6 +2224,49 @@ mod tests {
             assert!(hint.len() + 18 <= 50);
         }
     }
+    /// Every property mask emits one bounded, ordered row, including zero after a
+    /// full mask; count-only traversal never changes its existing scratch bytes.
+    #[test]
+    fn property_rows_reuse_scratch_without_stale_labels() {
+        let labels = ["Bcast", "R", "WriteCmd", "W", "Notify", "Indicate", "Signed", "Ext"];
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        let mut sink = |s: &str| rows.push(s.into());
+        let mut emitted = EvidenceLines::new(Some(&mut sink));
+        let mut counted = EvidenceLines::new(None);
+        counted.scratch.push_str("unchanged").unwrap();
+        for mask in (0..=u8::MAX).rev() {
+            emitted.properties(mask);
+            counted.properties(mask);
+        }
+        assert_eq!(emitted.count, 256);
+        assert_eq!(counted.count, 256);
+        assert_eq!(counted.scratch.as_str(), "unchanged");
+        for (index, row) in rows.iter().enumerate() {
+            let mask = u8::MAX - index as u8;
+            let actual: std::vec::Vec<_> = row.split(' ').collect();
+            if mask == 0 {
+                assert_eq!(actual, ["None"]);
+            } else {
+                assert_eq!(actual.len(), mask.count_ones() as usize);
+                let mut previous = None;
+                for token in actual {
+                    let bit = labels.iter().position(|&label| label == token).unwrap();
+                    assert_ne!(mask & (1 << bit), 0);
+                    assert!(previous.is_none_or(|prior| prior < bit));
+                    previous = Some(bit);
+                }
+            }
+            assert!(row.is_ascii() && row.len() <= 50);
+        }
+    }
+
+    /// Returns the one emitted property row for `bits` in an owned test string.
+    fn properties_text(bits: u8) -> std::string::String {
+        let mut row = std::string::String::new();
+        EvidenceLines::new(Some(&mut |s| row.push_str(s))).properties(bits);
+        row
+    }
+
     /// Checks signed RSSI, every GATT property bit and immediate-back recovery labels.
     #[test]
     fn rssi_and_characteristic_flags_are_photo_readable() {
@@ -1910,12 +2309,15 @@ mod tests {
     /// Rejected prefixes retain lengths/unvalidated handles, and current errors outrank latched headers.
     #[test]
     fn rejected_wire_evidence_is_bounded_explicit_and_paginated() {
-        for length in [0, 1, 2, 3, 5, 19, 20, 253, 65535] {
+        let mut absent = EvidenceLines::new(None);
+        rejected_details(None, &mut absent);
+        assert_eq!(absent.count, 0);
+        for length in [0, 1, 2, 3, 5, 19, 20, 42, 253, 65535] {
             let raw = std::vec![0xAB; length];
             let rejected = RejectedDeclaration::from_wire(0xFFFF, &raw);
             let mut rows = std::vec::Vec::<std::string::String>::new();
             rejected_details(
-                Some(rejected),
+                Some(&rejected),
                 &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))),
             );
             assert_eq!(rows[0], std::format!("Rejected decl FFFF / {length} bytes"));
@@ -1928,9 +2330,21 @@ mod tests {
                 }
             );
             assert_eq!(rows.len(), 3 + length.min(19).div_ceil(16));
+            assert_eq!(
+                rows[2],
+                if length > 19 {
+                    "Rejected RAW HEX prefix (first 19 bytes)"
+                } else {
+                    "Rejected RAW HEX (wire order)"
+                }
+            );
+            if length >= 19 {
+                assert_eq!(rows[3], "AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB");
+                assert_eq!(rows[4], "AB AB AB");
+            }
             assert!(rows.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
             let mut counted = EvidenceLines::new(None);
-            rejected_details(Some(rejected), &mut counted);
+            rejected_details(Some(&rejected), &mut counted);
             assert_eq!(counted.count, rows.len());
         }
         let mut p = Probe::new();

@@ -5,6 +5,7 @@
 use core::fmt::Write;
 
 use heapless::String;
+
 /// Address plus address type; equal octets with different types are different peers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Peer {
@@ -16,13 +17,14 @@ pub struct Peer {
 impl Peer {
     /// Returns `self`'s address as 17 uppercase, colon-separated ASCII bytes.
     /// The address type is not included; this string alone is not a peer identity.
+    /// A capacity-erased writer shares formatting code while retaining the exact bound.
     pub fn to_string(self) -> String<17> {
         let mut text = String::new();
         for (i, byte) in self.address.iter().enumerate() {
             if i != 0 {
                 let _ = text.push(':');
             }
-            let _ = write!(text, "{byte:02X}");
+            let _ = write!(text.as_mut_view(), "{byte:02X}");
         }
         text
     }
@@ -181,4 +183,28 @@ pub fn printable<const N: usize>(bytes: &[u8]) -> String<N> {
         }
     }
     out
+}
+
+#[cfg(test)]
+/// Address presentation regressions exercise the public formatter without radio I/O.
+mod address_tests {
+    use super::Peer;
+
+    /// Every octet in every position retains uppercase digits, separators and exactly 17 bytes.
+    #[test]
+    fn every_address_octet_formats_without_truncation() {
+        for random in [false, true] {
+            for position in 0..6 {
+                for value in 0..=u8::MAX {
+                    let mut address = [0; 6];
+                    address[position] = value;
+                    let text = Peer { address, random }.to_string();
+                    let mut expected = *b"00:00:00:00:00:00";
+                    expected[position * 3] = b"0123456789ABCDEF"[usize::from(value >> 4)];
+                    expected[position * 3 + 1] = b"0123456789ABCDEF"[usize::from(value & 15)];
+                    assert_eq!(text.as_bytes(), expected);
+                }
+            }
+        }
+    }
 }

@@ -19,9 +19,17 @@ required-features = ["ngm-identity"]
 test = false
 bench = false
 
+[[bin]]
+name = "ngm-collector"
+path = "src/bin/ngm_collector.rs"
+required-features = ["ngm-collector"]
+test = false
+bench = false
+
 [features]
 default = []
 ngm-identity = []
+ngm-collector = ["ngm-identity"]
 cpu280-spi70-1v30 = ["dashboard-pico2/cpu280-spi70-1v30"]
 
 [dependencies]
